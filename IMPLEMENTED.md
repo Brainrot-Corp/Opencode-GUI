@@ -164,6 +164,17 @@ Root causes fixed:
 3. Hard guards: `body { position:fixed; inset:0; overscroll-behavior:none }`, sidebar width sanity-clamped from localStorage (170–440px).
 4. **Final piece (confirmed by user):** the `.layout` grid had no row definition — its implicit row sized itself to chat content and pushed both columns past the viewport. Fixed with `grid-template-rows: minmax(0, 1fr)` + `overflow:hidden` on `.main`.
 
+### Loading UI ✅ (2026-08-23)
+
+Root cause of "nothing populates": server responses are sometimes slow; the UI showed empty states before data arrived (the temp diag line proved counts were just 0 *yet*).
+
+- `useOpencode` now exposes `booting` — true until sessions + providers settle (success or fail).
+- Sidebar: pulsing skeleton rows while booting.
+- Messages: skeleton bubbles while booting.
+- Model picker: disabled "Loading models…" until providers arrive.
+- Premature "Say something…" / "Select or create…" prompts suppressed during boot.
+- Temp diagnostics line removed (banner still shows real failures).
+
 ### Font Awesome icons ✅ (2026-08-23)
 
 - Bundled `@fortawesome/fontawesome-free` via npm (offline-safe, fonts hashed into dist) — imported once in `main.tsx`.

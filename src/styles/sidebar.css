@@ -111,6 +111,19 @@
   box-shadow: 0 0 24px -8px var(--accent-glow);
 }
 
+/* boot skeletons */
+.skel-row {
+  height: 38px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.045);
+  margin-bottom: 5px;
+  animation: skel-pulse 1.2s ease-in-out infinite;
+}
+@keyframes skel-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
 .session-row {
   position: relative;
   display: flex;

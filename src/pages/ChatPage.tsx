@@ -82,6 +82,7 @@ export default function ChatPage() {
             activeId={oc.activeId}
             width={sbW}
             collapsed={sbClosed}
+            loading={oc.booting}
             onToggle={() => setSbClosed((v) => !v)}
             onStartResize={startResize}
             onNew={oc.newSession}
@@ -89,24 +90,19 @@ export default function ChatPage() {
             onDelete={(id) => oc.removeSession(id)}
           />
           <div className="main">
-            {/* TEMP boot diagnostics — remove once stable */}
-            <div className="diag">
-              server ✓ · sessions {oc.sessions.length} · models{" "}
-              {oc.providers.reduce((n, g) => n + g.models.length, 0)} · stream{" "}
-              {oc.live ? "live" : "down"}
-              {oc.error ? ` · ERROR: ${oc.error}` : ""}
-            </div>
             {oc.error && <div className="banner">{oc.error}</div>}
-            {!oc.activeId ? (
+            {!oc.activeId && !oc.booting && (
               <p className="empty">Select or create a session to start.</p>
-            ) : (
+            )}
+            {(oc.activeId || oc.booting) && (
               <>
-                <MessageList msgs={oc.msgs} busy={oc.busy} />
+                <MessageList msgs={oc.msgs} busy={oc.busy} loading={oc.booting} />
                 {oc.permission && (
                   <PermissionBar permission={oc.permission} onRespond={oc.respondToPermission} />
                 )}
                 <Composer
                   busy={oc.busy}
+                  loadingModels={oc.booting}
                   providers={oc.providers}
                   modelSel={oc.modelSel}
                   onModelSelect={oc.setModelSel}

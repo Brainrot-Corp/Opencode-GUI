@@ -5,6 +5,7 @@ export default function Sidebar({
   sessions,
   activeId,
   collapsed,
+  loading,
   onToggle,
   onStartResize,
   onNew,
@@ -15,6 +16,7 @@ export default function Sidebar({
   activeId: string;
   width: number;
   collapsed: boolean;
+  loading?: boolean;
   onToggle: () => void;
   onStartResize: (e: React.MouseEvent) => void;
   onNew: () => void;
@@ -44,16 +46,30 @@ export default function Sidebar({
                   <i className="fa-solid fa-angles-left" />
                 </button>
               </div>
-              {sessions.map((s) => (
-                <div key={s.id} className={`session-row ${s.id === activeId ? "active" : ""}`}>
-                  <button className="session-item" onClick={() => onOpen(s.id)} title={s.title || s.id}>
-                    {s.title || "New session"}
-                  </button>
-                  <button className="del" title="Delete session" onClick={() => onDelete(s.id)}>
-                    <i className="fa-solid fa-xmark" />
-                  </button>
-                </div>
-              ))}
+              {loading && sessions.length === 0 ? (
+                <>
+                  <div className="skel-row" />
+                  <div className="skel-row" style={{ animationDelay: "0.15s" }} />
+                  <div className="skel-row" style={{ animationDelay: "0.3s" }} />
+                  <div className="skel-row" style={{ animationDelay: "0.45s" }} />
+                  <div className="skel-row" style={{ animationDelay: "0.6s" }} />
+                </>
+              ) : (
+                sessions.map((s) => (
+                  <div key={s.id} className={`session-row ${s.id === activeId ? "active" : ""}`}>
+                    <button
+                      className="session-item"
+                      onClick={() => onOpen(s.id)}
+                      title={s.title || s.id}
+                    >
+                      {s.title || "New session"}
+                    </button>
+                    <button className="del" title="Delete session" onClick={() => onDelete(s.id)}>
+                      <i className="fa-solid fa-xmark" />
+                    </button>
+                  </div>
+                ))
+              )}
             </div>
             <div className="sb-resize" title="Drag to resize" onMouseDown={onStartResize} />
           </>

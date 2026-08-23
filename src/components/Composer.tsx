@@ -4,6 +4,7 @@ import "../styles/composer.css";
 
 export default function Composer({
   busy,
+  loadingModels,
   providers,
   modelSel,
   onModelSelect,
@@ -11,6 +12,7 @@ export default function Composer({
   onAbort,
 }: {
   busy: boolean;
+  loadingModels?: boolean;
   providers: ProviderGroup[];
   modelSel: string;
   onModelSelect: (value: string) => void;
@@ -29,18 +31,28 @@ export default function Composer({
   return (
     <div className="composer">
       <div className="model-row">
-        <span>{modelSel || "server default model"}</span>
-        <select value={modelSel} onChange={(e) => onModelSelect(e.target.value)}>
-          <option value="">Default model</option>
-          {providers.map((g) => (
-            <optgroup key={g.id} label={g.label}>
-              {g.models.map((m) => (
-                <option key={m.id} value={`${g.id}/${m.id}`}>
-                  {m.label}
-                </option>
+        <span>
+          {loadingModels
+            ? "loading models…"
+            : modelSel || (providers.length ? "server default model" : "")}
+        </span>
+        <select value={modelSel} onChange={(e) => onModelSelect(e.target.value)} disabled={loadingModels}>
+          {loadingModels ? (
+            <option>Loading models…</option>
+          ) : (
+            <>
+              <option value="">Default model</option>
+              {providers.map((g) => (
+                <optgroup key={g.id} label={g.label}>
+                  {g.models.map((m) => (
+                    <option key={m.id} value={`${g.id}/${m.id}`}>
+                      {m.label}
+                    </option>
+                  ))}
+                </optgroup>
               ))}
-            </optgroup>
-          ))}
+            </>
+          )}
         </select>
       </div>
       <div className="composer-row">

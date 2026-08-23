@@ -13,6 +13,7 @@ export function useOpencode() {
   const [modelSel, setModelSel] = useState("");
   const [permission, setPermission] = useState<PermAsk | null>(null);
   const [live, setLive] = useState(false);
+  const [booting, setBooting] = useState(true);
 
   const activeRef = useRef(activeId);
   activeRef.current = activeId;
@@ -151,8 +152,12 @@ export function useOpencode() {
           // provider listing is optional, but show why it failed
           if (!disposed) setError(`Failed to load models: ${e}`);
         }
+        if (!disposed) setBooting(false);
       } catch (e) {
-        if (!disposed) setError(String(e));
+        if (!disposed) {
+          setError(String(e));
+          setBooting(false);
+        }
       }
     })();
 
@@ -232,6 +237,7 @@ export function useOpencode() {
   return {
     error,
     live,
+    booting,
     sessions,
     activeId,
     msgs,

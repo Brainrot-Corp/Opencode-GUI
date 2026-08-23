@@ -30,7 +30,15 @@ function renderPart(part: Part, key: number) {
   return null;
 }
 
-export default function MessageList({ msgs, busy }: { msgs: Msg[]; busy: boolean }) {
+export default function MessageList({
+  msgs,
+  busy,
+  loading,
+}: {
+  msgs: Msg[];
+  busy: boolean;
+  loading?: boolean;
+}) {
   const listRef = useRef<HTMLDivElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
 
@@ -44,7 +52,14 @@ export default function MessageList({ msgs, busy }: { msgs: Msg[]; busy: boolean
 
   return (
     <div className="messages" ref={listRef}>
-      {msgs.length === 0 && !busy && <p className="empty">Say something…</p>}
+      {loading && (
+        <>
+          <div className="msg skel user" />
+          <div className="msg skel" style={{ width: "55%" }} />
+          <div className="msg skel" style={{ width: "40%" }} />
+        </>
+      )}
+      {!loading && msgs.length === 0 && !busy && <p className="empty">Say something…</p>}
       {msgs.map((m) =>
         m.parts.some((p) => renderPart(p, 0)) ? (
           <div key={m.info.id} className={`msg ${m.info.role}`}>

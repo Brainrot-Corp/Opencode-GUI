@@ -120,13 +120,6 @@
   letter-spacing: 0.02em;
 }
 
-.diag {
-  font-family: var(--mono);
-  font-size: 11px;
-  color: var(--text-faint);
-  padding: 2px 2px 8px;
-}
-
 .empty {
   margin: auto;
   font-family: var(--mono);

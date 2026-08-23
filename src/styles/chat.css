@@ -62,6 +62,13 @@
   color: var(--text);
 }
 
+.msg.skel {
+  border: none;
+  background: rgba(255, 255, 255, 0.05);
+  height: 44px;
+  animation: skel-pulse 1.2s ease-in-out infinite;
+}
+
 /* markdown inside messages */
 .msg p {
   margin: 0.45em 0;
