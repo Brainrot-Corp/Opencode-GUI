@@ -74,6 +74,10 @@ export function useOpencode() {
   const queueRef = useRef<Map<string, { text: string; files?: Attachment[] }[]>>(new Map());
   const [queueCounts, setQueueCounts] = useState<Record<string, number>>({});
   const flushRef = useRef<(sid: string) => void>(() => {});
+  // assistant messages started but not finished, per session — the REAL
+  // working signal: message.completed / session.idle fire mid-turn in
+  // heavier tasks and used to kill the indicators prematurely
+  const inflightRef = useRef<Map<string, Set<string>>>(new Map());
 
   const storeFor = (sid: string) => {
     let s = stores.current.get(sid);
@@ -207,9 +211,26 @@ export function useOpencode() {
           const info = p.info as Message;
           const sid = info.sessionID;
           if (info.role === "assistant" && info.time?.completed) {
-            setSessionBusy(sid, false);
-            if (sid === activeRef.current) playSound("reply");
-            flushRef.current(sid);
+            const set = inflightRef.current.get(sid);
+            set?.delete(info.id);
+            if (!set || set.size === 0) {
+              inflightRef.current.delete(sid);
+              // this message finished AND nothing else is running — but the
+              // turn may continue with a new message; only session.idle with
+              // an empty set settles the turn (and drains the queue)
+              setSessionBusy(sid, false);
+              if (sid === activeRef.current) playSound("reply");
+            }
+          } else if (info.role === "assistant") {
+            let set = inflightRef.current.get(sid);
+            if (!set) {
+              set = new Set();
+              inflightRef.current.set(sid, set);
+            }
+            set.add(info.id);
+            // a live message means definitely working — restore the
+            // indicators even if an early idle/completion cleared them
+            if (!busyRef.current.has(sid)) setSessionBusy(sid, true);
           }
           // learn the server's real default from a reply we did NOT steer
           if (
@@ -301,8 +322,13 @@ export function useOpencode() {
             });
           break;
         case "session.idle":
-          setSessionBusy(p.sessionID, false);
-          flushRef.current(p.sessionID);
+          // settles the turn only when no assistant message is still live —
+          // mid-turn idles in heavier tasks are ignored
+          if (!inflightRef.current.get(p.sessionID)?.size) {
+            inflightRef.current.delete(p.sessionID);
+            setSessionBusy(p.sessionID, false);
+            flushRef.current(p.sessionID);
+          }
           break;
         case "session.deleted": {
           const delId = p.sessionID ?? p.id;
@@ -465,6 +491,23 @@ export function useOpencode() {
     setPermission(null);
   }, []);
 
+  // session-wide token/cost totals — summed from the authoritative store
+  // (not the revert-filtered view) so rewinding doesn't rewrite history;
+  // msgs in deps is the recompute trigger (the store mutates alongside it)
+  const sessionUsage = useMemo(() => {
+    const store = activeId ? stores.current.get(activeId) : null;
+    let cost = 0;
+    let tokens = 0;
+    for (const m of store ?? []) {
+      const info = m.info as any;
+      if (info.role !== "assistant") continue;
+      cost += info.cost ?? 0;
+      const t = info.tokens ?? {};
+      tokens += (t.input ?? 0) + (t.output ?? 0) + (t.reasoning ?? 0);
+    }
+    return { cost, tokens };
+  }, [msgs, activeId]);
+
   // thinking-effort options for the selected model
   const modelVariants = useMemo(() => {
     if (!modelSel) return [];
@@ -584,6 +627,7 @@ export function useOpencode() {
   const abort = useCallback(async () => {
     if (!activeId) return;
     clearQueued(activeId);
+    inflightRef.current.delete(activeId);
     setSessionBusy(activeId, false);
     const { client } = await opencode();
     await client.session.abort({ path: { id: activeId } }).catch(() => {});
@@ -869,6 +913,7 @@ export function useOpencode() {
       stores.current.delete(id);
       fetchSeq.current.delete(id);
       clearQueued(id);
+      inflightRef.current.delete(id);
       setSessionBusy(id, false);
       if (activeRef.current === id) {
         setActiveId("");
@@ -917,6 +962,7 @@ export function useOpencode() {
     modelVariants,
     modelCaps,
     queueCounts,
+    sessionUsage,
     abort,
     respondToPermission,
     removeSession,

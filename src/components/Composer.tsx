@@ -25,6 +25,7 @@ export default function Composer({
   onCycleVariant,
   hasVariants,
   variantSel,
+  usage,
   caps,
 }: {
   busy: boolean;
@@ -47,6 +48,7 @@ export default function Composer({
   hasVariants?: boolean;
   variantSel?: string;
   caps?: { attachment?: boolean; input?: string[] };
+  usage?: { cost: number; tokens: number };
 }) {
   const [input, setInput] = useState("");
   const [open, setOpen] = useState(false);
@@ -371,6 +373,16 @@ export default function Composer({
             <i className="fa-solid fa-gauge-high" />
             {variantSel || "default"}
           </button>
+        )}
+        {usage && usage.tokens > 0 && (
+          <span
+            className="agent-chip usage-chip"
+            data-tip={`Session totals — ${usage.tokens.toLocaleString()} tokens${usage.cost > 0 ? `, $${usage.cost.toFixed(4)}` : ""}`}
+          >
+            <i className="fa-solid fa-coins" />
+            {usage.tokens >= 1000 ? `${(usage.tokens / 1000).toFixed(usage.tokens >= 10000 ? 0 : 1)}k` : usage.tokens} tok
+            {usage.cost > 0 && ` · $${usage.cost.toFixed(4)}`}
+          </span>
         )}
         <div
           className={`model-select${open ? " open" : ""}${needsModel ? " needs-model" : ""}`}

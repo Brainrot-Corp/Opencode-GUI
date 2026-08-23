@@ -66,6 +66,10 @@
   color: var(--accent-bright);
   text-shadow: 0 0 10px var(--accent-glow);
 }
+/* usage readout is informational, not a button */
+.usage-chip {
+  cursor: default;
+}
 /* push picker (+ diff toggle) to the right edge */
 .model-row .model-select {
   margin-left: auto;

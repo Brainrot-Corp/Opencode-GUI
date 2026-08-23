@@ -310,27 +310,142 @@
   color: inherit;
 }
 
-.tool-line {
+/* tool call blocks — collapsed header by default, mono body on expand */
+.msg .tool-block {
+  border-left: 2px solid var(--line-strong);
+  padding-left: 8px;
+  margin: 3px 0;
+}
+.msg .tool-block.error {
+  border-left-color: var(--danger);
+}
+.msg .tool-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  min-width: 0;
+  padding: 2px 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-align: left;
   font-family: var(--mono);
-  font-size: 11.5px;
+  font-size: 11px;
   letter-spacing: 0.04em;
   color: var(--text-faint);
-  padding: 2px 0;
+  transition: color 0.2s;
 }
-.tool-line i {
+.msg .tool-head:hover {
+  color: var(--accent-bright);
+}
+.msg .tool-ico {
   font-size: 10px;
-  margin-right: 7px;
-}
-.tool-line .tool-status {
-  opacity: 0.6;
-  margin-left: 7px;
-}
-.tool-line.done {
+  flex-shrink: 0;
   color: var(--accent);
-  text-shadow: 0 0 8px color-mix(in srgb, var(--accent) calc(0.45 * 100%), transparent);
+  text-shadow: 0 0 7px var(--accent-glow);
 }
-.tool-line.error {
+.msg .tool-name {
+  flex-shrink: 0;
+  color: inherit;
+}
+.msg .tool-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: 0.75;
+}
+.msg .tool-dur {
+  flex-shrink: 0;
+  opacity: 0.6;
+}
+.msg .tool-state {
+  flex-shrink: 0;
+  font-size: 10px;
+  color: var(--accent);
+  text-shadow: 0 0 7px var(--accent-glow);
+}
+.msg .chev {
+  flex-shrink: 0;
+  font-size: 9px;
+  transition: transform 0.2s var(--ease);
+}
+.msg .tool-block.open .chev {
+  transform: rotate(90deg);
+}
+.msg .tool-body {
+  padding: 3px 0 5px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.msg .tool-input,
+.msg .tool-out {
+  margin: 0;
+  padding: 6px 8px;
+  background: var(--inset-bg);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-dim);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 240px;
+  overflow-y: auto;
+}
+.msg .tool-block.error .tool-out {
   color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) calc(0.35 * 100%), transparent);
+}
+
+/* small informational part lines (step stats, retry, compaction, agents) */
+.part-note {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 10.5px;
+  letter-spacing: 0.05em;
+  color: var(--text-faint);
+  opacity: 0.85;
+  padding: 1px 0;
+}
+.part-note i {
+  font-size: 9px;
+  color: var(--accent);
+  text-shadow: 0 0 6px var(--accent-glow);
+}
+.part-note.retry {
+  color: var(--danger);
+}
+.part-note.retry i {
+  color: var(--danger);
+  text-shadow: none;
+}
+
+/* patch parts: inline chips of files changed in this step */
+.patch-line {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-faint);
+  padding: 1px 0;
+}
+.patch-line > i {
+  font-size: 10px;
+  color: var(--accent);
+}
+.patch-file {
+  padding: 1px 6px;
+  background: var(--accent-dim);
+  color: var(--accent-bright);
+  border-radius: 3px;
+  font-size: 10.5px;
 }
 
 .thinking {

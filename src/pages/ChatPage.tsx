@@ -275,6 +275,7 @@ export default function ChatPage() {
                   onCycleVariant={oc.cycleVariant}
                   hasVariants={oc.modelVariants.length > 0}
                   variantSel={oc.variantSel}
+                  usage={oc.sessionUsage}
                   caps={oc.modelCaps}
                 />
               </>

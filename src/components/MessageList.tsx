@@ -29,6 +29,81 @@ function Reasoning({ part, defaultOpen }: { part: Part; defaultOpen: boolean }) 
   );
 }
 
+const TOOL_ICONS: Record<string, string> = {
+  read: "fa-file-lines",
+  write: "fa-pen",
+  edit: "fa-pen",
+  multiedit: "fa-pen",
+  patch: "fa-pen",
+  bash: "fa-terminal",
+  glob: "fa-magnifying-glass",
+  grep: "fa-table-list",
+  list: "fa-list",
+  webfetch: "fa-globe",
+  task: "fa-diagram-project",
+  todowrite: "fa-list-check",
+  todo: "fa-list-check",
+};
+
+function fmtTok(n: number) {
+  return n >= 1000 ? `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k` : `${n}`;
+}
+
+// one tool call — streams through pending → running → completed|error as
+// part.updated replaces this part; collapsed by default, auto-expanded for
+// errors and very short outputs
+function ToolBlock({ part }: { part: Part }) {
+  const t = part as any;
+  const st = t.state ?? {};
+  const status: string = st.status ?? "";
+  const [manual, setManual] = useState<boolean | null>(null);
+
+  const out = status === "completed" ? st.output ?? "" : status === "error" ? st.error ?? "" : "";
+  const outLines = out ? out.split("\n").length : 0;
+  const open = manual ?? (status === "error" || (outLines > 0 && outLines <= 3));
+
+  const input: [string, unknown][] = Object.entries(st.input ?? {});
+  const title =
+    st.title ||
+    (() => {
+      const fv = input.find(([, v]) => v != null && v !== "");
+      const s = fv ? (typeof fv[1] === "string" ? fv[1] : JSON.stringify(fv[1])) : "";
+      return s.length > 90 ? `${s.slice(0, 90)}…` : s;
+    })() ||
+    t.tool;
+
+  const ms = st.time?.start && st.time?.end ? st.time.end - st.time.start : null;
+  const dur = ms == null ? null : ms < 10000 ? `${(ms / 1000).toFixed(2)}s` : `${Math.round(ms / 1000)}s`;
+
+  return (
+    <div className={`tool-block ${status}${open ? " open" : ""}`}>
+      <button type="button" className="tool-head mono" onClick={() => setManual(!open)}>
+        <i className={`fa-solid ${TOOL_ICONS[(t.tool as string)?.toLowerCase()] ?? "fa-gear"} tool-ico`} />
+        <span className="tool-name">{t.tool}</span>
+        <span className="tool-title">{title}</span>
+        {dur && <span className="tool-dur">{dur}s</span>}
+        {status === "running" || status === "pending" ? (
+          <i className="fa-solid fa-circle-notch fa-spin-pulse tool-state" />
+        ) : status === "error" ? (
+          <i className="fa-solid fa-triangle-exclamation tool-state" />
+        ) : (
+          <i className="fa-solid fa-chevron-right chev" />
+        )}
+      </button>
+      {open && (
+        <div className="tool-body mono">
+          {input.length > 0 && (
+            <pre className="tool-input">
+              {input.map(([k, v]) => `${k}: ${typeof v === "string" ? v : JSON.stringify(v)}`).join("\n")}
+            </pre>
+          )}
+          {out && <pre className="tool-out">{out}</pre>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function renderPart(part: Part, key: number, showThinking?: boolean) {
   if (part.type === "text") {
     const t = (part as any).text ?? "";
@@ -43,17 +118,66 @@ function renderPart(part: Part, key: number, showThinking?: boolean) {
     return <Reasoning key={(part as any).id || key} part={part} defaultOpen={!!showThinking} />;
   }
   if (part.type === "tool") {
-    const tool = part as any;
-    const status = tool.state?.status ?? "";
-    const cls = status === "error" ? "error" : status === "completed" ? "done" : "";
+    return <ToolBlock key={(part as any).id || key} part={part} />;
+  }
+  if (part.type === "step-finish") {
+    const sf = part as any;
+    const tk = sf.tokens ?? {};
+    const total = (tk.input ?? 0) + (tk.output ?? 0) + (tk.reasoning ?? 0);
     return (
-      <div key={key} className={`tool-line ${cls}`}>
-        <i className={`fa-solid ${status === "error" ? "fa-triangle-exclamation" : "fa-gear"}${status === "running" || status === "pending" ? " fa-spin-pulse" : ""}`} />
-        {tool.tool}
-        <span className="tool-status">[{status}]</span>
+      <div key={key} className="part-note mono">
+        <i className="fa-solid fa-shoe-prints" />
+        step · {fmtTok(total)} tok
+        {sf.cost > 0 && ` · $${sf.cost.toFixed(4)}`}
       </div>
     );
   }
+  if (part.type === "retry") {
+    const r = part as any;
+    return (
+      <div key={key} className="part-note retry mono">
+        <i className="fa-solid fa-rotate-right" />
+        retrying (attempt {r.attempt})
+        {r.error?.message ? ` — ${r.error.message}` : ""}
+      </div>
+    );
+  }
+  if (part.type === "compaction") {
+    const c = part as any;
+    return (
+      <div key={key} className="part-note mono">
+        <i className="fa-solid fa-compress" />
+        context compacted{c.auto ? "" : " (manual)"}
+      </div>
+    );
+  }
+  if (part.type === "patch") {
+    const pt = part as any;
+    const files: string[] = pt.files ?? [];
+    if (!files.length) return null;
+    return (
+      <div key={key} className="patch-line">
+        <i className="fa-solid fa-code-pull-request" />
+        changed:
+        {files.map((f) => (
+          <span key={f} className="mono patch-file" data-tip={f}>
+            {f.split(/[\\/]/).pop()}
+          </span>
+        ))}
+      </div>
+    );
+  }
+  if (part.type === "agent" || part.type === "subtask") {
+    const a = part as any;
+    return (
+      <div key={key} className="part-note mono">
+        <i className="fa-solid fa-robot" />
+        {a.name || a.agent}
+        {a.description ? ` — ${a.description}` : ""}
+      </div>
+    );
+  }
+  return null;
   if (part.type === "file") {
     const f = part as any;
     const url: string = f.url ?? "";
