@@ -43,6 +43,10 @@ So we build a **thin GUI client** that spawns and talks to the server. All agent
 - **opencode release binary** — sidecar (`externalBin` in `tauri.conf.json`)
 - Markdown rendering lib for assistant output
 
+> **Design rules** (spacing unit, glass/acrylic material, accent system, blocky
+> chrome, icons, fonts, persistence keys) are codified in [AGENTS.md](./AGENTS.md)
+> and apply to every new UI element.
+
 ### Frontend architecture (since 2026-08-23 restructure)
 
 ```

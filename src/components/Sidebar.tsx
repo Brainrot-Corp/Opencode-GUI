@@ -6,6 +6,7 @@ export default function Sidebar({
   activeId,
   collapsed,
   loading,
+  resizing,
   onToggle,
   onStartResize,
   onNew,
@@ -17,6 +18,7 @@ export default function Sidebar({
   width: number;
   collapsed: boolean;
   loading?: boolean;
+  resizing?: boolean;
   onToggle: () => void;
   onStartResize: (e: React.MouseEvent) => void;
   onNew: () => void;
@@ -25,7 +27,9 @@ export default function Sidebar({
 }) {
   return (
     <>
-      <aside className={`sidebar${collapsed ? " collapsed" : ""}`}>
+      <aside
+        className={`sidebar${collapsed ? " collapsed" : ""}${resizing ? " resizing" : ""}`}
+      >
         {collapsed ? (
           <button className="icon-btn sb-expand" title="Show session history" onClick={onToggle}>
             <i className="fa-solid fa-angles-right" />

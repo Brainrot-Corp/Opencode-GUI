@@ -177,13 +177,17 @@ Root cause of "nothing populates": server responses are sometimes slow; the UI s
 - Session list sorted by `time.updated` descending (most recent first); last-opened session id persisted (`oc.lastSes`) and restored on launch when it still exists, otherwise the newest opens.
 - Model picker shows the **resolved** server default (e.g. "OpenCode · x-preview-f-free (server default)") instead of generic text; the last hand-picked model is persisted (`oc.lastModel`), validated against the provider list on launch, and re-selected if still available.
 - Default resolution order (matches actual server behavior): `config.model` from opencode.jsonc → the opencode provider's entry in the default map → any provider's default. The naive "first provider in map" heuristic was wrong — it claimed DeepSeek while the server really streamed `opencode/x-preview-f-free`.
+- **Self-correcting default**: no server endpoint reports the effective fallback model, so after a prompt sent *without* an explicit selection, the reply's `providerID/modelID` is adopted as `defaultModel` — the label always converges to what actually runs.
+- **Unknown default → require a pick**: the wrong-guessing heuristics were removed entirely. Until a default is known AND nothing is hand-picked, sending is blocked: textarea + Send disabled, picker shows "Choose a model…". Once a default is learned (or remembered), "Server default · X" reappears as an option.
+- **Persistence bugfix**: the save-effect fired with `""` on mount and wiped the stored model before restore could read it; it now only persists non-empty selections.
 
 ### Font Awesome icons ✅ (2026-08-23)
 
-- Bundled `@fortawesome/fontawesome-free` via npm (offline-safe, fonts hashed into dist) — imported once in `main.tsx`.
-- All inline SVGs replaced with FA glyphs: window controls (minus/square/xmark), sidebar collapse (`fa-angles-left`) + reopen tab (`fa-angles-right`), new chat (`fa-plus`), session delete (`fa-xmark`), send (`fa-paper-plane`), stop (`fa-stop`), tool lines (`fa-gear`, spinning while running; `fa-triangle-exclamation` on error), permission buttons (`fa-check` / `fa-check-double` / `fa-ban`).
+- Bundled `@fortawesome/fontawesome-free` via npm (offline-safe, fonts hashed into dist) — imported once in `main.tsx`.- All inline SVGs replaced with FA glyphs: window controls (minus/square/xmark), sidebar collapse (`fa-angles-left`) + reopen tab (`fa-angles-right`), new chat (`fa-plus`), session delete (`fa-xmark`), send (`fa-paper-plane`), stop (`fa-stop`), tool lines (`fa-gear`, spinning while running; `fa-triangle-exclamation` on error), permission buttons (`fa-check` / `fa-check-double` / `fa-ban`).
 - Left panel collapse/reopen restyled: reopen is now a glowing edge tab on the left border.
 - Icon sizing/spacing handled per-section in the split CSS files.
+- Collapse toggle (`sb-toggle`): blocky 4px radius, dim accent tint at rest (darker version of hover), full hover glow.
+- **Consolidated design rules now live in AGENTS.md** (spacing unit, glass material, accent system, blocky chrome, icons, fonts, cursors, `oc.*` persistence keys) — follow them for all new UI.
 
 ### Resizable / collapsible session sidebar ✅ (2026-08-23)
 

@@ -88,6 +88,7 @@ export default function ChatPage() {
             width={sbW}
             collapsed={sbClosed}
             loading={oc.booting}
+            resizing={resizing}
             onToggle={() => setSbClosed((v) => !v)}
             onStartResize={startResize}
             onNew={oc.newSession}

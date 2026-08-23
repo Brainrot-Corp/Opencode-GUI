@@ -63,17 +63,30 @@
   /* match New chat height via flex stretch; beats .icon-btn fixed height */
   height: auto;
   align-self: stretch;
+  margin-right: 0;
+  /* resting state = dimmer version of the hover tint, blocky corners */
+  border-radius: 4px;
+  background: rgba(127, 212, 212, 0.07);
 }
 .sb-toggle:hover {
   color: var(--accent);
+  background: var(--accent-dim);
 }
 
-/* while the resize indicator shows (hover), get the scrollbar out of the way */
-.sidebar:has(.sb-resize:hover) .sb-scroll {
+/* while the resize indicator shows (hover or active drag), hide the scrollbar
+   and keep the glow line visible even if the cursor outruns the handle */
+.sidebar:has(.sb-resize:hover) .sb-scroll,
+.sidebar.resizing .sb-scroll {
   scrollbar-width: none;
 }
-.sidebar:has(.sb-resize:hover) .sb-scroll::-webkit-scrollbar {
+.sidebar:has(.sb-resize:hover) .sb-scroll::-webkit-scrollbar,
+.sidebar.resizing .sb-scroll::-webkit-scrollbar {
   width: 0;
+}
+.sb-resize:hover::before,
+.sidebar.resizing .sb-resize::before {
+  background: rgba(127, 212, 212, 0.45);
+  box-shadow: 0 0 10px var(--accent-glow);
 }
 
 .sb-resize {
@@ -96,7 +109,8 @@
   background: transparent;
   transition: background 0.25s var(--ease), box-shadow 0.3s var(--ease);
 }
-.sb-resize:hover::before {
+.sb-resize:hover::before,
+.sidebar.resizing .sb-resize::before {
   background: rgba(127, 212, 212, 0.45);
   box-shadow: 0 0 10px var(--accent-glow);
 }
