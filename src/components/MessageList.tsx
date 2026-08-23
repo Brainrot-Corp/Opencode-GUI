@@ -21,7 +21,9 @@ function renderPart(part: Part, key: number) {
     const cls = status === "error" ? "error" : status === "completed" ? "done" : "";
     return (
       <div key={key} className={`tool-line ${cls}`}>
-        ⚙ {tool.tool} [{status}]
+        <i className={`fa-solid ${status === "error" ? "fa-triangle-exclamation" : "fa-gear"}${status === "running" || status === "pending" ? " fa-spin-pulse" : ""}`} />
+        {tool.tool}
+        <span className="tool-status">[{status}]</span>
       </div>
     );
   }
@@ -29,14 +31,19 @@ function renderPart(part: Part, key: number) {
 }
 
 export default function MessageList({ msgs, busy }: { msgs: Msg[]; busy: boolean }) {
+  const listRef = useRef<HTMLDivElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    endRef.current?.scrollIntoView();
+    // manual scrollTop — never scrollIntoView(), it also scrolls page-level
+    // ancestors and shoves the whole layout off-screen
+    const el = listRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+    void endRef.current;
   }, [msgs]);
 
   return (
-    <div className="messages">
+    <div className="messages" ref={listRef}>
       {msgs.length === 0 && !busy && <p className="empty">Say something…</p>}
       {msgs.map((m) =>
         m.parts.some((p) => renderPart(p, 0)) ? (

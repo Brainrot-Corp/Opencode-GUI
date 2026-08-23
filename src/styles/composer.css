@@ -86,7 +86,7 @@
 
 .send-btn,
 .stop-btn {
-  padding: 12px 24px;
+  padding: 12px 22px;
   border-radius: 999px;
   cursor: pointer;
   font-family: var(--sans);
@@ -94,6 +94,20 @@
   font-weight: 500;
   letter-spacing: 0.06em;
   transition: border-color 0.35s var(--ease), background 0.35s var(--ease), box-shadow 0.45s var(--ease);
+}
+.send-btn i,
+.stop-btn i {
+  font-size: 11.5px;
+}
+.send-btn i {
+  margin-left: 8px;
+  transition: transform 0.3s var(--ease);
+}
+.send-btn:hover:not(:disabled) i {
+  transform: translateX(2px);
+}
+.stop-btn i {
+  margin-right: 8px;
 }
 
 .send-btn {

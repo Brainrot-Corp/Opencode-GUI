@@ -110,8 +110,27 @@ export function useOpencode() {
       try {
         const { base, client } = await opencode();
 
-        const list = await refreshSessions().catch(() => [] as Session[]);
-        if (list.length > 0 && !disposed) await openSession(list[0].id);
+        es = new EventSource(`${base}/event`);
+        es.onmessage = (ev) => {
+          try {
+            onEvent(JSON.parse(ev.data));
+          } catch {
+            // malformed event — ignore
+          }
+        };
+        // onerror: EventSource reconnects automatically
+
+        let list: Session[] = [];
+        try {
+          list = await refreshSessions();
+        } catch (e) {
+          if (!disposed) setError(`Failed to load sessions: ${e}`);
+        }
+        if (list.length > 0 && !disposed) {
+          await openSession(list[0].id).catch((e) => {
+            if (!disposed) setError(`Failed to open session: ${e}`);
+          });
+        }
 
         try {
           const pr = await client.config.providers();
@@ -125,19 +144,10 @@ export function useOpencode() {
           }));
           groups.sort((a, b) => a.label.localeCompare(b.label));
           setProviders(groups);
-        } catch {
-          // provider listing is optional
+        } catch (e) {
+          // provider listing is optional, but show why it failed
+          if (!disposed) setError(`Failed to load models: ${e}`);
         }
-
-        es = new EventSource(`${base}/event`);
-        es.onmessage = (ev) => {
-          try {
-            onEvent(JSON.parse(ev.data));
-          } catch {
-            // malformed event — ignore
-          }
-        };
-        // onerror: EventSource reconnects automatically
       } catch (e) {
         if (!disposed) setError(String(e));
       }

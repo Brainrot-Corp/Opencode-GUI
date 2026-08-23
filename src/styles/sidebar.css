@@ -1,6 +1,7 @@
-/* sidebar: session list */
+/* sidebar: session history — resizable + collapsible */
 
 .sidebar {
+  position: relative;
   background: linear-gradient(180deg, rgba(20, 28, 35, 0.26), rgba(12, 17, 22, 0.38));
   border-right: 1px solid var(--line);
   backdrop-filter: blur(14px);
@@ -8,8 +9,81 @@
   padding: 16px 12px;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+}
+.sidebar.collapsed {
+  overflow: hidden;
+  border-right-color: transparent;
+}
+
+/* scrollable content layer — the resize handle stays outside it,
+   so it sits to the RIGHT of the scrollbar at full height */
+.sb-scroll {
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
+  overflow-x: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.sb-toggle {
+  align-self: flex-end;
+  width: 30px;
+  height: 28px;
+}
+
+.sb-reopen {
+  position: fixed;
+  left: 0;
+  top: 56px;
+  z-index: 35;
+  width: 30px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: var(--accent);
+  font-size: 14px;
+  background: linear-gradient(180deg, rgba(20, 28, 35, 0.6), rgba(12, 17, 22, 0.7));
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: none;
+  border-right: 1px solid var(--line);
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  border-radius: 0 10px 10px 0;
+  transition: box-shadow 0.3s var(--ease), padding-left 0.25s var(--ease), color 0.2s;
+}
+.sb-reopen:hover {
+  box-shadow: 0 0 22px -4px var(--accent-glow);
+  padding-left: 5px;
+}
+
+.sb-resize {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: -3px;
+  width: 9px;
+  cursor: col-resize;
+  z-index: 5;
+}
+.sb-resize::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 3px;
+  width: 2px;
+  border-radius: 1px;
+  background: transparent;
+  transition: background 0.25s var(--ease), box-shadow 0.3s var(--ease);
+}
+.sb-resize:hover::before {
+  background: rgba(127, 212, 212, 0.45);
+  box-shadow: 0 0 10px var(--accent-glow);
 }
 
 .new-chat {
@@ -17,7 +91,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 10px;
+  gap: 9px;
   padding: 11px;
   border-radius: 12px;
   cursor: pointer;
@@ -85,7 +159,7 @@
   background: none;
   cursor: pointer;
   color: var(--text-faint);
-  font-size: 15px;
+  font-size: 12px;
   border-radius: 0 12px 12px 0;
   opacity: 0;
   transition: opacity 0.2s, color 0.2s, background 0.2s;

@@ -153,6 +153,14 @@
   color: var(--text-faint);
   padding: 2px 0;
 }
+.tool-line i {
+  font-size: 10px;
+  margin-right: 7px;
+}
+.tool-line .tool-status {
+  opacity: 0.6;
+  margin-left: 7px;
+}
 .tool-line.done {
   color: var(--accent);
 }

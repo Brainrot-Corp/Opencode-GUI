@@ -154,6 +154,29 @@ src/
 
 Each component imports its own stylesheet; global tokens/layout load once in `main.tsx`. Identical output CSS.
 
+### Bugfix: layout "zoom" when history loads ✅ (2026-08-23)
+
+Symptom: as soon as session data arrived, the whole UI appeared super-zoomed / cut off.
+
+Root causes fixed:
+1. `MessageList` used `scrollIntoView()` on new messages — it scrolls **all** scrollable ancestors including the page root, shoving the layout off-screen. Replaced with manual `container.scrollTop = scrollHeight` (strictly scoped to the message panel).
+2. WebView2 page zoom (Ctrl+wheel / Ctrl±) silently persists across restarts. Now: reset to 100% at boot (`setZoom(1)`), zoom hotkeys blocked entirely via wheel/keydown preventDefault, capability `core:webview:allow-set-webview-zoom` added.
+3. Hard guards: `body { position:fixed; inset:0; overscroll-behavior:none }`, sidebar width sanity-clamped from localStorage (170–440px).
+
+### Font Awesome icons ✅ (2026-08-23)
+
+- Bundled `@fortawesome/fontawesome-free` via npm (offline-safe, fonts hashed into dist) — imported once in `main.tsx`.
+- All inline SVGs replaced with FA glyphs: window controls (minus/square/xmark), sidebar collapse (`fa-angles-left`) + reopen tab (`fa-angles-right`), new chat (`fa-plus`), session delete (`fa-xmark`), send (`fa-paper-plane`), stop (`fa-stop`), tool lines (`fa-gear`, spinning while running; `fa-triangle-exclamation` on error), permission buttons (`fa-check` / `fa-check-double` / `fa-ban`).
+- Left panel collapse/reopen restyled: reopen is now a glowing edge tab on the left border.
+- Icon sizing/spacing handled per-section in the split CSS files.
+
+### Resizable / collapsible session sidebar ✅ (2026-08-23)
+
+- Drag the sidebar's right edge to resize (170–440px, accent glow on the handle).
+- Chevron button top-right of the sidebar collapses it; a small tab at the window's left edge reopens it. Animated via grid-template-columns transition.
+- Width + collapsed state persisted in localStorage (`oc.sb.w` / `oc.sb.c`).
+- Note: a first attempt accidentally added this to the message panel; reverted — messages area stays flex-fill.
+
 ## Notes / Decisions log
 
 - 2026-08-23: Project started. Plan finalized in PLAN.md (Windows only, Tauri v2, React+TS, fresh UI, minimal scope).

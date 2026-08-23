@@ -67,14 +67,9 @@
   color: var(--text-faint);
   transition: color 0.25s var(--ease), background 0.25s var(--ease), box-shadow 0.35s var(--ease);
 }
-.icon-btn svg {
-  width: 15px;
-  height: 15px;
-  stroke: currentColor;
-  fill: none;
-  stroke-width: 1.7;
-  stroke-linecap: round;
-  stroke-linejoin: round;
+.icon-btn i {
+  font-size: 14px;
+  line-height: 1;
 }
 .icon-btn:hover {
   color: var(--accent);
@@ -90,8 +85,15 @@
 .layout {
   display: grid;
   grid-template-columns: 248px 1fr;
+  /* pin the single row to the container — otherwise it sizes to content
+     and both columns overflow past the viewport */
+  grid-template-rows: minmax(0, 1fr);
   flex: 1;
   min-height: 0;
+  transition: grid-template-columns 0.25s var(--ease);
+}
+.layout.no-anim {
+  transition: none;
 }
 
 .main {
@@ -99,6 +101,7 @@
   flex-direction: column;
   min-width: 0;
   min-height: 0;
+  overflow: hidden;
   padding: 22px clamp(18px, 4vw, 44px) 22px;
   gap: 0;
 }

@@ -46,6 +46,10 @@
   letter-spacing: 0.03em;
   transition: all 0.3s var(--ease);
 }
+.permission-bar button i {
+  font-size: 10.5px;
+  margin-right: 7px;
+}
 .permission-bar button.allow {
   background: rgba(127, 212, 212, 0.09);
   border: 1px solid rgba(127, 212, 212, 0.4);

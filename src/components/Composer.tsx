@@ -59,11 +59,13 @@ export default function Composer({
         />
         {busy ? (
           <button className="stop-btn" onClick={onAbort}>
+            <i className="fa-solid fa-stop" />
             Stop
           </button>
         ) : (
           <button className="send-btn" onClick={send} disabled={!input.trim()}>
             Send
+            <i className="fa-solid fa-paper-plane" />
           </button>
         )}
       </div>
