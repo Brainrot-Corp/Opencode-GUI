@@ -2,7 +2,11 @@ use std::net::TcpListener;
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 
-use tauri::{Manager, RunEvent, State};
+use tauri::{Manager, RunEvent, State, WindowEvent};
+
+mod browser;
+use browser::{browser_back, browser_close, browser_forward, browser_navigate, browser_open,
+    browser_reload, open_external};
 
 struct ServerState {
     port: u16,
@@ -97,7 +101,17 @@ pub fn run() {
                 })
                 .build(),
         )
-        .invoke_handler(tauri::generate_handler![server_url])
+        .invoke_handler(tauri::generate_handler![
+            server_url,
+            browser_open,
+            browser_back,
+            browser_forward,
+            browser_navigate,
+            browser_reload,
+            browser_close,
+            open_external,
+            browser::diag_log
+        ])
         .setup(|app| {
             // system tray: left click toggles visibility, right click menu
             use tauri::{
@@ -151,6 +165,7 @@ pub fn run() {
                 },
             };
             app.manage(state);
+            app.manage(browser::BrowserState::default());
             // make sure the window actually owns keyboard focus on launch —
             // otherwise the first Alt+Space sees "visible but unfocused" and
             // only focuses it instead of hiding it
@@ -163,6 +178,18 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|_app_handle, event| {
+            // keep the browser webview glued below the top bar across
+            // window resizes / DPI changes while it is open
+            if let RunEvent::WindowEvent {
+                label,
+                event: WindowEvent::Resized(size),
+                ..
+            } = &event
+            {
+                if label == "main" {
+                    browser::on_main_resize(_app_handle, *size);
+                }
+            }
             if let RunEvent::Exit = event {
                 if let Some(mut child) = _app_handle
                     .state::<ServerState>()

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import Titlebar from "../components/Titlebar";
 import Sidebar from "../components/Sidebar";
@@ -6,6 +7,7 @@ import MessageList from "../components/MessageList";
 import Composer from "../components/Composer";
 import PermissionBar from "../components/PermissionBar";
 import QuestionPopup from "../components/QuestionPopup";
+import BrowserBar from "../components/BrowserBar";
 import SettingsDrawer from "../components/SettingsDrawer";
 import DiffPanel from "../components/DiffPanel";
 import TooltipLayer from "../components/TooltipLayer";
@@ -30,6 +32,29 @@ export default function ChatPage() {
   });
   const [sbClosed, setSbClosed] = useState(() => localStorage.getItem(SB_C_KEY) === "1");
   const [resizing, setResizing] = useState(false);
+  const [browserTop, setBrowserTop] = useState<number | null>(null);
+
+  // browser bar band = titlebar bottom + bar height; also the y the child
+  // webview is placed at
+  function barTop() {
+    const tb = document.querySelector(".titlebar") as HTMLElement | null;
+    return (tb?.offsetHeight ?? 42) + 34;
+  }
+
+  // TEMP-DIAG: auto-open a page so the browser bar can be screenshotted
+  useEffect(() => {
+    const t = setTimeout(() => {
+      invoke("browser_open", { url: "https://example.com", top: barTop() })
+        .then(() => {
+          setBrowserTop(barTop());
+          invoke("diag_log", { msg: "promise resolved, setBrowserTop done" }).catch(() => {});
+        })
+        .catch((e) => {
+          invoke("diag_log", { msg: `invoke REJECTED: ${e}` }).catch(() => {});
+        });
+    }, 2500);
+    return () => clearTimeout(t);
+  }, []);
 
   // block WebView2 zoom hotkeys entirely: Ctrl+wheel / Ctrl +/-/0
   // and suppress the raw browser right-click menu (desktop app, not a page)
@@ -178,6 +203,9 @@ export default function ChatPage() {
     <>
       <div className="noise" aria-hidden="true" />
       <TooltipLayer />
+      {browserTop !== null && (
+        <BrowserBar top={browserTop} onClose={() => setBrowserTop(null)} />
+      )}
       <div className="app">
         <Titlebar
           pinned={settings.alwaysOnTop}

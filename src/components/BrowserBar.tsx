@@ -1,0 +1,74 @@
+import { useEffect, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
+import "../styles/browser.css";
+
+type NavState = { url: string; canBack: boolean; canFwd: boolean };
+
+// browser chrome strip rendered by the main webview while the child webview
+// shows remote content below it — back/forward/reload/URL/open-external and
+// the return-to-app button
+export default function BrowserBar({ top, onClose }: { top: number; onClose: () => void }) {
+  const [nav, setNav] = useState<NavState>({ url: "", canBack: false, canFwd: false });
+  // null = show the live url; a string = user is editing the field
+  const [edit, setEdit] = useState<string | null>(null);
+
+  useEffect(() => {
+    invoke("diag_log", { msg: "BrowserBar MOUNTED" }).catch(() => {});
+    let un: (() => void) | undefined;
+    listen<NavState>("browser://nav", (e) => {
+      setNav(e.payload);
+      setEdit(null);
+    }).then((f) => {
+      un = f;
+    });
+    return () => un?.();
+  }, []);
+
+  const go = () => {
+    const v = (edit ?? "").trim();
+    if (!v) return;
+    const url = /^https?:\/\//i.test(v) ? v : `https://${v}`;
+    invoke("browser_navigate", { url }).catch(() => {});
+    setEdit(null);
+  };
+
+  return (
+    <div className="browser-bar" style={{ top }}>
+      <button className="icon-btn" data-tip="Back (mouse4)" disabled={!nav.canBack}
+        onClick={() => invoke("browser_back")}>
+        <i className="fa-solid fa-arrow-left" />
+      </button>
+      <button className="icon-btn" data-tip="Forward (mouse5)" disabled={!nav.canFwd}
+        onClick={() => invoke("browser_forward")}>
+        <i className="fa-solid fa-arrow-right" />
+      </button>
+      <button className="icon-btn" data-tip="Reload" onClick={() => invoke("browser_reload")}>
+        <i className="fa-solid fa-rotate-right" />
+      </button>
+      <input
+        className="browser-url mono"
+        value={edit ?? nav.url}
+        placeholder="Search or type a URL"
+        spellCheck={false}
+        onChange={(e) => setEdit(e.target.value)}
+        onKeyDown={(e) => e.key === "Enter" && go()}
+        onFocus={(e) => e.currentTarget.select()}
+      />
+      <button className="icon-btn" data-tip="Open in system browser"
+        onClick={() => nav.url && invoke("open_external", { url: nav.url })}>
+        <i className="fa-solid fa-up-right-from-square" />
+      </button>
+      <button
+        className="icon-btn browser-home"
+        data-tip="Return to OpenCode"
+        onClick={() => {
+          invoke("browser_close");
+          onClose();
+        }}
+      >
+        <i className="fa-solid fa-house" />
+      </button>
+    </div>
+  );
+}
