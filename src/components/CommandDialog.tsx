@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Dialog from "./Dialog";
 import type { CmdEntry } from "../hooks/useOpencode";
 
@@ -46,25 +46,57 @@ export function VariantsDialog({
   onSelect: (v: string) => void;
   onClose: () => void;
 }) {
+  const opts = ["", ...variants];
+  const [hi, setHi] = useState(() => Math.max(0, opts.indexOf(selected)));
+  const listRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const key = (e: KeyboardEvent) => {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setHi((h) => Math.min(h + 1, opts.length - 1));
+      } else if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setHi((h) => Math.max(h - 1, 0));
+      } else if (e.key === "Enter" || e.key === "Tab") {
+        e.preventDefault();
+        onSelect(opts[hi]);
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", key);
+    return () => window.removeEventListener("keydown", key);
+  }, [hi, variants]);
+
+  useEffect(() => {
+    listRef.current
+      ?.querySelector('[data-hl="true"]')
+      ?.scrollIntoView({ block: "nearest" });
+  }, [hi]);
+
   return (
     <Dialog title="Thinking effort" onClose={onClose}>
-      {variants.length === 0 && (
-        <p className="empty">The selected model has no effort levels.</p>
-      )}
-      {["", ...variants].map((v) => (
-        <button
-          type="button"
-          key={v || "default"}
-          className={`cmd-row cmd-opt${v === selected ? " hl" : ""}`}
-          onClick={() => {
-            onSelect(v);
-            onClose();
-          }}
-        >
-          <span className="mono cmd-name">/{v || "default"}</span>
-          <span className="cmd-desc">{v === selected ? "active" : ""}</span>
-        </button>
-      ))}
+      <div ref={listRef}>
+        {variants.length === 0 && (
+          <p className="empty">The selected model has no effort levels.</p>
+        )}
+        {opts.map((v, i) => (
+          <button
+            type="button"
+            key={v || "default"}
+            className={`cmd-row cmd-opt cmd-variant${i === hi ? " hl" : ""}`}
+            data-hl={i === hi || undefined}
+            onMouseEnter={() => setHi(i)}
+            onClick={() => {
+              onSelect(v);
+              onClose();
+            }}
+          >
+            <span className="mono cmd-name">/{v || "default"}</span>
+            <span className="cmd-desc">{v === selected ? "active" : ""}</span>
+          </button>
+        ))}
+      </div>
     </Dialog>
   );
 }
@@ -72,22 +104,33 @@ export function VariantsDialog({
 // /share — the session URL with a copy button
 export function ShareDialog({ url, onClose }: { url: string; onClose: () => void }) {
   const [copied, setCopied] = useState(false);
+  const doCopy = () => {
+    navigator.clipboard.writeText(url).then(
+      () => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1500);
+      },
+      () => {},
+    );
+  };
+
+  // Enter copies too
+  useEffect(() => {
+    const key = (e: KeyboardEvent) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        doCopy();
+      }
+    };
+    window.addEventListener("keydown", key);
+    return () => window.removeEventListener("keydown", key);
+  }, [url]);
+
   return (
     <Dialog title="Session shared" onClose={onClose}>
       <div className="cmd-share">
         <span className="mono cmd-url">{url}</span>
-        <button
-          className="send-btn"
-          onClick={() => {
-            navigator.clipboard.writeText(url).then(
-              () => {
-                setCopied(true);
-                setTimeout(() => setCopied(false), 1500);
-              },
-              () => {},
-            );
-          }}
-        >
+        <button className="send-btn" onClick={doCopy}>
           <i className={`fa-solid ${copied ? "fa-check" : "fa-copy"}`} />
           {copied ? "Copied" : "Copy"}
         </button>

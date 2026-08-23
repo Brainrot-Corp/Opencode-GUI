@@ -48,6 +48,7 @@ export default function Composer({
   const [cmdClosed, setCmdClosed] = useState(false);
   const boxRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
 
   // no selection and the server default is still unknown → require a pick
   const needsModel = !loadingModels && !modelSel && !defaultModel;
@@ -79,28 +80,99 @@ export default function Composer({
 
   // /models command → open the model picker
   useEffect(() => {
-    const open = () => {
+    const openEvt = () => {
       if (loadingModels) return;
       setOpen(true);
       setHi(entries.findIndex((e2) => e2.value === modelSel));
     };
-    window.addEventListener("oc:models", open);
-    return () => window.removeEventListener("oc:models", open);
+    window.addEventListener("oc:models", openEvt);
+    return () => window.removeEventListener("oc:models", openEvt);
   });
 
-  // Tab cycles the agent (TUI parity) — unless the slash menu is completing.
-  // Real form fields keep Tab's focus behavior
+  // ONE keyboard brain for the composer: a fresh closure every render, so
+  // every surface (model menu, slash suggestions, agent Tab-cycle, send)
+  // routes off the same state — no per-handler desync.
+  // priority: model menu → slash suggestions → plain Enter send / Tab cycle
   useEffect(() => {
-    const key = (e: KeyboardEvent) => {
-      if (e.key !== "Tab" || cmdOpen || e.ctrlKey || e.altKey || e.metaKey) return;
-      const t = e.target as HTMLElement | null;
-      if (t && (t.tagName === "INPUT" || t.tagName === "SELECT" || t.isContentEditable)) return;
-      e.preventDefault();
-      onCycleAgent?.();
+    const onKey = (e: KeyboardEvent) => {
+      // --- model picker open: owns navigation from anywhere ---
+      if (open) {
+        if (e.key === "ArrowDown") {
+          e.preventDefault();
+          setHi((h) => Math.min(h + 1, entries.length - 1));
+        } else if (e.key === "ArrowUp") {
+          e.preventDefault();
+          setHi((h) => Math.max(h - 1, 0));
+        } else if (e.key === "Home") {
+          e.preventDefault();
+          setHi(0);
+        } else if (e.key === "End") {
+          e.preventDefault();
+          setHi(entries.length - 1);
+        } else if ((e.key === "Enter" || e.key === "Tab") && !e.shiftKey) {
+          e.preventDefault();
+          const c = entries[Math.max(0, Math.min(hi, entries.length - 1))];
+          if (c) pick(c.value);
+        } else if (e.key === "Escape") {
+          e.preventDefault();
+          setOpen(false);
+          setHi(-1);
+        }
+        return;
+      }
+
+      // --- slash suggestions visible: arrows move, Tab completes,
+      //     Enter runs arg-less commands instantly ---
+      if (cmdOpen) {
+        if (e.key === "ArrowDown") {
+          e.preventDefault();
+          setHiCmd((h) => Math.min(h + 1, cmdEntries.length - 1));
+        } else if (e.key === "ArrowUp") {
+          e.preventDefault();
+          setHiCmd((h) => Math.max(h - 1, 0));
+        } else if (e.key === "Tab") {
+          e.preventDefault();
+          const c = cmdEntries[Math.max(0, Math.min(hiCmd, cmdEntries.length - 1))];
+          if (c) fillCmd(c);
+        } else if (e.key === "Enter" && !e.shiftKey) {
+          e.preventDefault();
+          cmdPick();
+        } else if (e.key === "Escape") {
+          e.preventDefault();
+          setCmdClosed(true);
+        }
+        return;
+      }
+
+      // --- Enter in the textarea sends ---
+      if (
+        e.key === "Enter" &&
+        !e.shiftKey &&
+        e.target === inputRef.current
+      ) {
+        e.preventDefault();
+        send();
+        return;
+      }
+
+      // --- Tab cycles the agent when no suggestion UI is up;
+      //     real form fields keep Tab's focus behavior ---
+      if (
+        e.key === "Tab" &&
+        !e.ctrlKey &&
+        !e.altKey &&
+        !e.metaKey &&
+        !e.shiftKey
+      ) {
+        const t = e.target as HTMLElement | null;
+        if (t && (t.tagName === "INPUT" || t.tagName === "SELECT" || t.isContentEditable)) return;
+        e.preventDefault();
+        onCycleAgent?.();
+      }
     };
-    window.addEventListener("keydown", key);
-    return () => window.removeEventListener("keydown", key);
-  }, [cmdOpen, onCycleAgent]);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
 
   const fillCmd = (c: CmdEntry) => {
     setInput(`/${c.name} `);
@@ -175,36 +247,6 @@ export default function Composer({
     setHi(-1);
   };
 
-  function onMenuKeyDown(e: React.KeyboardEvent) {
-    if (!open) {
-      if (e.key === "Enter" || e.key === " ") {
-        e.preventDefault();
-        toggleMenu();
-      }
-      return;
-    }
-    if (e.key === "Escape") {
-      e.preventDefault();
-      setOpen(false);
-      setHi(-1);
-    } else if (e.key === "ArrowDown") {
-      e.preventDefault();
-      setHi((h) => Math.min(h + 1, entries.length - 1));
-    } else if (e.key === "ArrowUp") {
-      e.preventDefault();
-      setHi((h) => Math.max(h - 1, 0));
-    } else if (e.key === "Enter" && hi >= 0 && hi < entries.length) {
-      e.preventDefault();
-      pick(entries[hi].value);
-    } else if (e.key === "Home") {
-      e.preventDefault();
-      setHi(0);
-    } else if (e.key === "End") {
-      e.preventDefault();
-      setHi(entries.length - 1);
-    }
-  }
-
   const currentLabel = () => {
     if (loadingModels) return "loading models…";
     if (needsModel) return "choose a model to start";
@@ -258,7 +300,6 @@ export default function Composer({
         <div
           className={`model-select${open ? " open" : ""}${needsModel ? " needs-model" : ""}`}
           ref={boxRef}
-          onKeyDown={onMenuKeyDown}
         >
           <button
             type="button"
@@ -339,46 +380,17 @@ export default function Composer({
       )}
       <div className="composer-row">
                 <textarea
+                  ref={inputRef}
                   value={input}
                   disabled={needsModel}
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={(e) => {
-                    if (cmdOpen) {
-                      if (e.key === "ArrowDown") {
-                        e.preventDefault();
-                        setHiCmd((h) => Math.min(h + 1, cmdEntries.length - 1));
-                        return;
-                      }
-                      if (e.key === "ArrowUp") {
-                        e.preventDefault();
-                        setHiCmd((h) => Math.max(h - 1, 0));
-                        return;
-                      }
-                      if (e.key === "Tab") {
-                        e.preventDefault();
-                        cmdPick();
-                        return;
-                      }
-                      if (e.key === "Escape") {
-                        e.preventDefault();
-                        setCmdClosed(true);
-                        return;
-                      }
-                      if (e.key === "Enter" && !e.shiftKey) {
-                        e.preventDefault();
-                        cmdPick();
-                        return;
-                      }
-                    }
-                    // typing sounds: distinct for keys, erase, newline
+                    // typing sounds only — all key ROUTING (menus, send,
+                    // agent cycle) lives in the single global handler
                     if (!e.ctrlKey && !e.metaKey && !e.altKey) {
                       if (e.key === "Backspace" || e.key === "Delete") playSound("erase");
                       else if (e.key === "Enter" && e.shiftKey) playSound("newline");
                       else if (e.key.length === 1) playSound("type");
-                    }
-                    if (e.key === "Enter" && !e.shiftKey) {
-                      e.preventDefault();
-                      send();
                     }
                   }}
                   placeholder={

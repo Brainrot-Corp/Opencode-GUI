@@ -307,6 +307,14 @@
   padding: 0 6px 4px;
 }
 
+/* variants picker: "active" tag hugs the option name */
+.cmd-variant {
+  gap: 8px;
+}
+.cmd-variant .cmd-name {
+  min-width: 0;
+}
+
 .composer-row {
   display: flex;
   gap: 10px;
