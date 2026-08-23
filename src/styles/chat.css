@@ -44,6 +44,44 @@
     inset 0 1px 0 rgba(255, 255, 255, 0.05);
 }
 
+/* slim workspace header above the chat stage — same glass surface,
+   full-bleed like the stage; its bottom edge is the separator */
+.stage-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  width: 100%;
+  padding: 8px clamp(22px, 4.5vw, 40px) 6px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-faint);
+  user-select: none;
+  background: linear-gradient(
+    180deg,
+    rgba(var(--surf-rgb), min(1, calc(var(--surf-a) * 1.15))),
+    rgba(var(--surf-rgb), var(--surf-a))
+  );
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  /* sides match the stage's own borders; stage drops its top border */
+  border: 1px solid var(--line);
+  border-top: none;
+}
+.stage-head i {
+  color: var(--accent);
+  opacity: 0.75;
+  flex-shrink: 0;
+}
+.stage-head span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  /* keep the tail of the path visible instead of the head */
+  direction: rtl;
+  text-align: left;
+}
+
 .msg {
   max-width: 84%;
   padding: 11px 16px;
@@ -107,8 +145,9 @@
   display: flex;
   align-items: center;
   gap: 9px;
-  margin: 0 6px 6px;
-  padding: 8px 12px;
+  width: 100%;
+  margin: 0;
+  padding: 8px 16px;
   font-family: var(--mono);
   font-size: 11.5px;
   color: var(--text-dim);

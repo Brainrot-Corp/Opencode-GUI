@@ -13,6 +13,8 @@ export default function Composer({
   onSend,
   onAbort,
   onToggleDiff,
+  onPickWorkspace,
+  workspace,
 }: {
   busy: boolean;
   loadingModels?: boolean;
@@ -23,6 +25,8 @@ export default function Composer({
   onSend: (text: string) => void;
   onAbort: () => void;
   onToggleDiff?: () => void;
+  onPickWorkspace?: () => void;
+  workspace?: string;
 }) {
   const [input, setInput] = useState("");
   const [open, setOpen] = useState(false);
@@ -138,16 +142,6 @@ export default function Composer({
     <div className="composer">
       <div className="model-row">
         <span>{currentLabel()}</span>
-        {onToggleDiff && (
-          <button
-            type="button"
-            className="icon-btn diff-btn"
-            title="Files changed in this session"
-            onClick={onToggleDiff}
-          >
-            <i className="fa-solid fa-code-compare" />
-          </button>
-        )}
         <div
           className={`model-select${open ? " open" : ""}${needsModel ? " needs-model" : ""}`}
           ref={boxRef}
@@ -189,6 +183,26 @@ export default function Composer({
             </div>
           )}
         </div>
+        {onPickWorkspace && (
+          <button
+            type="button"
+            className="icon-btn diff-btn"
+            title={`Workspace: ${workspace || "home folder"} — click to change`}
+            onClick={onPickWorkspace}
+          >
+            <i className="fa-solid fa-folder-open" />
+          </button>
+        )}
+        {onToggleDiff && (
+          <button
+            type="button"
+            className="icon-btn diff-btn"
+            title="Files changed in this session"
+            onClick={onToggleDiff}
+          >
+            <i className="fa-solid fa-code-compare" />
+          </button>
+        )}
       </div>
               <div className="composer-row">
                 <textarea

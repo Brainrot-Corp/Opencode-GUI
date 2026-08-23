@@ -179,28 +179,32 @@
   overflow: hidden;
 }
 
-.sound-box-head .reset-btn {
-  margin-left: auto;
+/* small blocky action button (reset, workspace browse…) */
+.reset-btn {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   padding: 4px 10px;
   background: color-mix(in srgb, var(--accent) calc(0.06 * 100%), transparent);
   border: 1px solid var(--line);
-  border-radius: 0;
+  border-radius: 4px;
   color: var(--text-dim);
   font-family: var(--sans);
   font-size: 11px;
   cursor: pointer;
   transition: all 0.25s var(--ease);
 }
-.sound-box-head .reset-btn:hover {
+.reset-btn:hover {
   border-color: color-mix(in srgb, var(--accent) calc(0.45 * 100%), transparent);
   color: var(--accent-bright);
   box-shadow: 0 0 14px -6px var(--accent-glow);
 }
-.sound-box-head .reset-btn i {
-  font-size: 9px;
+.reset-btn i {
+  font-size: 10px;
+}
+/* the appearance-head Reset hugs the right edge */
+.sound-box-head .reset-btn {
+  margin-left: auto;
 }
 
 .color-controls {

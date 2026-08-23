@@ -9,6 +9,7 @@ import SettingsDrawer from "../components/SettingsDrawer";
 import DiffPanel from "../components/DiffPanel";
 import { useOpencode } from "../hooks/useOpencode";
 import { useSettings } from "../hooks/useSettings";
+import { pickWorkspace } from "../lib/workspace";
 import { playSound } from "../lib/sounds";
 
 const SB_W_KEY = "oc.sb.w";
@@ -193,6 +194,12 @@ export default function ChatPage() {
             )}
             {(oc.activeId || oc.booting) && (
               <>
+                {settings.workspace && (
+                  <div className="stage-head" title={settings.workspace}>
+                    <i className="fa-solid fa-folder-open" />
+                    <span className="mono">{settings.workspace}</span>
+                  </div>
+                )}
                 <MessageList
                   msgs={oc.msgs}
                   busy={oc.busy}
@@ -222,6 +229,8 @@ export default function ChatPage() {
                   onSend={oc.send}
                   onAbort={oc.abort}
                   onToggleDiff={() => setDiffOpen((v) => !v)}
+                  onPickWorkspace={() => pickWorkspace()}
+                  workspace={settings.workspace}
                 />
               </>
             )}
