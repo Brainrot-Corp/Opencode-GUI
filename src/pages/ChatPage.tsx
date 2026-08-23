@@ -6,6 +6,7 @@ import MessageList from "../components/MessageList";
 import Composer from "../components/Composer";
 import PermissionBar from "../components/PermissionBar";
 import SettingsDrawer from "../components/SettingsDrawer";
+import DiffPanel from "../components/DiffPanel";
 import { useOpencode } from "../hooks/useOpencode";
 import { useSettings } from "../hooks/useSettings";
 import { playSound } from "../lib/sounds";
@@ -17,6 +18,7 @@ export default function ChatPage() {
   const oc = useOpencode();
   const { settings, update, updateSounds, updateColors, resetColors } = useSettings();
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [diffOpen, setDiffOpen] = useState(false);
 
   const [sbW, setSbW] = useState(() => {
     const w = Number(localStorage.getItem(SB_W_KEY)) || 248;
@@ -191,7 +193,22 @@ export default function ChatPage() {
             )}
             {(oc.activeId || oc.booting) && (
               <>
-                <MessageList msgs={oc.msgs} busy={oc.busy} loading={oc.booting} />
+                <MessageList
+                  msgs={oc.msgs}
+                  busy={oc.busy}
+                  loading={oc.booting}
+                  onRevert={oc.revertTo}
+                />
+                {oc.revertId && (
+                  <div className="revert-banner">
+                    <i className="fa-solid fa-clock-rotate-left" />
+                    Viewing an earlier version of this conversation.
+                    <button onClick={oc.unrevert}>
+                      <i className="fa-solid fa-rotate-left" />
+                      Undo rewind
+                    </button>
+                  </div>
+                )}
                 {oc.permission && (
                   <PermissionBar permission={oc.permission} onRespond={oc.respondToPermission} />
                 )}
@@ -204,11 +221,15 @@ export default function ChatPage() {
                   onModelSelect={oc.setModelSel}
                   onSend={oc.send}
                   onAbort={oc.abort}
+                  onToggleDiff={() => setDiffOpen((v) => !v)}
                 />
               </>
             )}
           </div>
         </div>
+        {diffOpen && oc.activeId && (
+          <DiffPanel sessionId={oc.activeId} onClose={() => setDiffOpen(false)} />
+        )}
       </div>
     </>
   );

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Message, Part, Session } from "@opencode-ai/sdk/client";
 import { opencode } from "../api";
 import { playSound } from "../lib/sounds";
@@ -341,6 +341,37 @@ export function useOpencode() {
     [permission],
   );
 
+  // session.revert cuts the conversation after the given message;
+  // the active session's revert marker tells us where (and that) we rewound
+  const revertId = sessions.find((s) => s.id === activeId)?.revert?.messageID ?? "";
+  // hide everything past the rewind point (server still returns full history)
+  const visibleMsgs = useMemo(() => {
+    if (!revertId) return msgs;
+    const i = msgs.findIndex((m) => m.info.id === revertId);
+    return i >= 0 ? msgs.slice(0, i + 1) : msgs;
+  }, [msgs, revertId]);
+
+  const revertTo = useCallback(
+    async (messageID: string) => {
+      const id = activeRef.current;
+      if (!id) return;
+      const { client } = await opencode();
+      await client.session.revert({ path: { id }, body: { messageID } }).catch(() => {});
+      await refreshSessions().catch(() => {});
+      await openSession(id).catch(() => {});
+    },
+    [refreshSessions, openSession],
+  );
+
+  const unrevert = useCallback(async () => {
+    const id = activeRef.current;
+    if (!id) return;
+    const { client } = await opencode();
+    await client.session.unrevert({ path: { id } }).catch(() => {});
+    await refreshSessions().catch(() => {});
+    await openSession(id).catch(() => {});
+  }, [refreshSessions, openSession]);
+
   const removeSession = useCallback(
     async (id: string) => {
       const { client } = await opencode();
@@ -364,7 +395,10 @@ export function useOpencode() {
     sessions,
     defaultModel,
     activeId,
-    msgs,
+    msgs: visibleMsgs,
+    revertId,
+    revertTo,
+    unrevert,
     busy,
     providers,
     modelSel,

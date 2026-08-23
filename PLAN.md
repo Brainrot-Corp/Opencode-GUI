@@ -124,14 +124,10 @@ Full API reference: https://opencode.ai/docs/server · SDK: https://opencode.ai/
 
 Add after the chat loop is solid:
 
-- File tree browser (`/file?path=...`)
-- Diff viewer for agent edits (`GET /session/:id/diff`)
-- Session revert/undo (`session.revert/unrevert`)
-- Session share (`session.share`)
-- Themes, keybinds
-- Multi-project support
+- ~~File tree browser (`/file?path=...`)~~ ✅ 2026-08-23 — sidebar "Files" tab
+- ~~Diff viewer for agent edits (`GET /session/:id/diff`)~~ ✅ 2026-08-23 — composer toggle → DiffPanel overlay
+- ~~Session revert/undo (`session.revert/unrevert`)~~ ✅ 2026-08-23 — hover rewind on user messages + undo banner
+- Session share (`session.share`) — declined by user
+- Themes ✅ (theme system v2), keybinds
+- Multi-project support — declined by user
 - macOS/Linux builds
-
-## Known risk
-
-Opencode officially recommends WSL on Windows for best performance/compatibility. During **Phase 2**, verify early that the native Windows `opencode serve` binary behaves well. If it does not, fallback plan: spawn it inside WSL from the Tauri process and talk over localhost HTTP (GUI code is unaffected either way since it only uses HTTP).

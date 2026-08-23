@@ -1,5 +1,7 @@
+import { useState } from "react";
 import type { Session } from "@opencode-ai/sdk/client";
 import { playSound } from "../lib/sounds";
+import FileTree from "./FileTree";
 import "../styles/sidebar.css";
 
 export default function Sidebar({
@@ -26,6 +28,16 @@ export default function Sidebar({
   onOpen: (id: string) => void;
   onDelete: (id: string) => void;
 }) {
+  const [tab, setTab] = useState(() =>
+    localStorage.getItem("oc.sb.tab") === "files" ? "files" : "chats",
+  );
+  const switchTab = (t: "chats" | "files") => {
+    if (t === tab) return;
+    playSound("click");
+    setTab(t);
+    localStorage.setItem("oc.sb.tab", t);
+  };
+
   return (
     <>
       <aside
@@ -46,13 +58,29 @@ export default function Sidebar({
           <>
             <div className="sb-scroll">
               <div className="sb-head">
-                <button className="new-chat" onClick={onNew}>
-                  <i className="fa-solid fa-plus" />
-                  New chat
-                </button>
+                <div className="sb-tabs" role="tablist">
+                  <button
+                    role="tab"
+                    aria-selected={tab === "chats"}
+                    className={tab === "chats" ? "active" : ""}
+                    onClick={() => switchTab("chats")}
+                  >
+                    <i className="fa-solid fa-comments" />
+                    Chats
+                  </button>
+                  <button
+                    role="tab"
+                    aria-selected={tab === "files"}
+                    className={tab === "files" ? "active" : ""}
+                    onClick={() => switchTab("files")}
+                  >
+                    <i className="fa-solid fa-folder-tree" />
+                    Files
+                  </button>
+                </div>
                 <button
                   className="icon-btn sb-toggle"
-                  title="Hide session history"
+                  title="Hide panel"
                   onClick={() => {
                     playSound("collapse");
                     onToggle();
@@ -61,6 +89,12 @@ export default function Sidebar({
                   <i className="fa-solid fa-angles-left" />
                 </button>
               </div>
+              {tab === "chats" && (
+                <button className="new-chat" onClick={onNew}>
+                  <i className="fa-solid fa-plus" />
+                  New chat
+                </button>
+              )}
               {loading && sessions.length === 0 ? (
                 <>
                   <div className="skel-row" />
@@ -69,6 +103,8 @@ export default function Sidebar({
                   <div className="skel-row" style={{ animationDelay: "0.45s" }} />
                   <div className="skel-row" style={{ animationDelay: "0.6s" }} />
                 </>
+              ) : tab === "files" ? (
+                <FileTree />
               ) : (
                 sessions.map((s) => (
                   <div key={s.id} className={`session-row ${s.id === activeId ? "active" : ""}`}>

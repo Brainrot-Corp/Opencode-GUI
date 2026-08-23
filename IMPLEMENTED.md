@@ -262,6 +262,16 @@ Root cause of "nothing populates": server responses are sometimes slow; the UI s
 - Width + collapsed state persisted in localStorage (`oc.sb.w` / `oc.sb.c`).
 - Note: a first attempt accidentally added this to the message panel; reverted — messages area stays flex-fill.
 
+### Deferred features ✅ (2026-08-23)
+
+Three of the PLAN.md deferred items implemented (user-selected; share / multi-project / cross-platform declined):
+
+- **File tree browser**: sidebar gained Chats/Files segmented tabs (persisted `oc.sb.tab`). `FileTree.tsx` lazy-loads directories via `GET /file?path=...` (children fetched on expand; dirs-first sort, ignored entries dimmed). Clicking a file opens an in-panel preview overlay (`GET /file/content?path=...`, binary-aware, Escape closes). Windows paths come back with trailing backslashes — passed through verbatim.
+- **Diff viewer**: composer model-row toggle (fa-code-compare) opens `DiffPanel` — fixed scrim + glass dialog listing `GET /session/:id/diff` results: per-file header (path, +adds/−dels) and inline line diff. `lineDiff()` is a plain LCS on lines (~30 lines); files whose n·m exceeds ~1.5M cells render "too large" instead (ponytail ceiling). Escape/scrim click closes.
+- **Revert/undo**: hover button on every user bubble → `POST /session/:id/revert {messageID}`. Active session's `revert.messageID` marker drives: (a) messages past the rewind point hidden client-side (server still returns full history — verified), (b) a "Viewing an earlier version" banner above the composer with Undo → `unrevert`. Hook refetches sessions+messages after both ops.
+
+Verified headless against the sidecar (own PID only): file list/read ✓, diff [] ✓, prompt(free model) → 2 messages ✓, revert 200 + marker set ✓, unrevert 200 + marker cleared ✓. `npm run build` green.
+
 ## Notes / Decisions log
 
 - 2026-08-23: Project started. Plan finalized in PLAN.md (Windows only, Tauri v2, React+TS, fresh UI, minimal scope).

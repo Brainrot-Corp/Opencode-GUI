@@ -12,6 +12,7 @@ export default function Composer({
   onModelSelect,
   onSend,
   onAbort,
+  onToggleDiff,
 }: {
   busy: boolean;
   loadingModels?: boolean;
@@ -21,6 +22,7 @@ export default function Composer({
   onModelSelect: (value: string) => void;
   onSend: (text: string) => void;
   onAbort: () => void;
+  onToggleDiff?: () => void;
 }) {
   const [input, setInput] = useState("");
   const [open, setOpen] = useState(false);
@@ -136,6 +138,16 @@ export default function Composer({
     <div className="composer">
       <div className="model-row">
         <span>{currentLabel()}</span>
+        {onToggleDiff && (
+          <button
+            type="button"
+            className="icon-btn diff-btn"
+            title="Files changed in this session"
+            onClick={onToggleDiff}
+          >
+            <i className="fa-solid fa-code-compare" />
+          </button>
+        )}
         <div
           className={`model-select${open ? " open" : ""}${needsModel ? " needs-model" : ""}`}
           ref={boxRef}

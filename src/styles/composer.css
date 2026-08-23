@@ -32,7 +32,6 @@
 
 .model-row {
   display: flex;
-  justify-content: space-between;
   align-items: center;
   gap: 10px;
   font-family: var(--mono);
@@ -41,8 +40,27 @@
   color: var(--text-faint);
   padding: 2px 4px 10px;
 }
+/* push picker (+ diff toggle) to the right edge */
+.model-row .model-select {
+  margin-left: auto;
+}
 .model-row select {
   display: none;
+}
+
+/* session diff toggle — blocky, dim at rest like the collapse toggle */
+.diff-btn {
+  width: 26px;
+  height: 24px;
+  font-size: 11px;
+  border-radius: 4px;
+  color: var(--text-faint);
+  background: color-mix(in srgb, var(--accent) calc(0.05 * 100%), transparent);
+}
+.diff-btn:hover {
+  color: var(--accent);
+  background: var(--accent-dim);
+  box-shadow: 0 0 12px -4px var(--accent-glow);
 }
 
 /* custom model dropdown (native select popups can't be styled) */

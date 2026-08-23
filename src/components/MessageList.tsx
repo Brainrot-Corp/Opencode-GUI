@@ -34,10 +34,12 @@ export default function MessageList({
   msgs,
   busy,
   loading,
+  onRevert,
 }: {
   msgs: Msg[];
   busy: boolean;
   loading?: boolean;
+  onRevert?: (messageID: string) => void;
 }) {
   const listRef = useRef<HTMLDivElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
@@ -61,12 +63,19 @@ export default function MessageList({
       )}
       {!loading && msgs.length === 0 && !busy && <p className="empty">Say something…</p>}
       {msgs.map((m) =>
-        m.parts.some((p) => renderPart(p, 0)) ? (
+        m.parts.some((p) => renderPart(p, 0)) || m.info.role === "user" ? (
           <div key={m.info.id} className={`msg ${m.info.role}`}>
+            {m.info.role === "user" && onRevert && (
+              <button
+                className="rewind"
+                title="Rewind conversation to here"
+                onClick={() => onRevert(m.info.id)}
+              >
+                <i className="fa-solid fa-clock-rotate-left" />
+              </button>
+            )}
             {m.parts.map((part, i) => renderPart(part, i))}
           </div>
-        ) : m.info.role === "user" ? (
-          <div key={m.info.id} className={`msg ${m.info.role}`} />
         ) : null,
       )}
       {busy && (
