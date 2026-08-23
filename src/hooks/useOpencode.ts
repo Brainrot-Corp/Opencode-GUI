@@ -3,7 +3,7 @@ import type { Message, Part, Session } from "@opencode-ai/sdk/client";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { opencode, getDirectory } from "../api";
 import { playSound } from "../lib/sounds";
-import type { Cmd, Msg, OpenCodeEvent, PermAsk, ProviderGroup } from "../types";
+import type { Cmd, Msg, OpenCodeEvent, PermAsk, ProviderGroup, Attachment } from "../types";
 
 // slash-command entries surfaced in the composer: app built-ins first,
 // then the server registry (custom + plugin + skill commands)
@@ -69,6 +69,11 @@ export function useOpencode() {
   const orphanParts = useRef<Map<string, { sid: string; parts: Part[] }>>(new Map());
   // streamed text deltas for parts that don't officially exist yet
   const pendingDeltas = useRef<Map<string, { sid: string; text: string }>>(new Map());
+  // outbound prompts waiting on a busy session — flushed FIFO when the
+  // stream finishes (typed messages used to be silently dropped)
+  const queueRef = useRef<Map<string, { text: string; files?: Attachment[] }[]>>(new Map());
+  const [queueCounts, setQueueCounts] = useState<Record<string, number>>({});
+  const flushRef = useRef<(sid: string) => void>(() => {});
 
   const storeFor = (sid: string) => {
     let s = stores.current.get(sid);
@@ -204,6 +209,7 @@ export function useOpencode() {
           if (info.role === "assistant" && info.time?.completed) {
             setSessionBusy(sid, false);
             if (sid === activeRef.current) playSound("reply");
+            flushRef.current(sid);
           }
           // learn the server's real default from a reply we did NOT steer
           if (
@@ -291,6 +297,7 @@ export function useOpencode() {
           break;
         case "session.idle":
           setSessionBusy(p.sessionID, false);
+          flushRef.current(p.sessionID);
           break;
         case "session.deleted": {
           const delId = p.sessionID ?? p.id;
@@ -362,6 +369,35 @@ export function useOpencode() {
               variants: Object.keys((m as any).variants ?? {}),
             })),
           }));
+          // attachment/modality hints live only in GET /provider; optional
+          // enrichment. SDK types stale AGAIN: runtime nests under
+          // capabilities.{attachment,input} (input is a boolean map)
+          try {
+            const pl = await client.provider.list();
+            const caps = new Map<string, { attachment: boolean; input: string[] }>();
+            for (const prov of ((pl.data as any)?.all ?? []) as any[]) {
+              for (const [mid, m] of Object.entries(prov.models ?? {})) {
+                const cap = (m as any).capabilities ?? {};
+                const kinds = Object.entries(cap.input ?? {})
+                  .filter(([, v]) => v === true)
+                  .map(([k]) => k);
+                caps.set(`${prov.id}/${mid}`, {
+                  attachment: !!cap.attachment,
+                  input: kinds,
+                });
+              }
+            }
+            for (const g of groups)
+              for (const m of g.models) {
+                const c = caps.get(`${g.id}/${m.id}`);
+                if (c) {
+                  m.attachment = c.attachment;
+                  m.input = c.input;
+                }
+              }
+          } catch {
+            // missing hints = UI stays fully enabled
+          }
           groups.sort((a, b) => a.label.localeCompare(b.label));
           setProviders(groups);
 
@@ -433,6 +469,14 @@ export function useOpencode() {
     );
   }, [providers, modelSel]);
 
+  // attachment capabilities of the selected model (undefined = allow all)
+  const modelCaps = useMemo(() => {
+    if (!modelSel) return undefined;
+    const [pid, mid] = modelSel.split("/");
+    const m = providers.find((g) => g.id === pid)?.models.find((m) => m.id === mid);
+    return m ? { attachment: m.attachment, input: m.input } : undefined;
+  }, [providers, modelSel]);
+
   // current model's stored effort — kept if the option still exists, else
   // default. never reset on switch: each model remembers its own
   // ponytail: pass-through while providers are still loading (empty list);
@@ -460,13 +504,33 @@ export function useOpencode() {
     [modelSel],
   );
 
-  const send = useCallback(
-    async (text: string) => {
-      if (!text || !activeId || busyRef.current.has(activeId)) return;
-      setSessionBusy(activeId, true);
+  const pushQueued = (sid: string, item: { text: string; files?: Attachment[] }) => {
+    const q = queueRef.current.get(sid) ?? [];
+    q.push(item);
+    queueRef.current.set(sid, q);
+    setQueueCounts((prev) => ({ ...prev, [sid]: q.length }));
+  };
+
+  const clearQueued = (sid: string) => {
+    if (!queueRef.current.delete(sid)) return;
+    setQueueCounts((prev) => {
+      const next = { ...prev };
+      delete next[sid];
+      return next;
+    });
+  };
+
+  // fire a prompt on a specific session — callers ensure it isn't busy
+  const promptNow = useCallback(
+    async (sid: string, text: string, files?: Attachment[]) => {
+      if (!sid || (!text && !files?.length)) return;
+      setSessionBusy(sid, true);
       try {
         const { client } = await opencode();
-        const body: any = { parts: [{ type: "text", text }] };
+        const parts: any[] = [{ type: "text", text }];
+        for (const f of files ?? [])
+          parts.push({ type: "file", mime: f.mime, filename: f.filename, url: f.url });
+        const body: any = { parts };
         sentExplicitModel.current = !!modelSel;
         if (modelSel) {
           const [providerID, modelID] = modelSel.split("/");
@@ -474,17 +538,47 @@ export function useOpencode() {
         }
         if (agentSel) body.agent = agentSel;
         if (variantSel) body.variant = variantSel;
-        await client.session.promptAsync({ path: { id: activeId }, body });
+        await client.session.promptAsync({ path: { id: sid }, body });
       } catch (e) {
-        setSessionBusy(activeId, false);
+        setSessionBusy(sid, false);
         setError(String(e));
       }
     },
-    [activeId, modelSel, agentSel, variantSel],
+    [modelSel, agentSel, variantSel],
   );
+
+  // public entry: while the session is streaming, queue instead of dropping
+  const send = useCallback(
+    async (text: string, files?: Attachment[]) => {
+      if (!activeId) return;
+      const trimmed = text.trim();
+      if (!trimmed && !files?.length) return;
+      if (busyRef.current.has(activeId)) {
+        pushQueued(activeId, { text: trimmed, files });
+        playSound("send");
+        return;
+      }
+      return promptNow(activeId, trimmed, files);
+    },
+    [activeId, promptNow],
+  );
+
+  // drain one queued prompt per stream completion
+  useEffect(() => {
+    flushRef.current = (sid: string) => {
+      if (busyRef.current.has(sid)) return;
+      const q = queueRef.current.get(sid);
+      if (!q?.length) return;
+      const next = q.shift()!;
+      if (!q.length) queueRef.current.delete(sid);
+      setQueueCounts((prev) => ({ ...prev, [sid]: q.length }));
+      void promptNow(sid, next.text, next.files);
+    };
+  }, [promptNow]);
 
   const abort = useCallback(async () => {
     if (!activeId) return;
+    clearQueued(activeId);
     setSessionBusy(activeId, false);
     const { client } = await opencode();
     await client.session.abort({ path: { id: activeId } }).catch(() => {});
@@ -557,9 +651,14 @@ export function useOpencode() {
   }, [msgs, revertId, activeId]);
 
   const submit = useCallback(
-    async (text: string) => {
+    async (text: string, files?: Attachment[]) => {
       const trimmed = text.trim();
-      if (!trimmed) return;
+      if (!trimmed && !files?.length) return;
+      // attachments ride on a plain prompt — never parse as slash commands
+      if (files?.length) {
+        await send(trimmed, files);
+        return;
+      }
       const slash = /^\/([\w-]+)(?:\s+([\s\S]*))?$/.exec(trimmed);
       const id = activeRef.current;
 
@@ -756,6 +855,7 @@ export function useOpencode() {
       setSessions((prev) => prev.filter((s) => s.id !== id));
       stores.current.delete(id);
       fetchSeq.current.delete(id);
+      clearQueued(id);
       setSessionBusy(id, false);
       if (activeRef.current === id) {
         setActiveId("");
@@ -801,6 +901,8 @@ export function useOpencode() {
     variantSel,
     setVariantSel,
     modelVariants,
+    modelCaps,
+    queueCounts,
     abort,
     respondToPermission,
     removeSession,

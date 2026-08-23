@@ -3,6 +3,7 @@ import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Part } from "@opencode-ai/sdk/client";
 import type { Msg } from "../types";
+import { iconFor } from "../lib/attachments";
 import "../styles/chat.css";
 
 // one reasoning block — per-message visibility: the brain icon toggles THIS
@@ -50,6 +51,22 @@ function renderPart(part: Part, key: number, showThinking?: boolean) {
         <i className={`fa-solid ${status === "error" ? "fa-triangle-exclamation" : "fa-gear"}${status === "running" || status === "pending" ? " fa-spin-pulse" : ""}`} />
         {tool.tool}
         <span className="tool-status">[{status}]</span>
+      </div>
+    );
+  }
+  if (part.type === "file") {
+    const f = part as any;
+    const url: string = f.url ?? "";
+    const mime: string = f.mime ?? "";
+    const name = f.filename || "file";
+    if (mime.startsWith("image/") && url)
+      return <img key={key} className="file-img" src={url} alt={name} loading="lazy" />;
+    if (mime.startsWith("video/") && url)
+      return <video key={key} className="file-video" src={url} controls preload="metadata" />;
+    return (
+      <div key={key} className="file-chip mono">
+        <i className={`fa-solid ${iconFor(mime)}`} />
+        {name}
       </div>
     );
   }

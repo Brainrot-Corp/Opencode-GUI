@@ -7,7 +7,26 @@ export type PermAsk = { id: string; sessionID: string; type: string; title: stri
 export type ProviderGroup = {
   id: string;
   label: string;
-  models: { id: string; label: string; variants?: string[] }[];
+  models: {
+    id: string;
+    label: string;
+    variants?: string[];
+    // attachment support from GET /provider (missing metadata = allow all)
+    attachment?: boolean;
+    input?: string[];
+  }[];
+};
+
+// staged attachment in the composer
+export type Attachment = {
+  id: string;
+  mime: string;
+  filename?: string;
+  url: string; // data URL once ready, "" while reading
+  size: number;
+  status: "reading" | "ready" | "error";
+  progress: number; // 0..1 read progress
+  hash?: string; // sha256 of the data URL — draft duplicate detection
 };
 
 // GET /command entry — SDK type is stale (no source/hints)

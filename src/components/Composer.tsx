@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { ProviderGroup } from "../types";
+import type { Attachment, ProviderGroup } from "../types";
+import { MAX_FILE, iconFor, mimeFor, prettySize, readAttachment } from "../lib/attachments";
 import type { CmdEntry } from "../hooks/useOpencode";
 import { playSound } from "../lib/sounds";
 import "../styles/composer.css";
@@ -22,6 +23,7 @@ export default function Composer({
   agentSel,
   onCycleAgent,
   variantSel,
+  caps,
 }: {
   busy: boolean;
   loadingModels?: boolean;
@@ -29,7 +31,7 @@ export default function Composer({
   modelSel: string;
   defaultModel?: string;
   onModelSelect: (value: string) => void;
-  onSend: (text: string) => void;
+  onSend: (text: string, files?: Attachment[]) => void;
   onAbort: () => void;
   onToggleDiff?: () => void;
   onPickWorkspace?: () => void;
@@ -40,6 +42,7 @@ export default function Composer({
   agentSel?: string;
   onCycleAgent?: () => void;
   variantSel?: string;
+  caps?: { attachment?: boolean; input?: string[] };
 }) {
   const [input, setInput] = useState("");
   const [open, setOpen] = useState(false);
@@ -49,6 +52,12 @@ export default function Composer({
   const boxRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // staged attachments + inline warning line (size/capability/dup rejects)
+  const [files, setFiles] = useState<Attachment[]>([]);
+  const [note, setNote] = useState("");
+  const [dragOver, setDragOver] = useState(false);
 
   // no selection and the server default is still unknown → require a pick
   const needsModel = !loadingModels && !modelSel && !defaultModel;
@@ -254,12 +263,58 @@ export default function Composer({
     return `${pretty(defaultModel ?? "")} (server default)`;
   };
 
+  // --- attachments: staging, progress, dedupe ----------------------------
+  // capabilities are ADVISORY only — verified lying for Zen free models
+  // (reports no-image while ox alpha ingests PNGs fine), so nothing here is
+  // hard-blocked; unsupported types surface as a provider error on send
+
+  const addFiles = (list: FileList | File[] | null | undefined) => {
+    if (!list?.length) return;
+    setNote("");
+    for (const f of Array.from(list)) {
+      const mime = mimeFor(f);
+      if (f.size > MAX_FILE) {
+        setNote(`${f.name}: over the ${prettySize(MAX_FILE)} limit`);
+        continue;
+      }
+      const id = crypto.randomUUID();
+      setFiles((prev) => [
+        ...prev,
+        { id, mime, filename: f.name, url: "", size: f.size, status: "reading", progress: 0 },
+      ]);
+      void readAttachment(f, (p) =>
+        setFiles((prev) => prev.map((x) => (x.id === id ? { ...x, progress: p } : x))),
+      ).then((res) => {
+        if (!res) {
+          setFiles((prev) => prev.filter((x) => x.id !== id));
+          setNote(`${f.name}: could not be read`);
+          return;
+        }
+        setFiles((prev) => {
+          // same bytes already staged in this draft — drop the newcomer
+          if (prev.some((x) => x.id !== id && x.hash === res.hash)) {
+            setNote(`${f.name}: already attached`);
+            return prev.filter((x) => x.id !== id);
+          }
+          return prev.map((x) =>
+            x.id === id ? { ...x, status: "ready" as const, progress: 1, url: res.url, hash: res.hash } : x,
+          );
+        });
+      });
+    }
+  };
+
+  const readyFiles = () => files.filter((f) => f.status === "ready");
+
   const send = () => {
     const text = input.trim();
-    if (!text || needsModel) return;
+    const ready = readyFiles();
+    if ((!text && !ready.length) || needsModel) return;
     setInput("");
+    setFiles([]);
+    setNote("");
     playSound("send");
-    onSend(text);
+    onSend(text, ready.length ? ready : undefined);
   };
 
   // slash menu: Enter picks the highlighted entry — arg-less commands send
@@ -272,7 +327,23 @@ export default function Composer({
   };
 
   return (
-    <div className="composer">
+    <div
+      className={`composer${dragOver ? " dragover" : ""}`}
+      onDragOver={(e) => {
+        if (!Array.from(e.dataTransfer.types).includes("Files")) return;
+        e.preventDefault();
+        setDragOver(true);
+      }}
+      onDragLeave={(e) => {
+        if (e.currentTarget.contains(e.relatedTarget as Node)) return;
+        setDragOver(false);
+      }}
+      onDrop={(e) => {
+        setDragOver(false);
+        e.preventDefault();
+        addFiles(e.dataTransfer.files);
+      }}
+    >
       <div className="model-row">
         <span>{currentLabel()}</span>
         {onCycleAgent && agents && (
@@ -378,12 +449,68 @@ export default function Composer({
           ))}
         </div>
       )}
+      {(files.length > 0 || note) && (
+        <div className="attach-row">
+          {files.map((a) => (
+            <div key={a.id} className={`attach-chip${a.status === "reading" ? " reading" : ""}`}>
+              {a.mime.startsWith("image/") && a.url ? (
+                <img src={a.url} alt="" />
+              ) : (
+                <i className={`fa-solid ${iconFor(a.mime)} attach-icon`} />
+              )}
+              <span className="attach-name">{a.filename}</span>
+              <span className="attach-size">{prettySize(a.size)}</span>
+              <button
+                type="button"
+                className="attach-x"
+                data-tip="Remove attachment"
+                onClick={() => setFiles((prev) => prev.filter((x) => x.id !== a.id))}
+              >
+                <i className="fa-solid fa-xmark" />
+              </button>
+              {a.status === "reading" && (
+                <i className="attach-bar" style={{ width: `${Math.round(a.progress * 100)}%` }} />
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+      {note && <div className="composer-note">{note}</div>}
       <div className="composer-row">
-                <textarea
+        <input
+          ref={fileInputRef}
+          type="file"
+          multiple
+          hidden
+          onChange={(e) => {
+            addFiles(e.target.files);
+            e.target.value = "";
+          }}
+        />
+        <button
+          type="button"
+          className="icon-btn diff-btn attach-btn"
+          data-tip={
+            caps?.input?.length && !caps.input.includes("image") && !caps.input.includes("video")
+              ? `Attach files — this model reports: ${caps.input.join(", ")}`
+              : "Attach files"
+          }
+          onClick={() => fileInputRef.current?.click()}
+        >
+          <i className="fa-solid fa-paperclip" />
+        </button>
+        <textarea
                   ref={inputRef}
                   value={input}
                   disabled={needsModel}
                   onChange={(e) => setInput(e.target.value)}
+                  onPaste={(e) => {
+                    const fs = e.clipboardData?.files;
+                    if (fs?.length) {
+                      e.preventDefault();
+                      addFiles(fs);
+                    }
+                  }}
                   onKeyDown={(e) => {
                     // typing sounds only — all key ROUTING (menus, send,
                     // agent cycle) lives in the single global handler
@@ -410,7 +537,7 @@ export default function Composer({
                   <button
                     className="send-btn"
                     onClick={send}
-                    disabled={!input.trim() || needsModel}
+                    disabled={(!input.trim() && !readyFiles().length) || needsModel}
                   >
                     Send
                     <i className="fa-solid fa-paper-plane" />

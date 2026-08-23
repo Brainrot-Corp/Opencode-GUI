@@ -248,6 +248,20 @@
   }
 }
 
+/* queued-prompt count while the session streams */
+.row-queued {
+  flex-shrink: 0;
+  align-self: center;
+  min-width: 16px;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--accent) calc(0.14 * 100%), transparent);
+  color: var(--accent-bright);
+  font-family: var(--mono);
+  font-size: 10px;
+  text-align: center;
+}
+
 .session-row .del {
   width: 30px;
   border: none;

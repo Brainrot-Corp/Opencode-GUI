@@ -204,6 +204,7 @@ export default function ChatPage() {
             sessions={oc.sessions}
             activeId={oc.activeId}
             busyIds={oc.busyIds}
+            queueCounts={oc.queueCounts}
             width={sbW}
             collapsed={sbClosed}
             loading={oc.booting}
@@ -272,6 +273,7 @@ export default function ChatPage() {
                   agentSel={oc.agentSel}
                   onCycleAgent={oc.cycleAgent}
                   variantSel={oc.variantSel}
+                  caps={oc.modelCaps}
                 />
               </>
             )}

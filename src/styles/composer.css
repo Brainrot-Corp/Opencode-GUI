@@ -423,3 +423,95 @@
   background: rgba(224, 143, 143, 0.13);
   box-shadow: 0 0 28px -8px rgba(224, 143, 143, 0.55);
 }
+
+/* attachments: staged chips with read progress + inline rejects */
+.attach-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0 0 8px;
+}
+.attach-chip {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 240px;
+  padding: 4px 6px;
+  background: var(--inset-bg);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  font-family: var(--sans);
+  font-size: 11.5px;
+  color: var(--text-dim);
+  overflow: hidden;
+}
+.attach-chip img {
+  width: 34px;
+  height: 34px;
+  object-fit: cover;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+.attach-icon {
+  color: var(--accent);
+  font-size: 13px;
+  text-shadow: 0 0 7px var(--accent-glow);
+}
+.attach-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.attach-size {
+  flex-shrink: 0;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-faint);
+}
+.attach-x {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: 3px;
+  color: var(--text-faint);
+  cursor: pointer;
+  font-size: 10px;
+  transition: color 0.2s, background 0.2s;
+}
+.attach-x:hover {
+  color: var(--danger);
+  background: rgba(224, 143, 143, 0.12);
+}
+.attach-bar {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  display: block;
+  height: 2px;
+  background: var(--accent);
+  box-shadow: 0 0 6px var(--accent-glow);
+}
+.attach-chip.reading .attach-name,
+.attach-chip.reading .attach-size,
+.attach-chip.reading img {
+  opacity: 0.55;
+}
+.composer-note {
+  padding: 0 2px 8px;
+  font-family: var(--sans);
+  font-size: 11.5px;
+  color: var(--danger);
+}
+.composer.dragover {
+  border-color: color-mix(in srgb, var(--accent) calc(0.5 * 100%), transparent);
+  box-shadow:
+    inset 0 0 40px -18px var(--accent-glow),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}

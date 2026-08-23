@@ -17,6 +17,7 @@
         "height": 720,
         "decorations": false,
         "transparent": true,
+        "dragDropEnabled": false,
         "windowEffects": {
           "effects": ["acrylic", "mica"]
         }
