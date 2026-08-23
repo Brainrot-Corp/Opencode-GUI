@@ -1,0 +1,141 @@
+/* AI-question popup — extends the shared .permission-bar shell
+   (same position, glass surface and buttons), compacted */
+
+.question-pop {
+  z-index: 31; /* rides above a simultaneously-open permission card */
+  padding: 10px 14px;
+}
+
+.question-pop .title {
+  margin-bottom: 4px;
+}
+.question-pop .what {
+  font-size: 12.5px;
+  margin-bottom: 6px;
+}
+
+.question-pop .q-head {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--accent-bright);
+  margin-bottom: 4px;
+}
+
+.question-pop .q-section + .q-section {
+  margin-top: 8px;
+  padding-top: 7px;
+  border-top: 1px solid color-mix(in srgb, var(--accent) calc(0.14 * 100%), transparent);
+}
+
+/* one line per option — description dimmed inline, full text on hover */
+.question-pop .q-opt {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  text-align: left;
+  padding: 5px 8px;
+  margin: 0 0 3px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 0;
+  cursor: pointer;
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 12.5px;
+  white-space: nowrap;
+  transition: all 0.3s var(--ease);
+}
+.question-pop .q-opt > i {
+  font-size: 10px;
+  color: var(--text-faint);
+  flex-shrink: 0;
+}
+.question-pop .q-opt span {
+  flex-shrink: 0;
+  max-width: 60%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.question-pop .q-opt small {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-faint);
+  font-size: 11.5px;
+}
+.question-pop .q-opt:hover,
+.question-pop .q-opt.hl {
+  background: color-mix(in srgb, var(--accent) calc(0.09 * 100%), transparent);
+  border-color: color-mix(in srgb, var(--accent) calc(0.4 * 100%), transparent);
+}
+.question-pop .q-opt.sel {
+  background: color-mix(in srgb, var(--accent) calc(0.13 * 100%), transparent);
+  border-color: color-mix(in srgb, var(--accent) calc(0.55 * 100%), transparent);
+}
+.question-pop .q-opt.sel > i,
+.question-pop .q-opt.sel span {
+  color: var(--accent-bright);
+}
+
+/* free-text "Other…" row */
+.question-pop .q-custom {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 8px 3px;
+  color: var(--text-faint);
+  font-size: 10px;
+}
+.question-pop .q-custom.hl,
+.question-pop .q-custom:hover {
+  background: color-mix(in srgb, var(--accent) calc(0.09 * 100%), transparent);
+}
+.question-pop .q-custom input {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 9px;
+  background: var(--inset-bg);
+  border: 1px solid color-mix(in srgb, var(--accent) calc(0.22 * 100%), transparent);
+  border-radius: 0;
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  transition: all 0.3s var(--ease);
+}
+.question-pop .q-custom input:focus {
+  outline: none;
+  border-color: color-mix(in srgb, var(--accent) calc(0.55 * 100%), transparent);
+  box-shadow: 0 0 18px -8px var(--accent-glow);
+}
+
+.question-pop button {
+  padding: 5px 12px;
+  font-size: 12px;
+}
+.question-pop button.allow:disabled {
+  opacity: 0.35;
+  cursor: default;
+  pointer-events: none;
+}
+
+.question-pop .actions {
+  margin-top: 2px;
+}
+.question-pop .actions button i {
+  font-size: 9.5px;
+  margin-right: 6px;
+}
+
+/* hint shares the footer row with the buttons */
+.question-pop .q-hint {
+  margin-left: auto;
+  align-self: center;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: var(--text-faint);
+}

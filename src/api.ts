@@ -49,3 +49,12 @@ export function opencode() {
   }));
   return cached;
 }
+
+// raw fetch for endpoints missing from the stale SDK types (/question*) —
+// carries ?directory= like every wrapped SDK call
+export async function serverFetch(path: string, init?: RequestInit) {
+  const { base } = await opencode();
+  const sep = path.includes("?") ? "&" : "?";
+  const url = `${base}${path}${directory ? `${sep}directory=${encodeURIComponent(directory)}` : ""}`;
+  return fetch(url, init);
+}

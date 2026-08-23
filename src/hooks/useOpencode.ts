@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Message, Part, Session } from "@opencode-ai/sdk/client";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { opencode, getDirectory } from "../api";
+import { opencode, getDirectory, serverFetch } from "../api";
 import { playSound } from "../lib/sounds";
-import type { Cmd, Msg, OpenCodeEvent, PermAsk, ProviderGroup, Attachment } from "../types";
+import type { Cmd, Msg, OpenCodeEvent, PermAsk, ProviderGroup, Attachment, QuestionAsk } from "../types";
 
 // slash-command entries surfaced in the composer: app built-ins first,
 // then the server registry (custom + plugin + skill commands)
@@ -45,6 +45,10 @@ export function useOpencode() {
     }
   });
   const [permission, setPermission] = useState<PermAsk | null>(null);
+  // pending question-tool asks, kept per session — returning to a session
+  // resurfaces its ask (unlike permissions, these outlive session switches)
+  const questionsRef = useRef<Map<string, QuestionAsk>>(new Map());
+  const [question, setQuestion] = useState<QuestionAsk | null>(null);
   const [commands, setCommands] = useState<Cmd[]>([]);
   const [dialog, setDialog] = useState<DialogState>(null);
   const [live, setLive] = useState(false);
@@ -101,6 +105,12 @@ export function useOpencode() {
       else next.delete(sid);
       return next;
     });
+  };
+
+  // mirror the active session's pending ask (if any) into state
+  const showQuestion = (sid: string) => {
+    if (sid !== activeRef.current) return;
+    setQuestion(questionsRef.current.get(sid) ?? null);
   };
 
   function upsertPart(part: Part) {
@@ -184,6 +194,7 @@ export function useOpencode() {
     localStorage.setItem(LAST_KEY, id);
     setActiveId(id);
     setPermission(null);
+    setQuestion(questionsRef.current.get(id) ?? null);
     // show whatever we already have for this session (no blank flash),
     // then refetch — a per-session sequence guard drops stale responses
     const cached = stores.current.get(id);
@@ -326,6 +337,26 @@ export function useOpencode() {
               title: p.title ?? p.type,
             });
           break;
+        case "question.asked": {
+          // question tool ask: {id, sessionID, questions:[{question,header,options,multiple?,custom?}]}
+          const ask: QuestionAsk = {
+            id: p.id,
+            sessionID: p.sessionID,
+            questions: Array.isArray(p.questions) ? p.questions : [],
+          };
+          questionsRef.current.set(p.sessionID, ask);
+          if (p.sessionID === activeRef.current) {
+            setQuestion(ask);
+            playSound("reply");
+          }
+          break;
+        }
+        case "question.replied":
+        case "question.rejected":
+          for (const [sid, q] of [...questionsRef.current])
+            if (q.id === p.requestID) questionsRef.current.delete(sid);
+          setQuestion((cur) => (cur && cur.id === p.requestID ? null : cur));
+          break;
         case "session.idle":
           // settles the turn only when no assistant message is still live —
           // mid-turn idles in heavier tasks are ignored
@@ -458,6 +489,17 @@ export function useOpencode() {
         refreshCommands().catch(() => {});
         refreshAgents().catch(() => {});
 
+        // asks that fired while disconnected (app start / reload) — surface
+        // any belonging to the reopened session instead of stranding the turn
+        serverFetch("/question")
+          .then((r) => r.json())
+          .then((list: QuestionAsk[]) => {
+            if (disposed) return;
+            for (const q of list ?? []) questionsRef.current.set(q.sessionID, q);
+            showQuestion(activeRef.current);
+          })
+          .catch(() => {});
+
         if (!disposed) setBooting(false);
       } catch (e) {
         if (!disposed) {
@@ -492,6 +534,7 @@ export function useOpencode() {
     pendingDeltas.current.clear();
     setMsgs([]);
     setPermission(null);
+    setQuestion(null);
   }, []);
 
   // session-wide token/cost totals — summed from the authoritative store
@@ -659,6 +702,10 @@ export function useOpencode() {
     cancelSettle(activeId);
     inflightRef.current.delete(activeId);
     setSessionBusy(activeId, false);
+    // an aborted turn drops its pending ask — the server discards the
+    // request with the run, so don't leave a popup pointing at a corpse
+    questionsRef.current.delete(activeId);
+    setQuestion((cur) => (cur?.sessionID === activeId ? null : cur));
     const { client } = await opencode();
     await client.session.abort({ path: { id: activeId } }).catch(() => {});
   }, [activeId]);
@@ -678,6 +725,35 @@ export function useOpencode() {
     },
     [permission],
   );
+
+  const answerQuestion = useCallback(
+    async (answers: string[][]) => {
+      if (!question) return;
+      const ask = question;
+      setQuestion(null);
+      questionsRef.current.delete(ask.sessionID);
+      playSound("send");
+      try {
+        const r = await serverFetch(`/question/${ask.id}/reply`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ answers }),
+        });
+        if (!r.ok) setError(`Failed to send answer (${r.status})`);
+      } catch (e) {
+        setError(String(e));
+      }
+    },
+    [question],
+  );
+
+  const rejectQuestion = useCallback(async () => {
+    if (!question) return;
+    const ask = question;
+    setQuestion(null);
+    questionsRef.current.delete(ask.sessionID);
+    await serverFetch(`/question/${ask.id}/reject`, { method: "POST" }).catch(() => {});
+  }, [question]);
 
   // session.revert cuts the conversation after the given message;
   // the active session's revert marker tells us where (and that) we rewound
@@ -942,6 +1018,7 @@ export function useOpencode() {
       setSessions((prev) => prev.filter((s) => s.id !== id));
       stores.current.delete(id);
       fetchSeq.current.delete(id);
+      questionsRef.current.delete(id);
       clearQueued(id);
       cancelSettle(id);
       inflightRef.current.delete(id);
@@ -951,6 +1028,7 @@ export function useOpencode() {
         orphanParts.current.clear();
         pendingDeltas.current.clear();
         setMsgs([]);
+        setQuestion(null);
       }
     },
     [],
@@ -976,6 +1054,9 @@ export function useOpencode() {
     modelSel,
     setModelSel,
     permission,
+    question,
+    answerQuestion,
+    rejectQuestion,
     newSession,
     openSession,
     send,

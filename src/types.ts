@@ -4,6 +4,18 @@ export type Msg = { info: Message; parts: Part[] };
 
 export type PermAsk = { id: string; sessionID: string; type: string; title: string };
 
+// question tool ask (question.asked event / GET /question) — the SDK types
+// predate this endpoint so these mirror the server's OpenAPI schema
+export type QuestionOption = { label: string; description?: string };
+export type QuestionInfo = {
+  question: string;
+  header: string;
+  options: QuestionOption[];
+  multiple?: boolean;
+  custom?: boolean;
+};
+export type QuestionAsk = { id: string; sessionID: string; questions: QuestionInfo[] };
+
 export type ProviderGroup = {
   id: string;
   label: string;

@@ -5,6 +5,7 @@ import Sidebar from "../components/Sidebar";
 import MessageList from "../components/MessageList";
 import Composer from "../components/Composer";
 import PermissionBar from "../components/PermissionBar";
+import QuestionPopup from "../components/QuestionPopup";
 import SettingsDrawer from "../components/SettingsDrawer";
 import DiffPanel from "../components/DiffPanel";
 import TooltipLayer from "../components/TooltipLayer";
@@ -254,6 +255,13 @@ export default function ChatPage() {
                 )}
                 {oc.permission && (
                   <PermissionBar permission={oc.permission} onRespond={oc.respondToPermission} />
+                )}
+                {oc.question && (
+                  <QuestionPopup
+                    ask={oc.question}
+                    onAnswer={oc.answerQuestion}
+                    onReject={oc.rejectQuestion}
+                  />
                 )}
                 <Composer
                   busy={oc.busy}
