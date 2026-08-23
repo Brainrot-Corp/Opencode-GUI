@@ -18,6 +18,9 @@ export default function Composer({
   workspace,
   commands,
   onCommandsOpen,
+  agents,
+  agentSel,
+  onCycleAgent,
 }: {
   busy: boolean;
   loadingModels?: boolean;
@@ -32,6 +35,9 @@ export default function Composer({
   workspace?: string;
   commands?: CmdEntry[];
   onCommandsOpen?: () => void;
+  agents?: { name: string; mode: string }[];
+  agentSel?: string;
+  onCycleAgent?: () => void;
 }) {
   const [input, setInput] = useState("");
   const [open, setOpen] = useState(false);
@@ -79,6 +85,20 @@ export default function Composer({
     window.addEventListener("oc:models", open);
     return () => window.removeEventListener("oc:models", open);
   });
+
+  // Tab cycles the agent (TUI parity) — unless the slash menu is completing.
+  // Real form fields keep Tab's focus behavior
+  useEffect(() => {
+    const key = (e: KeyboardEvent) => {
+      if (e.key !== "Tab" || cmdOpen || e.ctrlKey || e.altKey || e.metaKey) return;
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === "INPUT" || t.tagName === "SELECT" || t.isContentEditable)) return;
+      e.preventDefault();
+      onCycleAgent?.();
+    };
+    window.addEventListener("keydown", key);
+    return () => window.removeEventListener("keydown", key);
+  }, [cmdOpen, onCycleAgent]);
 
   const fillCmd = (c: CmdEntry) => {
     setInput(`/${c.name} `);
@@ -215,6 +235,17 @@ export default function Composer({
     <div className="composer">
       <div className="model-row">
         <span>{currentLabel()}</span>
+        {onCycleAgent && agents && (
+          <button
+            type="button"
+            className="agent-chip"
+            data-tip={`Agent — Tab to cycle (${agents.length} available)`}
+            onClick={() => onCycleAgent()}
+          >
+            <i className="fa-solid fa-robot" />
+            {agentSel || agents[0]?.name || "build"}
+          </button>
+        )}
         <div
           className={`model-select${open ? " open" : ""}${needsModel ? " needs-model" : ""}`}
           ref={boxRef}

@@ -35,6 +35,37 @@
   color: var(--text-faint);
   padding: 2px 4px 10px;
 }
+
+/* current agent chip — Tab cycles it */
+.agent-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  background: color-mix(in srgb, var(--accent) calc(0.06 * 100%), transparent);
+  border: 1px solid transparent;
+  border-radius: 4px;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.05em;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s, border-color 0.25s, box-shadow 0.3s;
+}
+.agent-chip i {
+  font-size: 9px;
+  color: var(--accent);
+  text-shadow: 0 0 7px var(--accent-glow);
+}
+.agent-chip:hover {
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--accent) calc(0.4 * 100%), transparent);
+  box-shadow: 0 0 12px -4px var(--accent-glow);
+}
+.agent-chip:hover i {
+  color: var(--accent-bright);
+  text-shadow: 0 0 10px var(--accent-glow);
+}
 /* push picker (+ diff toggle) to the right edge */
 .model-row .model-select {
   margin-left: auto;

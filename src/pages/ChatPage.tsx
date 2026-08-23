@@ -263,6 +263,9 @@ export default function ChatPage() {
                   workspace={settings.workspace}
                   commands={oc.cmdList}
                   onCommandsOpen={oc.refreshCommands}
+                  agents={oc.agents}
+                  agentSel={oc.agentSel}
+                  onCycleAgent={oc.cycleAgent}
                 />
               </>
             )}

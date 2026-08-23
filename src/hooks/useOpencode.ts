@@ -485,6 +485,14 @@ export function useOpencode() {
     await openSession(id).catch(() => {});
   }, [refreshSessions, openSession]);
 
+  const cycleAgent = useCallback(() => {
+    if (!agents.length) return;
+    const cur = agentSel || agents[0].name;
+    const i = agents.findIndex((a) => a.name === cur);
+    setAgentSel(agents[(i + 1) % agents.length].name);
+    playSound("click");
+  }, [agents, agentSel]);
+
   // /undo target: the user message to rewind TO — one before the last
   // exchange normally, one before the rewind point when already viewing an
   // earlier version. "" when there is nothing left to undo.
@@ -592,15 +600,9 @@ export function useOpencode() {
             await openSession(next.id);
             return;
           }
-          case "agents": {
-            // cycle the primary agent used for subsequent prompts
-            if (!agents.length) return;
-            const cur = agentSel || agents[0].name;
-            const i = agents.findIndex((a) => a.name === cur);
-            setAgentSel(agents[(i + 1) % agents.length].name);
-            playSound("click");
+          case "agents":
+            cycleAgent();
             return;
-          }
         }
         const reg = commands.find((c) => c.name === name);
         if (reg) {
@@ -636,9 +638,9 @@ export function useOpencode() {
       sessions,
       agents,
       agentSel,
+      cycleAgent,
     ],
   );
-
   // unified list for the composer autocomplete — built-ins first
   const cmdList = useMemo<CmdEntry[]>(() => {
     const builtins: CmdEntry[] = [
@@ -723,6 +725,9 @@ export function useOpencode() {
     refreshCommands,
     dialog,
     closeDialog: () => setDialog(null),
+    agents,
+    agentSel,
+    cycleAgent,
     abort,
     respondToPermission,
     removeSession,
