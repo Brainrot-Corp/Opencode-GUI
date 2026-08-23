@@ -86,6 +86,31 @@
   line-height: 1.78;
   letter-spacing: 0.012em;
   overflow-wrap: break-word;
+  /* soft entrance for new bubbles (streamed text updates don't re-trigger) */
+  animation: msg-in 0.22s var(--ease);
+}
+@keyframes msg-in {
+  from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+}
+
+/* while streaming, the newest assistant bubble breathes gently */
+.messages.streaming .msg.assistant:last-of-type {
+  border-color: color-mix(in srgb, var(--accent) calc(0.14 * 100%), transparent);
+  animation:
+    msg-in 0.22s var(--ease),
+    stream-breathe 2.2s ease-in-out infinite;
+}
+@keyframes stream-breathe {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+  50% {
+    box-shadow: 0 0 18px -6px var(--accent-glow);
+  }
 }
 
 .msg.user {

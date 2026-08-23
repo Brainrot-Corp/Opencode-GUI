@@ -42,18 +42,72 @@ export default function MessageList({
   onRevert?: (messageID: string) => void;
 }) {
   const listRef = useRef<HTMLDivElement>(null);
-  const endRef = useRef<HTMLDivElement>(null);
+  const raf = useRef(0);
+  // while streaming, follow the tail — until the user scrolls up
+  const stick = useRef(true);
 
   useEffect(() => {
-    // manual scrollTop — never scrollIntoView(), it also scrolls page-level
-    // ancestors and shoves the whole layout off-screen
     const el = listRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-    void endRef.current;
-  }, [msgs]);
+    if (!el) return;
+    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+    const snap = () => {
+      el.scrollTop = el.scrollHeight;
+    };
+    // eased chase toward the tail — text grows in place instead of snapping
+    const follow = () => {
+      cancelAnimationFrame(raf.current);
+      const step = () => {
+        const el = listRef.current;
+        if (!el) return;
+        const target = el.scrollHeight - el.clientHeight;
+        const d = target - el.scrollTop;
+        if (Math.abs(d) < 2) {
+          el.scrollTop = target;
+          return;
+        }
+        el.scrollTop += d * 0.22;
+        raf.current = requestAnimationFrame(step);
+      };
+      raf.current = requestAnimationFrame(step);
+    };
+
+    if (!busy) {
+      // history load / session switch / stream finished: land at the bottom
+      stick.current = true;
+      snap();
+      return;
+    }
+    if (!stick.current) return;
+    const dist = el.scrollHeight - el.clientHeight - el.scrollTop;
+    // huge jump = fresh session content: snap; small growth: ease after it
+    if (dist > el.clientHeight * 3 || reduced) snap();
+    else follow();
+  }, [msgs, busy]);
+
+  // stick/unstick: scrolling up detaches the follower, returning to the
+  // tail re-attaches
+  useEffect(() => {
+    const el = listRef.current;
+    if (!el) return;
+    const wheel = (e: WheelEvent) => {
+      if (e.deltaY < 0) stick.current = false;
+    };
+    const scroll = () => {
+      const dist = el.scrollHeight - el.clientHeight - el.scrollTop;
+      if (dist < 48) stick.current = true;
+    };
+    el.addEventListener("wheel", wheel, { passive: true });
+    el.addEventListener("scroll", scroll, { passive: true });
+    return () => {
+      cancelAnimationFrame(raf.current);
+      el.removeEventListener("wheel", wheel);
+      el.removeEventListener("scroll", scroll);
+    };
+  }, []);
 
   return (
-    <div className="messages" ref={listRef}>
+    <div className={`messages${busy ? " streaming" : ""}`} ref={listRef}>
       {loading && (
         <>
           <div className="msg skel user" />
@@ -83,7 +137,6 @@ export default function MessageList({
           <span className="cursor-dot" /> thinking
         </div>
       )}
-      <div ref={endRef} />
     </div>
   );
 }
