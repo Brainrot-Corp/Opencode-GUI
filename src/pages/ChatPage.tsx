@@ -155,7 +155,13 @@ export default function ChatPage() {
           <div className="main">
             {oc.error && <div className="banner">{oc.error}</div>}
             {!oc.activeId && !oc.booting && (
-              <p className="empty">Select or create a session to start.</p>
+              <div className="messages">
+                <p className="empty">
+                  Select or create a session
+                  <br />
+                  to start.
+                </p>
+              </div>
             )}
             {(oc.activeId || oc.booting) && (
               <>

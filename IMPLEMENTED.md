@@ -207,6 +207,13 @@ Root cause of "nothing populates": server responses are sometimes slow; the UI s
 - Capabilities added: `core:window:allow-set-always-on-top`, `autostart:allow-enable/disable/is-enabled`.
 - Alt+Space keeps hiding the window even when always-on-top is active (hide is orthogonal to pinning).
 
+### Square/flush pass ✅ (2026-08-23)
+
+- Send button is square like everything else (pill exception removed).
+- Main area padding and composer gap are zero — chat panel + input sit flush edge-to-edge.
+- Window body background fully transparent: the OS acrylic is the only backdrop; panels supply all tint themselves.
+- Empty state ("Select or create a session") renders inside a full-size chat-style glass panel.
+
 ### Sounds ✅ (2026-08-23)
 
 - All sounds are **synthesized** with the Web Audio API (`src/lib/sounds.ts`) — zero bundled assets.

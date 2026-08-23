@@ -36,10 +36,11 @@ body,
 body {
   font-family: var(--sans);
   color: var(--text);
+  /* translucent base over the acrylic — darkened tones, same transparency */
   background:
     radial-gradient(1100px 700px at 50% -12%, rgba(127, 212, 212, 0.055), transparent 62%),
     radial-gradient(900px 640px at 88% 112%, rgba(127, 212, 212, 0.035), transparent 60%),
-    linear-gradient(180deg, rgba(13, 18, 24, 0.68), rgba(9, 13, 17, 0.76) 70%);
+    linear-gradient(180deg, rgba(9, 12, 16, 0.68), rgba(5, 8, 11, 0.76) 70%);
   background-attachment: fixed;
   overflow: hidden;
   overscroll-behavior: none;

@@ -2,7 +2,7 @@
 
 .composer {
   width: 100%;
-  margin: 6px 0 0;
+  margin: 0;
   flex-shrink: 0;
   padding: 12px 14px 14px;
   background: linear-gradient(180deg, rgba(23, 32, 40, 0.38), rgba(15, 21, 27, 0.28));
@@ -191,10 +191,6 @@
   font-weight: 500;
   letter-spacing: 0.06em;
   transition: border-color 0.35s var(--ease), background 0.35s var(--ease), box-shadow 0.45s var(--ease);
-}
-/* the one intentional exception to the square UI */
-.send-btn {
-  border-radius: 999px;
 }
 .send-btn i,
 .stop-btn i {

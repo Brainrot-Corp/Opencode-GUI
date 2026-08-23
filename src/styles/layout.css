@@ -119,8 +119,8 @@
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  /* one spacing unit everywhere */
-  padding: 6px;
+  /* zero margin — panels sit flush edge to edge */
+  padding: 0;
   gap: 0;
 }
 
