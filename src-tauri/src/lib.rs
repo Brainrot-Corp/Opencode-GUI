@@ -75,6 +75,8 @@ pub fn run() {
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
         ))
+        // native folder picker for the workspace setting
+        .plugin(tauri_plugin_dialog::init())
         .plugin(
             // global Alt+Space: toggle window visibility, works system-wide
             tauri_plugin_global_shortcut::Builder::new()

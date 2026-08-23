@@ -272,6 +272,17 @@ Three of the PLAN.md deferred items implemented (user-selected; share / multi-pr
 
 Verified headless against the sidecar (own PID only): file list/read ✓, diff [] ✓, prompt(free model) → 2 messages ✓, revert 200 + marker set ✓, unrevert 200 + marker cleared ✓. `npm run build` green.
 
+### Workspace directory ✅ (2026-08-23)
+
+Root cause found for "diff viewer shows nothing": `/session/:id/diff` returns **[] without a `messageID` query** — it serves each *user message*'s precomputed `summary.diffs` (see upstream `session/summary.ts`). Also, v1.18's real diff shape is `{file, patch, additions, deletions, status}` with a ready-made unified diff — SDK types (`before`/`after`) are stale; LCS renderer deleted in favor of coloring the server's patch. Snapshots (and therefore diffs + file-restoring revert) only work when the working directory is a Git repo — and the sidecar spawned in USERPROFILE.
+
+Fix: per-request workspace switching via the server's `directory` query param (verified on v1.18: session lists, providers, file listing, prompts AND `/event?directory=` streaming all honor it — no sidecar respawn needed):
+
+- `api.ts` wraps the SDK client in a Proxy merging `?directory=` into every call; `setDirectory()/getDirectory()`; SSE URL appends it too.
+- Settings → **Workspace** row: native folder picker (`tauri-plugin-dialog`, capability `dialog:allow-open`), Reset-to-home button; changing reloads the webview (full reboot of sessions/messages/events).
+- Persisted as `oc.settings.workspace`. Default remains home folder.
+- Verified headless: prompt under `?directory=<git repo>` produces user-message `summary.diffs`; `/event?directory=` carries message/part/delta/session.diff events.
+
 ## Notes / Decisions log
 
 - 2026-08-23: Project started. Plan finalized in PLAN.md (Windows only, Tauri v2, React+TS, fresh UI, minimal scope).

@@ -41,6 +41,7 @@ export type AppSettings = {
   uiScale: number;
   sounds: SoundPrefs;
   colors: AppColors;
+  workspace: string;
 };
 
 const KEY = "oc.settings";
@@ -65,6 +66,7 @@ const DEFAULTS: AppSettings = {
     volume: 0.6,
   },
   colors: structuredClone(DEFAULT_COLOR_SETS),
+  workspace: "",
 };
 
 function num(v: unknown, def: number, min: number, max: number) {
@@ -135,6 +137,7 @@ export function useSettings() {
           volume: num(p.sounds?.volume, DEFAULTS.sounds.volume, 0, 1),
         },
         colors: loadColors(p, legacy ? "light" : theme),
+        workspace: typeof p.workspace === "string" ? p.workspace : "",
       };
     } catch {
       return structuredClone(DEFAULTS);

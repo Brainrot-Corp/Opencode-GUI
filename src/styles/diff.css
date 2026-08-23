@@ -106,6 +106,10 @@
   color: var(--text-dim);
   opacity: 0.75;
 }
+.diff-lines .hunk {
+  color: var(--accent-bright);
+  opacity: 0.8;
+}
 .diff-lines .add {
   background: color-mix(in srgb, var(--accent) calc(0.1 * 100%), transparent);
 }

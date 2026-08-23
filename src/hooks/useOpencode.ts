@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Message, Part, Session } from "@opencode-ai/sdk/client";
-import { opencode } from "../api";
+import { opencode, getDirectory } from "../api";
 import { playSound } from "../lib/sounds";
 import type { Msg, OpenCodeEvent, PermAsk, ProviderGroup } from "../types";
 
@@ -208,7 +208,10 @@ export function useOpencode() {
       try {
         const { base, client } = await opencode();
 
-        es = new EventSource(`${base}/event`);
+        const dir = getDirectory();
+        es = new EventSource(
+          dir ? `${base}/event?directory=${encodeURIComponent(dir)}` : `${base}/event`,
+        );
         es.onopen = () => setLive(true);
         es.onerror = () => setLive(false);
         es.onmessage = (ev) => {

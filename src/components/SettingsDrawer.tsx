@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
 import { enable, isEnabled, disable } from "@tauri-apps/plugin-autostart";
+import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import type { AppSettings, ColorSet } from "../hooks/useSettings";
 import { THEMES } from "../hooks/useSettings";
 import type { SoundPrefs } from "../lib/sounds";
+import { setDirectory } from "../api";
 import ThemeSelect from "./ThemeSelect";
 import "../styles/settings.css";
 
@@ -49,6 +51,19 @@ export default function SettingsDrawer({
 
   const scales = [0.8, 0.9, 1, 1.1, 1.25];
 
+  // switching workspace changes every API call's ?directory= — simplest
+  // correct refresh is a full reboot of the webview state
+  function applyWorkspace(path: string) {
+    setDirectory(path);
+    update({ workspace: path });
+    setTimeout(() => location.reload(), 50);
+  }
+
+  async function browseWorkspace() {
+    const path = await openDialog({ directory: true, multiple: false });
+    if (typeof path === "string") applyWorkspace(path);
+  }
+
   return (
     <>
       <div className={`drawer-scrim${open ? " open" : ""}`} onClick={onClose} />
@@ -65,6 +80,34 @@ export default function SettingsDrawer({
         </div>
 
         <div className="settings-body">
+          <div className="setting-row">
+            <div className="setting-info">
+              <i className="fa-solid fa-folder-open setting-icon" />
+              <div>
+                <div className="setting-name">Workspace</div>
+                <div className="setting-desc mono-hint">
+                  {settings.workspace || "Home folder (no Git snapshots)"}
+                </div>
+              </div>
+            </div>
+            <div className="color-controls">
+              {settings.workspace && (
+                <button
+                  type="button"
+                  className="reset-btn"
+                  title="Back to home folder"
+                  onClick={() => applyWorkspace("")}
+                >
+                  <i className="fa-solid fa-rotate-left" />
+                </button>
+              )}
+              <button type="button" className="reset-btn" onClick={browseWorkspace}>
+                <i className="fa-solid fa-folder" />
+                Browse…
+              </button>
+            </div>
+          </div>
+
           <div className="setting-row">
             <div className="setting-info">
               <i className="fa-solid fa-circle-half-stroke setting-icon" />
