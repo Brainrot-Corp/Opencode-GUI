@@ -272,6 +272,8 @@ export default function ChatPage() {
                   agents={oc.agents}
                   agentSel={oc.agentSel}
                   onCycleAgent={oc.cycleAgent}
+                  onCycleVariant={oc.cycleVariant}
+                  hasVariants={oc.modelVariants.length > 0}
                   variantSel={oc.variantSel}
                   caps={oc.modelCaps}
                 />

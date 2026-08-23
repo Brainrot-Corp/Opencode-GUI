@@ -22,6 +22,8 @@ export default function Composer({
   agents,
   agentSel,
   onCycleAgent,
+  onCycleVariant,
+  hasVariants,
   variantSel,
   caps,
 }: {
@@ -41,6 +43,8 @@ export default function Composer({
   agents?: { name: string; mode: string }[];
   agentSel?: string;
   onCycleAgent?: () => void;
+  onCycleVariant?: () => void;
+  hasVariants?: boolean;
   variantSel?: string;
   caps?: { attachment?: boolean; input?: string[] };
 }) {
@@ -357,15 +361,15 @@ export default function Composer({
             {agentSel || agents[0]?.name || "build"}
           </button>
         )}
-        {variantSel && (
+        {(variantSel || hasVariants) && (
           <button
             type="button"
             className="agent-chip"
-            data-tip={`Thinking effort: ${variantSel} — click to change`}
-            onClick={() => window.dispatchEvent(new Event("oc:variants"))}
+            data-tip={`Thinking effort: ${variantSel || "default"} — click to cycle`}
+            onClick={() => onCycleVariant?.()}
           >
             <i className="fa-solid fa-gauge-high" />
-            {variantSel}
+            {variantSel || "default"}
           </button>
         )}
         <div

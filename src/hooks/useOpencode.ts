@@ -639,6 +639,14 @@ export function useOpencode() {
     playSound("click");
   }, [agents, agentSel]);
 
+  // chip click: effort cycles default -> low -> ... -> default
+  const cycleVariant = useCallback(() => {
+    if (!modelVariants.length) return;
+    const opts = ["", ...modelVariants];
+    setVariantSel(opts[(opts.indexOf(variantSel) + 1) % opts.length]);
+    playSound("click");
+  }, [modelVariants, variantSel, setVariantSel]);
+
   // /undo target: the user message to rewind TO — one before the last
   // exchange normally, one before the rewind point when already viewing an
   // earlier version. "" when there is nothing left to undo.
@@ -898,6 +906,7 @@ export function useOpencode() {
     agents,
     agentSel,
     cycleAgent,
+    cycleVariant,
     variantSel,
     setVariantSel,
     modelVariants,
