@@ -43,6 +43,30 @@ So we build a **thin GUI client** that spawns and talks to the server. All agent
 - **opencode release binary** — sidecar (`externalBin` in `tauri.conf.json`)
 - Markdown rendering lib for assistant output
 
+### Frontend architecture (since 2026-08-23 restructure)
+
+```
+src/
+├── main.tsx              entry
+├── App.tsx               thin shell → renders ChatPage
+├── api.ts                opencode client singleton (Tauri server_url → SDK client)
+├── types.ts              shared local types (Msg, PermAsk, ProviderGroup, OpenCodeEvent)
+├── styles.css            global stylesheet ("Carriage" design tokens)
+├── hooks/
+│   └── useOpencode.ts    ALL app state + actions: boot, SSE event stream,
+│                         sessions CRUD, send/abort, permission responses
+├── components/           reusable, presentational (props in, callbacks out)
+│   ├── Titlebar.tsx      custom window chrome (drag region, min/max/close)
+│   ├── Sidebar.tsx       session list
+│   ├── MessageList.tsx   message rendering + markdown + tool lines + autoscroll
+│   ├── Composer.tsx      input box + model picker + send/stop
+│   └── PermissionBar.tsx approve/deny floating dialog
+└── pages/
+    └── ChatPage.tsx      composes hook + components into the main screen
+```
+
+Rule of thumb: state and server talk live in `hooks/`; anything visual is a `component/` that takes props; a screen is a `page/` that wires them together. New screens go in `pages/` and get wired to their own hook.
+
 ## Phases
 
 ### Phase 1 — Scaffold

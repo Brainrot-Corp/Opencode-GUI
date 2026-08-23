@@ -117,6 +117,28 @@ Applied the user's reference design (`design examples/index.html`) onto the exis
 
 Changed files: `index.html` (fonts), `src/styles.css` (full rewrite), `src/App.tsx` (noise overlay + markup tweaks only).
 
+### Frameless window ✅ (2026-08-23)
+
+- `decorations: false` in `tauri.conf.json`; custom glass titlebar (`Titlebar.tsx`) with drag region + min/max/close icon buttons (close hovers soft-red).
+- Required capabilities: `core:window:allow-minimize`, `-toggle-maximize`, `-close`, and **`-start-dragging`** (the missing one is why dragging initially failed).
+
+## Frontend restructure ✅ (2026-08-23)
+
+Split single-file App.tsx (~400 lines) into a maintainable structure (see tree in PLAN.md):
+
+```
+src/
+├── hooks/useOpencode.ts   — all state + server interaction (boot, SSE, sessions, send/abort, permissions)
+├── components/            — Titlebar, Sidebar, MessageList, Composer, PermissionBar (presentational)
+├── pages/ChatPage.tsx     — composition root for the main screen
+├── types.ts               — shared local types
+├── api.ts                 — unchanged client singleton
+└── App.tsx                — thin shell rendering ChatPage
+```
+
+- Zero behavior change; `npm run build` green.
+- Convention going forward: server talk → hooks, visuals → components, screens → pages.
+
 ## Notes / Decisions log
 
 - 2026-08-23: Project started. Plan finalized in PLAN.md (Windows only, Tauri v2, React+TS, fresh UI, minimal scope).
@@ -126,3 +148,5 @@ Changed files: `index.html` (fonts), `src/styles.css` (full rewrite), `src/App.t
 - 2026-08-23: Phase 3 code complete. End-to-end streaming verified headless with a live model (DeepSeek key already configured Windows-side). GUI smoke test pending.
 - 2026-08-23: **Rule added (AGENTS.md)** — never test with the user's own API keys; use free models only (`opencode/x-preview-f-free` or OpenCode Zen free tier). Earlier DeepSeek test calls should not be repeated.
 - 2026-08-23: Phase 4 complete. MVP done: Tauri app (8.3 MB exe / 42.6 MB installer) + opencode sidecar, cold start ~1.5 s, chat/streaming/permissions/abort verified. Free-model testing path confirmed working.
+- 2026-08-23: Design pass 1 (Carriage aesthetic) + frameless custom titlebar done; deferred features pushed back further per user — design first.
+- 2026-08-23: Frontend restructured into hooks/components/pages layout (see PLAN.md tree). No behavior change.

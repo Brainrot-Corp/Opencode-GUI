@@ -12,3 +12,7 @@ npm run tauri dev
 ```
 
 The sidecar binary (`src-tauri/binaries/opencode-x86_64-pc-windows-msvc.exe`) is not committed; download from [opencode releases](https://github.com/anomalyco/opencode/releases) (`opencode-windows-x64.zip`) and place it at that path.
+
+## Structure
+
+State/server logic lives in `src/hooks/`, presentational pieces in `src/components/`, screens in `src/pages/`. Full tree and conventions in [PLAN.md](./PLAN.md).
