@@ -78,6 +78,12 @@ export function useOpencode() {
   // working signal: message.completed / session.idle fire mid-turn in
   // heavier tasks and used to kill the indicators prematurely
   const inflightRef = useRef<Map<string, Set<string>>>(new Map());
+  // turns span several assistant messages; when one drains, wait out a
+  // short grace before dropping the indicators — the next message usually
+  // starts within that window and cancels the settle, so Send/Stop and the
+  // sidebar dot stop flapping at every step boundary
+  const SETTLE_GRACE_MS = 1500;
+  const settleTimer = useRef<Map<string, number>>(new Map());
 
   const storeFor = (sid: string) => {
     let s = stores.current.get(sid);
@@ -215,13 +221,12 @@ export function useOpencode() {
             set?.delete(info.id);
             if (!set || set.size === 0) {
               inflightRef.current.delete(sid);
-              // this message finished AND nothing else is running — but the
-              // turn may continue with a new message; only session.idle with
-              // an empty set settles the turn (and drains the queue)
-              setSessionBusy(sid, false);
-              if (sid === activeRef.current) playSound("reply");
+              // last live message done — but the turn may continue with a
+              // new message any moment; settle only after the grace window
+              settleSession(sid);
             }
           } else if (info.role === "assistant") {
+            cancelSettle(sid);
             let set = inflightRef.current.get(sid);
             if (!set) {
               set = new Set();
@@ -325,9 +330,7 @@ export function useOpencode() {
           // settles the turn only when no assistant message is still live —
           // mid-turn idles in heavier tasks are ignored
           if (!inflightRef.current.get(p.sessionID)?.size) {
-            inflightRef.current.delete(p.sessionID);
-            setSessionBusy(p.sessionID, false);
-            flushRef.current(p.sessionID);
+            settleSession(p.sessionID);
           }
           break;
         case "session.deleted": {
@@ -552,6 +555,31 @@ export function useOpencode() {
     [modelSel],
   );
 
+  // true end-of-turn: drops the indicators and drains the outbound queue.
+  // deduped — completions and idles may both call for the same settle
+  const settleSession = useCallback((sid: string) => {
+    if (settleTimer.current.has(sid)) return;
+    settleTimer.current.set(
+      sid,
+      window.setTimeout(() => {
+        settleTimer.current.delete(sid);
+        if (!inflightRef.current.get(sid)?.size) {
+          setSessionBusy(sid, false);
+          if (sid === activeRef.current) playSound("reply");
+          flushRef.current(sid);
+        }
+      }, SETTLE_GRACE_MS),
+    );
+  }, []);
+
+  const cancelSettle = (sid: string) => {
+    const t = settleTimer.current.get(sid);
+    if (t !== undefined) {
+      clearTimeout(t);
+      settleTimer.current.delete(sid);
+    }
+  };
+
   const pushQueued = (sid: string, item: { text: string; files?: Attachment[] }) => {
     const q = queueRef.current.get(sid) ?? [];
     q.push(item);
@@ -611,10 +639,11 @@ export function useOpencode() {
     [activeId, promptNow],
   );
 
-  // drain one queued prompt per stream completion
+  // drain one queued prompt per settled turn — guarded by the inflight set
+  // (busyRef lags a render behind and would refuse right after settling)
   useEffect(() => {
     flushRef.current = (sid: string) => {
-      if (busyRef.current.has(sid)) return;
+      if (inflightRef.current.get(sid)?.size) return;
       const q = queueRef.current.get(sid);
       if (!q?.length) return;
       const next = q.shift()!;
@@ -627,6 +656,7 @@ export function useOpencode() {
   const abort = useCallback(async () => {
     if (!activeId) return;
     clearQueued(activeId);
+    cancelSettle(activeId);
     inflightRef.current.delete(activeId);
     setSessionBusy(activeId, false);
     const { client } = await opencode();
@@ -913,6 +943,7 @@ export function useOpencode() {
       stores.current.delete(id);
       fetchSeq.current.delete(id);
       clearQueued(id);
+      cancelSettle(id);
       inflightRef.current.delete(id);
       setSessionBusy(id, false);
       if (activeRef.current === id) {
