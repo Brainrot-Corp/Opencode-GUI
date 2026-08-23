@@ -27,7 +27,15 @@ function Reasoning({ part, defaultOpen }: { part: Part; defaultOpen: boolean }) 
         <i className="fa-solid fa-brain" />
         {!open && <span className="reasoning-label">thinking</span>}
       </button>
-      {open && <div className="reasoning-body mono">{t}</div>}
+      {/* same markdown+highlight pipeline as replies so fenced code in the
+          thinking stream gets colored instead of flat grey */}
+      {open && (
+        <div className="reasoning-body">
+          <Markdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
+            {t}
+          </Markdown>
+        </div>
+      )}
     </div>
   );
 }
@@ -189,13 +197,17 @@ function ToolBlock({ part, collapsedDefault }: { part: Part; collapsedDefault: b
   const dur = ms == null ? null : ms < 10000 ? `${(ms / 1000).toFixed(2)}s` : `${Math.round(ms / 1000)}s`;
 
   // per-tool body views: git-style diff for file edits, Q&A cards for the
-  // question tool, pretty JSON for other structured outputs
+  // question tool, todo checklist / agent card for task tools, pretty JSON
+  // for other structured outputs
   const toolName = String(t.tool ?? "").toLowerCase();
   const isEditTool = ["edit", "multiedit", "patch", "write"].includes(toolName);
   const patch = isEditTool ? toolDiff(t) : null;
   const stats = patch ? diffStats(patch) : null;
   const filePath = st.input?.filePath ?? st.input?.path ?? "";
   const pretty = status === "completed" ? prettyJson(out) : null;
+  const todos = toolName === "todowrite" || toolName === "todo" ? todoSource(t) : [];
+  const todoDone =
+    todos.length > 0 ? todos.filter((td) => td.status === "completed").length : null;
 
   return (
     <div className={`tool-block ${status}${open ? " open" : ""}`}>
@@ -217,6 +229,13 @@ function ToolBlock({ part, collapsedDefault }: { part: Part; collapsedDefault: b
         {stats && (
           <span className="tool-stat mono">
             <em>+{stats.add}</em> <em className="del">−{stats.del}</em>
+          </span>
+        )}
+        {todoDone !== null && (
+          <span className="tool-stat mono">
+            <em>
+              ✓ {todoDone}/{todos.length}
+            </em>
           </span>
         )}
         {dur && <span className="tool-dur">{dur}</span>}
@@ -246,6 +265,10 @@ function ToolBlock({ part, collapsedDefault }: { part: Part; collapsedDefault: b
               <DiffLines patch={patch} lang={extLang(String(filePath))} />
               {out && <pre className="tool-out">{out}</pre>}
             </>
+          ) : todos.length > 0 ? (
+            <TodoView todos={todos} />
+          ) : toolName === "task" && out.trim() ? (
+            <TaskView t={t} />
           ) : toolName === "question" &&
             Array.isArray(st.input?.questions) &&
             (st.input.questions as any[]).length > 0 ? (
@@ -289,6 +312,72 @@ function QuestionAnswered(t: any): boolean {
   } catch {
     return false;
   }
+}
+
+// todo checklist — live list from the tool's input, history fallback from its
+// output; empty/unknown shape falls back to the raw <pre> rendering
+type Todo = { content: string; status?: string; priority?: string };
+
+function todoSource(t: any): Todo[] {
+  const fromInput = t.state?.input?.todos;
+  if (Array.isArray(fromInput)) return fromInput as Todo[];
+  try {
+    const out = JSON.parse(t.state?.output ?? "");
+    const list = Array.isArray(out) ? out : Array.isArray(out?.todos) ? out.todos : null;
+    if (list && list.every((x: any) => typeof x?.content === "string")) return list;
+  } catch {
+    // fall through
+  }
+  return [];
+}
+
+function TodoView({ todos }: { todos: Todo[] }) {
+  return (
+    <div className="todo-view">
+      {todos.map((td, i) => (
+        <div key={i} className={`todo-row ${td.status ?? ""}`}>
+          <i
+            className={`fa-solid ${
+              td.status === "completed"
+                ? "fa-circle-check"
+                : td.status === "in_progress"
+                  ? "fa-circle-dot todo-live"
+                  : "fa-circle"
+            }`}
+          />
+          <span className="todo-text">{td.content}</span>
+          {td.priority && <span className="q-tag">{td.priority}</span>}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// subagent run — agent chip + description, report rendered as prose
+function TaskView({ t }: { t: any }) {
+  const st = t.state ?? {};
+  let report = st.output ?? "";
+  try {
+    const parsed = JSON.parse(report);
+    report =
+      typeof parsed === "string"
+        ? parsed
+        : typeof parsed?.text === "string"
+          ? parsed.text
+          : typeof parsed?.content === "string"
+            ? parsed.content
+            : report;
+  } catch {
+    // plain text already
+  }
+  const agent = st.input?.subagentType ?? st.input?.agent;
+  return (
+    <div className="task-view">
+      {agent && <span className="q-tag mono">{agent}</span>}
+      {st.input?.description && <div className="q-text task-desc">{st.input.description}</div>}
+      {report.trim() && <div className="task-report">{report}</div>}
+    </div>
+  );
 }
 
 function renderPart(part: Part, key: number, collapsedDefault?: boolean) {

@@ -465,6 +465,73 @@
   background: color-mix(in srgb, var(--accent) 10%, transparent);
   color: var(--text);
 }
+
+/* todowrite checklist */
+.msg .todo-view {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 4px 0;
+}
+.msg .todo-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--sans);
+  font-size: 12px;
+  padding: 2px 0;
+}
+.msg .todo-row i {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+.msg .todo-row.completed i {
+  color: var(--accent);
+  text-shadow: 0 0 7px var(--accent-glow);
+}
+.msg .todo-row.completed .todo-text {
+  color: var(--text-faint);
+  text-decoration: line-through;
+}
+.msg .todo-row.in_progress i {
+  color: var(--accent-bright);
+  text-shadow: 0 0 7px var(--accent-glow);
+}
+@keyframes todo-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+.msg .todo-live {
+  animation: todo-pulse 1.4s ease-in-out infinite;
+}
+.msg .task-view {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 4px 0;
+}
+.msg .task-desc {
+  opacity: 0.75;
+}
+.msg .task-report {
+  font-family: var(--sans);
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  user-select: text;
+}
+
+/* thinking stream: keep prose muted+italic but let highlighted code pop */
+.msg .reasoning-body p {
+  margin: 2px 0;
+}
+.msg .reasoning-body pre,
+.msg .reasoning-body code,
+.msg .reasoning-body pre code {
+  font-style: normal;
+}
 .msg .chev {
   flex-shrink: 0;
   font-size: 9px;
