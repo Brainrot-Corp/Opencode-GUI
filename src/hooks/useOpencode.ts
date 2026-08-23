@@ -34,8 +34,16 @@ export function useOpencode() {
   const [defaultModel, setDefaultModel] = useState("");
   const [agents, setAgents] = useState<{ name: string; mode: string }[]>([]);
   const [agentSel, setAgentSel] = useState("");
-  // thinking-effort variant for the current model ("" = model default)
-  const [variantSel, setVariantSel] = useState("");
+  // thinking-effort variant per model ("provider/model" -> effort), remembered
+  // across model switches, workspaces and relaunches ("" = model default)
+  const [variantMap, setVariantMap] = useState<Record<string, string>>(() => {
+    try {
+      const raw = JSON.parse(localStorage.getItem("oc.variants") ?? "{}");
+      return raw && typeof raw === "object" ? raw : {};
+    } catch {
+      return {};
+    }
+  });
   const [permission, setPermission] = useState<PermAsk | null>(null);
   const [commands, setCommands] = useState<Cmd[]>([]);
   const [dialog, setDialog] = useState<DialogState>(null);
@@ -416,6 +424,42 @@ export function useOpencode() {
     setPermission(null);
   }, []);
 
+  // thinking-effort options for the selected model
+  const modelVariants = useMemo(() => {
+    if (!modelSel) return [];
+    const [pid, mid] = modelSel.split("/");
+    return (
+      providers.find((g) => g.id === pid)?.models.find((m) => m.id === mid)?.variants ?? []
+    );
+  }, [providers, modelSel]);
+
+  // current model's stored effort — kept if the option still exists, else
+  // default. never reset on switch: each model remembers its own
+  // ponytail: pass-through while providers are still loading (empty list);
+  // a pick for a model that later drops all variants rides along until then
+  const variantSel = useMemo(() => {
+    const v = variantMap[modelSel] ?? "";
+    return v && (modelVariants.length === 0 || modelVariants.includes(v)) ? v : "";
+  }, [variantMap, modelSel, modelVariants]);
+
+  const setVariantSel = useCallback(
+    (v: string) => {
+      if (!modelSel) return;
+      setVariantMap((prev) => {
+        const next = { ...prev };
+        if (v) next[modelSel] = v;
+        else delete next[modelSel];
+        try {
+          localStorage.setItem("oc.variants", JSON.stringify(next));
+        } catch {
+          // storage full/blocked — in-session map still works
+        }
+        return next;
+      });
+    },
+    [modelSel],
+  );
+
   const send = useCallback(
     async (text: string) => {
       if (!text || !activeId || busyRef.current.has(activeId)) return;
@@ -471,20 +515,6 @@ export function useOpencode() {
     const i = msgs.findIndex((m) => m.info.id === revertId);
     return i >= 0 ? msgs.slice(0, i + 1) : msgs;
   }, [msgs, revertId]);
-
-  // thinking-effort options for the selected model
-  const modelVariants = useMemo(() => {
-    if (!modelSel) return [];
-    const [pid, mid] = modelSel.split("/");
-    return (
-      providers.find((g) => g.id === pid)?.models.find((m) => m.id === mid)?.variants ?? []
-    );
-  }, [providers, modelSel]);
-
-  // a different model invalidates the picked effort
-  useEffect(() => {
-    setVariantSel("");
-  }, [modelSel]);
 
   const revertTo = useCallback(
     async (messageID: string) => {
