@@ -1,0 +1,106 @@
+# Implementation Tracker
+
+Companion to [PLAN.md](./PLAN.md). Updated continuously: what's done, what's next.
+
+Status legend: `[x]` done · `[~]` in progress/partial · `[ ]` not started · `[!]` blocked/issue
+
+## Phase 1 — Scaffold ✅ (2026-08-23)
+
+- [x] Verify toolchain (Node v24.19.0, npm 11.17.0, Rust 1.98.0 via rustup, MSVC Build Tools VS 18 preinstalled)
+- [x] Scaffold Tauri v2 + React + TypeScript app (`create-tauri-app`, react-ts template)
+- [x] Strip template boilerplate (removed opener plugin from JS/Rust/capabilities, demo greet command, logos/CSS, renamed to `opencode-gui`)
+- [x] Install `@opencode-ai/sdk` (v1.18.21)
+- [x] Download official `opencode.exe` release binary (v1.18.21 → `src-tauri/binaries/opencode-x86_64-pc-windows-msvc.exe`)
+- [x] Configure sidecar in `tauri.conf.json` (`bundle.externalBin: ["binaries/opencode"]`)
+- [x] Build passes — `npm run tauri build` produces MSI + NSIS installers
+
+### Phase 1 measurements
+
+| Artifact | Size |
+|---|---|
+| App exe (`opencode-gui.exe`) | **8.3 MB** |
+| Bundled sidecar (`opencode.exe`) | 171 MB uncompressed |
+| NSIS installer | 42.5 MB |
+| MSI installer | 60.1 MB |
+
+Installer size is dominated by the opencode binary itself, not our app. Option if size ever matters: stop bundling and auto-detect a user-installed `opencode` on PATH first → installer drops under ~10 MB. Not needed now.
+
+### Phase 1 findings
+
+- ✅ `opencode serve` runs natively on Windows without WSL — smoke test passed: `/global/health` returned `{healthy:true}` in <1s. WSL fallback not needed.
+- Sidecar naming requires target-triple suffix: `opencode-x86_64-pc-windows-msvc.exe`.
+- npm has an allow-scripts policy here; esbuild's postinstall had to be approved once (`npm approve-scripts esbuild`).
+
+## Phase 2 — Server lifecycle ✅ (2026-08-23)
+
+- [x] Spawn `opencode serve --port <free-port>` on launch (Rust `std::process::Command`, ephemeral port via `TcpListener` bind to :0; sidecar resolved next to current exe)
+- [x] Poll `/global/health` until ready — done **in the webview** via browser fetch (same path Phase 3 uses, so CORS is proven end-to-end)
+- [x] Kill child process on window close/app exit (`RunEvent::Exit` → `Child::kill`)
+- [x] Pass base URL into webview (`server_url` Tauri command returning `Result<String,String>`)
+
+### Phase 2 findings
+
+- ✅ Lifecycle verified against release build: spawn → healthy on random port → graceful window close → serve pid dead → port dead.
+- opencode keeps an internal helper process that holds the listening socket for a few seconds after the direct serve child dies, then self-terminates. No extra cleanup needed on our side.
+- ⚠️ Skipped Windows Job Objects (kill-on-close): empirically unnecessary since both our kill handler AND opencode's self-cleanup work. Revisit only if orphaned servers are ever observed after a GUI crash.
+- ⚠️ Lesson learned: never blanket-kill `opencode.exe`/`wsl.exe` processes when testing — the user's own agent session lives in those. Only touch exact PIDs spawned by our app.
+- PowerShell 5.1 `Invoke-WebRequest` chokes on this endpoint (auth-prompt quirk in noninteractive mode); use `curl.exe` for API smoke tests.
+
+## Phase 3 — Minimal chat client ⬜ next
+
+- [ ] SDK client setup (`createOpencodeClient`) + React context
+- [ ] Session sidebar (list / create sessions)
+- [ ] Chat view: message list + text parts rendering
+- [ ] Prompt input → `session.prompt_async()`
+- [ ] SSE live updates (`message.updated`, `message.part.updated`)
+- [ ] Markdown rendering for assistant output
+- [ ] Model picker (`config.providers()`)
+- [ ] Permission dialog → approve/deny endpoint
+- [ ] Abort button while streaming
+
+## Phase 3 — Minimal chat client ✅ code complete, GUI test pending (2026-08-23)
+
+- [x] API helper (`src/api.ts`): `createOpencodeClient` from browser-safe `@opencode-ai/sdk/client` subpath + base URL via `server_url` command
+- [x] Session sidebar: list / create / select / delete; newest first
+- [x] Chat view: message bubbles, markdown rendering (`react-markdown` + `remark-gfm` — safe React rendering, no raw HTML injection), tool parts as compact status lines
+- [x] Prompt input → `session.prompt_async()` (Enter to send, Shift+Enter newline)
+- [x] SSE live updates: native `EventSource` on `/event`; handles `message.updated`, `message.part.updated`, `permission.updated`, `session.idle`, `session.deleted`; auto-reconnect built in
+- [x] Model picker: grouped `<select>` from `config.providers()`; empty = server default
+- [x] Permission dialog: Allow once / Always allow / Deny → `postSessionIdPermissionsPermissionId`
+- [x] Abort button while streaming (+ busy flag cleared on assistant `time.completed` and `session.idle`)
+- [x] Build passes
+
+### Phase 3 verification (headless, real provider)
+
+Full end-to-end flow exercised against a live DeepSeek model with curl + SSE capture:
+- `prompt_async` → 204 ✓
+- Streamed events observed: `message.updated` ×6, `message.part.updated` ×5, `message.part.delta`, `session.status`, `session.idle` ✓
+- Text parts arrive **fully accumulated** per update (replace-by-part-id is the right strategy) ✓
+- Assistant completion signaled by `time.completed != null` in `message.updated` ✓
+- User messages are echoed via `message.updated` (no optimistic local add needed) ✓
+
+### Phase 3 notes
+
+- SDK main entry is Node-only (spawns servers); must import from `@opencode-ai/sdk/client`.
+- PowerShell 5.1 body-quoting pitfalls when testing JSON APIs: single quotes don't survive native arg parsing, `-Encoding UTF8` adds a BOM. Use `[IO.File]::WriteAllText` + `curl --data-binary @file`.
+- ✅ Permission round trip fully verified headless (2026-08-23): with a `"permission":{"bash":"ask",...}` config, the server emits **`permission.asked`** (NOT `permission.updated` — SDK types are stale), properties `{id, sessionID, permission, metadata, patterns, always}`. UI handler normalized accordingly; handles both event names.
+  - Approve flow: `POST /session/:id/permissions/:id {"response":"once"}` → 200 → tool completes → run finishes.
+  - Note: with NO permission config (user's current setup), bash defaults to allow — tools run silently, which is why no dialog appeared in the first GUI test. To see prompts, add a permission block to `~/.config/opencode/opencode.jsonc`.
+
+## Phase 4 — Package & verify ⬜ next
+
+- [ ] Final installer size / cold-start time record
+- [ ] Smoke test with real provider API key
+
+## Deferred (from PLAN.md)
+
+File tree, diff viewer, revert/undo, share, themes, multi-project, cross-platform builds.
+
+## Notes / Decisions log
+
+- 2026-08-23: Project started. Plan finalized in PLAN.md (Windows only, Tauri v2, React+TS, fresh UI, minimal scope).
+- 2026-08-23: Phase 1 complete. Sidecar approach verified end-to-end at build level; server spawn/kill wiring is Phase 2.
+- 2026-08-23: Phase 2 complete. CORS needs no --cors flags (server reflects any Origin). Server lifecycle verified in release build.
+- 2026-08-23: Incident note — during lifecycle testing, system-wide process kills nearly took down the user's own WSL opencode session (the agent running the session itself). Testing now strictly scoped to PIDs our app creates.
+- 2026-08-23: Phase 3 code complete. End-to-end streaming verified headless with a live model (DeepSeek key already configured Windows-side). GUI smoke test pending.
+- 2026-08-23: **Rule added (AGENTS.md)** — never test with the user's own API keys; use free models only (`opencode/x-preview-f-free` or OpenCode Zen free tier). Earlier DeepSeek test calls should not be repeated.

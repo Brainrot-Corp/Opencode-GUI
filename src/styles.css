@@ -1,0 +1,280 @@
+:root {
+  color-scheme: dark;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: #1a1b26;
+  color: #d5d6db;
+}
+
+#root {
+  height: 100vh;
+}
+
+.layout {
+  display: grid;
+  grid-template-columns: 230px 1fr;
+  height: 100vh;
+}
+
+.sidebar {
+  background: #16161e;
+  border-right: 1px solid #2a2b3a;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  overflow-y: auto;
+}
+
+.sidebar h2 {
+  font-size: 13px;
+  margin: 4px 4px 8px;
+  color: #787c99;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.new-chat {
+  margin-bottom: 8px;
+  padding: 8px;
+  border-radius: 6px;
+  border: 1px solid #3d4059;
+  background: #24283b;
+  color: #d5d6db;
+  cursor: pointer;
+}
+
+.new-chat:hover {
+  background: #2f334d;
+}
+
+.session-item {
+  text-align: left;
+  padding: 7px 9px;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  color: #a9aec8;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.session-item:hover {
+  background: #24283b;
+}
+
+.session-item.active {
+  background: #2f334d;
+  color: #e6e7ec;
+}
+
+.main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.msg {
+  max-width: 78%;
+  padding: 10px 14px;
+  border-radius: 12px;
+  line-height: 1.5;
+}
+
+.msg.user {
+  align-self: flex-end;
+  background: #394b70;
+}
+
+.msg.assistant {
+  align-self: flex-start;
+  background: #24283b;
+}
+
+.msg pre {
+  background: #16161e;
+  padding: 10px;
+  border-radius: 8px;
+  overflow-x: auto;
+  font-size: 13px;
+}
+
+.msg code {
+  background: #16161e;
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 13px;
+}
+
+.msg pre code {
+  padding: 0;
+  background: none;
+}
+
+.tool-line {
+  font-size: 12px;
+  color: #787c99;
+  font-family: Consolas, monospace;
+}
+
+.tool-line.done {
+  color: #9ece6a;
+}
+
+.tool-line.error {
+  color: #f7768e;
+}
+
+.empty {
+  margin: auto;
+  color: #565a75;
+}
+
+.composer {
+  border-top: 1px solid #2a2b3a;
+  padding: 12px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.composer-row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+}
+
+.composer textarea {
+  flex: 1;
+  resize: none;
+  min-height: 44px;
+  max-height: 160px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid #3d4059;
+  background: #24283b;
+  color: #d5d6db;
+  font: inherit;
+}
+
+.composer textarea:focus {
+  outline: none;
+  border-color: #586f9c;
+}
+
+.send-btn,
+.stop-btn {
+  padding: 10px 18px;
+  border-radius: 8px;
+  border: none;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.send-btn {
+  background: #4a6da7;
+  color: #fff;
+}
+
+.send-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.stop-btn {
+  background: #8f3247;
+  color: #fff;
+}
+
+.model-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+  color: #787c99;
+}
+
+.model-row select {
+  background: #24283b;
+  color: #a9aec8;
+  border: 1px solid #3d4059;
+  border-radius: 6px;
+  padding: 4px 6px;
+  max-width: 340px;
+}
+
+.permission-bar {
+  position: fixed;
+  bottom: 110px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(680px, 90%);
+  background: #2e2136;
+  border: 1px solid #7a4d94;
+  border-radius: 10px;
+  padding: 12px 16px;
+  box-shadow: 0 6px 30px rgba(0, 0, 0, 0.5);
+}
+
+.permission-bar .title {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: #bb9af7;
+  margin-bottom: 4px;
+}
+
+.permission-bar .what {
+  font-size: 13px;
+  margin-bottom: 10px;
+  word-break: break-word;
+}
+
+.permission-bar .actions {
+  display: flex;
+  gap: 8px;
+}
+
+.permission-bar button {
+  padding: 6px 14px;
+  border-radius: 6px;
+  border: 1px solid #55527a;
+  background: #24283b;
+  color: #d5d6db;
+  cursor: pointer;
+}
+
+.permission-bar button.allow {
+  background: #38536b;
+  border-color: #4a6da7;
+}
+
+.permission-bar button.deny {
+  background: #4a2530;
+  border-color: #8f3247;
+}
+
+.banner {
+  padding: 8px 16px;
+  background: #4a2530;
+  color: #f7768e;
+  font-size: 13px;
+}
