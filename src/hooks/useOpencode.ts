@@ -22,6 +22,22 @@ export function useOpencode() {
   // tracks whether the in-flight prompt carries an explicit model selection;
   // if not, the reply reveals the server's true default
   const sentExplicitModel = useRef(false);
+  // authoritative mutable message store — SSE mutations apply here
+  // synchronously, then mirror into React state (avoids batching races)
+  const msgsStore = useRef<Msg[]>([]);
+  // parts that arrived before their parent message entry — flushed on creation
+  const orphanParts = useRef<Map<string, Part[]>>(new Map());
+
+  function upsertPart(part: Part) {
+    const store = msgsStore.current;
+    const m = store.find((x) => x.info.id === part.messageID);
+    if (!m) return false;
+    const pi = m.parts.findIndex((x) => x.id === part.id);
+    if (pi < 0) m.parts.push(part);
+    else m.parts[pi] = part;
+    setMsgs([...store]);
+    return true;
+  }
 
   // remember the last hand-picked model across launches
   // (only persist real selections — never wipe the stored one with "")
@@ -45,12 +61,17 @@ export function useOpencode() {
   const openSession = useCallback(async (id: string) => {
     localStorage.setItem(LAST_KEY, id);
     setActiveId(id);
+    msgsStore.current = [];
     setMsgs([]);
     setBusy(false);
     setPermission(null);
     const { client } = await opencode();
     const r = await client.session.messages({ path: { id } });
-    setMsgs((r.data ?? []) as Msg[]);
+    const list = (r.data ?? []) as Msg[];
+    // replace (don't merge) — events that landed mid-fetch are already included
+    msgsStore.current = list;
+    orphanParts.current.clear();
+    setMsgs(list);
   }, []);
 
   useEffect(() => {
@@ -77,32 +98,32 @@ export function useOpencode() {
             const resolved = `${(info as any).providerID}/${(info as any).modelID}`;
             setDefaultModel((prev) => (prev === resolved ? prev : resolved));
           }
-          setMsgs((prev) => {
-            const i = prev.findIndex((m) => m.info.id === info.id);
-            if (i < 0) return [...prev, { info, parts: [] }];
-            const next = [...prev];
-            next[i] = { ...next[i], info };
-            return next;
-          });
+          {
+            const store = msgsStore.current;
+            const i = store.findIndex((m) => m.info.id === info.id);
+            if (i < 0) {
+              // flush any parts that arrived before their parent message
+              const queued = orphanParts.current.get(info.id) ?? [];
+              orphanParts.current.delete(info.id);
+              store.push({ info, parts: queued });
+            } else {
+              store[i] = { ...store[i], info };
+            }
+            setMsgs([...store]);
+          }
           break;
         }
         case "message.part.updated": {
           const part = p.part as Part;
           if (!part || part.sessionID !== activeRef.current) return;
-          setMsgs((prev) => {
-            const i = prev.findIndex((m) => m.info.id === part.messageID);
-            if (i < 0) return prev; // message.updated creates the entry
-            const next = [...prev];
-            const pi = next[i].parts.findIndex((x) => x.id === part.id);
-            if (pi < 0) {
-              next[i] = { ...next[i], parts: [...next[i].parts, part] };
-            } else {
-              const parts = [...next[i].parts];
-              parts[pi] = part;
-              next[i] = { ...next[i], parts };
-            }
-            return next;
-          });
+          if (!upsertPart(part)) {
+            // parent message entry not created yet — queue so nothing is lost
+            const q = orphanParts.current.get(part.messageID) ?? [];
+            q.push(part);
+            orphanParts.current.set(part.messageID, q);
+          } else {
+            orphanParts.current.delete(part.messageID);
+          }
           break;
         }
         case "permission.asked":
@@ -222,6 +243,8 @@ export function useOpencode() {
     localStorage.setItem(LAST_KEY, s.id);
     setSessions((prev) => [s, ...prev]);
     setActiveId(s.id);
+    msgsStore.current = [];
+    orphanParts.current.clear();
     setMsgs([]);
     setBusy(false);
     setPermission(null);
@@ -278,6 +301,8 @@ export function useOpencode() {
       setSessions((prev) => prev.filter((s) => s.id !== id));
       if (activeRef.current === id) {
         setActiveId("");
+        msgsStore.current = [];
+        orphanParts.current.clear();
         setMsgs([]);
       }
     },

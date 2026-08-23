@@ -196,6 +196,7 @@ Root cause of "nothing populates": server responses are sometimes slow; the UI s
 - Tauri feature `tray-icon`; capabilities `core:window:allow-hide/show`.
 - Note: rebuilding while the old exe is running fails with "Access is denied" (Windows file lock) — close the app before recompiling.
 - **Global hotkey Alt+Space** (`tauri-plugin-global-shortcut`): toggles window visibility system-wide, any focus. Behavior: hidden → show+focus · visible but unfocused → show+focus · visible and focused → hide to tray. Note this shadows Windows' default Alt+Space window menu while the app runs.
+- **First-launch focus fix**: the window calls `set_focus()` during startup — without it the freshly launched window didn't own keyboard focus, so the first Alt+Space only *focused* it instead of hiding (worked normally after any manual minimize/unfocus).
 
 ### Settings ✅ (2026-08-23)
 
@@ -224,6 +225,18 @@ Root cause of "nothing populates": server responses are sometimes slow; the UI s
 - Rust emits `visibility://changed` on tray click / tray menu / Alt+Space so hide/show sounds play even when the window is already hidden (frontend listens via Tauri events).
 - Close button delays `window.close()` by ~130 ms so its sound can ring out.
 - **Persistence bugfix**: the save-effect fired with `""` on mount and wiped the stored model before restore could read it; it now only persists non-empty selections.
+
+### Task runner scripts ✅ (2026-08-23)
+
+- `scripts/run.ps1` (Windows) and `scripts/run.sh` (bash/WSL): one runner each with subcommands —
+  **setup** (npm install + fetch latest sidecar from GitHub releases), **dev**, **build** (packaged installers), **portable** (zip of app exe + sidecar → `bundle/portable/`, no install needed), **check** (tsc + vite + cargo check), **clean**.
+- Sidecar auto-download verified end-to-end (`run.ps1 setup` → 1.18.21 in place); run.sh syntax-checked under WSL.
+- README documents the commands.
+- Release builds spawn the sidecar with the Windows `CREATE_NO_WINDOW` flag — no console window flashes behind the GUI (`Stdio::null()` alone isn't enough; dev builds still inherit stdio for logs).
+
+### Streaming reliability fix ✅ (2026-08-23)
+
+- **Race fixed**: `message.part.updated` events arriving before their parent `message.updated` were silently dropped — streamed text could vanish or never appear. The hook now keeps an authoritative mutable message store (`msgsStore` ref) that SSE mutations apply synchronously, mirroring into React state afterwards; orphan parts are queued and flushed when the parent message is created. StrictMode/batching double-invocation hazards removed (no mutations inside state updaters).
 
 ### Font Awesome icons ✅ (2026-08-23)
 

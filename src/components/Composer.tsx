@@ -51,10 +51,18 @@ export default function Composer({
 
   useEffect(() => {
     if (!open) return;
-    const onDoc = (e: MouseEvent) => {
+    // capture-phase pointerdown: fires before anything else, so clicking
+    // anywhere outside the dropdown always closes it
+    const onDoc = (e: Event) => {
       if (!boxRef.current?.contains(e.target as Node)) setOpen(false);
     };
-    return () => document.removeEventListener("mousedown", onDoc);
+    const onBlur = () => setOpen(false);
+    document.addEventListener("pointerdown", onDoc, true);
+    window.addEventListener("blur", onBlur);
+    return () => {
+      document.removeEventListener("pointerdown", onDoc, true);
+      window.removeEventListener("blur", onBlur);
+    };
   }, [open]);
 
   // keep the highlighted entry visible while arrowing

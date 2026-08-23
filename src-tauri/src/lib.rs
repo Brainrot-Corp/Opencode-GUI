@@ -27,8 +27,16 @@ fn spawn_server() -> std::io::Result<(Child, u16)> {
     }
     #[cfg(debug_assertions)]
     let _ = cmd.stdout(Stdio::inherit()).stderr(Stdio::inherit());
-    #[cfg(not(debug_assertions))]
-    let _ = cmd.stdout(Stdio::null()).stderr(Stdio::null());
+    // release: null stdio AND CREATE_NO_WINDOW — without the flag a visible
+    // console window pops up next to our frameless GUI
+    #[cfg(all(windows, not(debug_assertions)))]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+    }
     Ok((cmd.spawn()?, port))
 }
 
@@ -141,6 +149,13 @@ pub fn run() {
                 },
             };
             app.manage(state);
+            // make sure the window actually owns keyboard focus on launch —
+            // otherwise the first Alt+Space sees "visible but unfocused" and
+            // only focuses it instead of hiding it
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.set_focus();
+            }
+
             Ok(())
         })
         .build(tauri::generate_context!())
