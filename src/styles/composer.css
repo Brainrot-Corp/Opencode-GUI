@@ -57,7 +57,7 @@
   max-width: 340px;
   min-width: 200px;
   padding: 4px 9px;
-  background: rgba(9, 13, 17, 0.7);
+  background: var(--inset-bg);
   color: var(--text-dim);
   border: 1px solid var(--line);
   border-radius: 0;
@@ -163,7 +163,7 @@
   padding: 11px 13px;
   border-radius: 0;
   border: 1px solid transparent;
-  background: rgba(9, 13, 17, 0.5);
+  background: var(--inset-bg);
   color: var(--text);
   font-family: var(--mono);
   font-size: 13.5px;

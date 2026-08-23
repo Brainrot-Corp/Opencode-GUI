@@ -208,7 +208,8 @@ Root cause of "nothing populates": server responses are sometimes slow; the UI s
 - Capabilities added: `core:window:allow-set-always-on-top`, `autostart:allow-enable/disable/is-enabled`.
 - Alt+Space keeps hiding the window even when always-on-top is active (hide is orthogonal to pinning).
 - **Ctrl+P** toggles always-on-top via a plain window keydown listener — fires only while the app is open and focused (and replaces the browser print shortcut). Pin state syncs across the titlebar pin, the settings toggle, and this hotkey.
-- **Appearance customization**: settings drawer gained an Appearance box — color swatch + transparency slider for the **main background** and the **panel surface** (chat history + input), plus a Reset button restoring defaults. Persisted in `oc.settings.colors`, applied at boot via CSS custom properties (`--base-rgb/--base-a/--surf-rgb/--surf-a`) that all panel/body gradients consume. Sidebar/titlebar chrome tones intentionally stay fixed so they keep matching.
+- **Appearance customization**: settings drawer gained an Appearance box — color swatch + transparency slider for the **main background** and the **panel surface** (chat history + input), plus a Reset button restoring defaults. Persisted in `oc.settings.colors`, applied at boot via CSS custom properties (`--base-rgb/--base-a/--surf-rgb/--surf-a`) that all panel/body gradients consume.
+- **Light mode**: toggle in the titlebar (sun/moon) and in settings; persisted (`oc.settings.theme`). Each theme keeps its own appearance colors (per-theme `oc.settings.colors.dark/light`, legacy flat shape auto-migrated). Light palette: white chrome, light glass panels, darker teal accent for contrast, dark code blocks retained.
 
 ### Square/flush pass ✅ (2026-08-23)
 

@@ -5,7 +5,7 @@
   /* no right padding: the scroll layer below must reach the panel edge
      so its scrollbar hugs the border; rows get their own right gap */
   /* soft tint — same tones as the titlebar so the two read as one surface */
-  background: linear-gradient(180deg, rgba(20, 28, 35, 0.14), rgba(12, 17, 22, 0.22));
+  background: linear-gradient(180deg, rgba(var(--chrome-rgb), 0.14), rgba(var(--chrome-rgb), 0.22));
   border-right: 1px solid var(--line);
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);

@@ -147,6 +147,10 @@ export default function ChatPage() {
           pinned={settings.alwaysOnTop}
           onTogglePin={() => update({ alwaysOnTop: !settings.alwaysOnTop })}
           onOpenSettings={openSettings}
+          theme={settings.theme}
+          onToggleTheme={() =>
+            update({ theme: settings.theme === "dark" ? "light" : "dark" })
+          }
         />
         <SettingsDrawer
           open={settingsOpen}

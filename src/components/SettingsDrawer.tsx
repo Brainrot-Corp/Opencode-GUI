@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { enable, isEnabled, disable } from "@tauri-apps/plugin-autostart";
-import type { AppColors, AppSettings } from "../hooks/useSettings";
+import type { AppSettings, ColorSet, ThemeName } from "../hooks/useSettings";
 import type { SoundPrefs } from "../lib/sounds";
 import "../styles/settings.css";
 
@@ -18,9 +18,10 @@ export default function SettingsDrawer({
   settings: AppSettings;
   update: (patch: Partial<AppSettings>) => void;
   updateSounds: (patch: Partial<SoundPrefs>) => void;
-  updateColors: (patch: Partial<AppColors>) => void;
+  updateColors: (patch: Partial<ColorSet>) => void;
   resetColors: () => void;
 }) {
+  const cs = settings.colors[settings.theme];
   const [autoLaunch, setAutoLaunch] = useState<boolean | null>(null);
 
   useEffect(() => {
@@ -62,6 +63,24 @@ export default function SettingsDrawer({
         </div>
 
         <div className="settings-body">
+          <div className="setting-row">
+            <div className="setting-info">
+              <i className="fa-solid fa-circle-half-stroke setting-icon" />
+              <div>
+                <div className="setting-name">Light mode</div>
+                <div className="setting-desc">Switch the interface theme</div>
+              </div>
+            </div>
+            <button
+              type="button"
+              className={`toggle${settings.theme === "light" ? " on" : ""}`}
+              aria-pressed={settings.theme === "light"}
+              onClick={() => update({ theme: (settings.theme === "light" ? "dark" : "light") as ThemeName })}
+            >
+              <span className="knob" />
+            </button>
+          </div>
+
           <div className="setting-row">
             <div className="setting-info">
               <i className="fa-solid fa-rocket setting-icon" />
@@ -144,7 +163,7 @@ export default function SettingsDrawer({
               <div className="color-controls">
                 <input
                   type="color"
-                  value={settings.colors.base}
+                  value={cs.base}
                   onChange={(e) => updateColors({ base: e.target.value })}
                   aria-label="Main background color"
                 />
@@ -153,11 +172,11 @@ export default function SettingsDrawer({
                   min={0}
                   max={1}
                   step={0.02}
-                  value={settings.colors.baseA}
+                  value={cs.baseA}
                   onChange={(e) => updateColors({ baseA: Number(e.target.value) })}
                   aria-label="Main background transparency"
                 />
-                <span className="alpha-num">{Math.round(settings.colors.baseA * 100)}%</span>
+                <span className="alpha-num">{Math.round(cs.baseA * 100)}%</span>
               </div>
             </div>
 
@@ -172,7 +191,7 @@ export default function SettingsDrawer({
               <div className="color-controls">
                 <input
                   type="color"
-                  value={settings.colors.surface}
+                  value={cs.surface}
                   onChange={(e) => updateColors({ surface: e.target.value })}
                   aria-label="Panel surface color"
                 />
@@ -181,11 +200,11 @@ export default function SettingsDrawer({
                   min={0}
                   max={1}
                   step={0.02}
-                  value={settings.colors.surfaceA}
+                  value={cs.surfaceA}
                   onChange={(e) => updateColors({ surfaceA: Number(e.target.value) })}
                   aria-label="Panel surface transparency"
                 />
-                <span className="alpha-num">{Math.round(settings.colors.surfaceA * 100)}%</span>
+                <span className="alpha-num">{Math.round(cs.surfaceA * 100)}%</span>
               </div>
             </div>
           </div>

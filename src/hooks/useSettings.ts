@@ -3,21 +3,17 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { setSoundPrefs, type SoundPrefs } from "../lib/sounds";
 
-export type AppColors = {
-  base: string; // main background tint, #rrggbb
-  baseA: number; // its transparency, 0..1
-  surface: string; // chat/input panel tint, #rrggbb
-  surfaceA: number;
-};
+export type ThemeName = "dark" | "light";
+export type ColorSet = { base: string; baseA: number; surface: string; surfaceA: number };
+export type AppColors = Record<ThemeName, ColorSet>;
 
-export const DEFAULT_COLORS: AppColors = {
-  base: "#090c10",
-  baseA: 0.6,
-  surface: "#172830",
-  surfaceA: 0.33,
+export const DEFAULT_COLOR_SETS: Record<ThemeName, ColorSet> = {
+  dark: { base: "#090c10", baseA: 0.6, surface: "#172830", surfaceA: 0.33 },
+  light: { base: "#eef2f5", baseA: 0.55, surface: "#ffffff", surfaceA: 0.5 },
 };
 
 export type AppSettings = {
+  theme: ThemeName;
   alwaysOnTop: boolean;
   uiScale: number;
   sounds: SoundPrefs;
@@ -25,7 +21,10 @@ export type AppSettings = {
 };
 
 const KEY = "oc.settings";
+const HEX = /^#[0-9a-f]{6}$/i;
+
 const DEFAULTS: AppSettings = {
+  theme: "dark",
   alwaysOnTop: false,
   uiScale: 1,
   sounds: {
@@ -41,54 +40,26 @@ const DEFAULTS: AppSettings = {
     click: true,
     volume: 0.6,
   },
-  colors: { ...DEFAULT_COLORS },
+  colors: structuredClone(DEFAULT_COLOR_SETS),
 };
 
-const HEX = /^#[0-9a-f]{6}$/i;
+function num(v: unknown, def: number, min: number, max: number) {
+  return typeof v === "number" && v >= min && v <= max ? v : def;
+}
 
-function load(): AppSettings {
-  try {
-    const raw = localStorage.getItem(KEY);
-    if (!raw) return structuredClone(DEFAULTS);
-    const p = JSON.parse(raw);
-    return {
-      alwaysOnTop: !!p.alwaysOnTop,
-      uiScale:
-        typeof p.uiScale === "number" && p.uiScale >= 0.7 && p.uiScale <= 1.5
-          ? p.uiScale
-          : DEFAULTS.uiScale,
-      sounds: {
-        show: p.sounds?.show ?? true,
-        hide: p.sounds?.hide ?? true,
-        send: p.sounds?.send ?? true,
-        reply: p.sounds?.reply ?? true,
-        type: p.sounds?.type ?? true,
-        resize: p.sounds?.resize ?? true,
-        panels: p.sounds?.panels ?? true,
-        maximize: p.sounds?.maximize ?? true,
-        close: p.sounds?.close ?? true,
-        click: p.sounds?.click ?? true,
-        volume:
-          typeof p.sounds?.volume === "number" && p.sounds.volume >= 0 && p.sounds.volume <= 1
-            ? p.sounds.volume
-            : DEFAULTS.sounds.volume,
-      },
-      colors: {
-        base: HEX.test(p.colors?.base) ? p.colors.base : DEFAULT_COLORS.base,
-        baseA:
-          typeof p.colors?.baseA === "number" && p.colors.baseA >= 0 && p.colors.baseA <= 1
-            ? p.colors.baseA
-            : DEFAULT_COLORS.baseA,
-        surface: HEX.test(p.colors?.surface) ? p.colors.surface : DEFAULT_COLORS.surface,
-        surfaceA:
-          typeof p.colors?.surfaceA === "number" && p.colors.surfaceA >= 0 && p.colors.surfaceA <= 1
-            ? p.colors.surfaceA
-            : DEFAULT_COLORS.surfaceA,
-      },
+// migrates the legacy flat colors shape ({base,...}) into the per-theme layout
+function loadColors(p: any): AppColors {
+  const out = {} as AppColors;
+  for (const th of ["dark", "light"] as ThemeName[]) {
+    const src = p?.colors?.[th] ?? (th === "dark" ? p?.colors : undefined);
+    out[th] = {
+      base: HEX.test(src?.base) ? src.base : DEFAULT_COLOR_SETS[th].base,
+      baseA: num(src?.baseA, DEFAULT_COLOR_SETS[th].baseA, 0, 1),
+      surface: HEX.test(src?.surface) ? src.surface : DEFAULT_COLOR_SETS[th].surface,
+      surfaceA: num(src?.surfaceA, DEFAULT_COLOR_SETS[th].surfaceA, 0, 1),
     };
-  } catch {
-    return structuredClone(DEFAULTS);
   }
+  return out;
 }
 
 function hexToRgb(hex: string): string {
@@ -97,27 +68,54 @@ function hexToRgb(hex: string): string {
 }
 
 export function useSettings() {
-  const [settings, setSettings] = useState<AppSettings>(load);
+  const [settings, setSettings] = useState<AppSettings>(() => {
+    try {
+      const raw = localStorage.getItem(KEY);
+      if (!raw) return structuredClone(DEFAULTS);
+      const p = JSON.parse(raw);
+      return {
+        theme: p.theme === "light" ? "light" : "dark",
+        alwaysOnTop: !!p.alwaysOnTop,
+        uiScale: num(p.uiScale, DEFAULTS.uiScale, 0.7, 1.5),
+        sounds: {
+          show: p.sounds?.show ?? true,
+          hide: p.sounds?.hide ?? true,
+          send: p.sounds?.send ?? true,
+          reply: p.sounds?.reply ?? true,
+          type: p.sounds?.type ?? true,
+          resize: p.sounds?.resize ?? true,
+          panels: p.sounds?.panels ?? true,
+          maximize: p.sounds?.maximize ?? true,
+          close: p.sounds?.close ?? true,
+          click: p.sounds?.click ?? true,
+          volume: num(p.sounds?.volume, DEFAULTS.sounds.volume, 0, 1),
+        },
+        colors: loadColors(p),
+      };
+    } catch {
+      return structuredClone(DEFAULTS);
+    }
+  });
 
   useEffect(() => {
     localStorage.setItem(KEY, JSON.stringify(settings));
   }, [settings]);
 
-  // mirror sound prefs into the synth lib
   useEffect(() => {
     setSoundPrefs(settings.sounds);
   }, [settings.sounds]);
 
-  // push appearance into CSS variables (consumed by tokens/layout/chat css)
+  // theme + appearance → DOM (CSS custom properties drive every surface)
   useEffect(() => {
+    const cs = settings.colors[settings.theme];
+    document.documentElement.dataset.theme = settings.theme;
     const s = document.documentElement.style;
-    s.setProperty("--base-rgb", hexToRgb(settings.colors.base));
-    s.setProperty("--base-a", String(settings.colors.baseA));
-    s.setProperty("--surf-rgb", hexToRgb(settings.colors.surface));
-    s.setProperty("--surf-a", String(settings.colors.surfaceA));
-  }, [settings.colors]);
+    s.setProperty("--base-rgb", hexToRgb(cs.base));
+    s.setProperty("--base-a", String(cs.baseA));
+    s.setProperty("--surf-rgb", hexToRgb(cs.surface));
+    s.setProperty("--surf-a", String(cs.surfaceA));
+  }, [settings.theme, settings.colors]);
 
-  // apply on boot + change (also replaces the old fixed setZoom(1))
   useEffect(() => {
     getCurrentWindow().setAlwaysOnTop(settings.alwaysOnTop).catch(() => {});
   }, [settings.alwaysOnTop]);
@@ -135,12 +133,17 @@ export function useSettings() {
     setSettings((s) => ({ ...s, sounds: { ...s.sounds, ...patch } }));
   }, []);
 
-  const updateColors = useCallback((patch: Partial<AppColors>) => {
-    setSettings((s) => ({ ...s, colors: { ...s.colors, ...patch } }));
-  }, []);
+  const updateColors = useCallback(
+    (patch: Partial<ColorSet>) =>
+      setSettings((s) => ({
+        ...s,
+        colors: { ...s.colors, [s.theme]: { ...s.colors[s.theme], ...patch } },
+      })),
+    [],
+  );
 
   const resetColors = useCallback(
-    () => setSettings((s) => ({ ...s, colors: { ...DEFAULT_COLORS } })),
+    () => setSettings((s) => ({ ...s, colors: structuredClone(DEFAULT_COLOR_SETS) })),
     [],
   );
 

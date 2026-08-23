@@ -5,10 +5,14 @@ export default function Titlebar({
   pinned,
   onTogglePin,
   onOpenSettings,
+  theme,
+  onToggleTheme,
 }: {
   pinned?: boolean;
   onTogglePin?: () => void;
   onOpenSettings?: () => void;
+  theme?: "dark" | "light";
+  onToggleTheme?: () => void;
 }) {
   return (
     <header
@@ -26,6 +30,17 @@ export default function Titlebar({
         <span>OpenCode</span>
       </div>
       <div className="win-controls">
+        <button
+          className={`icon-btn${theme === "light" ? " on" : ""}`}
+          title={theme === "light" ? "Switch to dark mode" : "Switch to light mode"}
+          aria-pressed={theme === "light"}
+          onClick={() => {
+            playSound("click");
+            onToggleTheme?.();
+          }}
+        >
+          <i className={theme === "light" ? "fa-solid fa-moon" : "fa-regular fa-sun"} />
+        </button>
         <button className="icon-btn" title="Settings" onClick={() => onOpenSettings?.()}>
           <i className="fa-solid fa-gear" />
         </button>
