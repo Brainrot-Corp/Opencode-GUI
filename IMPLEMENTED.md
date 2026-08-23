@@ -209,7 +209,8 @@ Root cause of "nothing populates": server responses are sometimes slow; the UI s
 - Alt+Space keeps hiding the window even when always-on-top is active (hide is orthogonal to pinning).
 - **Ctrl+P** toggles always-on-top via a plain window keydown listener — fires only while the app is open and focused (and replaces the browser print shortcut). Pin state syncs across the titlebar pin, the settings toggle, and this hotkey.
 - **Appearance customization**: settings drawer gained an Appearance box — color swatch + transparency slider for the **main background** and the **panel surface** (chat history + input), plus a Reset button restoring defaults. Persisted in `oc.settings.colors`, applied at boot via CSS custom properties (`--base-rgb/--base-a/--surf-rgb/--surf-a`) that all panel/body gradients consume.
-- **Light mode**: toggle in the titlebar (sun/moon) and in settings; persisted (`oc.settings.theme`). Each theme keeps its own appearance colors (per-theme `oc.settings.colors.dark/light`, legacy flat shape auto-migrated). Light palette: white chrome, light glass panels, darker teal accent for contrast, dark code blocks retained.
+- **Theme system v2**: the dropdown picks a color family — **Cyan** (the original look), **Latte**, **Matcha**, **Strawberry** — and the sun/moon toggle switches its **dark/light mode** (each family ships both variants; 12 palettes total as `[data-theme][data-mode]` variable blocks). Appearance colors are stored per theme × mode. All hardcoded cyan literals were converted to `color-mix(var(--accent))` so every family tints correctly. Thinking shimmer derives from theme text/faint variables. Legacy "midnight"/"light" saved values migrate to Cyan dark/light.
+- **Light mode**: also toggleable via a Dark/Light segmented row in settings.
 
 ### Square/flush pass ✅ (2026-08-23)
 

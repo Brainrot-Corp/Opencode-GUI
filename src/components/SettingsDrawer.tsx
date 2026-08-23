@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
 import { enable, isEnabled, disable } from "@tauri-apps/plugin-autostart";
-import type { AppSettings, ColorSet, ThemeName } from "../hooks/useSettings";
+import type { AppSettings, ColorSet } from "../hooks/useSettings";
+import { THEMES } from "../hooks/useSettings";
 import type { SoundPrefs } from "../lib/sounds";
+import ThemeSelect from "./ThemeSelect";
 import "../styles/settings.css";
 
 export default function SettingsDrawer({
@@ -21,7 +23,7 @@ export default function SettingsDrawer({
   updateColors: (patch: Partial<ColorSet>) => void;
   resetColors: () => void;
 }) {
-  const cs = settings.colors[settings.theme];
+  const cs = settings.colors[settings.theme][settings.mode];
   const [autoLaunch, setAutoLaunch] = useState<boolean | null>(null);
 
   useEffect(() => {
@@ -67,18 +69,39 @@ export default function SettingsDrawer({
             <div className="setting-info">
               <i className="fa-solid fa-circle-half-stroke setting-icon" />
               <div>
-                <div className="setting-name">Light mode</div>
-                <div className="setting-desc">Switch the interface theme</div>
+                <div className="setting-name">Theme</div>
+                <div className="setting-desc">Interface color scheme</div>
               </div>
             </div>
-            <button
-              type="button"
-              className={`toggle${settings.theme === "light" ? " on" : ""}`}
-              aria-pressed={settings.theme === "light"}
-              onClick={() => update({ theme: (settings.theme === "light" ? "dark" : "light") as ThemeName })}
-            >
-              <span className="knob" />
-            </button>
+            <ThemeSelect
+              variant="drawer"
+              value={settings.theme}
+              onChange={(t) => update({ theme: t })}
+            />
+          </div>
+
+          <div className="setting-row">
+            <div className="setting-info">
+              <i className="fa-solid fa-circle-half-stroke setting-icon" />
+              <div>
+                <div className="setting-name">Mode</div>
+                <div className="setting-desc">Dark or light variant of the theme</div>
+              </div>
+            </div>
+            <div className="seg-row mode-seg" role="radiogroup" aria-label="Mode">
+              {(["dark", "light"] as const).map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  role="radio"
+                  aria-checked={settings.mode === m}
+                  className={`seg${settings.mode === m ? " on" : ""}`}
+                  onClick={() => update({ mode: m })}
+                >
+                  {m === "dark" ? "Dark" : "Light"}
+                </button>
+              ))}
+            </div>
           </div>
 
           <div className="setting-row">
@@ -146,6 +169,7 @@ export default function SettingsDrawer({
             <div className="sound-box-head">
               <i className="fa-solid fa-palette setting-icon" />
               <span>Appearance</span>
+              <span className="mono-hint">{THEMES.find((t) => t.id === settings.theme)?.name}</span>
               <button type="button" className="reset-btn" onClick={resetColors}>
                 <i className="fa-solid fa-rotate-left" />
                 Reset

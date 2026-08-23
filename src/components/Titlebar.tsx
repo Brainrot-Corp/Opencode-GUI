@@ -1,18 +1,24 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { playSound } from "../lib/sounds";
+import type { Mode, ThemeName } from "../hooks/useSettings";
+import ThemeSelect from "./ThemeSelect";
 
 export default function Titlebar({
   pinned,
   onTogglePin,
   onOpenSettings,
   theme,
-  onToggleTheme,
+  onThemeChange,
+  mode,
+  onModeChange,
 }: {
   pinned?: boolean;
   onTogglePin?: () => void;
   onOpenSettings?: () => void;
-  theme?: "dark" | "light";
-  onToggleTheme?: () => void;
+  theme?: ThemeName;
+  onThemeChange?: (t: ThemeName) => void;
+  mode?: Mode;
+  onModeChange?: (m: Mode) => void;
 }) {
   return (
     <header
@@ -30,17 +36,18 @@ export default function Titlebar({
         <span>OpenCode</span>
       </div>
       <div className="win-controls">
+        <ThemeSelect value={theme ?? "cyan"} onChange={(t) => onThemeChange?.(t)} />
         <button
-          className={`icon-btn${theme === "light" ? " on" : ""}`}
-          title={theme === "light" ? "Switch to dark mode" : "Switch to light mode"}
-          aria-pressed={theme === "light"}
+          className="icon-btn"
+          title={mode === "light" ? "Switch to dark mode" : "Switch to light mode"}
           onClick={() => {
             playSound("click");
-            onToggleTheme?.();
+            onModeChange?.(mode === "light" ? "dark" : "light");
           }}
         >
-          <i className={theme === "light" ? "fa-solid fa-moon" : "fa-regular fa-sun"} />
+          <i className={`fa-solid ${mode === "light" ? "fa-moon" : "fa-regular fa-sun"}`} />
         </button>
+        <span className="ctrl-sep" />
         <button className="icon-btn" title="Settings" onClick={() => onOpenSettings?.()}>
           <i className="fa-solid fa-gear" />
         </button>

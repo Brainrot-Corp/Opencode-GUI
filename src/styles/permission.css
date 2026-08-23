@@ -9,13 +9,13 @@
   z-index: 30;
   padding: 14px 18px;
   background: var(--surface-2);
-  border: 1px solid rgba(127, 212, 212, 0.28);
+  border: 1px solid color-mix(in srgb, var(--accent) calc(0.28 * 100%), transparent);
   border-radius: 0;
   backdrop-filter: blur(18px);
   -webkit-backdrop-filter: blur(18px);
   box-shadow:
     0 20px 50px -12px rgba(0, 0, 0, 0.65),
-    0 0 60px -20px rgba(127, 212, 212, 0.18);
+    0 0 60px -20px color-mix(in srgb, var(--accent) calc(0.18 * 100%), transparent);
 }
 .permission-bar .title {
   font-family: var(--mono);
@@ -51,12 +51,12 @@
   margin-right: 7px;
 }
 .permission-bar button.allow {
-  background: rgba(127, 212, 212, 0.09);
-  border: 1px solid rgba(127, 212, 212, 0.4);
+  background: color-mix(in srgb, var(--accent) calc(0.09 * 100%), transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) calc(0.4 * 100%), transparent);
   color: var(--accent-bright);
 }
 .permission-bar button.allow:hover {
-  background: rgba(127, 212, 212, 0.16);
+  background: color-mix(in srgb, var(--accent) calc(0.16 * 100%), transparent);
   box-shadow: 0 0 22px -6px var(--accent-glow);
 }
 .permission-bar button.deny {

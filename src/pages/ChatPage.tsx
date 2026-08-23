@@ -148,9 +148,9 @@ export default function ChatPage() {
           onTogglePin={() => update({ alwaysOnTop: !settings.alwaysOnTop })}
           onOpenSettings={openSettings}
           theme={settings.theme}
-          onToggleTheme={() =>
-            update({ theme: settings.theme === "dark" ? "light" : "dark" })
-          }
+          onThemeChange={(t) => update({ theme: t })}
+          mode={settings.mode}
+          onModeChange={(m) => update({ mode: m })}
         />
         <SettingsDrawer
           open={settingsOpen}
