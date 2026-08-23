@@ -5,7 +5,11 @@
   margin: 0;
   flex-shrink: 0;
   padding: 12px 14px 14px;
-  background: linear-gradient(180deg, rgba(23, 32, 40, 0.38), rgba(15, 21, 27, 0.28));
+  background: linear-gradient(
+    180deg,
+    rgba(var(--surf-rgb), min(1, calc(var(--surf-a) * 1.15))),
+    rgba(var(--surf-rgb), var(--surf-a))
+  );
   border: 1px solid var(--line);
   /* chat history sits flush above — drop our top edge so no seam shows */
   border-top: none;

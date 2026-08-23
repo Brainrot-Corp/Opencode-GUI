@@ -10,7 +10,11 @@
   flex-direction: column;
   gap: 16px;
   padding: clamp(22px, 4vw, 36px) clamp(22px, 4.5vw, 40px);
-  background: linear-gradient(180deg, rgba(23, 32, 40, 0.38), rgba(15, 21, 27, 0.28));
+  background: linear-gradient(
+    180deg,
+    rgba(var(--surf-rgb), min(1, calc(var(--surf-a) * 1.15))),
+    rgba(var(--surf-rgb), var(--surf-a))
+  );
   border: 1px solid var(--line);
   /* topbar above and composer below sit flush — drop our edges so no seams show */
   border-top: none;

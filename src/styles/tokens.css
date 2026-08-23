@@ -4,6 +4,11 @@
   color-scheme: dark;
   --bg-0: #090d11;
   --bg-1: #0d1218;
+  /* appearance overrides — written by useSettings at runtime */
+  --base-rgb: 9, 12, 16;
+  --base-a: 0.72;
+  --surf-rgb: 23, 40, 48;
+  --surf-a: 0.33;
   --surface: rgba(21, 29, 36, 0.55);
   --surface-2: rgba(28, 38, 47, 0.65);
   --line: rgba(255, 255, 255, 0.07);
@@ -36,11 +41,15 @@ body,
 body {
   font-family: var(--sans);
   color: var(--text);
-  /* translucent base over the acrylic — darkened tones, same transparency */
+  /* translucent base over the acrylic — color/transparency user-configurable */
   background:
     radial-gradient(1100px 700px at 50% -12%, rgba(127, 212, 212, 0.055), transparent 62%),
     radial-gradient(900px 640px at 88% 112%, rgba(127, 212, 212, 0.035), transparent 60%),
-    linear-gradient(180deg, rgba(9, 12, 16, 0.68), rgba(5, 8, 11, 0.76) 70%);
+    linear-gradient(
+      180deg,
+      rgba(var(--base-rgb), var(--base-a)),
+      rgba(var(--base-rgb), min(1, calc(var(--base-a) * 1.06))) 70%
+    );
   background-attachment: fixed;
   overflow: hidden;
   overscroll-behavior: none;

@@ -15,7 +15,7 @@ const SB_C_KEY = "oc.sb.c";
 
 export default function ChatPage() {
   const oc = useOpencode();
-  const { settings, update, updateSounds } = useSettings();
+  const { settings, update, updateSounds, updateColors, resetColors } = useSettings();
   const [settingsOpen, setSettingsOpen] = useState(false);
 
   const [sbW, setSbW] = useState(() => {
@@ -134,6 +134,8 @@ export default function ChatPage() {
           settings={settings}
           update={update}
           updateSounds={updateSounds}
+          updateColors={updateColors}
+          resetColors={resetColors}
         />
         <div
           className={`layout${resizing ? " no-anim" : ""}`}

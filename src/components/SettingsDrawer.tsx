@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { enable, isEnabled, disable } from "@tauri-apps/plugin-autostart";
-import type { AppSettings } from "../hooks/useSettings";
+import type { AppColors, AppSettings } from "../hooks/useSettings";
 import type { SoundPrefs } from "../lib/sounds";
 import "../styles/settings.css";
 
@@ -10,12 +10,16 @@ export default function SettingsDrawer({
   settings,
   update,
   updateSounds,
+  updateColors,
+  resetColors,
 }: {
   open: boolean;
   onClose: () => void;
   settings: AppSettings;
   update: (patch: Partial<AppSettings>) => void;
   updateSounds: (patch: Partial<SoundPrefs>) => void;
+  updateColors: (patch: Partial<AppColors>) => void;
+  resetColors: () => void;
 }) {
   const [autoLaunch, setAutoLaunch] = useState<boolean | null>(null);
 
@@ -117,6 +121,73 @@ export default function SettingsDrawer({
                 {Math.round(s * 100)}%
               </button>
             ))}
+          </div>
+
+          <div className="sound-box">
+            <div className="sound-box-head">
+              <i className="fa-solid fa-palette setting-icon" />
+              <span>Appearance</span>
+              <button type="button" className="reset-btn" onClick={resetColors}>
+                <i className="fa-solid fa-rotate-left" />
+                Reset
+              </button>
+            </div>
+
+            <div className="setting-row">
+              <div className="setting-info">
+                <i className="fa-solid fa-fill setting-icon" />
+                <div>
+                  <div className="setting-name">Main background</div>
+                  <div className="setting-desc">Color and transparency behind everything</div>
+                </div>
+              </div>
+              <div className="color-controls">
+                <input
+                  type="color"
+                  value={settings.colors.base}
+                  onChange={(e) => updateColors({ base: e.target.value })}
+                  aria-label="Main background color"
+                />
+                <input
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.02}
+                  value={settings.colors.baseA}
+                  onChange={(e) => updateColors({ baseA: Number(e.target.value) })}
+                  aria-label="Main background transparency"
+                />
+                <span className="alpha-num">{Math.round(settings.colors.baseA * 100)}%</span>
+              </div>
+            </div>
+
+            <div className="setting-row" style={{ borderTop: "1px solid var(--line)" }}>
+              <div className="setting-info">
+                <i className="fa-solid fa-layer-group setting-icon" />
+                <div>
+                  <div className="setting-name">Panel surface</div>
+                  <div className="setting-desc">Chat history and input tint</div>
+                </div>
+              </div>
+              <div className="color-controls">
+                <input
+                  type="color"
+                  value={settings.colors.surface}
+                  onChange={(e) => updateColors({ surface: e.target.value })}
+                  aria-label="Panel surface color"
+                />
+                <input
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.02}
+                  value={settings.colors.surfaceA}
+                  onChange={(e) => updateColors({ surfaceA: Number(e.target.value) })}
+                  aria-label="Panel surface transparency"
+                />
+                <span className="alpha-num">{Math.round(settings.colors.surfaceA * 100)}%</span>
+              </div>
+            </div>
           </div>
 
           <div className="sound-box">
