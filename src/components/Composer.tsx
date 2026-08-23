@@ -1,7 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Attachment, ProviderGroup } from "../types";
-import { MAX_FILE, iconFor, mimeFor, prettySize, readAttachment } from "../lib/attachments";
+import { prettySize, iconFor } from "../lib/attachments";
 import type { CmdEntry } from "../hooks/useOpencode";
+import { useAttachments } from "../hooks/useAttachments";
+import ModelMenu, { type ModelEntry } from "./ModelMenu";
+import SlashMenu from "./SlashMenu";
 import { playSound } from "../lib/sounds";
 import "../styles/composer.css";
 
@@ -55,15 +58,10 @@ export default function Composer({
   const [hi, setHi] = useState(-1); // keyboard highlight index
   const [hiCmd, setHiCmd] = useState(0); // slash-menu highlight
   const [cmdClosed, setCmdClosed] = useState(false);
-  const boxRef = useRef<HTMLDivElement>(null);
-  const menuRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // staged attachments + inline warning line (size/capability/dup rejects)
-  const [files, setFiles] = useState<Attachment[]>([]);
-  const [note, setNote] = useState("");
-  const [dragOver, setDragOver] = useState(false);
+  const attach = useAttachments();
 
   // no selection and the server default is still unknown → require a pick
   const needsModel = !loadingModels && !modelSel && !defaultModel;
@@ -206,7 +204,7 @@ export default function Composer({
   };
 
   // flat selectable entries (server default first, then provider models)
-  const entries: { value: string; label: string; group?: string }[] = [];
+  const entries: ModelEntry[] = [];
   if (defaultModel) {
     entries.push({ value: "", label: `Server default · ${pretty(defaultModel)}` });
   }
@@ -216,51 +214,11 @@ export default function Composer({
     ),
   );
 
-  useEffect(() => {
-    if (!open) return;
-    // capture-phase pointerdown: fires before anything else, so clicking
-    // anywhere outside the dropdown always closes it
-    const onDoc = (e: Event) => {
-      if (!boxRef.current?.contains(e.target as Node)) setOpen(false);
-    };
-    const onBlur = () => setOpen(false);
-    document.addEventListener("pointerdown", onDoc, true);
-    window.addEventListener("blur", onBlur);
-    return () => {
-      document.removeEventListener("pointerdown", onDoc, true);
-      window.removeEventListener("blur", onBlur);
-    };
-  }, [open]);
-
-  // keep the highlighted entry visible while arrowing
-  useEffect(() => {
-    menuRef.current
-      ?.querySelector('[data-hl="true"]')
-      ?.scrollIntoView({ block: "nearest" });
-  }, [hi, open]);
-
-  // same for the slash-command menu
-  const cmdMenuRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    cmdMenuRef.current
-      ?.querySelector('[data-hl="true"]')
-      ?.scrollIntoView({ block: "nearest" });
-  }, [hiCmd, cmdOpen]);
-
-  function toggleMenu() {
-    setOpen((o) => {
-      const next = !o;
-      if (next) setHi(entries.findIndex((e2) => e2.value === modelSel));
-      else setHi(-1);
-      return next;
-    });
-  }
-
-  const pick = (v: string) => {
+  function pick(v: string) {
     onModelSelect(v);
     setOpen(false);
     setHi(-1);
-  };
+  }
 
   const currentLabel = () => {
     if (loadingModels) return "loading models…";
@@ -269,56 +227,13 @@ export default function Composer({
     return `${pretty(defaultModel ?? "")} (server default)`;
   };
 
-  // --- attachments: staging, progress, dedupe ----------------------------
-  // capabilities are ADVISORY only — verified lying for Zen free models
-  // (reports no-image while ox alpha ingests PNGs fine), so nothing here is
-  // hard-blocked; unsupported types surface as a provider error on send
-
-  const addFiles = (list: FileList | File[] | null | undefined) => {
-    if (!list?.length) return;
-    setNote("");
-    for (const f of Array.from(list)) {
-      const mime = mimeFor(f);
-      if (f.size > MAX_FILE) {
-        setNote(`${f.name}: over the ${prettySize(MAX_FILE)} limit`);
-        continue;
-      }
-      const id = crypto.randomUUID();
-      setFiles((prev) => [
-        ...prev,
-        { id, mime, filename: f.name, url: "", size: f.size, status: "reading", progress: 0 },
-      ]);
-      void readAttachment(f, (p) =>
-        setFiles((prev) => prev.map((x) => (x.id === id ? { ...x, progress: p } : x))),
-      ).then((res) => {
-        if (!res) {
-          setFiles((prev) => prev.filter((x) => x.id !== id));
-          setNote(`${f.name}: could not be read`);
-          return;
-        }
-        setFiles((prev) => {
-          // same bytes already staged in this draft — drop the newcomer
-          if (prev.some((x) => x.id !== id && x.hash === res.hash)) {
-            setNote(`${f.name}: already attached`);
-            return prev.filter((x) => x.id !== id);
-          }
-          return prev.map((x) =>
-            x.id === id ? { ...x, status: "ready" as const, progress: 1, url: res.url, hash: res.hash } : x,
-          );
-        });
-      });
-    }
-  };
-
-  const readyFiles = () => files.filter((f) => f.status === "ready");
-
   const send = () => {
     const text = input.trim();
-    const ready = readyFiles();
+    const ready = attach.readyFiles();
     if ((!text && !ready.length) || needsModel) return;
     setInput("");
-    setFiles([]);
-    setNote("");
+    attach.clearFiles();
+    attach.setNote("");
     playSound("send");
     onSend(text, ready.length ? ready : undefined);
   };
@@ -334,20 +249,20 @@ export default function Composer({
 
   return (
     <div
-      className={`composer${dragOver ? " dragover" : ""}`}
+      className={`composer${attach.dragOver ? " dragover" : ""}`}
       onDragOver={(e) => {
         if (!Array.from(e.dataTransfer.types).includes("Files")) return;
         e.preventDefault();
-        setDragOver(true);
+        attach.setDragOver(true);
       }}
       onDragLeave={(e) => {
         if (e.currentTarget.contains(e.relatedTarget as Node)) return;
-        setDragOver(false);
+        attach.setDragOver(false);
       }}
       onDrop={(e) => {
-        setDragOver(false);
+        attach.setDragOver(false);
         e.preventDefault();
-        addFiles(e.dataTransfer.files);
+        attach.addFiles(e.dataTransfer.files);
       }}
     >
       <div className="model-row">
@@ -384,46 +299,18 @@ export default function Composer({
             {usage.cost > 0 && ` · $${usage.cost.toFixed(4)}`}
           </span>
         )}
-        <div
-          className={`model-select${open ? " open" : ""}${needsModel ? " needs-model" : ""}`}
-          ref={boxRef}
-        >
-          <button
-            type="button"
-            className="model-select-btn"
-            onClick={toggleMenu}
-            disabled={loadingModels}
-            aria-haspopup="listbox"
-            aria-expanded={open}
-          >
-            <span>{currentLabel()}</span>
-            <i className={`fa-solid fa-chevron-${open ? "up" : "down"}`} />
-          </button>
-          {open && (
-            <div className="model-menu" role="listbox" ref={menuRef}>
-              {entries.map((it, i) => {
-                const showGroup = it.group && entries[i - 1]?.group !== it.group;
-                return (
-                  <div key={it.value || `def-${i}`}>
-                    {showGroup && <div className="model-group-label">{it.group}</div>}
-                    <button
-                      type="button"
-                      role="option"
-                      aria-selected={modelSel === it.value}
-                      data-hl={hi === i || undefined}
-                      className={`model-opt${modelSel === it.value ? " selected" : ""}${hi === i ? " hl" : ""}`}
-                      onClick={() => pick(it.value)}
-                      onMouseEnter={() => setHi(i)}
-                    >
-                      <span>{it.label}</span>
-                      {modelSel === it.value && <i className="fa-solid fa-check" />}
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
+        <ModelMenu
+          open={open}
+          setOpen={setOpen}
+          hi={hi}
+          setHi={setHi}
+          entries={entries}
+          selected={modelSel}
+          label={currentLabel()}
+          disabled={loadingModels}
+          needsModel={needsModel}
+          onPick={pick}
+        />
         {onPickWorkspace && (
           <button
             type="button"
@@ -446,28 +333,11 @@ export default function Composer({
         )}
       </div>
       {cmdOpen && (
-        <div className="cmd-menu" role="listbox" ref={cmdMenuRef}>
-          {cmdEntries.map((c, i) => (
-            <button
-              type="button"
-              role="option"
-              key={c.name}
-              aria-selected={i === hiCmd}
-              data-hl={i === hiCmd || undefined}
-              className={`cmd-opt${i === hiCmd ? " hl" : ""}`}
-              onMouseEnter={() => setHiCmd(i)}
-              onClick={() => (c.takesArgs ? fillCmd(c) : runCmd(c))}
-            >
-              <span className="mono cmd-opt-name">/{c.name}</span>
-              <span className="cmd-opt-desc">{c.description || "—"}</span>
-              {c.source !== "built-in" && <span className="cmd-opt-src">{c.source}</span>}
-            </button>
-          ))}
-        </div>
+        <SlashMenu entries={cmdEntries} hi={hiCmd} onHover={setHiCmd} onPick={(c) => (c.takesArgs ? fillCmd(c) : runCmd(c))} />
       )}
-      {(files.length > 0 || note) && (
+      {(attach.files.length > 0 || attach.note) && (
         <div className="attach-row">
-          {files.map((a) => (
+          {attach.files.map((a) => (
             <div key={a.id} className={`attach-chip${a.status === "reading" ? " reading" : ""}`}>
               {a.mime.startsWith("image/") && a.url ? (
                 <img src={a.url} alt="" />
@@ -480,7 +350,7 @@ export default function Composer({
                 type="button"
                 className="attach-x"
                 data-tip="Remove attachment"
-                onClick={() => setFiles((prev) => prev.filter((x) => x.id !== a.id))}
+                onClick={() => attach.removeFile(a.id)}
               >
                 <i className="fa-solid fa-xmark" />
               </button>
@@ -491,7 +361,7 @@ export default function Composer({
           ))}
         </div>
       )}
-      {note && <div className="composer-note">{note}</div>}
+      {attach.note && <div className="composer-note">{attach.note}</div>}
       <div className="composer-row">
         <input
           ref={fileInputRef}
@@ -499,7 +369,7 @@ export default function Composer({
           multiple
           hidden
           onChange={(e) => {
-            addFiles(e.target.files);
+            attach.addFiles(e.target.files);
             e.target.value = "";
           }}
         />
@@ -524,7 +394,7 @@ export default function Composer({
                     const fs = e.clipboardData?.files;
                     if (fs?.length) {
                       e.preventDefault();
-                      addFiles(fs);
+                      attach.addFiles(fs);
                     }
                   }}
                   onKeyDown={(e) => {
@@ -553,7 +423,7 @@ export default function Composer({
                   <button
                     className="send-btn"
                     onClick={send}
-                    disabled={(!input.trim() && !readyFiles().length) || needsModel}
+                    disabled={(!input.trim() && !attach.readyFiles().length) || needsModel}
                   >
                     Send
                     <i className="fa-solid fa-paper-plane" />
