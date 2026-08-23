@@ -78,10 +78,76 @@ body {
 }
 
 /* ============ layout ============ */
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+.titlebar {
+  height: 42px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-left: 18px;
+  background: linear-gradient(180deg, rgba(13, 18, 24, 0.82), rgba(13, 18, 24, 0.55) 80%, transparent);
+  user-select: none;
+}
+.titlebar .brand {
+  margin: 0;
+  pointer-events: none;
+}
+.titlebar .brand i {
+  width: 7px;
+  height: 7px;
+}
+
+.win-controls {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 100%;
+}
+.icon-btn {
+  width: 40px;
+  height: 32px;
+  margin-right: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: 9px;
+  cursor: pointer;
+  color: var(--text-faint);
+  transition: color 0.25s var(--ease), background 0.25s var(--ease), box-shadow 0.35s var(--ease);
+}
+.icon-btn svg {
+  width: 15px;
+  height: 15px;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.icon-btn:hover {
+  color: var(--accent);
+  background: var(--accent-dim);
+  box-shadow: 0 0 18px -4px var(--accent-glow);
+}
+.icon-btn.close:hover {
+  color: var(--danger);
+  background: rgba(224, 143, 143, 0.12);
+  box-shadow: 0 0 18px -6px rgba(224, 143, 143, 0.5);
+}
+
 .layout {
   display: grid;
   grid-template-columns: 248px 1fr;
-  height: 100vh;
+  flex: 1;
+  min-height: 0;
 }
 
 /* ============ sidebar ============ */
@@ -211,7 +277,7 @@ body {
   display: flex;
   flex-direction: column;
   min-width: 0;
-  height: 100vh;
+  min-height: 0;
   padding: 22px clamp(18px, 4vw, 44px) 22px;
   gap: 0;
 }

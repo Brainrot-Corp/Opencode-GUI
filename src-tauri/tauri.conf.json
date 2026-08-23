@@ -14,7 +14,8 @@
       {
         "title": "OpenCode",
         "width": 1100,
-        "height": 720
+        "height": 720,
+        "decorations": false
       }
     ],
     "security": {
