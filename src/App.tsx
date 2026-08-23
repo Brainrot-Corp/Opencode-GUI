@@ -241,33 +241,28 @@ export default function App() {
   }
 
   return (
-    <div className="layout">
-      <aside className="sidebar">
-        <h2>Sessions</h2>
-        <button className="new-chat" onClick={newSession}>
-          + New chat
-        </button>
-        {sessions.map((s) => (
-          <div key={s.id} style={{ display: "flex", gap: 2 }}>
-            <button
-              className={`session-item ${s.id === activeId ? "active" : ""}`}
-              style={{ flex: 1 }}
-              onClick={() => openSession(s.id)}
-              title={s.title || s.id}
-            >
-              {s.title || "New session"}
-            </button>
-            <button
-              className="session-item"
-              style={{ width: 28 }}
-              title="Delete session"
-              onClick={() => removeSession(s.id)}
-            >
-              ×
-            </button>
+    <>
+      <div className="noise" aria-hidden="true" />
+      <div className="layout">
+        <aside className="sidebar">
+          <div className="brand">
+            <i />
+            <span>OpenCode</span>
           </div>
-        ))}
-      </aside>
+          <button className="new-chat" onClick={newSession}>
+            + New chat
+          </button>
+          {sessions.map((s) => (
+            <div key={s.id} className={`session-row ${s.id === activeId ? "active" : ""}`}>
+              <button className="session-item" onClick={() => openSession(s.id)} title={s.title || s.id}>
+                {s.title || "New session"}
+              </button>
+              <button className="del" title="Delete session" onClick={() => removeSession(s.id)}>
+                ×
+              </button>
+            </div>
+          ))}
+        </aside>
 
       <div className="main">
         {error && <div className="banner">{error}</div>}
@@ -286,7 +281,11 @@ export default function App() {
                   <div key={m.info.id} className={`msg ${m.info.role}`} />
                 ) : null,
               )}
-              {busy && <div className="tool-line">…thinking</div>}
+              {busy && (
+                <div className="thinking">
+                  <span className="cursor-dot" /> thinking
+                </div>
+              )}
               <div ref={endRef} />
             </div>
 
@@ -350,6 +349,7 @@ export default function App() {
           </>
         )}
       </div>
-    </div>
+      </div>
+    </>
   );
 }

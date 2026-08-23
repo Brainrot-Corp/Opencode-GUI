@@ -87,14 +87,35 @@ Full end-to-end flow exercised against a live DeepSeek model with curl + SSE cap
   - Approve flow: `POST /session/:id/permissions/:id {"response":"once"}` → 200 → tool completes → run finishes.
   - Note: with NO permission config (user's current setup), bash defaults to allow — tools run silently, which is why no dialog appeared in the first GUI test. To see prompts, add a permission block to `~/.config/opencode/opencode.jsonc`.
 
-## Phase 4 — Package & verify ⬜ next
+## Phase 4 — Package & verify ✅ (2026-08-23)
 
-- [ ] Final installer size / cold-start time record
-- [ ] Smoke test with real provider API key
+- [x] Final release build → MSI 60.1 MB / NSIS **42.6 MB** installer
+- [x] App exe: 8.3 MB; cold start to healthy server: **~1.5 s**
+- [x] Smoke test with **free model only** per AGENTS.md rule: `opencode/x-preview-f-free` replied "pong" via prompt_async+SSE ✓
+
+## Project status: MVP COMPLETE ✅
+
+All four phases done. Deferred features live in PLAN.md.
 
 ## Deferred (from PLAN.md)
 
 File tree, diff viewer, revert/undo, share, themes, multi-project, cross-platform builds.
+**Deferred even further per user (2026-08-23): design work comes first.**
+
+## Design pass 1 — "Carriage" aesthetic ✅ (2026-08-23)
+
+Applied the user's reference design (`design examples/index.html`) onto the existing opencode layout:
+
+- Design tokens ported verbatim: deep blue-black bg (#090d11/#0d1218), cyan accent #7fd4d4 + glow vars, glass surfaces with backdrop blur, Inter + JetBrains Mono
+- Ambient radial gradient background + animated film-grain noise overlay
+- Chat area & composer: rounded-18px glass "stage" panels with accent glow on focus-within
+- Sidebar: glass panel, glowing brand dot, dashed-accent new-chat button, session rows styled like the reference's doc-rows (hover tint, active accent border, delete revealed on hover)
+- Message bubbles: mono font; user = accent-tinted, assistant = surface glass; full markdown styling (code blocks, tables, blockquotes)
+- Thinking indicator: blinking glowing cursor block (reference's cta-cursor)
+- Permission bar: floating glass card, pill buttons (accent allow / soft-red deny)
+- Send/Stop as pill buttons with hover glow
+
+Changed files: `index.html` (fonts), `src/styles.css` (full rewrite), `src/App.tsx` (noise overlay + markup tweaks only).
 
 ## Notes / Decisions log
 
@@ -104,3 +125,4 @@ File tree, diff viewer, revert/undo, share, themes, multi-project, cross-platfor
 - 2026-08-23: Incident note — during lifecycle testing, system-wide process kills nearly took down the user's own WSL opencode session (the agent running the session itself). Testing now strictly scoped to PIDs our app creates.
 - 2026-08-23: Phase 3 code complete. End-to-end streaming verified headless with a live model (DeepSeek key already configured Windows-side). GUI smoke test pending.
 - 2026-08-23: **Rule added (AGENTS.md)** — never test with the user's own API keys; use free models only (`opencode/x-preview-f-free` or OpenCode Zen free tier). Earlier DeepSeek test calls should not be repeated.
+- 2026-08-23: Phase 4 complete. MVP done: Tauri app (8.3 MB exe / 42.6 MB installer) + opencode sidecar, cold start ~1.5 s, chat/streaming/permissions/abort verified. Free-model testing path confirmed working.
