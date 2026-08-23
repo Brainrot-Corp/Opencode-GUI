@@ -107,13 +107,14 @@
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  padding: 10px clamp(10px, 1.6vw, 18px) 10px;
+  /* one spacing unit everywhere */
+  padding: 6px;
   gap: 0;
 }
 
 .banner {
   width: 100%;
-  margin: 0 0 10px;
+  margin: 0 0 6px;
   padding: 9px 16px;
   border-radius: 12px;
   background: rgba(224, 143, 143, 0.07);
