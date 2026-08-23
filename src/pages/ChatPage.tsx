@@ -173,6 +173,7 @@ export default function ChatPage() {
           <Sidebar
             sessions={oc.sessions}
             activeId={oc.activeId}
+            busyIds={oc.busyIds}
             width={sbW}
             collapsed={sbClosed}
             loading={oc.booting}

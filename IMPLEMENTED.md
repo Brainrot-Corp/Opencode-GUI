@@ -283,6 +283,16 @@ Fix: per-request workspace switching via the server's `directory` query param (v
 - Persisted as `oc.settings.workspace`. Default remains home folder.
 - Verified headless: prompt under `?directory=<git repo>` produces user-message `summary.diffs`; `/event?directory=` carries message/part/delta/session.diff events.
 
+### Per-session streaming + activity indicators ✅ (2026-08-23)
+
+Fixed "stream disappears when switching sessions mid-reply" and added per-session busy indicators:
+
+- **Root cause**: every SSE handler early-returned unless the event's session was the active one — background streams were silently dropped, and `openSession` replaced the store with a fetch response (rapid switches could resolve out of order and cross-contaminate).
+- **Fix (`useOpencode.ts`)**: message stores are now a `Map<sessionID, Msg[]>`. `message.updated` / `message.part.updated` / `message.part.delta` mutate the *event's* session store unconditionally; only the React-state mirror is gated on the active session. Deltas/orphan parts stash their sessionID. `openSession` shows the cached store immediately and refetches with a per-session sequence guard (stale responses discarded). `session.deleted` drops the store/busy state.
+- **Per-session busy**: `busy` bool → `busyIds: Set<string>` (+ ref). Set on `send`, cleared on assistant `time.completed`, `session.idle`, abort, delete — for every session. Active-session `busy` is derived (`busyIds.has(activeId)`), so Composer/MessageList props are unchanged. Reply sound stays active-session-only.
+- **Sidebar indicator**: pulsing glowing accent dot (`.row-busy`, reduced-motion aware) on each busy session row, independent of which session is open.
+- Returning to a still-streaming session now shows its live partial output immediately (cached store + continued deltas).
+
 ## Notes / Decisions log
 
 - 2026-08-23: Project started. Plan finalized in PLAN.md (Windows only, Tauri v2, React+TS, fresh UI, minimal scope).

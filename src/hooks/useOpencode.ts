@@ -9,7 +9,9 @@ export function useOpencode() {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [activeId, setActiveId] = useState("");
   const [msgs, setMsgs] = useState<Msg[]>([]);
-  const [busy, setBusy] = useState(false);
+  // sessions with an in-flight prompt — tracked per session so background
+  // streams keep their state (and the sidebar can show an indicator)
+  const [busyIds, setBusyIds] = useState<Set<string>>(new Set());
   const [providers, setProviders] = useState<ProviderGroup[]>([]);
   const [modelSel, setModelSel] = useState("");
   const [defaultModel, setDefaultModel] = useState("");
@@ -19,19 +21,42 @@ export function useOpencode() {
 
   const activeRef = useRef(activeId);
   activeRef.current = activeId;
+  const busyRef = useRef(busyIds);
+  busyRef.current = busyIds;
   // tracks whether the in-flight prompt carries an explicit model selection;
   // if not, the reply reveals the server's true default
   const sentExplicitModel = useRef(false);
-  // authoritative mutable message store — SSE mutations apply here
-  // synchronously, then mirror into React state (avoids batching races)
-  const msgsStore = useRef<Msg[]>([]);
+  // authoritative mutable message stores, one per session — SSE mutations
+  // apply here synchronously (regardless of which session is open), then
+  // mirror into React state only for the active session
+  const stores = useRef<Map<string, Msg[]>>(new Map());
+  // guards against a stale fetch overwriting a newer one (fast session hops)
+  const fetchSeq = useRef<Map<string, number>>(new Map());
   // parts that arrived before their parent message entry — flushed on creation
-  const orphanParts = useRef<Map<string, Part[]>>(new Map());
+  const orphanParts = useRef<Map<string, { sid: string; parts: Part[] }>>(new Map());
   // streamed text deltas for parts that don't officially exist yet
-  const pendingDeltas = useRef<Map<string, string>>(new Map());
+  const pendingDeltas = useRef<Map<string, { sid: string; text: string }>>(new Map());
+
+  const storeFor = (sid: string) => {
+    let s = stores.current.get(sid);
+    if (!s) {
+      s = [];
+      stores.current.set(sid, s);
+    }
+    return s;
+  };
+
+  const setSessionBusy = (sid: string, on: boolean) => {
+    setBusyIds((prev) => {
+      const next = new Set(prev);
+      if (on) next.add(sid);
+      else next.delete(sid);
+      return next;
+    });
+  };
 
   function upsertPart(part: Part) {
-    const store = msgsStore.current;
+    const store = storeFor(part.sessionID);
     const m = store.find((x) => x.info.id === part.messageID);
     if (!m) return false;
     const pi = m.parts.findIndex((x) => x.id === part.id);
@@ -39,29 +64,28 @@ export function useOpencode() {
     else m.parts[pi] = part;
     // authoritative full-text update — drop any stashed deltas for this part
     pendingDeltas.current.delete(`${part.messageID}:${part.id}`);
-    setMsgs([...store]);
+    if (part.sessionID === activeRef.current) setMsgs([...store]);
     return true;
   }
 
   // append stashed deltas to their parts once those parts exist
   function flushDeltas() {
-    let changed = false;
-    for (const key of [...pendingDeltas.current.keys()]) {
+    for (const [key, entry] of [...pendingDeltas.current]) {
       const cut = key.lastIndexOf(":");
       const mid = key.slice(0, cut);
       const pid = key.slice(cut + 1);
-      const m = msgsStore.current.find((x) => x.info.id === mid);
+      const store = stores.current.get(entry.sid);
+      const m = store?.find((x) => x.info.id === mid);
       const pt = m?.parts.find((x) => x.id === pid) as { type?: string; text?: string } | undefined;
       if (m && pt && pt.type === "text") {
-        pt.text = (pt.text ?? "") + pendingDeltas.current.get(key);
+        pt.text = (pt.text ?? "") + entry.text;
         pendingDeltas.current.delete(key);
-        changed = true;
-      } else if (!m) {
-        // message is gone — stale deltas
-        pendingDeltas.current.delete(key);
+        if (entry.sid === activeRef.current) setMsgs([...store!]);
+      } else if (!store || !m) {
+        // store gone (session deleted) — stale deltas; keep waiting otherwise
+        if (!store) pendingDeltas.current.delete(key);
       }
     }
-    if (changed) setMsgs([...msgsStore.current]);
   }
 
   // remember the last hand-picked model across launches
@@ -86,18 +110,27 @@ export function useOpencode() {
   const openSession = useCallback(async (id: string) => {
     localStorage.setItem(LAST_KEY, id);
     setActiveId(id);
-    msgsStore.current = [];
-    setMsgs([]);
-    setBusy(false);
     setPermission(null);
+    // show whatever we already have for this session (no blank flash),
+    // then refetch — a per-session sequence guard drops stale responses
+    const cached = stores.current.get(id);
+    setMsgs(cached ? [...cached] : []);
+    const seq = (fetchSeq.current.get(id) ?? 0) + 1;
+    fetchSeq.current.set(id, seq);
     const { client } = await opencode();
     const r = await client.session.messages({ path: { id } });
+    if (fetchSeq.current.get(id) !== seq) return;
+    // mid-stream the SSE-mutated store is NEWER than any fetch snapshot
+    // (opencode persists part text only at milestones) — don't reset it
+    if (busyRef.current.has(id)) return;
     const list = (r.data ?? []) as Msg[];
-    // replace (don't merge) — events that landed mid-fetch are already included
-    msgsStore.current = list;
-    orphanParts.current.clear();
-    pendingDeltas.current.clear();
-    setMsgs(list);
+    stores.current.set(id, list);
+    // the fetch is authoritative for THIS session — drop its stashes
+    for (const [k, v] of orphanParts.current) if (v.sid === id) orphanParts.current.delete(k);
+    for (const [k, v] of pendingDeltas.current) if (v.sid === id) pendingDeltas.current.delete(k);
+    // user may have switched away while we were fetching — update the
+    // session's store but never clobber another session's view
+    if (activeRef.current === id) setMsgs(list);
   }, []);
 
   useEffect(() => {
@@ -109,10 +142,10 @@ export function useOpencode() {
       switch (e.type) {
         case "message.updated": {
           const info = p.info as Message;
-          if (info.sessionID !== activeRef.current) return;
+          const sid = info.sessionID;
           if (info.role === "assistant" && info.time?.completed) {
-            setBusy(false);
-            playSound("reply");
+            setSessionBusy(sid, false);
+            if (sid === activeRef.current) playSound("reply");
           }
           // learn the server's real default from a reply we did NOT steer
           if (
@@ -125,29 +158,29 @@ export function useOpencode() {
             setDefaultModel((prev) => (prev === resolved ? prev : resolved));
           }
           {
-            const store = msgsStore.current;
+            const store = storeFor(sid);
             const i = store.findIndex((m) => m.info.id === info.id);
             if (i < 0) {
               // flush any parts that arrived before their parent message
-              const queued = orphanParts.current.get(info.id) ?? [];
+              const queued = orphanParts.current.get(info.id);
               orphanParts.current.delete(info.id);
-              store.push({ info, parts: queued });
+              store.push({ info, parts: queued?.parts ?? [] });
             } else {
               store[i] = { ...store[i], info };
             }
-            setMsgs([...store]);
+            if (sid === activeRef.current) setMsgs([...store]);
           }
           flushDeltas();
           break;
         }
         case "message.part.updated": {
           const part = p.part as Part;
-          if (!part || part.sessionID !== activeRef.current) return;
+          if (!part) return;
           if (!upsertPart(part)) {
             // parent message entry not created yet — queue so nothing is lost
-            const q = orphanParts.current.get(part.messageID) ?? [];
-            q.push(part);
-            orphanParts.current.set(part.messageID, q);
+            const q = orphanParts.current.get(part.messageID);
+            if (q) q.parts.push(part);
+            else orphanParts.current.set(part.messageID, { sid: part.sessionID, parts: [part] });
           } else {
             orphanParts.current.delete(part.messageID);
           }
@@ -155,9 +188,10 @@ export function useOpencode() {
         }
         case "message.part.delta": {
           // incremental stream chunk: {sessionID, messageID, partID, field, delta}
-          if (p.sessionID !== activeRef.current || p.field !== "text") return;
+          if (p.field !== "text") return;
+          const sid = p.sessionID as string;
           const key = `${p.messageID}:${p.partID}`;
-          const store = msgsStore.current;
+          const store = storeFor(sid);
           const m = store.find((x) => x.info.id === p.messageID);
           const pt = m?.parts.find((x) => x.id === p.partID) as
             | { type?: string; text?: string }
@@ -165,10 +199,12 @@ export function useOpencode() {
           if (m && pt && pt.type === "text") {
             pt.text = (pt.text ?? "") + p.delta;
             pendingDeltas.current.delete(key);
-            setMsgs([...store]);
+            if (sid === activeRef.current) setMsgs([...store]);
           } else {
             // part not announced yet — stash until it exists
-            pendingDeltas.current.set(key, (pendingDeltas.current.get(key) ?? "") + p.delta);
+            const cur = pendingDeltas.current.get(key);
+            if (cur) cur.text += p.delta;
+            else pendingDeltas.current.set(key, { sid, text: p.delta });
           }
           break;
         }
@@ -196,11 +232,18 @@ export function useOpencode() {
             });
           break;
         case "session.idle":
-          if (p.sessionID === activeRef.current) setBusy(false);
+          setSessionBusy(p.sessionID, false);
           break;
-        case "session.deleted":
+        case "session.deleted": {
+          const delId = p.sessionID ?? p.id;
+          if (delId) {
+            stores.current.delete(delId);
+            fetchSeq.current.delete(delId);
+            setSessionBusy(delId, false);
+          }
           refreshSessions().catch(() => {});
           break;
+        }
       }
     };
 
@@ -292,18 +335,17 @@ export function useOpencode() {
     localStorage.setItem(LAST_KEY, s.id);
     setSessions((prev) => [s, ...prev]);
     setActiveId(s.id);
-    msgsStore.current = [];
+    stores.current.set(s.id, []);
     orphanParts.current.clear();
     pendingDeltas.current.clear();
     setMsgs([]);
-    setBusy(false);
     setPermission(null);
   }, []);
 
   const send = useCallback(
     async (text: string) => {
-      if (!text || !activeId || busy) return;
-      setBusy(true);
+      if (!text || !activeId || busyRef.current.has(activeId)) return;
+      setSessionBusy(activeId, true);
       try {
         const { client } = await opencode();
         const body: any = { parts: [{ type: "text", text }] };
@@ -314,16 +356,16 @@ export function useOpencode() {
         }
         await client.session.promptAsync({ path: { id: activeId }, body });
       } catch (e) {
-        setBusy(false);
+        setSessionBusy(activeId, false);
         setError(String(e));
       }
     },
-    [activeId, busy, modelSel],
+    [activeId, modelSel],
   );
 
   const abort = useCallback(async () => {
     if (!activeId) return;
-    setBusy(false);
+    setSessionBusy(activeId, false);
     const { client } = await opencode();
     await client.session.abort({ path: { id: activeId } }).catch(() => {});
   }, [activeId]);
@@ -380,9 +422,11 @@ export function useOpencode() {
       const { client } = await opencode();
       await client.session.delete({ path: { id } }).catch(() => {});
       setSessions((prev) => prev.filter((s) => s.id !== id));
+      stores.current.delete(id);
+      fetchSeq.current.delete(id);
+      setSessionBusy(id, false);
       if (activeRef.current === id) {
         setActiveId("");
-        msgsStore.current = [];
         orphanParts.current.clear();
         pendingDeltas.current.clear();
         setMsgs([]);
@@ -391,11 +435,15 @@ export function useOpencode() {
     [],
   );
 
+  // the active session's busy state, derived from the per-session set
+  const busy = busyIds.has(activeId);
+
   return {
     error,
     live,
     booting,
     sessions,
+    busyIds,
     defaultModel,
     activeId,
     msgs: visibleMsgs,

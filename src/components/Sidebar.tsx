@@ -7,6 +7,7 @@ import "../styles/sidebar.css";
 export default function Sidebar({
   sessions,
   activeId,
+  busyIds,
   collapsed,
   loading,
   resizing,
@@ -18,6 +19,7 @@ export default function Sidebar({
 }: {
   sessions: Session[];
   activeId: string;
+  busyIds?: Set<string>;
   width: number;
   collapsed: boolean;
   loading?: boolean;
@@ -115,6 +117,7 @@ export default function Sidebar({
                     >
                       {s.title || "New session"}
                     </button>
+                    {busyIds?.has(s.id) && <span className="row-busy" />}
                     <button className="del" data-tip="Delete session" onClick={() => onDelete(s.id)}>
                       <i className="fa-solid fa-xmark" />
                     </button>

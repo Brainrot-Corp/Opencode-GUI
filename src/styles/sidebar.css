@@ -227,6 +227,27 @@
   color: var(--text);
 }
 
+/* per-session activity indicator: pulsing glowing dot while streaming */
+.row-busy {
+  width: 7px;
+  height: 7px;
+  flex-shrink: 0;
+  align-self: center;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 8px var(--accent-glow);
+  animation: busy-pulse 1.1s ease-in-out infinite;
+}
+@keyframes busy-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .row-busy {
+    animation: none;
+  }
+}
+
 .session-row .del {
   width: 30px;
   border: none;
