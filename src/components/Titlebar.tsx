@@ -1,24 +1,30 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { playSound } from "../lib/sounds";
-import type { Mode, ThemeName } from "../hooks/useSettings";
+import type { Mode } from "../hooks/useSettings";
+import type { ThemeMeta } from "../lib/themes";
 import ThemeSelect from "./ThemeSelect";
 
 export default function Titlebar({
   pinned,
   onTogglePin,
   onOpenSettings,
+  themes,
   theme,
   onThemeChange,
   mode,
   onModeChange,
+  modes,
 }: {
   pinned?: boolean;
   onTogglePin?: () => void;
   onOpenSettings?: () => void;
-  theme?: ThemeName;
-  onThemeChange?: (t: ThemeName) => void;
+  themes?: ThemeMeta[];
+  theme?: string;
+  onThemeChange?: (t: string) => void;
   mode?: Mode;
   onModeChange?: (m: Mode) => void;
+  // variations the active theme provides — hidden toggle when only one
+  modes?: Mode[];
 }) {
   return (
     <header
@@ -36,17 +42,19 @@ export default function Titlebar({
         <span>OpenCode</span>
       </div>
       <div className="win-controls">
-        <ThemeSelect value={theme ?? "cyan"} onChange={(t) => onThemeChange?.(t)} />
-        <button
-          className="icon-btn"
-          data-tip={mode === "light" ? "Switch to dark mode" : "Switch to light mode"}
-          onClick={() => {
-            playSound("click");
-            onModeChange?.(mode === "light" ? "dark" : "light");
-          }}
-        >
-          <i className={`fa-solid ${mode === "light" ? "fa-moon" : "fa-regular fa-sun"}`} />
-        </button>
+        <ThemeSelect themes={themes ?? []} value={theme ?? "cyan"} onChange={(t) => onThemeChange?.(t)} />
+        {(!modes || modes.length > 1) && (
+          <button
+            className="icon-btn"
+            data-tip={mode === "light" ? "Switch to dark mode" : "Switch to light mode"}
+            onClick={() => {
+              playSound("click");
+              onModeChange?.(mode === "light" ? "dark" : "light");
+            }}
+          >
+            <i className={`fa-solid ${mode === "light" ? "fa-moon" : "fa-regular fa-sun"}`} />
+          </button>
+        )}
         <span className="ctrl-sep" />
         <button className="icon-btn" data-tip="Settings" onClick={() => onOpenSettings?.()}>
           <i className="fa-solid fa-gear" />

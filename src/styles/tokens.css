@@ -1,10 +1,10 @@
-/* design tokens, element base, film grain — imported once in main.tsx */
+/* design tokens, element base, film grain â€” imported once in main.tsx */
 
 :root {
   color-scheme: dark;
   --bg-0: #090d11;
   --bg-1: #0d1218;
-  /* appearance overrides — written by useSettings at runtime */
+  /* appearance overrides â€” written by useSettings at runtime */
   --base-rgb: 9, 12, 16;
   --base-a: 0.6;
   --surf-rgb: 23, 40, 48;
@@ -31,8 +31,8 @@
   --sans: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
 
-  /* syntax token palette (cyan dark default) — consumed by styles/syntax.css,
-     overridden per theme × mode below so code follows the active theme */
+  /* syntax token palette (cyan dark default) â€” consumed by styles/syntax.css,
+     overridden per theme Ã— mode below so code follows the active theme */
   --syn-comment: #55707c;
   --syn-keyword: #7fd4d4;
   --syn-string: #9fce8f;
@@ -58,7 +58,7 @@ body,
 body {
   font-family: var(--sans);
   color: var(--text);
-  /* translucent base over the acrylic — color/transparency user-configurable */
+  /* translucent base over the acrylic â€” color/transparency user-configurable */
   background:
     radial-gradient(1100px 700px at 50% -12%, color-mix(in srgb, var(--accent) calc(0.055 * 100%), transparent), transparent 62%),
     radial-gradient(900px 640px at 88% 112%, color-mix(in srgb, var(--accent) calc(0.035 * 100%), transparent), transparent 60%),
@@ -133,196 +133,9 @@ button:focus-visible,
   }
 }
 
-/* ============ theme × mode palettes ============ */
-/* cyan-dark is the :root default above; everything else overrides below */
+/* theme palettes moved to src/lib/themes.ts - loaded from
+   ~/.config/.opencode-gui/themes.json (hot-reloaded; :root above is the fallback) */
 
-[data-theme="cyan"][data-mode="light"] {
-  color-scheme: light;
-  --text: #20292f;
-  --text-dim: #56666f;
-  --text-faint: #8595a0;
-  --line: rgba(15, 30, 40, 0.12);
-  --line-strong: rgba(15, 30, 40, 0.2);
-  --surface: rgba(255, 255, 255, 0.6);
-  --surface-2: rgba(255, 255, 255, 0.8);
-  --accent: #177e7e;
-  --accent-bright: #10696b;
-  --accent-dim: rgba(23, 126, 126, 0.12);
-  --accent-glow: rgba(23, 126, 126, 0.32);
-  --danger: #b85050;
-  --chrome-rgb: 255, 255, 255;
-  --inset-bg: rgba(13, 25, 33, 0.07);
-  --drawer-bg: linear-gradient(180deg, rgba(250, 252, 254, 0.95), rgba(240, 245, 248, 0.97));
-  --syn-comment: #64767e;
-  --syn-keyword: #107072;
-  --syn-string: #35702c;
-  --syn-number: #82591a;
-  --syn-func: #10696b;
-  --syn-type: #205d7a;
-  --syn-var: #20292f;
-  --syn-meta: #48666f;
-}
-
-[data-theme="latte"][data-mode="dark"] {
-  color-scheme: dark;
-  --text: #d9cbb4;
-  --text-dim: #a89a83;
-  --text-faint: #7d7161;
-  --line: rgba(217, 203, 180, 0.1);
-  --line-strong: rgba(217, 203, 180, 0.18);
-  --surface: rgba(60, 50, 34, 0.5);
-  --surface-2: rgba(52, 43, 29, 0.72);
-  --accent: #c99a5f;
-  --accent-bright: #e0b87e;
-  --accent-dim: rgba(201, 154, 95, 0.14);
-  --accent-glow: rgba(201, 154, 95, 0.32);
-  --danger: #d97b62;
-  --chrome-rgb: 42, 35, 24;
-  --inset-bg: rgba(8, 6, 3, 0.45);
-  --drawer-bg: linear-gradient(180deg, rgba(38, 31, 20, 0.94), rgba(28, 22, 14, 0.96));
-  --syn-comment: #857763;
-  --syn-keyword: #c99a5f;
-  --syn-string: #a9bd70;
-  --syn-number: #d48068;
-  --syn-func: #e0b87e;
-  --syn-type: #93aed0;
-  --syn-var: #d9cbb4;
-  --syn-meta: #9a8054;
-}
-[data-theme="latte"][data-mode="light"] {
-  color-scheme: light;
-  --text: #54493c;
-  --text-dim: #7d7161;
-  --text-faint: #a39786;
-  --line: rgba(92, 74, 52, 0.15);
-  --line-strong: rgba(92, 74, 52, 0.23);
-  --surface: rgba(255, 251, 243, 0.62);
-  --surface-2: rgba(255, 251, 243, 0.85);
-  --accent: #a37b45;
-  --accent-bright: #8a6636;
-  --accent-dim: rgba(163, 123, 69, 0.13);
-  --accent-glow: rgba(163, 123, 69, 0.32);
-  --danger: #bd5f4e;
-  --chrome-rgb: 250, 245, 237;
-  --inset-bg: rgba(110, 88, 58, 0.08);
-  --drawer-bg: linear-gradient(180deg, rgba(252, 248, 240, 0.95), rgba(246, 240, 229, 0.97));
-  --syn-comment: #86755c;
-  --syn-keyword: #8a6636;
-  --syn-string: #55662a;
-  --syn-number: #99452f;
-  --syn-func: #8a6636;
-  --syn-type: #4a607f;
-  --syn-var: #54493c;
-  --syn-meta: #6e5a38;
-}
-
-[data-theme="matcha"][data-mode="dark"] {
-  color-scheme: dark;
-  --text: #c2d1b6;
-  --text-dim: #8fa184;
-  --text-faint: #65755a;
-  --line: rgba(194, 209, 182, 0.1);
-  --line-strong: rgba(194, 209, 182, 0.18);
-  --surface: rgba(36, 48, 32, 0.5);
-  --surface-2: rgba(30, 41, 26, 0.72);
-  --accent: #7fb069;
-  --accent-bright: #a3cc90;
-  --accent-dim: rgba(127, 176, 105, 0.14);
-  --accent-glow: rgba(127, 176, 105, 0.32);
-  --danger: #d97b62;
-  --chrome-rgb: 26, 34, 22;
-  --inset-bg: rgba(3, 6, 2, 0.45);
-  --drawer-bg: linear-gradient(180deg, rgba(26, 34, 22, 0.94), rgba(18, 24, 15, 0.96));
-  --syn-comment: #65755a;
-  --syn-keyword: #7fb069;
-  --syn-string: #d4b57f;
-  --syn-number: #d4a06a;
-  --syn-func: #a3cc90;
-  --syn-type: #7fc4bd;
-  --syn-var: #c2d1b6;
-  --syn-meta: #6f9460;
-}
-[data-theme="matcha"][data-mode="light"] {
-  color-scheme: light;
-  --text: #38442e;
-  --text-dim: #65755a;
-  --text-faint: #8d9c85;
-  --line: rgba(56, 78, 44, 0.15);
-  --line-strong: rgba(56, 78, 44, 0.23);
-  --surface: rgba(248, 252, 244, 0.62);
-  --surface-2: rgba(248, 252, 244, 0.85);
-  --accent: #55873f;
-  --accent-bright: #446e31;
-  --accent-dim: rgba(85, 135, 63, 0.13);
-  --accent-glow: rgba(85, 135, 63, 0.3);
-  --danger: #bb5a50;
-  --chrome-rgb: 242, 248, 237;
-  --inset-bg: rgba(48, 68, 38, 0.08);
-  --drawer-bg: linear-gradient(180deg, rgba(246, 250, 242, 0.95), rgba(238, 244, 232, 0.97));
-  --syn-comment: #6d7c63;
-  --syn-keyword: #446e31;
-  --syn-string: #82621c;
-  --syn-number: #8f5326;
-  --syn-func: #446e31;
-  --syn-type: #23716b;
-  --syn-var: #38442e;
-  --syn-meta: #4c6b40;
-}
-
-[data-theme="strawberry"][data-mode="dark"] {
-  color-scheme: dark;
-  --text: #e3ccd4;
-  --text-dim: #b39aa3;
-  --text-faint: #856871;
-  --line: rgba(227, 204, 212, 0.1);
-  --line-strong: rgba(227, 204, 212, 0.18);
-  --surface: rgba(52, 32, 39, 0.5);
-  --surface-2: rgba(44, 27, 33, 0.72);
-  --accent: #e07a92;
-  --accent-bright: #efa3b4;
-  --accent-dim: rgba(224, 122, 146, 0.14);
-  --accent-glow: rgba(224, 122, 146, 0.32);
-  --danger: #e08585;
-  --chrome-rgb: 36, 24, 28;
-  --inset-bg: rgba(6, 2, 3, 0.45);
-  --drawer-bg: linear-gradient(180deg, rgba(38, 24, 29, 0.94), rgba(28, 17, 21, 0.96));
-  --syn-comment: #8a6a75;
-  --syn-keyword: #e07a92;
-  --syn-string: #a8bf82;
-  --syn-number: #d4a76a;
-  --syn-func: #efa3b4;
-  --syn-type: #8fb8d8;
-  --syn-var: #e3ccd4;
-  --syn-meta: #a56d80;
-}
-[data-theme="strawberry"][data-mode="light"] {
-  color-scheme: light;
-  --text: #4f3a40;
-  --text-dim: #7f626a;
-  --text-faint: #a98e96;
-  --line: rgba(105, 50, 64, 0.14);
-  --line-strong: rgba(105, 50, 64, 0.22);
-  --surface: rgba(255, 248, 250, 0.62);
-  --surface-2: rgba(255, 248, 250, 0.85);
-  --accent: #c14e67;
-  --accent-bright: #a83b53;
-  --accent-dim: rgba(193, 78, 103, 0.12);
-  --accent-glow: rgba(193, 78, 103, 0.3);
-  --danger: #bf4949;
-  --chrome-rgb: 252, 243, 246;
-  --inset-bg: rgba(105, 45, 60, 0.07);
-  --drawer-bg: linear-gradient(180deg, rgba(253, 246, 248, 0.95), rgba(248, 237, 241, 0.97));
-  --syn-comment: #8f6672;
-  --syn-keyword: #a83b53;
-  --syn-string: #4f6a2a;
-  --syn-number: #8a5c1d;
-  --syn-func: #a83b53;
-  --syn-type: #33608a;
-  --syn-var: #4f3a40;
-  --syn-meta: #7c4557;
-}
-
-/* shared adjustments for the light variants */
 [data-mode="light"] .skel-row,
 [data-mode="light"] .msg.skel {
   background: rgba(0, 0, 0, 0.06);

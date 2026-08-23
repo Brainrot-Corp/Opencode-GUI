@@ -1,13 +1,17 @@
 import { useEffect, useRef, useState } from "react";
-import { THEMES, type ThemeName } from "../hooks/useSettings";
+import type { ThemeMeta } from "../lib/themes";
 
+// theme picker fed the live config-driven list — additions/deletions in
+// themes.json show up here without a restart
 export default function ThemeSelect({
+  themes,
   value,
   onChange,
   variant = "bar",
 }: {
-  value: ThemeName;
-  onChange: (t: ThemeName) => void;
+  themes: ThemeMeta[];
+  value: string;
+  onChange: (t: string) => void;
   variant?: "bar" | "drawer";
 }) {
   const [open, setOpen] = useState(false);
@@ -23,7 +27,9 @@ export default function ThemeSelect({
     return () => document.removeEventListener("pointerdown", onDoc, true);
   }, [open]);
 
-  const current = THEMES.find((t) => t.id === value) ?? THEMES[0];
+  const current =
+    themes.find((t) => t.id === value) ??
+    themes[0] ?? { id: value, name: value, icon: "fa-palette" };
 
   function onKeyDown(e: React.KeyboardEvent) {
     if (!open && (e.key === "Enter" || e.key === " ")) {
@@ -49,7 +55,7 @@ export default function ThemeSelect({
       </button>
       {open && (
         <div className="model-menu theme-menu" role="listbox">
-          {THEMES.map((t) => (
+          {themes.map((t) => (
             <button
               key={t.id}
               type="button"

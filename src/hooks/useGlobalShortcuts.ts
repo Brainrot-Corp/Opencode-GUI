@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { THEMES, type AppSettings } from "./useSettings";
+import type { AppSettings } from "./useSettings";
 import { playSound } from "../lib/sounds";
 
 // window/document-level listeners ChatPage used to inline: embedded-browser
@@ -12,12 +12,18 @@ export function useGlobalShortcuts({
   openBrowser,
   toggleDiff,
   openSettings,
+  themeIds,
+  activeModes,
 }: {
   settings: AppSettings;
   update: (patch: Partial<AppSettings>) => void;
   openBrowser: (url: string) => void;
   toggleDiff: () => void;
   openSettings: () => void;
+  // live theme list — /themes cycles whatever themes.json currently has
+  themeIds?: string[];
+  // variations the active theme provides — /scheme no-ops when locked to one
+  activeModes?: ("dark" | "light")[];
 }) {
   // follow links from chat content in the embedded browser — capture phase,
   // because react-markdown anchors aren't ours to attach handlers to
@@ -89,17 +95,21 @@ export function useGlobalShortcuts({
   // slash-command UI handoffs (/themes /scheme)
   useEffect(() => {
     const themes = () => {
-      const ids = THEMES.map((t) => t.id);
+      const ids = themeIds ?? [];
+      if (!ids.length) return;
       update({ theme: ids[(ids.indexOf(settings.theme) + 1) % ids.length] });
     };
-    const scheme = () => update({ mode: settings.mode === "dark" ? "light" : "dark" });
+    const scheme = () => {
+      if (activeModes && activeModes.length < 2) return;
+      update({ mode: settings.mode === "dark" ? "light" : "dark" });
+    };
     window.addEventListener("oc:themes", themes);
     window.addEventListener("oc:scheme", scheme);
     return () => {
       window.removeEventListener("oc:themes", themes);
       window.removeEventListener("oc:scheme", scheme);
     };
-  }, [settings.theme, settings.mode, update]);
+  }, [settings.theme, settings.mode, update, themeIds, activeModes]);
 
   useEffect(() => {
     const collapse = () => update({ collapsed: !settings.collapsed });

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { enable, isEnabled, disable } from "@tauri-apps/plugin-autostart";
 import type { AppSettings, ColorSet } from "../hooks/useSettings";
-import { THEMES } from "../hooks/useSettings";
+import type { ThemeMeta } from "../lib/themes";
 import type { SoundPrefs } from "../lib/sounds";
 import { applyWorkspace, pickWorkspace } from "../lib/workspace";
 import ThemeSelect from "./ThemeSelect";
@@ -15,6 +15,10 @@ export default function SettingsDrawer({
   updateSounds,
   updateColors,
   resetColors,
+  themes,
+  colorsFor,
+  modes,
+  effectiveMode,
 }: {
   open: boolean;
   onClose: () => void;
@@ -23,8 +27,15 @@ export default function SettingsDrawer({
   updateSounds: (patch: Partial<SoundPrefs>) => void;
   updateColors: (patch: Partial<ColorSet>) => void;
   resetColors: () => void;
+  themes?: ThemeMeta[];
+  colorsFor?: (theme: string) => Record<"dark" | "light", ColorSet>;
+  // variations the active theme provides — Mode selector hidden when one
+  modes?: ("dark" | "light")[];
+  effectiveMode?: "dark" | "light";
 }) {
-  const cs = settings.colors[settings.theme][settings.mode];
+  // custom themes have no stored color entry yet — cyan's shared base is the
+  // starting point until the user overrides it
+  const cs = (colorsFor?.(settings.theme) ?? settings.colors.cyan)[settings.mode];
   const [autoLaunch, setAutoLaunch] = useState<boolean | null>(null);
 
   useEffect(() => {
@@ -103,35 +114,38 @@ export default function SettingsDrawer({
               </div>
             </div>
             <ThemeSelect
+              themes={themes ?? []}
               variant="drawer"
               value={settings.theme}
               onChange={(t) => update({ theme: t })}
             />
           </div>
 
-          <div className="setting-row">
-            <div className="setting-info">
-              <i className="fa-solid fa-circle-half-stroke setting-icon" />
-              <div>
-                <div className="setting-name">Mode</div>
-                <div className="setting-desc">Dark or light variant of the theme</div>
+          {(!modes || modes.length > 1) && (
+            <div className="setting-row">
+              <div className="setting-info">
+                <i className="fa-solid fa-circle-half-stroke setting-icon" />
+                <div>
+                  <div className="setting-name">Mode</div>
+                  <div className="setting-desc">Dark or light variant of the theme</div>
+                </div>
+              </div>
+              <div className="seg-row mode-seg" role="radiogroup" aria-label="Mode">
+                {(modes ?? (["dark", "light"] as const)).map((m) => (
+                  <button
+                    key={m}
+                    type="button"
+                    role="radio"
+                    aria-checked={effectiveMode === m}
+                    className={`seg${effectiveMode === m ? " on" : ""}`}
+                    onClick={() => update({ mode: m })}
+                  >
+                    {m === "dark" ? "Dark" : "Light"}
+                  </button>
+                ))}
               </div>
             </div>
-            <div className="seg-row mode-seg" role="radiogroup" aria-label="Mode">
-              {(["dark", "light"] as const).map((m) => (
-                <button
-                  key={m}
-                  type="button"
-                  role="radio"
-                  aria-checked={settings.mode === m}
-                  className={`seg${settings.mode === m ? " on" : ""}`}
-                  onClick={() => update({ mode: m })}
-                >
-                  {m === "dark" ? "Dark" : "Light"}
-                </button>
-              ))}
-            </div>
-          </div>
+          )}
 
           <div className="setting-row">
             <div className="setting-info">
@@ -198,7 +212,7 @@ export default function SettingsDrawer({
             <div className="sound-box-head">
               <i className="fa-solid fa-palette setting-icon" />
               <span>Appearance</span>
-              <span className="mono-hint">{THEMES.find((t) => t.id === settings.theme)?.name}</span>
+              <span className="mono-hint">{themes?.find((t) => t.id === settings.theme)?.name}</span>
               <button type="button" className="reset-btn" onClick={resetColors}>
                 <i className="fa-solid fa-rotate-left" />
                 Reset

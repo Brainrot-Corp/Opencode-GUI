@@ -1,19 +1,23 @@
 import { useCallback, useEffect, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { setSoundPrefs, type SoundPrefs } from "../lib/sounds";
+import {
+  applyTheme,
+  defaultThemesJson,
+  parseThemesConfig,
+  stripComments,
+  THEME_CONFIG_VERSION,
+  type NormalizedTheme,
+  type ThemeMeta,
+} from "../lib/themes";
 
-export type ThemeName = "cyan" | "latte" | "matcha" | "strawberry";
+export type ThemeName = string;
 export type Mode = "dark" | "light";
 export type ColorSet = { base: string; baseA: number; surface: string; surfaceA: number };
-export type AppColors = Record<ThemeName, Record<Mode, ColorSet>>;
-
-export const THEMES: { id: ThemeName; name: string; icon: string }[] = [
-  { id: "cyan", name: "Cyan", icon: "fa-droplet" },
-  { id: "latte", name: "Latte", icon: "fa-mug-hot" },
-  { id: "matcha", name: "Matcha", icon: "fa-leaf" },
-  { id: "strawberry", name: "Strawberry", icon: "fa-apple-whole" },
-];
+export type AppColors = Record<string, Record<Mode, ColorSet>>;
 
 const DEFAULT_COLOR_SETS: AppColors = {
   cyan: {
@@ -25,11 +29,11 @@ const DEFAULT_COLOR_SETS: AppColors = {
     light: { base: "#f6efe4", baseA: 0.55, surface: "#fffdf8", surfaceA: 0.5 },
   },
   matcha: {
-    dark: { base: "#0c110b", baseA: 0.62, surface: "#182116", surfaceA: 0.42 },
+    dark: { base: "#0c110b", baseA: 0.62, surface: "#262116", surfaceA: 0.42 },
     light: { base: "#eef4e7", baseA: 0.55, surface: "#fbfef7", surfaceA: 0.5 },
   },
   strawberry: {
-    dark: { base: "#140b0e", baseA: 0.62, surface: "#26141a", surfaceA: 0.42 },
+    dark: { base: "#140b0e", baseA: 0.62, surface: "#2c141a", surfaceA: 0.42 },
     light: { base: "#fbeef2", baseA: 0.55, surface: "#fff8fa", surfaceA: 0.5 },
   },
 };
@@ -82,10 +86,10 @@ function num(v: unknown, def: number, min: number, max: number) {
 //   latte/matcha/strawberry (no mode)   → same theme + light mode
 function loadColors(p: any, legacyTheme: string): AppColors {
   const out = structuredClone(DEFAULT_COLOR_SETS);
-  const themes: ThemeName[] = ["cyan", "latte", "matcha", "strawberry"];
-  const th: ThemeName = themes.includes(p?.colors?.[legacyTheme] as ThemeName)
-    ? (p.colors[legacyTheme] as ThemeName)
-    : "cyan";
+  const th: string =
+    typeof p?.colors?.[legacyTheme] === "object" ? legacyTheme : "cyan";
+  // custom theme ids have no defaults — start from the shared cyan base
+  if (!out[th]) out[th] = structuredClone(DEFAULT_COLOR_SETS.cyan);
   const src = p?.colors?.[th];
   if (src) {
     for (const m of ["dark", "light"] as Mode[]) {
@@ -98,9 +102,9 @@ function loadColors(p: any, legacyTheme: string): AppColors {
     }
   } else if (p?.colors && HEX.test(p.colors.base)) {
     // very old flat shape
-    if (HEX.test(p.colors.base)) out.cyan.dark.base = p.colors.base;
+    out.cyan.dark.base = p.colors.base;
     out.cyan.dark.baseA = num(p.colors.baseA, out.cyan.dark.baseA, 0, 1);
-    if (HEX.test(p.colors.surface)) out.cyan.dark.surface = p.colors.surface;
+    out.cyan.dark.surface = p.colors.surface ?? out.cyan.dark.surface;
     out.cyan.dark.surfaceA = num(p.colors.surfaceA, out.cyan.dark.surfaceA, 0, 1);
   }
   return out;
@@ -111,6 +115,36 @@ function hexToRgb(hex: string): string {
   return `${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}`;
 }
 
+// per-theme color overrides may not exist for custom/config themes — fall
+// back to cyan's (the palettes' translucent black base is shared anyway)
+function colorsFor(colors: AppColors, theme: string): Record<Mode, ColorSet> {
+  return colors[theme] ?? colors.cyan ?? DEFAULT_COLOR_SETS.cyan;
+}
+
+// load ~/.config/.opencode-gui/themes.json via the Rust side, seeding the
+// default file on first run. returns null when the file is present but
+// unusable (caller keeps its previous set)
+async function loadThemeConfig(): Promise<Record<string, NormalizedTheme> | null> {
+  let text = await invoke<string>("theme_config_read").catch(() => "");
+  if (!text.trim()) {
+    text = defaultThemesJson();
+    await invoke("theme_config_write", { content: text }).catch(() => {});
+    return parseThemesConfig(text);
+  }
+  // pre-versioned seed (v1 had no explicit cyan dark block) — re-seed
+  try {
+    const obj = JSON.parse(stripComments(text));
+    if (obj?.version !== THEME_CONFIG_VERSION) {
+      text = defaultThemesJson();
+      await invoke("theme_config_write", { content: text }).catch(() => {});
+      return parseThemesConfig(text);
+    }
+  } catch {
+    return null; // invalid JSON → caller keeps last good set
+  }
+  return parseThemesConfig(text);
+}
+
 export function useSettings() {
   const [settings, setSettings] = useState<AppSettings>(() => {
     try {
@@ -118,8 +152,7 @@ export function useSettings() {
       if (!raw) return structuredClone(DEFAULTS);
       const p = JSON.parse(raw);
       const legacy = p.theme === "light";
-      const themes: ThemeName[] = ["cyan", "latte", "matcha", "strawberry"];
-      const theme: ThemeName = themes.includes(p.theme) ? p.theme : "cyan";
+      const theme: ThemeName = typeof p.theme === "string" && !legacy ? p.theme : "cyan";
       const mode: Mode = legacy ? "light" : p.mode === "light" ? "light" : "dark";
       return {
         theme,
@@ -153,6 +186,47 @@ export function useSettings() {
     }
   });
 
+  // available themes — seeded from config at boot, hot-reloaded on file change
+  const [themes, setThemes] = useState<Record<string, NormalizedTheme>>({});
+  const [themeError, setThemeError] = useState("");
+
+  useEffect(() => {
+    let disposed = false;
+    const reload = () =>
+      loadThemeConfig().then((parsed) => {
+        if (disposed) return;
+        if (parsed) {
+          setThemes(parsed);
+          setThemeError("");
+        } else {
+          setThemeError("themes.json is invalid — keeping the last good set");
+        }
+      });
+    reload();
+    let un: (() => void) | undefined;
+    listen("themes://changed", reload).then((f) => {
+      un = f;
+    });
+    return () => {
+      disposed = true;
+      un?.();
+    };
+  }, []);
+
+  // active theme id must exist; deleted themes fall back to the first entry
+  const activeId =
+    settings.theme in themes
+      ? settings.theme
+      : Object.keys(themes)[0] ?? settings.theme;
+  const activeDef = themes[activeId];
+  // variations the active theme defines — single-variation themes lock the UI
+  const activeModes: Mode[] = activeDef
+    ? ([("dark" as const), ("light" as const)].filter((m) => activeDef.available[m]) as Mode[])
+    : (["dark", "light"] as Mode[]);
+  const effectiveMode: Mode = activeModes.includes(settings.mode)
+    ? settings.mode
+    : activeModes[0];
+
   useEffect(() => {
     localStorage.setItem(KEY, JSON.stringify(settings));
   }, [settings]);
@@ -161,17 +235,19 @@ export function useSettings() {
     setSoundPrefs(settings.sounds);
   }, [settings.sounds]);
 
-  // theme + mode + appearance → DOM (CSS variables drive every surface)
+  // theme + mode + appearance → DOM (CSS variables drive every surface).
+  // full palette comes from applyTheme; the user's per-theme color overrides
+  // layer on top of it afterwards
   useEffect(() => {
-    const cs = settings.colors[settings.theme][settings.mode];
-    document.documentElement.dataset.theme = settings.theme;
-    document.documentElement.dataset.mode = settings.mode;
+    if (activeDef) applyTheme(activeId, activeDef, effectiveMode);
+    else document.documentElement.dataset.mode = effectiveMode;
+    const cs = colorsFor(settings.colors, activeId)[effectiveMode];
     const s = document.documentElement.style;
     s.setProperty("--base-rgb", hexToRgb(cs.base));
     s.setProperty("--base-a", String(cs.baseA));
     s.setProperty("--surf-rgb", hexToRgb(cs.surface));
     s.setProperty("--surf-a", String(cs.surfaceA));
-  }, [settings.theme, settings.mode, settings.colors]);
+  }, [activeDef, activeId, settings.mode, settings.colors, effectiveMode]);
 
   useEffect(() => {
     getCurrentWindow().setAlwaysOnTop(settings.alwaysOnTop).catch(() => {});
@@ -186,19 +262,32 @@ export function useSettings() {
     [],
   );
 
+  // deleted active theme: persist the fallback so it doesn't re-resolve
+  useEffect(() => {
+    if (Object.keys(themes).length && !(settings.theme in themes)) {
+      update({ theme: Object.keys(themes)[0] });
+    }
+  }, [themes, settings.theme, update]);
+
   const updateSounds = useCallback((patch: Partial<SoundPrefs>) => {
     setSettings((s) => ({ ...s, sounds: { ...s.sounds, ...patch } }));
   }, []);
 
   const updateColors = useCallback(
     (patch: Partial<ColorSet>) =>
-      setSettings((s) => ({
-        ...s,
-        colors: {
-          ...s.colors,
-          [s.theme]: { ...s.colors[s.theme], [s.mode]: { ...s.colors[s.theme][s.mode], ...patch } },
-        },
-      })),
+      setSettings((s) => {
+        const cur = colorsFor(s.colors, s.theme);
+        return {
+          ...s,
+          colors: {
+            ...s.colors,
+            [s.theme]: {
+              ...cur,
+              [s.mode]: { ...cur[s.mode], ...patch },
+            },
+          },
+        };
+      }),
     [],
   );
 
@@ -207,12 +296,25 @@ export function useSettings() {
       setSettings((s) => ({
         ...s,
         colors: {
-          ...structuredClone(DEFAULT_COLOR_SETS),
-          [s.theme]: structuredClone(DEFAULT_COLOR_SETS)[s.theme],
+          ...s.colors,
+          [s.theme]: structuredClone(DEFAULT_COLOR_SETS.cyan),
         },
       })),
     [],
   );
 
-  return { settings, update, updateSounds, updateColors, resetColors };
+  const themeList: ThemeMeta[] = Object.values(themes).map((t) => t.meta);
+
+  return {
+    settings,
+    update,
+    updateSounds,
+    updateColors,
+    resetColors,
+    themes: themeList,
+    themeError,
+    activeModes,
+    effectiveMode,
+    colorsFor: (theme: string) => colorsFor(settings.colors, theme),
+  };
 }

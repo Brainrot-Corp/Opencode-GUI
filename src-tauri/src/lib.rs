@@ -1,4 +1,5 @@
 use std::net::TcpListener;
+use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 
@@ -52,6 +53,64 @@ fn server_url(state: State<'_, ServerState>) -> Result<String, String> {
     }
 }
 
+// theme config: ~/.config/.opencode-gui/themes.json — read by the frontend,
+// seeded once by it, and watched here so edits hot-reload the UI
+fn themes_dir() -> PathBuf {
+    let home = std::env::var("USERPROFILE").unwrap_or_default();
+    PathBuf::from(home).join(".config").join(".opencode-gui")
+}
+
+#[tauri::command]
+fn theme_config_read() -> Result<String, String> {
+    let p = themes_dir().join("themes.json");
+    if !p.exists() {
+        return Ok(String::new());
+    }
+    std::fs::read_to_string(&p).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn theme_config_write(content: String) -> Result<(), String> {
+    let dir = themes_dir();
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    std::fs::write(dir.join("themes.json"), content).map_err(|e| e.to_string())
+}
+
+// watch the theme config dir; coalesce bursts of events into one emit
+fn watch_themes(handle: tauri::AppHandle) {
+    use notify::Watcher as _;
+    let _ = std::fs::create_dir_all(themes_dir());
+    let (tx, rx) = std::sync::mpsc::channel();
+    let mut watcher = match notify::recommended_watcher(tx) {
+        Ok(w) => w,
+        Err(e) => {
+            eprintln!("theme watcher unavailable: {e}");
+            return;
+        }
+    };
+    if let Err(e) = watcher.watch(&themes_dir(), notify::RecursiveMode::NonRecursive) {
+        eprintln!("theme watch failed: {e}");
+        return;
+    }
+    // keep the watcher alive for the process lifetime
+    std::thread::spawn(move || {
+        let _keep = watcher;
+        loop {
+            if rx.recv().is_err() {
+                break;
+            }
+            // debounce: editors write in several steps
+            let deadline = std::time::Instant::now() + std::time::Duration::from_millis(300);
+            while std::time::Instant::now() < deadline {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+                let _ = rx.try_recv();
+            }
+            use tauri::Emitter;
+            let _ = handle.emit("themes://changed", ());
+        }
+    });
+}
+
 fn show_main(app: &tauri::AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.show();
@@ -83,6 +142,8 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             server_url,
+            theme_config_read,
+            theme_config_write,
             browser_open,
             browser_back,
             browser_forward,
@@ -173,6 +234,7 @@ pub fn run() {
             };
             app.manage(state);
             app.manage(browser::BrowserState::default());
+            watch_themes(app.handle().clone());
             // make sure the window actually owns keyboard focus on launch —
             // otherwise the first Alt+Space sees "visible but unfocused" and
             // only focuses it instead of hiding it

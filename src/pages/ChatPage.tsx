@@ -22,7 +22,18 @@ const SB_C_KEY = "oc.sb.c";
 
 export default function ChatPage() {
   const oc = useOpencode();
-  const { settings, update, updateSounds, updateColors, resetColors } = useSettings();
+  const {
+    settings,
+    update,
+    updateSounds,
+    updateColors,
+    resetColors,
+    themes,
+    themeError,
+    activeModes,
+    effectiveMode,
+    colorsFor,
+  } = useSettings();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [diffOpen, setDiffOpen] = useState(false);
 
@@ -58,6 +69,8 @@ export default function ChatPage() {
     openBrowser,
     toggleDiff,
     openSettings: openSettingsDrawer,
+    themeIds: themes.map((t) => t.id),
+    activeModes,
   });
 
   useEffect(() => {
@@ -120,9 +133,10 @@ export default function ChatPage() {
           pinned={settings.alwaysOnTop}
           onTogglePin={() => update({ alwaysOnTop: !settings.alwaysOnTop })}
           onOpenSettings={openSettings}
+          themes={themes}
           theme={settings.theme}
           onThemeChange={(t) => update({ theme: t })}
-          mode={settings.mode}
+          mode={effectiveMode}
           onModeChange={(m) => update({ mode: m })}
         />
         <SettingsDrawer
@@ -133,6 +147,10 @@ export default function ChatPage() {
           updateSounds={updateSounds}
           updateColors={updateColors}
           resetColors={resetColors}
+          themes={themes}
+          colorsFor={colorsFor}
+          modes={activeModes}
+          effectiveMode={effectiveMode}
         />
         <div
           className={`layout${resizing ? " no-anim" : ""}`}
@@ -155,6 +173,7 @@ export default function ChatPage() {
           />
           <div className="main">
             {oc.error && <div className="banner">{oc.error}</div>}
+            {themeError && <div className="banner">{themeError}</div>}
             {!oc.activeId && !oc.booting && (
               <div className="messages">
                 <p className="empty">
