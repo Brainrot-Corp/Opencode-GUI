@@ -56,7 +56,7 @@ export default function DiffPanel({
       <div className="diff-panel" onClick={(e) => e.stopPropagation()} role="dialog">
         <div className="diff-head">
           <span>Changes in this session</span>
-          <button className="icon-btn diff-close" title="Close" onClick={onClose}>
+          <button className="icon-btn diff-close" data-tip="Close" onClick={onClose}>
             <i className="fa-solid fa-xmark" />
           </button>
         </div>

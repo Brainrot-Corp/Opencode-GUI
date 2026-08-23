@@ -39,7 +39,7 @@ export default function Titlebar({
         <ThemeSelect value={theme ?? "cyan"} onChange={(t) => onThemeChange?.(t)} />
         <button
           className="icon-btn"
-          title={mode === "light" ? "Switch to dark mode" : "Switch to light mode"}
+          data-tip={mode === "light" ? "Switch to dark mode" : "Switch to light mode"}
           onClick={() => {
             playSound("click");
             onModeChange?.(mode === "light" ? "dark" : "light");
@@ -48,12 +48,12 @@ export default function Titlebar({
           <i className={`fa-solid ${mode === "light" ? "fa-moon" : "fa-regular fa-sun"}`} />
         </button>
         <span className="ctrl-sep" />
-        <button className="icon-btn" title="Settings" onClick={() => onOpenSettings?.()}>
+        <button className="icon-btn" data-tip="Settings" onClick={() => onOpenSettings?.()}>
           <i className="fa-solid fa-gear" />
         </button>
         <button
           className={`icon-btn${pinned ? " on" : ""}`}
-          title={pinned ? "Unpin (always on top)" : "Pin to top (always on top)"}
+          data-tip={pinned ? "Unpin (always on top)" : "Pin to top (always on top)"}
           aria-pressed={pinned ?? false}
           onClick={() => onTogglePin?.()}
         >
@@ -62,7 +62,7 @@ export default function Titlebar({
         <span className="ctrl-sep" />
         <button
           className="icon-btn"
-          title="Hide to tray"
+          data-tip="Hide to tray"
           onClick={() => {
             playSound("hide");
             getCurrentWindow().hide();
@@ -72,7 +72,7 @@ export default function Titlebar({
         </button>
         <button
           className="icon-btn"
-          title="Maximize / restore"
+          data-tip="Maximize / restore"
           onClick={() => {
             playSound("maximize");
             getCurrentWindow().toggleMaximize();
@@ -82,7 +82,7 @@ export default function Titlebar({
         </button>
         <button
           className="icon-btn close"
-          title="Close"
+          data-tip="Close"
           onClick={() => {
             playSound("close");
             window.setTimeout(() => getCurrentWindow().close(), 130);

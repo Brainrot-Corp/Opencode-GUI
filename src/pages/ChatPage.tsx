@@ -7,6 +7,7 @@ import Composer from "../components/Composer";
 import PermissionBar from "../components/PermissionBar";
 import SettingsDrawer from "../components/SettingsDrawer";
 import DiffPanel from "../components/DiffPanel";
+import TooltipLayer from "../components/TooltipLayer";
 import { useOpencode } from "../hooks/useOpencode";
 import { useSettings } from "../hooks/useSettings";
 import { pickWorkspace } from "../lib/workspace";
@@ -145,6 +146,7 @@ export default function ChatPage() {
   return (
     <>
       <div className="noise" aria-hidden="true" />
+      <TooltipLayer />
       <div className="app">
         <Titlebar
           pinned={settings.alwaysOnTop}
@@ -195,7 +197,7 @@ export default function ChatPage() {
             {(oc.activeId || oc.booting) && (
               <>
                 {settings.workspace && (
-                  <div className="stage-head" title={settings.workspace}>
+                  <div className="stage-head" data-tip={settings.workspace}>
                     <i className="fa-solid fa-folder-open" />
                     <span className="mono">{settings.workspace}</span>
                   </div>

@@ -60,7 +60,7 @@ export default function SettingsDrawer({
       >
         <div className="settings-head">
           <h2>Settings</h2>
-          <button className="icon-btn" title="Close" onClick={onClose}>
+          <button className="icon-btn" data-tip="Close" onClick={onClose}>
             <i className="fa-solid fa-xmark" />
           </button>
         </div>
@@ -81,7 +81,7 @@ export default function SettingsDrawer({
                 <button
                   type="button"
                   className="reset-btn"
-                  title="Back to home folder"
+                  data-tip="Back to home folder"
                   onClick={() => applyWorkspace("")}
                 >
                   <i className="fa-solid fa-rotate-left" />
@@ -273,7 +273,7 @@ export default function SettingsDrawer({
                 max={1}
                 step={0.05}
                 value={settings.sounds.volume}
-                title={`Master volume ${Math.round(settings.sounds.volume * 100)}%`}
+                data-tip={`Master volume ${Math.round(settings.sounds.volume * 100)}%`}
                 aria-label="Master volume"
                 onChange={(e) => updateSounds({ volume: Number(e.target.value) })}
               />

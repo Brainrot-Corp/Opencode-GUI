@@ -46,7 +46,7 @@ export default function Sidebar({
         {collapsed ? (
           <button
             className="icon-btn sb-expand"
-            title="Show session history"
+            data-tip="Show session history"
             onClick={() => {
               playSound("expand");
               onToggle();
@@ -80,7 +80,7 @@ export default function Sidebar({
                 </div>
                 <button
                   className="icon-btn sb-toggle"
-                  title="Hide panel"
+                  data-tip="Hide panel"
                   onClick={() => {
                     playSound("collapse");
                     onToggle();
@@ -111,18 +111,18 @@ export default function Sidebar({
                     <button
                       className="session-item"
                       onClick={() => onOpen(s.id)}
-                      title={s.title || s.id}
+                      data-tip={s.title || s.id}
                     >
                       {s.title || "New session"}
                     </button>
-                    <button className="del" title="Delete session" onClick={() => onDelete(s.id)}>
+                    <button className="del" data-tip="Delete session" onClick={() => onDelete(s.id)}>
                       <i className="fa-solid fa-xmark" />
                     </button>
                   </div>
                 ))
               )}
             </div>
-            <div className="sb-resize" title="Drag to resize" onMouseDown={onStartResize} />
+            <div className="sb-resize" data-tip="Drag to resize" onMouseDown={onStartResize} />
           </>
         )}
       </aside>

@@ -187,7 +187,7 @@ export default function Composer({
           <button
             type="button"
             className="icon-btn diff-btn"
-            title={`Workspace: ${workspace || "home folder"} — click to change`}
+            data-tip={`Workspace: ${workspace || "home folder"} — click to change`}
             onClick={onPickWorkspace}
           >
             <i className="fa-solid fa-folder-open" />
@@ -197,7 +197,7 @@ export default function Composer({
           <button
             type="button"
             className="icon-btn diff-btn"
-            title="Files changed in this session"
+            data-tip="Files changed in this session"
             onClick={onToggleDiff}
           >
             <i className="fa-solid fa-code-compare" />

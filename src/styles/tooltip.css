@@ -1,0 +1,29 @@
+/* themed tooltip layer — replaces native title popups app-wide */
+
+.tip {
+  position: fixed;
+  z-index: 90;
+  max-width: min(420px, calc(100vw - 16px));
+  padding: 5px 9px;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.03em;
+  color: var(--text);
+  background: var(--drawer-bg);
+  backdrop-filter: blur(20px) saturate(1.2);
+  -webkit-backdrop-filter: blur(20px) saturate(1.2);
+  border: 1px solid color-mix(in srgb, var(--accent) calc(0.22 * 100%), transparent);
+  border-radius: 4px;
+  box-shadow: 0 12px 32px -12px rgba(0, 0, 0, 0.7), 0 0 16px -8px var(--accent-glow);
+  pointer-events: none;
+  /* wrap long paths instead of overflowing */
+  white-space: normal;
+  overflow-wrap: anywhere;
+  opacity: 0;
+  transform: translateY(4px);
+  transition: opacity 0.15s var(--ease), transform 0.15s var(--ease);
+}
+.tip.show {
+  opacity: 1;
+  transform: translateY(0);
+}

@@ -68,7 +68,7 @@ export default function MessageList({
             {m.info.role === "user" && onRevert && (
               <button
                 className="rewind"
-                title="Rewind conversation to here"
+                data-tip="Rewind conversation to here"
                 onClick={() => onRevert(m.info.id)}
               >
                 <i className="fa-solid fa-clock-rotate-left" />

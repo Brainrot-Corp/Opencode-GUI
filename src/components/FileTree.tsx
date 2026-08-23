@@ -142,7 +142,7 @@ export default function FileTree() {
             <span className="mono">{preview.path}</span>
             <button
               className="icon-btn"
-              title="Close preview"
+              data-tip="Close preview"
               onClick={() => setPreview(null)}
             >
               <i className="fa-solid fa-xmark" />

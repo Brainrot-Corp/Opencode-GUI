@@ -42,7 +42,7 @@ export default function ThemeSelect({
         onClick={() => setOpen((o) => !o)}
         aria-haspopup="listbox"
         aria-expanded={open}
-        title="Theme"
+        data-tip="Theme"
       >
         <i className={`fa-solid ${current.icon}`} />
         {variant === "drawer" && <span>{current.name}</span>}
