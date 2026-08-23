@@ -286,7 +286,7 @@
 }
 
 .msg pre {
-  background: rgba(9, 13, 17, 0.8);
+  background: var(--inset-bg);
   border: 1px solid var(--line);
   padding: 12px 14px;
   border-radius: 0;
@@ -296,7 +296,7 @@
   margin: 0.5em 0;
 }
 .msg code {
-  background: rgba(9, 13, 17, 0.8);
+  background: var(--inset-bg);
   border: 1px solid var(--line);
   padding: 1px 5px;
   border-radius: 0;

@@ -52,6 +52,11 @@
   padding: 0 10px;
   white-space: pre;
 }
+.diff-lines .sign {
+  display: inline-block;
+  width: 1ch;
+  opacity: 0.45;
+}
 .diff-lines .ctx {
   color: var(--text-dim);
   opacity: 0.75;

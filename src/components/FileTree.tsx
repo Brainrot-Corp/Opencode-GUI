@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { opencode } from "../api";
+import { extLang, escPlain, hlHtml } from "../lib/syntax";
 import "../styles/files.css";
 
 type Node = {
@@ -36,7 +37,7 @@ export default function FileTree() {
   const [kids, setKids] = useState<Map<string, Node[]>>(new Map());
   const [openDirs, setOpenDirs] = useState<Set<string>>(new Set());
   const [loadingDir, setLoadingDir] = useState("");
-  const [preview, setPreview] = useState<{ path: string; text: string } | null>(null);
+  const [preview, setPreview] = useState<{ path: string; text: string; ok: boolean } | null>(null);
   const [error, setError] = useState("");
 
   async function load(path: string) {
@@ -73,7 +74,7 @@ export default function FileTree() {
   }
 
   async function openFile(n: Node) {
-    setPreview({ path: n.path, text: "Loading…" });
+    setPreview({ path: n.path, text: "Loading…", ok: false });
     try {
       const { client } = await opencode();
       const r: any = await client.file.read({ query: { path: n.path } });
@@ -81,9 +82,10 @@ export default function FileTree() {
       setPreview({
         path: n.path,
         text: fc?.type === "binary" ? "(binary file)" : (fc?.content ?? ""),
+        ok: fc?.type !== "binary" && !!fc?.content,
       });
     } catch (e) {
-      setPreview({ path: n.path, text: String(e) });
+      setPreview({ path: n.path, text: String(e), ok: false });
     }
   }
 
@@ -148,9 +150,19 @@ export default function FileTree() {
               <i className="fa-solid fa-xmark" />
             </button>
           </div>
-          <pre className="ft-preview-body mono">{preview.text}</pre>
+          <PreviewBody path={preview.path} text={preview.text} ok={preview.ok} />
         </div>
       )}
     </div>
   );
+}
+
+// highlighted file preview — language from the real path; placeholders and
+// errors stay plain (hlHtml's size caps keep huge files from janking)
+function PreviewBody({ path, text, ok }: { path: string; text: string; ok: boolean }) {
+  const html = useMemo(
+    () => ({ __html: ok ? hlHtml(text, extLang(path)) : escPlain(text) }),
+    [path, text, ok],
+  );
+  return <pre className="ft-preview-body mono" dangerouslySetInnerHTML={html} />;
 }

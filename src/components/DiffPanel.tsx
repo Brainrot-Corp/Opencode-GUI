@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
+import type { ReactNode } from "react";
 import type { Msg } from "../types";
 import { opencode } from "../api";
+import { extLang, hlHtml } from "../lib/syntax";
 import Dialog from "./Dialog";
 import "../styles/diff.css";
 
@@ -64,33 +66,64 @@ export default function DiffPanel({
               <em>+{d.additions ?? 0}</em> <em className="del">-{d.deletions ?? 0}</em>
             </span>
           </div>
-          <DiffLines patch={d.patch ?? ""} />
+          <DiffLines patch={d.patch ?? ""} lang={extLang(d.file)} />
         </div>
       ))}
     </Dialog>
   );
 }
 
-// colorize the server-provided unified diff
-function DiffLines({ patch }: { patch: string }) {
+// colorize the server-provided unified diff: runs of add/del/context lines
+// are highlighted as one block (so multi-line tokens stay consistent), then
+// re-split by line; hunk and file headers keep their plain styling
+function DiffLines({ patch, lang }: { patch: string; lang?: string }) {
   if (!patch.trim()) return null;
-  return (
-    <div className="diff-lines mono">
-      {patch.split("\n").map((l, i) => {
-        const cls =
-          l.startsWith("+") && !l.startsWith("+++")
-            ? "add"
-            : l.startsWith("-") && !l.startsWith("---")
-              ? "del"
-              : l.startsWith("@@")
-                ? "hunk"
-                : "ctx";
-        return (
-          <div key={i} className={cls}>
-            {l}
-          </div>
-        );
-      })}
-    </div>
-  );
+  const lines = patch.split("\n");
+  if (lines[lines.length - 1] === "") lines.pop();
+
+  const out: ReactNode[] = [];
+  let buf: { cls: string; sign: string; code: string }[] = [];
+  const flush = () => {
+    if (!buf.length) return;
+    const html = lang
+      ? hlHtml(buf.map((b) => b.code).join("\n"), lang).split("\n")
+      : null;
+    for (const b of buf)
+      out.push(
+        <div key={out.length} className={b.cls}>
+          <span className="sign">{b.sign}</span>
+          {html ? <span dangerouslySetInnerHTML={{ __html: html.shift() ?? "" }} /> : b.code}
+        </div>,
+      );
+    buf = [];
+  };
+
+  for (const l of lines) {
+    if (l.startsWith("@@")) {
+      flush();
+      out.push(
+        <div key={out.length} className="hunk">
+          {l}
+        </div>,
+      );
+      continue;
+    }
+    if (/^(---|\+\+\+|diff |index |old mode|new mode)/.test(l)) {
+      flush();
+      out.push(
+        <div key={out.length} className="ctx meta">
+          {l}
+        </div>,
+      );
+      continue;
+    }
+    const cls = l.startsWith("+") ? "add" : l.startsWith("-") ? "del" : "ctx";
+    const sign = cls === "add" ? "+" : cls === "del" ? "-" : " ";
+    // strip the diff prefix so it doesn't pollute the first token
+    const code = cls === "ctx" ? (l.startsWith(" ") ? l.slice(1) : l) : l.slice(1);
+    buf.push({ cls, sign, code });
+  }
+  flush();
+
+  return <div className="diff-lines mono">{out}</div>;
 }

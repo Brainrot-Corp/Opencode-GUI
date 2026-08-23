@@ -1,0 +1,64 @@
+/* syntax highlighting — .hljs-* token classes mapped onto the --syn-*
+   palette defined per theme × mode in tokens.css. Global scope: applies to
+   chat fences, tool blocks, diff rows and the file preview alike. */
+
+.hljs-comment,
+.hljs-quote {
+  color: var(--syn-comment);
+  font-style: italic;
+}
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-literal,
+.hljs-doctag,
+.hljs-formula {
+  color: var(--syn-keyword);
+}
+.hljs-string,
+.hljs-regexp,
+.hljs-addition,
+.hljs-meta .hljs-string {
+  color: var(--syn-string);
+}
+.hljs-number,
+.hljs-symbol,
+.hljs-bullet,
+.hljs-link {
+  color: var(--syn-number);
+}
+.hljs-title,
+.hljs-title.function_,
+.hljs-section,
+.hljs-selector-id,
+.hljs-selector-class {
+  color: var(--syn-func);
+}
+.hljs-title.class_,
+.hljs-title.function_.invoke__,
+.hljs-type,
+.hljs-built_in,
+.hljs-name,
+.hljs-tag {
+  color: var(--syn-type);
+}
+.hljs-attr,
+.hljs-attribute,
+.hljs-variable,
+.hljs-template-variable,
+.hljs-property,
+.hljs-params {
+  color: var(--syn-var);
+}
+.hljs-meta,
+.hljs-subst {
+  color: var(--syn-meta);
+}
+.hljs-deletion {
+  color: var(--danger);
+}
+.hljs-emphasis {
+  font-style: italic;
+}
+.hljs-strong {
+  font-weight: 600;
+}

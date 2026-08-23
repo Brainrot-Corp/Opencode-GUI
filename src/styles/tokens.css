@@ -30,6 +30,17 @@
   --mono: "JetBrains Mono", ui-monospace, "Cascadia Mono", Consolas, "Courier New", monospace;
   --sans: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+
+  /* syntax token palette (cyan dark default) — consumed by styles/syntax.css,
+     overridden per theme × mode below so code follows the active theme */
+  --syn-comment: #55707c;
+  --syn-keyword: #7fd4d4;
+  --syn-string: #9fce8f;
+  --syn-number: #d4b57f;
+  --syn-func: #a8e6e4;
+  --syn-type: #8fc7e0;
+  --syn-var: #d7e0e6;
+  --syn-meta: #74a0ab;
 }
 
 * {
@@ -142,6 +153,14 @@ button:focus-visible,
   --chrome-rgb: 255, 255, 255;
   --inset-bg: rgba(13, 25, 33, 0.07);
   --drawer-bg: linear-gradient(180deg, rgba(250, 252, 254, 0.95), rgba(240, 245, 248, 0.97));
+  --syn-comment: #64767e;
+  --syn-keyword: #107072;
+  --syn-string: #35702c;
+  --syn-number: #82591a;
+  --syn-func: #10696b;
+  --syn-type: #205d7a;
+  --syn-var: #20292f;
+  --syn-meta: #48666f;
 }
 
 [data-theme="latte"][data-mode="dark"] {
@@ -161,6 +180,14 @@ button:focus-visible,
   --chrome-rgb: 42, 35, 24;
   --inset-bg: rgba(8, 6, 3, 0.45);
   --drawer-bg: linear-gradient(180deg, rgba(38, 31, 20, 0.94), rgba(28, 22, 14, 0.96));
+  --syn-comment: #857763;
+  --syn-keyword: #c99a5f;
+  --syn-string: #a9bd70;
+  --syn-number: #d48068;
+  --syn-func: #e0b87e;
+  --syn-type: #93aed0;
+  --syn-var: #d9cbb4;
+  --syn-meta: #9a8054;
 }
 [data-theme="latte"][data-mode="light"] {
   color-scheme: light;
@@ -179,6 +206,14 @@ button:focus-visible,
   --chrome-rgb: 250, 245, 237;
   --inset-bg: rgba(110, 88, 58, 0.08);
   --drawer-bg: linear-gradient(180deg, rgba(252, 248, 240, 0.95), rgba(246, 240, 229, 0.97));
+  --syn-comment: #86755c;
+  --syn-keyword: #8a6636;
+  --syn-string: #55662a;
+  --syn-number: #99452f;
+  --syn-func: #8a6636;
+  --syn-type: #4a607f;
+  --syn-var: #54493c;
+  --syn-meta: #6e5a38;
 }
 
 [data-theme="matcha"][data-mode="dark"] {
@@ -198,6 +233,14 @@ button:focus-visible,
   --chrome-rgb: 26, 34, 22;
   --inset-bg: rgba(3, 6, 2, 0.45);
   --drawer-bg: linear-gradient(180deg, rgba(26, 34, 22, 0.94), rgba(18, 24, 15, 0.96));
+  --syn-comment: #65755a;
+  --syn-keyword: #7fb069;
+  --syn-string: #d4b57f;
+  --syn-number: #d4a06a;
+  --syn-func: #a3cc90;
+  --syn-type: #7fc4bd;
+  --syn-var: #c2d1b6;
+  --syn-meta: #6f9460;
 }
 [data-theme="matcha"][data-mode="light"] {
   color-scheme: light;
@@ -216,6 +259,14 @@ button:focus-visible,
   --chrome-rgb: 242, 248, 237;
   --inset-bg: rgba(48, 68, 38, 0.08);
   --drawer-bg: linear-gradient(180deg, rgba(246, 250, 242, 0.95), rgba(238, 244, 232, 0.97));
+  --syn-comment: #6d7c63;
+  --syn-keyword: #446e31;
+  --syn-string: #82621c;
+  --syn-number: #8f5326;
+  --syn-func: #446e31;
+  --syn-type: #23716b;
+  --syn-var: #38442e;
+  --syn-meta: #4c6b40;
 }
 
 [data-theme="strawberry"][data-mode="dark"] {
@@ -235,6 +286,14 @@ button:focus-visible,
   --chrome-rgb: 36, 24, 28;
   --inset-bg: rgba(6, 2, 3, 0.45);
   --drawer-bg: linear-gradient(180deg, rgba(38, 24, 29, 0.94), rgba(28, 17, 21, 0.96));
+  --syn-comment: #8a6a75;
+  --syn-keyword: #e07a92;
+  --syn-string: #a8bf82;
+  --syn-number: #d4a76a;
+  --syn-func: #efa3b4;
+  --syn-type: #8fb8d8;
+  --syn-var: #e3ccd4;
+  --syn-meta: #a56d80;
 }
 [data-theme="strawberry"][data-mode="light"] {
   color-scheme: light;
@@ -253,6 +312,14 @@ button:focus-visible,
   --chrome-rgb: 252, 243, 246;
   --inset-bg: rgba(105, 45, 60, 0.07);
   --drawer-bg: linear-gradient(180deg, rgba(253, 246, 248, 0.95), rgba(248, 237, 241, 0.97));
+  --syn-comment: #8f6672;
+  --syn-keyword: #a83b53;
+  --syn-string: #4f6a2a;
+  --syn-number: #8a5c1d;
+  --syn-func: #a83b53;
+  --syn-type: #33608a;
+  --syn-var: #4f3a40;
+  --syn-meta: #7c4557;
 }
 
 /* shared adjustments for the light variants */

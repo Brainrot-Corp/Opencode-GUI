@@ -1,9 +1,11 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import rehypeHighlight from "rehype-highlight";
 import type { Part } from "@opencode-ai/sdk/client";
 import type { Msg } from "../types";
 import { iconFor } from "../lib/attachments";
+import { hlHtml } from "../lib/syntax";
 import "../styles/chat.css";
 
 // one reasoning block — per-message visibility: the brain icon toggles THIS
@@ -27,6 +29,13 @@ function Reasoning({ part, defaultOpen }: { part: Part; defaultOpen: boolean }) 
       {open && <div className="reasoning-body mono">{t}</div>}
     </div>
   );
+}
+
+// highlighted mono text for tool inputs/outputs — language auto-detected,
+// oversized/odd input falls back to escaped plain text inside hlHtml
+function Hi({ text }: { text: string }) {
+  const html = useMemo(() => ({ __html: hlHtml(text) }), [text]);
+  return <span dangerouslySetInnerHTML={html} />;
 }
 
 const TOOL_ICONS: Record<string, string> = {
@@ -94,10 +103,18 @@ function ToolBlock({ part }: { part: Part }) {
         <div className="tool-body mono">
           {input.length > 0 && (
             <pre className="tool-input">
-              {input.map(([k, v]) => `${k}: ${typeof v === "string" ? v : JSON.stringify(v)}`).join("\n")}
+              <Hi
+                text={input
+                  .map(([k, v]) => `${k}: ${typeof v === "string" ? v : JSON.stringify(v)}`)
+                  .join("\n")}
+              />
             </pre>
           )}
-          {out && <pre className="tool-out">{out}</pre>}
+          {out && (
+            <pre className="tool-out">
+              <Hi text={out} />
+            </pre>
+          )}
         </div>
       )}
     </div>
@@ -109,7 +126,7 @@ function renderPart(part: Part, key: number, showThinking?: boolean) {
     const t = (part as any).text ?? "";
     if (!t.trim()) return null;
     return (
-      <Markdown key={key} remarkPlugins={[remarkGfm]}>
+      <Markdown key={key} remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
         {t}
       </Markdown>
     );
