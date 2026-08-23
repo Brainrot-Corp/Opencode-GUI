@@ -10,7 +10,7 @@ import DiffPanel from "../components/DiffPanel";
 import TooltipLayer from "../components/TooltipLayer";
 import { HelpDialog, ShareDialog } from "../components/CommandDialog";
 import { useOpencode } from "../hooks/useOpencode";
-import { useSettings } from "../hooks/useSettings";
+import { THEMES, useSettings } from "../hooks/useSettings";
 import { pickWorkspace } from "../lib/workspace";
 import { playSound } from "../lib/sounds";
 
@@ -79,6 +79,32 @@ export default function ChatPage() {
       un = f;
     });
     return () => un?.();
+  }, []);
+
+  // slash-command UI handoffs (/themes /scheme /diff /settings)
+  useEffect(() => {
+    const themes = () => {
+      const ids = THEMES.map((t) => t.id);
+      update({ theme: ids[(ids.indexOf(settings.theme) + 1) % ids.length] });
+    };
+    const scheme = () => update({ mode: settings.mode === "dark" ? "light" : "dark" });
+    window.addEventListener("oc:themes", themes);
+    window.addEventListener("oc:scheme", scheme);
+    return () => {
+      window.removeEventListener("oc:themes", themes);
+      window.removeEventListener("oc:scheme", scheme);
+    };
+  }, [settings.theme, settings.mode, update]);
+
+  useEffect(() => {
+    const diff = () => setDiffOpen((v) => !v);
+    const openSettings = () => setSettingsOpen(true);
+    window.addEventListener("oc:diff", diff);
+    window.addEventListener("oc:settings", openSettings);
+    return () => {
+      window.removeEventListener("oc:diff", diff);
+      window.removeEventListener("oc:settings", openSettings);
+    };
   }, []);
 
   // generic click tick for every button that doesn't already play its own sound

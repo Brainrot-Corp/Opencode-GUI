@@ -69,6 +69,17 @@ export default function Composer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cmdOpen]);
 
+  // /models command → open the model picker
+  useEffect(() => {
+    const open = () => {
+      if (loadingModels) return;
+      setOpen(true);
+      setHi(entries.findIndex((e2) => e2.value === modelSel));
+    };
+    window.addEventListener("oc:models", open);
+    return () => window.removeEventListener("oc:models", open);
+  });
+
   const fillCmd = (c: CmdEntry) => {
     setInput(`/${c.name} `);
   };

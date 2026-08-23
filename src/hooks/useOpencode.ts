@@ -28,6 +28,8 @@ export function useOpencode() {
   const [providers, setProviders] = useState<ProviderGroup[]>([]);
   const [modelSel, setModelSel] = useState("");
   const [defaultModel, setDefaultModel] = useState("");
+  const [agents, setAgents] = useState<{ name: string; mode: string }[]>([]);
+  const [agentSel, setAgentSel] = useState("");
   const [permission, setPermission] = useState<PermAsk | null>(null);
   const [commands, setCommands] = useState<Cmd[]>([]);
   const [dialog, setDialog] = useState<DialogState>(null);
@@ -132,6 +134,21 @@ export function useOpencode() {
     const { client } = await opencode();
     const r = await client.command.list();
     setCommands(((r.data ?? []) as any[]).map((c) => ({ ...(c as Cmd) })));
+  }, []);
+
+  // selectable agents (GET /agent) — hidden internals filtered out
+  const refreshAgents = useCallback(async () => {
+    const { client } = await opencode();
+    const r = await client.app.agents();
+    setAgents(
+      ((r.data ?? []) as any[])
+        .filter(
+          (a: any) =>
+            a.mode !== "subagent" &&
+            !["compaction", "title", "summary"].includes(a.name),
+        )
+        .map((a: any) => ({ name: a.name as string, mode: a.mode as string })),
+    );
   }, []);
 
   const openSession = useCallback(async (id: string) => {
@@ -354,6 +371,7 @@ export function useOpencode() {
         }
         // command registry is optional chrome — never block boot on it
         refreshCommands().catch(() => {});
+        refreshAgents().catch(() => {});
 
         if (!disposed) setBooting(false);
       } catch (e) {
@@ -403,13 +421,14 @@ export function useOpencode() {
           const [providerID, modelID] = modelSel.split("/");
           body.model = { providerID, modelID };
         }
+        if (agentSel) body.agent = agentSel;
         await client.session.promptAsync({ path: { id: activeId }, body });
       } catch (e) {
         setSessionBusy(activeId, false);
         setError(String(e));
       }
     },
-    [activeId, modelSel],
+    [activeId, modelSel, agentSel],
   );
 
   const abort = useCallback(async () => {
@@ -483,10 +502,10 @@ export function useOpencode() {
       if (!trimmed) return;
       const slash = /^\/([\w-]+)(?:\s+([\s\S]*))?$/.exec(trimmed);
       const id = activeRef.current;
-      if (slash && id) {
-        const [, name, args] = slash;
-        // built-ins first (TUI parity), then the server registry
-        switch (name) {
+
+      // commands that work with or without an open session
+      if (slash) {
+        switch (slash[1]) {
           case "help":
             setDialog({ kind: "help" });
             return;
@@ -494,6 +513,22 @@ export function useOpencode() {
             playSound("close");
             getCurrentWindow().close();
             return;
+          case "models":
+          case "themes":
+          case "scheme":
+          case "diff":
+          case "settings":
+            // UI toggles owned by components — hand off over a namespaced event
+            playSound("click");
+            window.dispatchEvent(new Event(`oc:${slash[1]}`));
+            return;
+        }
+      }
+
+      if (slash && id) {
+        const [, name, args] = slash;
+        // built-ins first (TUI parity), then the server registry
+        switch (name) {
           case "new":
             await newSession();
             return;
@@ -549,6 +584,23 @@ export function useOpencode() {
             }
             return;
           }
+          case "next":
+          case "prev": {
+            if (!id || sessions.length < 2) return;
+            const i = sessions.findIndex((s) => s.id === id);
+            const next = sessions[(i + (name === "next" ? 1 : sessions.length - 1)) % sessions.length];
+            await openSession(next.id);
+            return;
+          }
+          case "agents": {
+            // cycle the primary agent used for subsequent prompts
+            if (!agents.length) return;
+            const cur = agentSel || agents[0].name;
+            const i = agents.findIndex((a) => a.name === cur);
+            setAgentSel(agents[(i + 1) % agents.length].name);
+            playSound("click");
+            return;
+          }
         }
         const reg = commands.find((c) => c.name === name);
         if (reg) {
@@ -557,10 +609,9 @@ export function useOpencode() {
           sentExplicitModel.current = false;
           const { client } = await opencode();
           try {
-            await client.session.command({
-              path: { id },
-              body: { command: name, arguments: args ?? "" },
-            });
+            const body: any = { command: name, arguments: args ?? "" };
+            if (agentSel) body.agent = agentSel;
+            await client.session.command({ path: { id }, body });
           } catch (e) {
             setSessionBusy(id, false);
             setError(String(e));
@@ -582,6 +633,9 @@ export function useOpencode() {
       defaultModel,
       refreshSessions,
       openSession,
+      sessions,
+      agents,
+      agentSel,
     ],
   );
 
@@ -595,6 +649,20 @@ export function useOpencode() {
       { name: "fork", description: "Create a new session from this one", source: "built-in", takesArgs: false, builtin: true },
       { name: "share", description: "Share this session and copy the URL", source: "built-in", takesArgs: false, builtin: true },
       { name: "unshare", description: "Stop sharing this session", source: "built-in", takesArgs: false, builtin: true },
+      { name: "models", description: "Choose a model", source: "built-in", takesArgs: false, builtin: true },
+      {
+        name: "agents",
+        description: `Switch agent (current: ${agentSel || agents[0]?.name || "build"})`,
+        source: "built-in",
+        takesArgs: false,
+        builtin: true,
+      },
+      { name: "themes", description: "Cycle UI theme", source: "built-in", takesArgs: false, builtin: true },
+      { name: "scheme", description: "Toggle dark / light mode", source: "built-in", takesArgs: false, builtin: true },
+      { name: "next", description: "Open the next session", source: "built-in", takesArgs: false, builtin: true },
+      { name: "prev", description: "Open the previous session", source: "built-in", takesArgs: false, builtin: true },
+      { name: "diff", description: "Toggle files changed in this session", source: "built-in", takesArgs: false, builtin: true },
+      { name: "settings", description: "Open settings", source: "built-in", takesArgs: false, builtin: true },
       { name: "help", description: "Show all available commands", source: "built-in", takesArgs: false, builtin: true },
       { name: "exit", description: "Close OpenCode", source: "built-in", takesArgs: false, builtin: true },
     ];
@@ -607,7 +675,7 @@ export function useOpencode() {
         takesArgs: (c.hints ?? []).some((h) => h.includes("ARGUMENTS")) || /\$ARGUMENTS/.test(c.template ?? ""),
       }));
     return [...builtins, ...reg];
-  }, [commands]);
+  }, [commands, agents, agentSel]);
 
   const removeSession = useCallback(
     async (id: string) => {

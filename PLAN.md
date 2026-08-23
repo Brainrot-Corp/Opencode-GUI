@@ -147,9 +147,13 @@ Add after the chat loop is solid:
 - Themes ✅ (theme system v2), keybinds
 - Multi-project support — declined by user
 - macOS/Linux builds
-- Slash-command autocomplete (`GET /command` registry: built-ins + config/markdown +
-  plugin-registered commands + skills → `POST /session/:id/command`) — designed, not built
+- ~~Slash-command autocomplete (`GET /command` registry: built-ins + config/markdown +
+  plugin-registered commands + skills → `POST /session/:id/command`)~~ ✅ 2026-08-23 —
+  composer autocomplete + 16 built-ins (new/undo/redo/compact/fork/share/unshare/
+  models/agents/themes/scheme/next/prev/diff/settings/help/exit) /help + /share dialogs
 
 ## Skipped — add if ever needed
 
-Command palette UI, fuzzy search over commands, hot-reload of command files.
+Command palette UI, fuzzy search over commands. No v1.18 server API exists for model
+variants, session archive, or session export → those TUI commands can't be mapped yet;
+hot-reload of command files is bounded by upstream (server scans once at boot).
