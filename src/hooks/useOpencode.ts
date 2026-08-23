@@ -125,7 +125,7 @@ export function useOpencode() {
       const store = stores.current.get(entry.sid);
       const m = store?.find((x) => x.info.id === mid);
       const pt = m?.parts.find((x) => x.id === pid) as { type?: string; text?: string } | undefined;
-      if (m && pt && pt.type === "text") {
+      if (m && pt && (pt.type === "text" || pt.type === "reasoning")) {
         pt.text = (pt.text ?? "") + entry.text;
         pendingDeltas.current.delete(key);
         if (entry.sid === activeRef.current) setMsgs([...store!]);
@@ -291,7 +291,7 @@ export function useOpencode() {
           const pt = m?.parts.find((x) => x.id === p.partID) as
             | { type?: string; text?: string }
             | undefined;
-          if (m && pt && pt.type === "text") {
+          if (m && pt && (pt.type === "text" || pt.type === "reasoning")) {
             pt.text = (pt.text ?? "") + p.delta;
             pendingDeltas.current.delete(key);
             if (sid === activeRef.current) setMsgs([...store]);
