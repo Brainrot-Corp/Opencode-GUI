@@ -6,7 +6,7 @@
   --bg-1: #0d1218;
   /* appearance overrides — written by useSettings at runtime */
   --base-rgb: 9, 12, 16;
-  --base-a: 0.72;
+  --base-a: 0.6;
   --surf-rgb: 23, 40, 48;
   --surf-a: 0.33;
   --surface: rgba(21, 29, 36, 0.55);

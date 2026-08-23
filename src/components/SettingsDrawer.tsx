@@ -238,7 +238,7 @@ export default function SettingsDrawer({
         </div>
 
         <div className="settings-foot">
-          <span className="mono-hint">Alt+Space toggles the window anywhere</span>
+          <span className="mono-hint">Alt+Space toggles the window anywhere · Ctrl+P pins on top</span>
         </div>
       </aside>
     </>

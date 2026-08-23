@@ -12,7 +12,7 @@ export type AppColors = {
 
 export const DEFAULT_COLORS: AppColors = {
   base: "#090c10",
-  baseA: 0.72,
+  baseA: 0.6,
   surface: "#172830",
   surfaceA: 0.33,
 };

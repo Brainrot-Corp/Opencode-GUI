@@ -45,6 +45,26 @@ export default function ChatPage() {
     };
   }, []);
 
+  // Ctrl+P toggles always-on-top — a plain window listener, so it naturally
+  // only fires while the app is open and focused
+  useEffect(() => {
+    const key = (e: KeyboardEvent) => {
+      if (
+        e.ctrlKey &&
+        !e.shiftKey &&
+        !e.altKey &&
+        e.key.toLowerCase() === "p"
+      ) {
+        e.preventDefault();
+        // same click noise as toggling via the titlebar pin
+        playSound("click");
+        update({ alwaysOnTop: !settings.alwaysOnTop });
+      }
+    };
+    window.addEventListener("keydown", key);
+    return () => window.removeEventListener("keydown", key);
+  }, [settings.alwaysOnTop, update]);
+
   // Rust emits visibility://changed on tray click / Alt+Space / tray menu
   useEffect(() => {
     let un: (() => void) | undefined;
