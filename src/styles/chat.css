@@ -367,6 +367,104 @@
   color: var(--accent);
   text-shadow: 0 0 7px var(--accent-glow);
 }
+/* per-block expand/collapse eye — same toggle style as the reasoning brain */
+.msg .tool-eye {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 22px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  cursor: pointer;
+}
+.msg .tool-eye i {
+  font-size: 10px;
+  color: var(--text-faint);
+  transition: color 0.2s;
+}
+.msg .tool-eye:hover {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+.msg .tool-eye:hover i {
+  color: var(--accent-bright);
+}
+.msg .tool-block.open .tool-eye i {
+  color: var(--accent);
+  text-shadow: 0 0 7px var(--accent-glow);
+}
+/* git-style +/- stat badge in the collapsed tool header */
+.msg .tool-stat {
+  flex-shrink: 0;
+  font-size: 10px;
+  white-space: nowrap;
+}
+.msg .tool-stat em,
+.msg .q-chip i {
+  color: var(--accent);
+  font-style: normal;
+}
+.msg .tool-stat em.del {
+  color: var(--danger);
+}
+
+/* answered question tool — cards mirroring the ask popup's design language */
+.msg .q-view {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 4px 0;
+}
+.msg .q-card {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.msg .q-head {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--accent-bright);
+}
+.msg .q-tag {
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--accent-dim);
+  color: var(--accent-bright);
+  font-size: 9px;
+}
+.msg .q-text {
+  font-family: var(--sans);
+  font-size: 12px;
+  color: var(--text);
+}
+.msg .q-opts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.msg .q-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.msg .q-chip.on {
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--text);
+}
 .msg .chev {
   flex-shrink: 0;
   font-size: 9px;

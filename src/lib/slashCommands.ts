@@ -67,8 +67,9 @@ export async function handleSlash(text: string, ctx: SlashCtx): Promise<boolean>
       ctx.openDialog({ kind: "variants" });
       return true;
     case "thinking":
+    case "collapse":
       playSound("click");
-      window.dispatchEvent(new Event("oc:thinking"));
+      window.dispatchEvent(new Event("oc:collapse"));
       return true;
     case "exit":
       playSound("close");
@@ -218,7 +219,7 @@ export function buildCmdList(
       takesArgs: false,
       builtin: true,
     },
-    { name: "thinking", description: "Toggle thinking blocks in replies", source: "built-in", takesArgs: false, builtin: true },
+    { name: "collapse", description: "Toggle whether thinking & tool blocks start collapsed", source: "built-in", takesArgs: false, builtin: true },
     { name: "themes", description: "Cycle UI theme", source: "built-in", takesArgs: false, builtin: true },
     { name: "scheme", description: "Toggle dark / light mode", source: "built-in", takesArgs: false, builtin: true },
     { name: "next", description: "Open the next session", source: "built-in", takesArgs: false, builtin: true },

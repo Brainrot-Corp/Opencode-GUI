@@ -176,7 +176,7 @@ export default function ChatPage() {
                   msgs={oc.msgs}
                   busy={oc.busy}
                   loading={oc.booting}
-                  showThinking={settings.showThinking}
+                  collapsed={settings.collapsed}
                   onRevert={oc.revertTo}
                   sessionId={oc.activeId}
                 />

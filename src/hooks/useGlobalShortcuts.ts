@@ -102,16 +102,16 @@ export function useGlobalShortcuts({
   }, [settings.theme, settings.mode, update]);
 
   useEffect(() => {
-    const thinking = () => update({ showThinking: !settings.showThinking });
+    const collapse = () => update({ collapsed: !settings.collapsed });
     window.addEventListener("oc:diff", toggleDiff);
     window.addEventListener("oc:settings", openSettings);
-    window.addEventListener("oc:thinking", thinking);
+    window.addEventListener("oc:collapse", collapse);
     return () => {
       window.removeEventListener("oc:diff", toggleDiff);
       window.removeEventListener("oc:settings", openSettings);
-      window.removeEventListener("oc:thinking", thinking);
+      window.removeEventListener("oc:collapse", collapse);
     };
-  }, [settings.showThinking, update, toggleDiff, openSettings]);
+  }, [settings.collapsed, update, toggleDiff, openSettings]);
 
   // generic click tick for every button that doesn't already play its own sound
   useEffect(() => {

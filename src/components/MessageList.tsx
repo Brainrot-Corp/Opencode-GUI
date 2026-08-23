@@ -3,13 +3,14 @@ import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
 import type { Part } from "@opencode-ai/sdk/client";
-import type { Msg } from "../types";
+import type { Msg, QuestionInfo } from "../types";
 import { iconFor } from "../lib/attachments";
-import { hlHtml } from "../lib/syntax";
+import { hlHtml, extLang } from "../lib/syntax";
+import { DiffLines } from "./DiffPanel";
 import "../styles/chat.css";
 
 // one reasoning block — per-message visibility: the brain icon toggles THIS
-// block only; /thinking flips the default for blocks not manually toggled
+// block only; /collapse flips the default for blocks not manually toggled
 function Reasoning({ part, defaultOpen }: { part: Part; defaultOpen: boolean }) {
   const [manual, setManual] = useState<boolean | null>(null);
   const open = manual ?? defaultOpen;
@@ -58,10 +59,112 @@ function fmtTok(n: number) {
   return n >= 1000 ? `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k` : `${n}`;
 }
 
+// --- tool-call body views ---------------------------------------------------
+
+// best-effort unified diff for file-editing tools: server metadata first,
+// then the input's own diff field, then synthesized fallbacks
+function toolDiff(t: any): string | null {
+  const st = t.state ?? {};
+  const meta = st.metadata?.diff ?? st.input?.diff;
+  if (typeof meta === "string" && meta.trim()) return meta;
+  const name = String(t.tool ?? "").toLowerCase();
+  const input = st.input ?? {};
+  if (name === "write" && typeof input.content === "string") {
+    // whole-file creation: every line is an addition
+    const body = input.content.split("\n").map((l: string) => `+${l}`).join("\n");
+    return `@@ -0,0 +1,${input.content.split("\n").length} @@\n${body}`;
+  }
+  if (
+    typeof input.oldString === "string" ||
+    (typeof input.newString === "string" && input.newString !== "")
+  ) {
+    const old = typeof input.oldString === "string" ? input.oldString : "";
+    const neu = typeof input.newString === "string" ? input.newString : "";
+    if (!old.trim() && !neu.trim()) return null;
+    const del = old ? old.split("\n").map((l: string) => `-${l}`) : [];
+    const add = neu ? neu.split("\n").map((l: string) => `+${l}`) : [];
+    return `@@ -1,${del.length} +1,${add.length} @@\n${[...del, ...add].join("\n")}`;
+  }
+  return null;
+}
+
+function diffStats(patch: string): { add: number; del: number } {
+  let add = 0;
+  let del = 0;
+  for (const l of patch.split("\n")) {
+    if (l.startsWith("+") && !l.startsWith("+++")) add++;
+    else if (l.startsWith("-") && !l.startsWith("---")) del++;
+  }
+  return { add, del };
+}
+
+// pretty-print JSON outputs (todowrite/task/…) — capped to protect scrolling
+function prettyJson(out: string): string | null {
+  if (!out.trim().startsWith("{") && !out.trim().startsWith("[")) return null;
+  try {
+    const parsed = JSON.parse(out);
+    if (typeof parsed !== "object" || parsed === null) return null;
+    const text = JSON.stringify(parsed, null, 2);
+    const lines = text.split("\n");
+    return lines.length > 200
+      ? `${lines.slice(0, 200).join("\n")}\n… ${lines.length - 200} more lines`
+      : text;
+  } catch {
+    return null;
+  }
+}
+
+// answered question block — questions as cards, chosen answers as chips.
+// any shape mismatch falls back to the raw <pre> rendering
+function QuestionView({ t }: { t: any }) {
+  const qs: QuestionInfo[] = Array.isArray(t.state?.input?.questions)
+    ? t.state.input.questions
+    : [];
+  let answers: string[][] | null = null;
+  try {
+    const out = JSON.parse(t.state?.output ?? "");
+    if (Array.isArray(out) && out.every((a) => Array.isArray(a))) answers = out;
+  } catch {
+    answers = null;
+  }
+  if (!qs.length) return null;
+
+  const chipFor = (label: string, on: boolean) => (
+    <span key={label} className={`q-chip${on ? " on" : ""}`}>
+      {on && <i className="fa-solid fa-check" />}
+      {label}
+    </span>
+  );
+
+  return (
+    <div className="q-view">
+      {qs.map((q, qi) => {
+        const picked = answers?.[qi] ?? [];
+        const isCustom = (v: string) =>
+          !!picked.includes(v) && !q.options.some((o) => o.label === v);
+        return (
+          <div key={qi} className="q-card">
+            <div className="q-head mono">
+              {q.header}
+              {q.multiple && <span className="q-tag">multi</span>}
+              {q.custom && <span className="q-tag">custom</span>}
+            </div>
+            <div className="q-text">{q.question}</div>
+            <div className="q-opts">
+              {q.options.map((o) => chipFor(o.label, picked.includes(o.label)))}
+              {picked.filter(isCustom).map((v) => chipFor(v, true))}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 // one tool call — streams through pending → running → completed|error as
-// part.updated replaces this part; collapsed by default, auto-expanded for
-// errors and very short outputs
-function ToolBlock({ part }: { part: Part }) {
+// part.updated replaces this part; default open/closed follows the global
+// /collapse flag (errors always force-expand), eye icon toggles THIS block
+function ToolBlock({ part, collapsedDefault }: { part: Part; collapsedDefault: boolean }) {
   const t = part as any;
   const st = t.state ?? {};
   const status: string = st.status ?? "";
@@ -69,7 +172,8 @@ function ToolBlock({ part }: { part: Part }) {
 
   const out = status === "completed" ? st.output ?? "" : status === "error" ? st.error ?? "" : "";
   const outLines = out ? out.split("\n").length : 0;
-  const open = manual ?? (status === "error" || (outLines > 0 && outLines <= 3));
+  const open =
+    manual ?? (status === "error" || (!collapsedDefault && outLines > 0 && outLines <= 3));
 
   const input: [string, unknown][] = Object.entries(st.input ?? {});
   const title =
@@ -84,36 +188,92 @@ function ToolBlock({ part }: { part: Part }) {
   const ms = st.time?.start && st.time?.end ? st.time.end - st.time.start : null;
   const dur = ms == null ? null : ms < 10000 ? `${(ms / 1000).toFixed(2)}s` : `${Math.round(ms / 1000)}s`;
 
+  // per-tool body views: git-style diff for file edits, Q&A cards for the
+  // question tool, pretty JSON for other structured outputs
+  const toolName = String(t.tool ?? "").toLowerCase();
+  const isEditTool = ["edit", "multiedit", "patch", "write"].includes(toolName);
+  const patch = isEditTool ? toolDiff(t) : null;
+  const stats = patch ? diffStats(patch) : null;
+  const filePath = st.input?.filePath ?? st.input?.path ?? "";
+  const pretty = status === "completed" ? prettyJson(out) : null;
+
   return (
     <div className={`tool-block ${status}${open ? " open" : ""}`}>
-      <button type="button" className="tool-head mono" onClick={() => setManual(!open)}>
+      <div
+        role="button"
+        tabIndex={0}
+        className="tool-head mono"
+        onClick={() => setManual(!open)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            setManual(!open);
+          }
+        }}
+      >
         <i className={`fa-solid ${TOOL_ICONS[(t.tool as string)?.toLowerCase()] ?? "fa-gear"} tool-ico`} />
         <span className="tool-name">{t.tool}</span>
         <span className="tool-title">{title}</span>
-        {dur && <span className="tool-dur">{dur}s</span>}
+        {stats && (
+          <span className="tool-stat mono">
+            <em>+{stats.add}</em> <em className="del">−{stats.del}</em>
+          </span>
+        )}
+        {dur && <span className="tool-dur">{dur}</span>}
         {status === "running" || status === "pending" ? (
           <i className="fa-solid fa-circle-notch fa-spin-pulse tool-state" />
         ) : status === "error" ? (
           <i className="fa-solid fa-triangle-exclamation tool-state" />
         ) : (
-          <i className="fa-solid fa-chevron-right chev" />
+          <button
+            type="button"
+            className="tool-eye"
+            data-tip={open ? "Collapse" : "Expand"}
+            aria-label={open ? "Collapse tool output" : "Expand tool output"}
+            onClick={(e) => {
+              e.stopPropagation();
+              setManual(!open);
+            }}
+          >
+            <i className={`fa-solid ${open ? "fa-eye" : "fa-eye-slash"}`} />
+          </button>
         )}
-      </button>
+      </div>
       {open && (
         <div className="tool-body mono">
-          {input.length > 0 && (
-            <pre className="tool-input">
-              <Hi
-                text={input
-                  .map(([k, v]) => `${k}: ${typeof v === "string" ? v : JSON.stringify(v)}`)
-                  .join("\n")}
-              />
-            </pre>
-          )}
-          {out && (
-            <pre className="tool-out">
-              <Hi text={out} />
-            </pre>
+          {patch !== null && filePath ? (
+            <>
+              <DiffLines patch={patch} lang={extLang(String(filePath))} />
+              {out && <pre className="tool-out">{out}</pre>}
+            </>
+          ) : toolName === "question" &&
+            Array.isArray(st.input?.questions) &&
+            (st.input.questions as any[]).length > 0 ? (
+            <>
+              <QuestionView t={t} />
+              {out && !QuestionAnswered(t) && (
+                <pre className="tool-out">
+                  <Hi text={out} />
+                </pre>
+              )}
+            </>
+          ) : (
+            <>
+              {input.length > 0 && (
+                <pre className="tool-input">
+                  <Hi
+                    text={input
+                      .map(([k, v]) => `${k}: ${typeof v === "string" ? v : JSON.stringify(v)}`)
+                      .join("\n")}
+                  />
+                </pre>
+              )}
+              {out && (
+                <pre className="tool-out">
+                  <Hi text={pretty ?? out} />
+                </pre>
+              )}
+            </>
           )}
         </div>
       )}
@@ -121,7 +281,17 @@ function ToolBlock({ part }: { part: Part }) {
   );
 }
 
-function renderPart(part: Part, key: number, showThinking?: boolean) {
+// answered? — hides the raw answers JSON once QuestionView renders it as chips
+function QuestionAnswered(t: any): boolean {
+  try {
+    const parsed = JSON.parse(t.state?.output ?? "");
+    return Array.isArray(parsed) && parsed.length > 0;
+  } catch {
+    return false;
+  }
+}
+
+function renderPart(part: Part, key: number, collapsedDefault?: boolean) {
   if (part.type === "text") {
     const t = (part as any).text ?? "";
     if (!t.trim()) return null;
@@ -132,10 +302,10 @@ function renderPart(part: Part, key: number, showThinking?: boolean) {
     );
   }
   if (part.type === "reasoning") {
-    return <Reasoning key={(part as any).id || key} part={part} defaultOpen={!!showThinking} />;
+    return <Reasoning key={(part as any).id || key} part={part} defaultOpen={!collapsedDefault} />;
   }
   if (part.type === "tool") {
-    return <ToolBlock key={(part as any).id || key} part={part} />;
+    return <ToolBlock key={(part as any).id || key} part={part} collapsedDefault={!!collapsedDefault} />;
   }
   if (part.type === "step-finish") {
     const sf = part as any;
@@ -218,14 +388,15 @@ export default function MessageList({
   msgs,
   busy,
   loading,
-  showThinking,
+  collapsed,
   onRevert,
   sessionId,
 }: {
   msgs: Msg[];
   busy: boolean;
   loading?: boolean;
-  showThinking?: boolean;
+  // global /collapse default for thinking + tool blocks
+  collapsed?: boolean;
   onRevert?: (messageID: string) => void;
   sessionId?: string;
 }) {
@@ -321,7 +492,7 @@ export default function MessageList({
       )}
       {!loading && msgs.length === 0 && !busy && <p className="empty">Say something…</p>}
       {msgs.map((m) =>
-        m.parts.some((p) => renderPart(p, 0, showThinking)) || m.info.role === "user" ? (
+        m.parts.some((p) => renderPart(p, 0, collapsed)) || m.info.role === "user" ? (
           <div key={m.info.id} className={`msg ${m.info.role}`}>
             {m.info.role === "user" && onRevert && (
               <button
@@ -332,7 +503,7 @@ export default function MessageList({
                 <i className="fa-solid fa-clock-rotate-left" />
               </button>
             )}
-            {m.parts.map((part, i) => renderPart(part, i, showThinking))}
+            {m.parts.map((part, i) => renderPart(part, i, collapsed))}
           </div>
         ) : null,
       )}

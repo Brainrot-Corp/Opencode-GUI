@@ -76,7 +76,8 @@ export default function DiffPanel({
 // colorize the server-provided unified diff: runs of add/del/context lines
 // are highlighted as one block (so multi-line tokens stay consistent), then
 // re-split by line; hunk and file headers keep their plain styling
-function DiffLines({ patch, lang }: { patch: string; lang?: string }) {
+// (also reused by chat tool blocks for edit/write diffs)
+export function DiffLines({ patch, lang }: { patch: string; lang?: string }) {
   if (!patch.trim()) return null;
   const lines = patch.split("\n");
   if (lines[lines.length - 1] === "") lines.pop();
