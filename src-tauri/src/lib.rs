@@ -51,6 +51,26 @@ fn show_main(app: &tauri::AppHandle) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(
+            // global Alt+Space: toggle window visibility, works system-wide
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_shortcuts(["alt+space"])
+                .expect("failed to register global shortcut")
+                .with_handler(|app, _shortcut, event| {
+                    if event.state() == tauri_plugin_global_shortcut::ShortcutState::Pressed {
+                        if let Some(w) = app.get_webview_window("main") {
+                            let visible = w.is_visible().unwrap_or(false);
+                            let focused = w.is_focused().unwrap_or(false);
+                            if visible && focused {
+                                let _ = w.hide();
+                            } else {
+                                show_main(app);
+                            }
+                        }
+                    }
+                })
+                .build(),
+        )
         .invoke_handler(tauri::generate_handler![server_url])
         .setup(|app| {
             // system tray: left click toggles visibility, right click menu

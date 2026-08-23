@@ -195,6 +195,7 @@ Root cause of "nothing populates": server responses are sometimes slow; the UI s
 - Quit via tray menu exits cleanly (RunEvent::Exit still kills the opencode serve child).
 - Tauri feature `tray-icon`; capabilities `core:window:allow-hide/show`.
 - Note: rebuilding while the old exe is running fails with "Access is denied" (Windows file lock) — close the app before recompiling.
+- **Global hotkey Alt+Space** (`tauri-plugin-global-shortcut`): toggles window visibility system-wide, any focus. Behavior: hidden → show+focus · visible but unfocused → show+focus · visible and focused → hide to tray. Note this shadows Windows' default Alt+Space window menu while the app runs.
 - **Persistence bugfix**: the save-effect fired with `""` on mount and wiped the stored model before restore could read it; it now only persists non-empty selections.
 
 ### Font Awesome icons ✅ (2026-08-23)
