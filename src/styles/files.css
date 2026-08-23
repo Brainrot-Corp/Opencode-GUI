@@ -2,6 +2,8 @@
 
 .filetree {
   position: relative;
+  /* fill the tab column so the absolute-positioned preview spans full height */
+  flex: 1;
   display: flex;
   flex-direction: column;
   min-height: 0;
