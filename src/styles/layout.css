@@ -16,6 +16,9 @@
   /* identical soft tones to the session sidebar, running horizontally:
      left edge matches the sidebar's top so they blend at the corner */
   background: linear-gradient(90deg, rgba(20, 28, 35, 0.14), rgba(12, 17, 22, 0.22));
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border-bottom: 1px solid var(--line);
   user-select: none;
 }
 .titlebar .brand {
