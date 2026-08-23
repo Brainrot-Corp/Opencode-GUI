@@ -1,4 +1,5 @@
 import type { Session } from "@opencode-ai/sdk/client";
+import "../styles/sidebar.css";
 
 export default function Sidebar({
   sessions,

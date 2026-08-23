@@ -1,4 +1,5 @@
 import type { PermAsk } from "../types";
+import "../styles/permission.css";
 
 export default function PermissionBar({
   permission,

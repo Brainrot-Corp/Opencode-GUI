@@ -137,7 +137,22 @@ src/
 ```
 
 - Zero behavior change; `npm run build` green.
-- Convention going forward: server talk → hooks, visuals → components, screens → pages.
+- Convention going forward: server talk → hooks, visuals → components, screens → pages. New screens go in `pages/` and get wired to their own hook.
+
+### CSS restructure ✅ (2026-08-23)
+
+`styles.css` split into `src/styles/` mirroring the component tree:
+
+| File | Contents | Imported by |
+|---|---|---|
+| `tokens.css` | design vars, element base, scrollbars, film grain, reduced-motion | `main.tsx` |
+| `layout.css` | app shell, titlebar, grid, main column, banner, empty state | `main.tsx` |
+| `sidebar.css` | session list styles | `Sidebar.tsx` |
+| `chat.css` | message stage, bubbles, markdown, tool lines, thinking cursor | `MessageList.tsx` |
+| `composer.css` | input card, model picker, send/stop | `Composer.tsx` |
+| `permission.css` | approval floating card | `PermissionBar.tsx` |
+
+Each component imports its own stylesheet; global tokens/layout load once in `main.tsx`. Identical output CSS.
 
 ## Notes / Decisions log
 
@@ -150,3 +165,4 @@ src/
 - 2026-08-23: Phase 4 complete. MVP done: Tauri app (8.3 MB exe / 42.6 MB installer) + opencode sidecar, cold start ~1.5 s, chat/streaming/permissions/abort verified. Free-model testing path confirmed working.
 - 2026-08-23: Design pass 1 (Carriage aesthetic) + frameless custom titlebar done; deferred features pushed back further per user — design first.
 - 2026-08-23: Frontend restructured into hooks/components/pages layout (see PLAN.md tree). No behavior change.
+- 2026-08-23: CSS split into src/styles/ (tokens, layout, sidebar, chat, composer, permission) imported by their owners. See table in tracker above.

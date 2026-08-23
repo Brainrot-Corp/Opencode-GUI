@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { ProviderGroup } from "../types";
+import "../styles/composer.css";
 
 export default function Composer({
   busy,

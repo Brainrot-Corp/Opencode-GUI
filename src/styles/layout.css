@@ -1,0 +1,132 @@
+/* app shell: window frame, titlebar, grid, main column */
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+.titlebar {
+  height: 42px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-left: 18px;
+  background: linear-gradient(180deg, rgba(13, 18, 24, 0.82), rgba(13, 18, 24, 0.55) 80%, transparent);
+  user-select: none;
+}
+.titlebar .brand {
+  margin: 0;
+  pointer-events: none;
+}
+.titlebar .brand i {
+  width: 7px;
+  height: 7px;
+}
+
+.brand {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.42em;
+  text-indent: 0.42em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  user-select: none;
+}
+.brand i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 8px var(--accent-glow);
+  opacity: 0.85;
+  flex-shrink: 0;
+}
+
+.win-controls {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 100%;
+}
+.icon-btn {
+  width: 40px;
+  height: 32px;
+  margin-right: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: 9px;
+  cursor: pointer;
+  color: var(--text-faint);
+  transition: color 0.25s var(--ease), background 0.25s var(--ease), box-shadow 0.35s var(--ease);
+}
+.icon-btn svg {
+  width: 15px;
+  height: 15px;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.icon-btn:hover {
+  color: var(--accent);
+  background: var(--accent-dim);
+  box-shadow: 0 0 18px -4px var(--accent-glow);
+}
+.icon-btn.close:hover {
+  color: var(--danger);
+  background: rgba(224, 143, 143, 0.12);
+  box-shadow: 0 0 18px -6px rgba(224, 143, 143, 0.5);
+}
+
+.layout {
+  display: grid;
+  grid-template-columns: 248px 1fr;
+  flex: 1;
+  min-height: 0;
+}
+
+.main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  padding: 22px clamp(18px, 4vw, 44px) 22px;
+  gap: 0;
+}
+
+.banner {
+  width: min(860px, 100%);
+  margin: 0 auto 12px;
+  padding: 9px 16px;
+  border-radius: 12px;
+  background: rgba(224, 143, 143, 0.07);
+  border: 1px solid rgba(224, 143, 143, 0.25);
+  color: var(--danger);
+  font-size: 12.5px;
+  letter-spacing: 0.02em;
+}
+
+.empty {
+  margin: auto;
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--text-faint);
+  letter-spacing: 0.05em;
+  line-height: 2;
+  text-align: center;
+}
+
+@media (max-width: 900px) {
+  .layout {
+    grid-template-columns: 210px 1fr;
+  }
+}

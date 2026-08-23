@@ -3,6 +3,7 @@ import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Part } from "@opencode-ai/sdk/client";
 import type { Msg } from "../types";
+import "../styles/chat.css";
 
 function renderPart(part: Part, key: number) {
   if (part.type === "text") {

@@ -51,7 +51,10 @@ src/
 ├── App.tsx               thin shell → renders ChatPage
 ├── api.ts                opencode client singleton (Tauri server_url → SDK client)
 ├── types.ts              shared local types (Msg, PermAsk, ProviderGroup, OpenCodeEvent)
-├── styles.css            global stylesheet ("Carriage" design tokens)
+├── styles.css            REMOVED → src/styles/ split by concern:
+│                           tokens.css (design vars/base/grain) + layout.css (shell/titlebar)
+│                           loaded once in main.tsx; sidebar/chat/composer/permission.css
+│                           imported by their owning components
 ├── hooks/
 │   └── useOpencode.ts    ALL app state + actions: boot, SSE event stream,
 │                         sessions CRUD, send/abort, permission responses

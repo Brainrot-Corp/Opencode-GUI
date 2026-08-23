@@ -1,0 +1,185 @@
+/* message list: glass stage, bubbles, markdown, tool lines, thinking cursor */
+
+.messages {
+  position: relative;
+  width: min(860px, 100%);
+  margin: 0 auto;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: clamp(22px, 4vw, 36px) clamp(22px, 4.5vw, 40px);
+  background: linear-gradient(180deg, rgba(23, 32, 40, 0.6), rgba(15, 21, 27, 0.42));
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  box-shadow:
+    0 40px 90px -40px rgba(0, 0, 0, 0.75),
+    0 0 70px -30px rgba(127, 212, 212, 0.09),
+    inset 0 1px 0 rgba(255, 255, 255, 0.045);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  transition: box-shadow 0.6s var(--ease), border-color 0.4s;
+}
+.messages::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background: radial-gradient(52% 46% at 50% 30%, rgba(127, 212, 212, 0.05), transparent 70%);
+}
+.messages:focus-within {
+  border-color: rgba(127, 212, 212, 0.16);
+  box-shadow:
+    0 40px 90px -40px rgba(0, 0, 0, 0.75),
+    0 0 90px -26px rgba(127, 212, 212, 0.16),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+.msg {
+  max-width: 84%;
+  padding: 11px 16px;
+  border-radius: 14px;
+  font-family: var(--mono);
+  font-size: 13.5px;
+  line-height: 1.78;
+  letter-spacing: 0.012em;
+  overflow-wrap: break-word;
+}
+
+.msg.user {
+  align-self: flex-end;
+  background: rgba(127, 212, 212, 0.09);
+  border: 1px solid rgba(127, 212, 212, 0.22);
+  color: var(--text);
+}
+
+.msg.assistant {
+  align-self: flex-start;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  color: var(--text);
+}
+
+/* markdown inside messages */
+.msg p {
+  margin: 0.45em 0;
+}
+.msg p:first-child {
+  margin-top: 0;
+}
+.msg p:last-child {
+  margin-bottom: 0;
+}
+.msg h1, .msg h2, .msg h3, .msg h4 {
+  font-size: 1em;
+  font-weight: 600;
+  color: var(--accent-bright);
+  margin: 0.9em 0 0.3em;
+  letter-spacing: 0.03em;
+}
+.msg ul, .msg ol {
+  margin: 0.4em 0;
+  padding-left: 1.4em;
+}
+.msg li {
+  margin: 0.2em 0;
+}
+.msg a {
+  color: var(--accent);
+  text-decoration: none;
+  border-bottom: 1px solid rgba(127, 212, 212, 0.35);
+}
+.msg a:hover {
+  border-bottom-color: var(--accent);
+}
+.msg blockquote {
+  border-left: 2px solid rgba(127, 212, 212, 0.4);
+  padding-left: 12px;
+  margin: 0.5em 0;
+  color: var(--text-dim);
+}
+.msg hr {
+  border: none;
+  border-top: 1px solid var(--line);
+  margin: 0.8em 0;
+}
+.msg table {
+  border-collapse: collapse;
+  margin: 0.5em 0;
+  font-size: 12.5px;
+}
+.msg th, .msg td {
+  border: 1px solid var(--line-strong);
+  padding: 4px 9px;
+  text-align: left;
+}
+.msg th {
+  color: var(--text-dim);
+  font-weight: 500;
+}
+
+.msg pre {
+  background: rgba(9, 13, 17, 0.8);
+  border: 1px solid var(--line);
+  padding: 12px 14px;
+  border-radius: 10px;
+  overflow-x: auto;
+  font-size: 12.5px;
+  line-height: 1.7;
+  margin: 0.5em 0;
+}
+.msg code {
+  background: rgba(9, 13, 17, 0.8);
+  border: 1px solid var(--line);
+  padding: 1px 5px;
+  border-radius: 5px;
+  font-size: 0.92em;
+  color: var(--accent-bright);
+}
+.msg pre code {
+  padding: 0;
+  border: none;
+  background: none;
+  color: inherit;
+}
+
+.tool-line {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  letter-spacing: 0.04em;
+  color: var(--text-faint);
+  padding: 2px 0;
+}
+.tool-line.done {
+  color: var(--accent);
+}
+.tool-line.error {
+  color: var(--danger);
+}
+
+.thinking {
+  align-self: flex-start;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+.cursor-dot {
+  width: 9px;
+  height: 17px;
+  border-radius: 2px;
+  background: var(--accent);
+  box-shadow: 0 0 10px var(--accent-glow);
+  animation: blink 1.15s steps(1) infinite;
+}
+@keyframes blink {
+  0%, 58% { opacity: 1; }
+  59%, 100% { opacity: 0.12; }
+}
