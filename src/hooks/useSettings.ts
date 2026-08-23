@@ -42,6 +42,7 @@ export type AppSettings = {
   sounds: SoundPrefs;
   colors: AppColors;
   workspace: string;
+  showThinking: boolean;
 };
 
 const KEY = "oc.settings";
@@ -67,6 +68,7 @@ const DEFAULTS: AppSettings = {
   },
   colors: structuredClone(DEFAULT_COLOR_SETS),
   workspace: "",
+  showThinking: true,
 };
 
 function num(v: unknown, def: number, min: number, max: number) {
@@ -138,6 +140,7 @@ export function useSettings() {
         },
         colors: loadColors(p, legacy ? "light" : theme),
         workspace: typeof p.workspace === "string" ? p.workspace : "",
+        showThinking: p.showThinking ?? true,
       };
     } catch {
       return structuredClone(DEFAULTS);

@@ -21,6 +21,7 @@ export default function Composer({
   agents,
   agentSel,
   onCycleAgent,
+  variantSel,
 }: {
   busy: boolean;
   loadingModels?: boolean;
@@ -38,6 +39,7 @@ export default function Composer({
   agents?: { name: string; mode: string }[];
   agentSel?: string;
   onCycleAgent?: () => void;
+  variantSel?: string;
 }) {
   const [input, setInput] = useState("");
   const [open, setOpen] = useState(false);
@@ -218,17 +220,13 @@ export default function Composer({
     onSend(text);
   };
 
-  // slash menu: Enter/Tab pick the highlighted entry — an exact, arg-less
-  // match executes right away, anything else fills the input for arguments
+  // slash menu: Enter picks the highlighted entry — arg-less commands send
+  // right away, arg-taking ones fill the input so arguments can be typed
   const cmdPick = () => {
     const c = cmdEntries[Math.max(0, Math.min(hiCmd, cmdEntries.length - 1))];
     if (!c) return;
-    if (`/${c.name}` === input.trimEnd()) {
-      if (c.takesArgs) fillCmd(c);
-      else runCmd(c);
-    } else {
-      fillCmd(c);
-    }
+    if (c.takesArgs) fillCmd(c);
+    else runCmd(c);
   };
 
   return (
@@ -244,6 +242,17 @@ export default function Composer({
           >
             <i className="fa-solid fa-robot" />
             {agentSel || agents[0]?.name || "build"}
+          </button>
+        )}
+        {variantSel && (
+          <button
+            type="button"
+            className="agent-chip"
+            data-tip={`Thinking effort: ${variantSel} — click to change`}
+            onClick={() => window.dispatchEvent(new Event("oc:variants"))}
+          >
+            <i className="fa-solid fa-gauge-high" />
+            {variantSel}
           </button>
         )}
         <div

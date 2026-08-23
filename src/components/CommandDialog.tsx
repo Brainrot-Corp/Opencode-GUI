@@ -34,6 +34,41 @@ export function HelpDialog({
   );
 }
 
+// /variants — thinking-effort picker for the current model
+export function VariantsDialog({
+  variants,
+  selected,
+  onSelect,
+  onClose,
+}: {
+  variants: string[];
+  selected: string;
+  onSelect: (v: string) => void;
+  onClose: () => void;
+}) {
+  return (
+    <Dialog title="Thinking effort" onClose={onClose}>
+      {variants.length === 0 && (
+        <p className="empty">The selected model has no effort levels.</p>
+      )}
+      {["", ...variants].map((v) => (
+        <button
+          type="button"
+          key={v || "default"}
+          className={`cmd-row cmd-opt${v === selected ? " hl" : ""}`}
+          onClick={() => {
+            onSelect(v);
+            onClose();
+          }}
+        >
+          <span className="mono cmd-name">/{v || "default"}</span>
+          <span className="cmd-desc">{v === selected ? "active" : ""}</span>
+        </button>
+      ))}
+    </Dialog>
+  );
+}
+
 // /share — the session URL with a copy button
 export function ShareDialog({ url, onClose }: { url: string; onClose: () => void }) {
   const [copied, setCopied] = useState(false);

@@ -7,7 +7,7 @@ export type PermAsk = { id: string; sessionID: string; type: string; title: stri
 export type ProviderGroup = {
   id: string;
   label: string;
-  models: { id: string; label: string }[];
+  models: { id: string; label: string; variants?: string[] }[];
 };
 
 // GET /command entry — SDK type is stale (no source/hints)

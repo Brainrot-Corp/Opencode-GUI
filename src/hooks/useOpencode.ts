@@ -15,7 +15,11 @@ export type CmdEntry = {
   builtin?: boolean;
 };
 
-type DialogState = { kind: "help" } | { kind: "share"; url: string } | null;
+type DialogState =
+  | { kind: "help" }
+  | { kind: "share"; url: string }
+  | { kind: "variants" }
+  | null;
 
 export function useOpencode() {
   const [error, setError] = useState("");
@@ -30,6 +34,8 @@ export function useOpencode() {
   const [defaultModel, setDefaultModel] = useState("");
   const [agents, setAgents] = useState<{ name: string; mode: string }[]>([]);
   const [agentSel, setAgentSel] = useState("");
+  // thinking-effort variant for the current model ("" = model default)
+  const [variantSel, setVariantSel] = useState("");
   const [permission, setPermission] = useState<PermAsk | null>(null);
   const [commands, setCommands] = useState<Cmd[]>([]);
   const [dialog, setDialog] = useState<DialogState>(null);
@@ -345,6 +351,7 @@ export function useOpencode() {
             models: Object.entries(prov.models ?? {}).map(([mid, m]: [string, any]) => ({
               id: mid,
               label: m.name || mid,
+              variants: Object.keys((m as any).variants ?? {}),
             })),
           }));
           groups.sort((a, b) => a.label.localeCompare(b.label));
@@ -422,13 +429,14 @@ export function useOpencode() {
           body.model = { providerID, modelID };
         }
         if (agentSel) body.agent = agentSel;
+        if (variantSel) body.variant = variantSel;
         await client.session.promptAsync({ path: { id: activeId }, body });
       } catch (e) {
         setSessionBusy(activeId, false);
         setError(String(e));
       }
     },
-    [activeId, modelSel, agentSel],
+    [activeId, modelSel, agentSel, variantSel],
   );
 
   const abort = useCallback(async () => {
@@ -463,6 +471,20 @@ export function useOpencode() {
     const i = msgs.findIndex((m) => m.info.id === revertId);
     return i >= 0 ? msgs.slice(0, i + 1) : msgs;
   }, [msgs, revertId]);
+
+  // thinking-effort options for the selected model
+  const modelVariants = useMemo(() => {
+    if (!modelSel) return [];
+    const [pid, mid] = modelSel.split("/");
+    return (
+      providers.find((g) => g.id === pid)?.models.find((m) => m.id === mid)?.variants ?? []
+    );
+  }, [providers, modelSel]);
+
+  // a different model invalidates the picked effort
+  useEffect(() => {
+    setVariantSel("");
+  }, [modelSel]);
 
   const revertTo = useCallback(
     async (messageID: string) => {
@@ -516,6 +538,13 @@ export function useOpencode() {
         switch (slash[1]) {
           case "help":
             setDialog({ kind: "help" });
+            return;
+          case "variants":
+            setDialog({ kind: "variants" });
+            return;
+          case "thinking":
+            playSound("click");
+            window.dispatchEvent(new Event("oc:thinking"));
             return;
           case "exit":
             playSound("close");
@@ -611,8 +640,9 @@ export function useOpencode() {
           sentExplicitModel.current = false;
           const { client } = await opencode();
           try {
-            const body: any = { command: name, arguments: args ?? "" };
+             const body: any = { command: name, arguments: args ?? "" };
             if (agentSel) body.agent = agentSel;
+            if (variantSel) body.variant = variantSel;
             await client.session.command({ path: { id }, body });
           } catch (e) {
             setSessionBusy(id, false);
@@ -653,12 +683,22 @@ export function useOpencode() {
       { name: "unshare", description: "Stop sharing this session", source: "built-in", takesArgs: false, builtin: true },
       { name: "models", description: "Choose a model", source: "built-in", takesArgs: false, builtin: true },
       {
+        name: "variants",
+        description: modelVariants.length
+          ? `Select thinking effort (current: ${variantSel || "default"})`
+          : "Select thinking effort — current model has none",
+        source: "built-in",
+        takesArgs: false,
+        builtin: true,
+      },
+      {
         name: "agents",
         description: `Switch agent (current: ${agentSel || agents[0]?.name || "build"})`,
         source: "built-in",
         takesArgs: false,
         builtin: true,
       },
+      { name: "thinking", description: "Toggle thinking blocks in replies", source: "built-in", takesArgs: false, builtin: true },
       { name: "themes", description: "Cycle UI theme", source: "built-in", takesArgs: false, builtin: true },
       { name: "scheme", description: "Toggle dark / light mode", source: "built-in", takesArgs: false, builtin: true },
       { name: "next", description: "Open the next session", source: "built-in", takesArgs: false, builtin: true },
@@ -677,7 +717,7 @@ export function useOpencode() {
         takesArgs: (c.hints ?? []).some((h) => h.includes("ARGUMENTS")) || /\$ARGUMENTS/.test(c.template ?? ""),
       }));
     return [...builtins, ...reg];
-  }, [commands, agents, agentSel]);
+  }, [commands, agents, agentSel, modelVariants, variantSel]);
 
   const removeSession = useCallback(
     async (id: string) => {
@@ -728,6 +768,9 @@ export function useOpencode() {
     agents,
     agentSel,
     cycleAgent,
+    variantSel,
+    setVariantSel,
+    modelVariants,
     abort,
     respondToPermission,
     removeSession,

@@ -8,7 +8,7 @@ import PermissionBar from "../components/PermissionBar";
 import SettingsDrawer from "../components/SettingsDrawer";
 import DiffPanel from "../components/DiffPanel";
 import TooltipLayer from "../components/TooltipLayer";
-import { HelpDialog, ShareDialog } from "../components/CommandDialog";
+import { HelpDialog, ShareDialog, VariantsDialog } from "../components/CommandDialog";
 import { useOpencode } from "../hooks/useOpencode";
 import { THEMES, useSettings } from "../hooks/useSettings";
 import { pickWorkspace } from "../lib/workspace";
@@ -99,13 +99,16 @@ export default function ChatPage() {
   useEffect(() => {
     const diff = () => setDiffOpen((v) => !v);
     const openSettings = () => setSettingsOpen(true);
+    const thinking = () => update({ showThinking: !settings.showThinking });
     window.addEventListener("oc:diff", diff);
     window.addEventListener("oc:settings", openSettings);
+    window.addEventListener("oc:thinking", thinking);
     return () => {
       window.removeEventListener("oc:diff", diff);
       window.removeEventListener("oc:settings", openSettings);
+      window.removeEventListener("oc:thinking", thinking);
     };
-  }, []);
+  }, [settings.showThinking, update]);
 
   // generic click tick for every button that doesn't already play its own sound
   useEffect(() => {
@@ -234,6 +237,7 @@ export default function ChatPage() {
                   msgs={oc.msgs}
                   busy={oc.busy}
                   loading={oc.booting}
+                  showThinking={settings.showThinking}
                   onRevert={oc.revertTo}
                 />
                 {oc.revertId && (
@@ -266,6 +270,7 @@ export default function ChatPage() {
                   agents={oc.agents}
                   agentSel={oc.agentSel}
                   onCycleAgent={oc.cycleAgent}
+                  variantSel={oc.variantSel}
                 />
               </>
             )}
@@ -276,6 +281,14 @@ export default function ChatPage() {
         )}
         {oc.dialog?.kind === "share" && (
           <ShareDialog url={oc.dialog.url} onClose={oc.closeDialog} />
+        )}
+        {oc.dialog?.kind === "variants" && (
+          <VariantsDialog
+            variants={oc.modelVariants}
+            selected={oc.variantSel}
+            onSelect={oc.setVariantSel}
+            onClose={oc.closeDialog}
+          />
         )}
         {diffOpen && oc.activeId && (
           <DiffPanel sessionId={oc.activeId} onClose={() => setDiffOpen(false)} />

@@ -344,3 +344,17 @@
   from { background-position: 200% 0; }
   to { background-position: -200% 0; }
 }
+
+/* reasoning (thinking) blocks - dim italic mono, visually secondary */
+.msg .reasoning {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-style: italic;
+  color: var(--text-faint);
+  opacity: 0.85;
+  padding: 2px 0 4px;
+  border-left: 2px solid var(--accent-dim);
+  padding-left: 8px;
+  margin: 3px 0;
+  white-space: pre-wrap;
+}

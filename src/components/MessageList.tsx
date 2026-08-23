@@ -5,7 +5,7 @@ import type { Part } from "@opencode-ai/sdk/client";
 import type { Msg } from "../types";
 import "../styles/chat.css";
 
-function renderPart(part: Part, key: number) {
+function renderPart(part: Part, key: number, showThinking?: boolean) {
   if (part.type === "text") {
     const t = (part as any).text ?? "";
     if (!t.trim()) return null;
@@ -13,6 +13,16 @@ function renderPart(part: Part, key: number) {
       <Markdown key={key} remarkPlugins={[remarkGfm]}>
         {t}
       </Markdown>
+    );
+  }
+  if (part.type === "reasoning") {
+    if (!showThinking) return null;
+    const t = (part as any).text ?? "";
+    if (!t.trim()) return null;
+    return (
+      <div key={key} className="reasoning mono">
+        {t}
+      </div>
     );
   }
   if (part.type === "tool") {
@@ -34,11 +44,13 @@ export default function MessageList({
   msgs,
   busy,
   loading,
+  showThinking,
   onRevert,
 }: {
   msgs: Msg[];
   busy: boolean;
   loading?: boolean;
+  showThinking?: boolean;
   onRevert?: (messageID: string) => void;
 }) {
   const listRef = useRef<HTMLDivElement>(null);
@@ -117,7 +129,7 @@ export default function MessageList({
       )}
       {!loading && msgs.length === 0 && !busy && <p className="empty">Say something…</p>}
       {msgs.map((m) =>
-        m.parts.some((p) => renderPart(p, 0)) || m.info.role === "user" ? (
+        m.parts.some((p) => renderPart(p, 0, showThinking)) || m.info.role === "user" ? (
           <div key={m.info.id} className={`msg ${m.info.role}`}>
             {m.info.role === "user" && onRevert && (
               <button
@@ -128,7 +140,7 @@ export default function MessageList({
                 <i className="fa-solid fa-clock-rotate-left" />
               </button>
             )}
-            {m.parts.map((part, i) => renderPart(part, i))}
+            {m.parts.map((part, i) => renderPart(part, i, showThinking))}
           </div>
         ) : null,
       )}
