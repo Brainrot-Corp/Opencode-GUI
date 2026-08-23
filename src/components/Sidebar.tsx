@@ -24,20 +24,26 @@ export default function Sidebar({
   return (
     <>
       <aside className={`sidebar${collapsed ? " collapsed" : ""}`}>
-        {!collapsed && (
+        {collapsed ? (
+          <button className="icon-btn sb-expand" title="Show session history" onClick={onToggle}>
+            <i className="fa-solid fa-angles-right" />
+          </button>
+        ) : (
           <>
             <div className="sb-scroll">
-              <button
-                className="icon-btn sb-toggle"
-                title="Hide session history"
-                onClick={onToggle}
-              >
-                <i className="fa-solid fa-angles-left" />
-              </button>
-              <button className="new-chat" onClick={onNew}>
-                <i className="fa-solid fa-plus" />
-                New chat
-              </button>
+              <div className="sb-head">
+                <button className="new-chat" onClick={onNew}>
+                  <i className="fa-solid fa-plus" />
+                  New chat
+                </button>
+                <button
+                  className="icon-btn sb-toggle"
+                  title="Hide session history"
+                  onClick={onToggle}
+                >
+                  <i className="fa-solid fa-angles-left" />
+                </button>
+              </div>
               {sessions.map((s) => (
                 <div key={s.id} className={`session-row ${s.id === activeId ? "active" : ""}`}>
                   <button className="session-item" onClick={() => onOpen(s.id)} title={s.title || s.id}>
@@ -49,16 +55,10 @@ export default function Sidebar({
                 </div>
               ))}
             </div>
+            <div className="sb-resize" title="Drag to resize" onMouseDown={onStartResize} />
           </>
         )}
-        <div className="sb-resize" title="Drag to resize" onMouseDown={onStartResize} />
       </aside>
-
-      {collapsed && (
-        <button className="sb-reopen" title="Show session history" onClick={onToggle}>
-          <i className="fa-solid fa-angles-right" />
-        </button>
-      )}
     </>
   );
 }

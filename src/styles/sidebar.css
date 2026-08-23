@@ -11,8 +11,23 @@
   flex-direction: column;
 }
 .sidebar.collapsed {
+  padding: 0;
   overflow: hidden;
-  border-right-color: transparent;
+  align-items: center;
+  justify-content: center;
+  border-right: 1px solid var(--line);
+}
+
+/* expand button inside the collapsed rail, vertically centered */
+.sb-expand {
+  width: 34px;
+  height: 42px;
+  margin: 0;
+  color: var(--text-dim);
+}
+.sb-expand:hover {
+  color: var(--accent);
+  box-shadow: 0 0 16px -4px var(--accent-glow);
 }
 
 /* scrollable content layer — the resize handle stays outside it,
@@ -27,38 +42,24 @@
   gap: 4px;
 }
 
-.sb-toggle {
-  align-self: flex-end;
-  width: 30px;
-  height: 28px;
+.sb-head {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+.sb-head .new-chat {
+  flex: 1;
+  margin-bottom: 0;
 }
 
-.sb-reopen {
-  position: fixed;
-  left: 0;
-  top: 56px;
-  z-index: 35;
-  width: 30px;
-  height: 44px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  color: var(--accent);
-  font-size: 14px;
-  background: linear-gradient(180deg, rgba(20, 28, 35, 0.6), rgba(12, 17, 22, 0.7));
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  border: none;
-  border-right: 1px solid var(--line);
-  border-top: 1px solid var(--line);
-  border-bottom: 1px solid var(--line);
-  border-radius: 0 10px 10px 0;
-  transition: box-shadow 0.3s var(--ease), padding-left 0.25s var(--ease), color 0.2s;
+.sb-toggle {
+  width: 38px;
+  /* match New chat height via flex stretch; override .icon-btn fixed height */
+  height: auto;
 }
-.sb-reopen:hover {
-  box-shadow: 0 0 22px -4px var(--accent-glow);
-  padding-left: 5px;
+.sb-toggle:hover {
+  color: var(--accent);
 }
 
 .sb-resize {

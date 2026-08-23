@@ -162,6 +162,7 @@ Root causes fixed:
 1. `MessageList` used `scrollIntoView()` on new messages — it scrolls **all** scrollable ancestors including the page root, shoving the layout off-screen. Replaced with manual `container.scrollTop = scrollHeight` (strictly scoped to the message panel).
 2. WebView2 page zoom (Ctrl+wheel / Ctrl±) silently persists across restarts. Now: reset to 100% at boot (`setZoom(1)`), zoom hotkeys blocked entirely via wheel/keydown preventDefault, capability `core:webview:allow-set-webview-zoom` added.
 3. Hard guards: `body { position:fixed; inset:0; overscroll-behavior:none }`, sidebar width sanity-clamped from localStorage (170–440px).
+4. **Final piece (confirmed by user):** the `.layout` grid had no row definition — its implicit row sized itself to chat content and pushed both columns past the viewport. Fixed with `grid-template-rows: minmax(0, 1fr)` + `overflow:hidden` on `.main`.
 
 ### Font Awesome icons ✅ (2026-08-23)
 

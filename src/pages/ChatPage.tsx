@@ -75,7 +75,7 @@ export default function ChatPage() {
         <Titlebar />
         <div
           className={`layout${resizing ? " no-anim" : ""}`}
-          style={{ gridTemplateColumns: sbClosed ? "0px 1fr" : `${sbW}px 1fr` }}
+          style={{ gridTemplateColumns: sbClosed ? "46px 1fr" : `${sbW}px 1fr` }}
         >
           <Sidebar
             sessions={oc.sessions}
