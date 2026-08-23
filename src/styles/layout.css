@@ -135,7 +135,20 @@
 }
 
 @media (max-width: 900px) {
-  .layout {
+.icon-btn.on {
+  color: var(--accent-bright);
+  background: var(--accent-dim);
+  box-shadow: 0 0 16px -2px var(--accent-glow), inset 0 0 10px -4px var(--accent-glow);
+}
+
+.ctrl-sep {
+  width: 1px;
+  height: 16px;
+  background: var(--line-strong);
+  margin: 0 6px;
+}
+
+.layout {
     grid-template-columns: 210px 1fr;
   }
 }

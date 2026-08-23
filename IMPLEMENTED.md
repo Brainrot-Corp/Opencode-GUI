@@ -196,6 +196,16 @@ Root cause of "nothing populates": server responses are sometimes slow; the UI s
 - Tauri feature `tray-icon`; capabilities `core:window:allow-hide/show`.
 - Note: rebuilding while the old exe is running fails with "Access is denied" (Windows file lock) — close the app before recompiling.
 - **Global hotkey Alt+Space** (`tauri-plugin-global-shortcut`): toggles window visibility system-wide, any focus. Behavior: hidden → show+focus · visible but unfocused → show+focus · visible and focused → hide to tray. Note this shadows Windows' default Alt+Space window menu while the app runs.
+
+### Settings ✅ (2026-08-23)
+
+- **Window size/position memory**: official `tauri-plugin-window-state` — bounds + maximized state auto-restored on launch (multi-monitor aware).
+- **Auto-launch on startup**: `tauri-plugin-autostart` (+ npm `@tauri-apps/plugin-autostart`); toggle in settings, registry-backed.
+- **Always on top**: persisted (`oc.settings.alwaysOnTop`), applied at boot; toggleable from the titlebar pin icon *and* the settings drawer — both controls stay in sync.
+- **UI scale**: webview zoom, segmented control 80/90/100/110/125 %, persisted (`oc.settings.uiScale`), replaces the old fixed boot-time reset to 100 %.
+- **Settings drawer**: gear icon in the titlebar opens a right-side glass drawer (scrim + blur, Carriage drawer pattern). Extensible: add rows to `components/SettingsDrawer.tsx`, fields to `hooks/useSettings.ts`.
+- Capabilities added: `core:window:allow-set-always-on-top`, `autostart:allow-enable/disable/is-enabled`.
+- Alt+Space keeps hiding the window even when always-on-top is active (hide is orthogonal to pinning).
 - **Persistence bugfix**: the save-effect fired with `""` on mount and wiped the stored model before restore could read it; it now only persists non-empty selections.
 
 ### Font Awesome icons ✅ (2026-08-23)

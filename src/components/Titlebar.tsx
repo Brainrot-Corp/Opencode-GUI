@@ -1,11 +1,13 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
 export default function Titlebar({
-  showSidebarRestore,
-  onSidebarRestore,
+  pinned,
+  onTogglePin,
+  onOpenSettings,
 }: {
-  showSidebarRestore?: boolean;
-  onSidebarRestore?: () => void;
+  pinned?: boolean;
+  onTogglePin?: () => void;
+  onOpenSettings?: () => void;
 }) {
   return (
     <header
@@ -18,22 +20,23 @@ export default function Titlebar({
         getCurrentWindow().startDragging();
       }}
     >
-      <div className="tb-left">
-        {showSidebarRestore && (
-          <button
-            className="icon-btn"
-            title="Show session history"
-            onClick={onSidebarRestore}
-          >
-            <i className="fa-solid fa-angles-right" />
-          </button>
-        )}
-        <div className="brand">
-          <i />
-          <span>OpenCode</span>
-        </div>
+      <div className="brand">
+        <i />
+        <span>OpenCode</span>
       </div>
       <div className="win-controls">
+        <button className="icon-btn" title="Settings" onClick={() => onOpenSettings?.()}>
+          <i className="fa-solid fa-gear" />
+        </button>
+        <button
+          className={`icon-btn${pinned ? " on" : ""}`}
+          title={pinned ? "Unpin (always on top)" : "Pin to top (always on top)"}
+          aria-pressed={pinned ?? false}
+          onClick={() => onTogglePin?.()}
+        >
+          <i className={`fa-solid fa-thumbtack${pinned ? " fa-rotate-45" : ""}`} />
+        </button>
+        <span className="ctrl-sep" />
         <button
           className="icon-btn"
           title="Hide to tray"

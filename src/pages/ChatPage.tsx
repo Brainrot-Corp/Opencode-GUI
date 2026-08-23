@@ -1,17 +1,20 @@
 import { useCallback, useEffect, useState } from "react";
-import { getCurrentWebview } from "@tauri-apps/api/webview";
 import Titlebar from "../components/Titlebar";
 import Sidebar from "../components/Sidebar";
 import MessageList from "../components/MessageList";
 import Composer from "../components/Composer";
 import PermissionBar from "../components/PermissionBar";
+import SettingsDrawer from "../components/SettingsDrawer";
 import { useOpencode } from "../hooks/useOpencode";
+import { useSettings } from "../hooks/useSettings";
 
 const SB_W_KEY = "oc.sb.w";
 const SB_C_KEY = "oc.sb.c";
 
 export default function ChatPage() {
   const oc = useOpencode();
+  const { settings, update } = useSettings();
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   const [sbW, setSbW] = useState(() => {
     const w = Number(localStorage.getItem(SB_W_KEY)) || 248;
@@ -19,11 +22,6 @@ export default function ChatPage() {
   });
   const [sbClosed, setSbClosed] = useState(() => localStorage.getItem(SB_C_KEY) === "1");
   const [resizing, setResizing] = useState(false);
-
-  // WebView2 page zoom (Ctrl+scroll) persists silently — always start at 100%
-  useEffect(() => {
-    getCurrentWebview().setZoom(1).catch(() => {});
-  }, []);
 
   // block WebView2 zoom hotkeys entirely: Ctrl+wheel / Ctrl +/-/0
   // and suppress the raw browser right-click menu (desktop app, not a page)
@@ -81,7 +79,17 @@ export default function ChatPage() {
     <>
       <div className="noise" aria-hidden="true" />
       <div className="app">
-        <Titlebar />
+        <Titlebar
+          pinned={settings.alwaysOnTop}
+          onTogglePin={() => update({ alwaysOnTop: !settings.alwaysOnTop })}
+          onOpenSettings={() => setSettingsOpen(true)}
+        />
+        <SettingsDrawer
+          open={settingsOpen}
+          onClose={() => setSettingsOpen(false)}
+          settings={settings}
+          update={update}
+        />
         <div
           className={`layout${resizing ? " no-anim" : ""}`}
           style={{ gridTemplateColumns: sbClosed ? "46px 1fr" : `${sbW}px 1fr` }}
