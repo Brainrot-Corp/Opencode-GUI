@@ -52,6 +52,13 @@ body {
   background: rgba(127, 212, 212, 0.22);
 }
 
+/* visible keyboard focus everywhere (mouse clicks don't trigger it) */
+button:focus-visible,
+[role="option"]:focus-visible {
+  outline: 1px solid rgba(127, 212, 212, 0.55);
+  outline-offset: 2px;
+}
+
 /* scrollbars: blocky + subtle accent glow to match the UI */
 ::-webkit-scrollbar {
   width: 8px;

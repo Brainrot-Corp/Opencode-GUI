@@ -179,7 +179,14 @@ Root cause of "nothing populates": server responses are sometimes slow; the UI s
 - Default resolution order (matches actual server behavior): `config.model` from opencode.jsonc → the opencode provider's entry in the default map → any provider's default. The naive "first provider in map" heuristic was wrong — it claimed DeepSeek while the server really streamed `opencode/x-preview-f-free`.
 - **Self-correcting default**: no server endpoint reports the effective fallback model, so after a prompt sent *without* an explicit selection, the reply's `providerID/modelID` is adopted as `defaultModel` — the label always converges to what actually runs.
 - **Unknown default → require a pick**: the wrong-guessing heuristics were removed entirely. Until a default is known AND nothing is hand-picked, sending is blocked: textarea + Send disabled, picker shows "Choose a model…". Once a default is learned (or remembered), "Server default · X" reappears as an option.
-- **Custom model dropdown**: replaced the native `<select>` (whose popup can't be styled) with a fully themed glass menu — blocky 4px radius, blurred surface, accent border + glow, group labels in mono caps, check mark on the active entry; opens upward from the composer; closes on outside click / Escape.
+- **Custom model dropdown**: replaced the native `<select>` (whose popup can't be styled) with a fully themed glass menu — blocky 4px radius, blurred surface, accent border + glow, group labels in mono caps, check mark on the active entry; opens upward from the composer; closes on outside click.
+- **Dropdown keyboard navigation**: focus the trigger → Enter/Space opens; ArrowUp/Down move highlight (auto-scrolled into view), Home/End jump, Enter picks, Escape closes. ARIA `listbox`/`option`/`aria-expanded` wired.
+
+### UX hardening ✅ (2026-08-23)
+
+- Raw browser right-click menu suppressed app-wide (`contextmenu` preventDefault) — no more Reload/Inspect leaking through.
+- Global `:focus-visible` accent outlines on buttons/options for keyboard users.
+- Disabled textarea styled (dimmed + not-allowed cursor) in "pick a model" state.
 - **Persistence bugfix**: the save-effect fired with `""` on mount and wiped the stored model before restore could read it; it now only persists non-empty selections.
 
 ### Font Awesome icons ✅ (2026-08-23)

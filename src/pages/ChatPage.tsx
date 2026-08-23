@@ -25,7 +25,8 @@ export default function ChatPage() {
     getCurrentWebview().setZoom(1).catch(() => {});
   }, []);
 
-  // and block zoom hotkeys entirely: Ctrl+wheel / Ctrl +/-/0
+  // block WebView2 zoom hotkeys entirely: Ctrl+wheel / Ctrl +/-/0
+  // and suppress the raw browser right-click menu (desktop app, not a page)
   useEffect(() => {
     const wheel = (e: WheelEvent) => {
       if (e.ctrlKey) e.preventDefault();
@@ -33,11 +34,14 @@ export default function ChatPage() {
     const key = (e: KeyboardEvent) => {
       if (e.ctrlKey && ["=", "+", "-", "0"].includes(e.key)) e.preventDefault();
     };
+    const ctx = (e: MouseEvent) => e.preventDefault();
     window.addEventListener("wheel", wheel, { passive: false });
     window.addEventListener("keydown", key);
+    document.addEventListener("contextmenu", ctx);
     return () => {
       window.removeEventListener("wheel", wheel);
       window.removeEventListener("keydown", key);
+      document.removeEventListener("contextmenu", ctx);
     };
   }, []);
 

@@ -23,26 +23,12 @@ export default function Composer({
 }) {
   const [input, setInput] = useState("");
   const [open, setOpen] = useState(false);
+  const [hi, setHi] = useState(-1); // keyboard highlight index
   const boxRef = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
 
   // no selection and the server default is still unknown → require a pick
   const needsModel = !loadingModels && !modelSel && !defaultModel;
-
-  useEffect(() => {
-    if (!open) return;
-    const onDoc = (e: MouseEvent) => {
-      if (!boxRef.current?.contains(e.target as Node)) setOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
-    };
-    document.addEventListener("mousedown", onDoc);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDoc);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
 
   const pretty = (sel: string) => {
     const [pid, mid] = sel.split("/");
@@ -50,6 +36,77 @@ export default function Composer({
     const m = g?.models.find((x) => x.id === mid);
     return g && m ? `${g.label} · ${m.label}` : sel;
   };
+
+  // flat selectable entries (server default first, then provider models)
+  const entries: { value: string; label: string; group?: string }[] = [];
+  if (defaultModel) {
+    entries.push({ value: "", label: `Server default · ${pretty(defaultModel)}` });
+  }
+  providers.forEach((g) =>
+    g.models.forEach((m) =>
+      entries.push({ value: `${g.id}/${m.id}`, label: m.label, group: g.label }),
+    ),
+  );
+
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      if (!boxRef.current?.contains(e.target as Node)) setOpen(false);
+    };
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [open]);
+
+  // keep the highlighted entry visible while arrowing
+  useEffect(() => {
+    menuRef.current
+      ?.querySelector('[data-hl="true"]')
+      ?.scrollIntoView({ block: "nearest" });
+  }, [hi, open]);
+
+  function toggleMenu() {
+    setOpen((o) => {
+      const next = !o;
+      if (next) setHi(entries.findIndex((e2) => e2.value === modelSel));
+      else setHi(-1);
+      return next;
+    });
+  }
+
+  const pick = (v: string) => {
+    onModelSelect(v);
+    setOpen(false);
+    setHi(-1);
+  };
+
+  function onMenuKeyDown(e: React.KeyboardEvent) {
+    if (!open) {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        toggleMenu();
+      }
+      return;
+    }
+    if (e.key === "Escape") {
+      e.preventDefault();
+      setOpen(false);
+      setHi(-1);
+    } else if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setHi((h) => Math.min(h + 1, entries.length - 1));
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setHi((h) => Math.max(h - 1, 0));
+    } else if (e.key === "Enter" && hi >= 0 && hi < entries.length) {
+      e.preventDefault();
+      pick(entries[hi].value);
+    } else if (e.key === "Home") {
+      e.preventDefault();
+      setHi(0);
+    } else if (e.key === "End") {
+      e.preventDefault();
+      setHi(entries.length - 1);
+    }
+  }
 
   const currentLabel = () => {
     if (loadingModels) return "loading models…";
@@ -69,53 +126,44 @@ export default function Composer({
     <div className="composer">
       <div className="model-row">
         <span>{currentLabel()}</span>
-        <div className={`model-select${open ? " open" : ""}${needsModel ? " needs-model" : ""}`} ref={boxRef}>
+        <div
+          className={`model-select${open ? " open" : ""}${needsModel ? " needs-model" : ""}`}
+          ref={boxRef}
+          onKeyDown={onMenuKeyDown}
+        >
           <button
             type="button"
             className="model-select-btn"
-            onClick={() => setOpen((o) => !o)}
+            onClick={toggleMenu}
             disabled={loadingModels}
+            aria-haspopup="listbox"
+            aria-expanded={open}
           >
             <span>{currentLabel()}</span>
             <i className={`fa-solid fa-chevron-${open ? "up" : "down"}`} />
           </button>
           {open && (
-            <div className="model-menu">
-              {defaultModel && (
-                <button
-                  type="button"
-                  className={`model-opt${!modelSel ? " selected" : ""}`}
-                  onClick={() => {
-                    onModelSelect("");
-                    setOpen(false);
-                  }}
-                >
-                  <span>Server default · {pretty(defaultModel)}</span>
-                  {!modelSel && <i className="fa-solid fa-check" />}
-                </button>
-              )}
-              {providers.map((g) => (
-                <div key={g.id} className="model-group">
-                  <div className="model-group-label">{g.label}</div>
-                  {g.models.map((m) => {
-                    const v = `${g.id}/${m.id}`;
-                    return (
-                      <button
-                        key={v}
-                        type="button"
-                        className={`model-opt${modelSel === v ? " selected" : ""}`}
-                        onClick={() => {
-                          onModelSelect(v);
-                          setOpen(false);
-                        }}
-                      >
-                        <span>{m.label}</span>
-                        {modelSel === v && <i className="fa-solid fa-check" />}
-                      </button>
-                    );
-                  })}
-                </div>
-              ))}
+            <div className="model-menu" role="listbox" ref={menuRef}>
+              {entries.map((it, i) => {
+                const showGroup = it.group && entries[i - 1]?.group !== it.group;
+                return (
+                  <div key={it.value || `def-${i}`}>
+                    {showGroup && <div className="model-group-label">{it.group}</div>}
+                    <button
+                      type="button"
+                      role="option"
+                      aria-selected={modelSel === it.value}
+                      data-hl={hi === i || undefined}
+                      className={`model-opt${modelSel === it.value ? " selected" : ""}${hi === i ? " hl" : ""}`}
+                      onClick={() => pick(it.value)}
+                      onMouseEnter={() => setHi(i)}
+                    >
+                      <span>{it.label}</span>
+                      {modelSel === it.value && <i className="fa-solid fa-check" />}
+                    </button>
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>

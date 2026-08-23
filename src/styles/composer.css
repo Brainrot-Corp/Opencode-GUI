@@ -129,6 +129,11 @@
   background: rgba(127, 212, 212, 0.08);
   color: var(--text);
 }
+.model-opt.hl,
+.model-opt.hl:hover {
+  background: rgba(127, 212, 212, 0.1);
+  color: var(--text);
+}
 .model-opt.selected {
   background: var(--accent-dim);
   color: var(--accent-bright);
@@ -167,6 +172,13 @@
 .composer textarea:focus {
   outline: none;
   border-color: rgba(127, 212, 212, 0.3);
+}
+.composer textarea:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.composer textarea:disabled:focus {
+  border-color: transparent;
 }
 
 .send-btn,
