@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { enable, isEnabled, disable } from "@tauri-apps/plugin-autostart";
 import type { AppSettings } from "../hooks/useSettings";
+import type { SoundPrefs } from "../lib/sounds";
 import "../styles/settings.css";
 
 export default function SettingsDrawer({
@@ -8,11 +9,13 @@ export default function SettingsDrawer({
   onClose,
   settings,
   update,
+  updateSounds,
 }: {
   open: boolean;
   onClose: () => void;
   settings: AppSettings;
   update: (patch: Partial<AppSettings>) => void;
+  updateSounds: (patch: Partial<SoundPrefs>) => void;
 }) {
   const [autoLaunch, setAutoLaunch] = useState<boolean | null>(null);
 
@@ -112,6 +115,46 @@ export default function SettingsDrawer({
                 onClick={() => update({ uiScale: s })}
               >
                 {Math.round(s * 100)}%
+              </button>
+            ))}
+          </div>
+
+          <div className="sound-box">
+            <div className="sound-box-head">
+              <i className="fa-solid fa-volume-high setting-icon" />
+              <span>Sounds</span>
+              <input
+                type="range"
+                className="vol-slider"
+                min={0}
+                max={1}
+                step={0.05}
+                value={settings.sounds.volume}
+                title={`Master volume ${Math.round(settings.sounds.volume * 100)}%`}
+                aria-label="Master volume"
+                onChange={(e) => updateSounds({ volume: Number(e.target.value) })}
+              />
+            </div>
+            {(
+              [
+                ["show", "fa-window-restore", "Show window"],
+                ["hide", "fa-window-minimize", "Hide window"],
+                ["send", "fa-paper-plane", "Message sent"],
+                ["reply", "fa-bell", "Reply finished"],
+              ] as const
+            ).map(([key, icon, name]) => (
+              <button
+                key={key}
+                type="button"
+                className={`sound-row${settings.sounds[key] ? " on" : ""}`}
+                onClick={() => updateSounds({ [key]: !settings.sounds[key] })}
+                aria-pressed={settings.sounds[key]}
+              >
+                <i className={`fa-solid ${icon}`} />
+                <span>{name}</span>
+                <span className={`pill${settings.sounds[key] ? " on" : ""}`}>
+                  {settings.sounds[key] ? "On" : "Off"}
+                </span>
               </button>
             ))}
           </div>

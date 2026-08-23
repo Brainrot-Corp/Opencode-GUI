@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Message, Part, Session } from "@opencode-ai/sdk/client";
 import { opencode } from "../api";
+import { playSound } from "../lib/sounds";
 import type { Msg, OpenCodeEvent, PermAsk, ProviderGroup } from "../types";
 
 export function useOpencode() {
@@ -62,7 +63,10 @@ export function useOpencode() {
         case "message.updated": {
           const info = p.info as Message;
           if (info.sessionID !== activeRef.current) return;
-          if (info.role === "assistant" && info.time?.completed) setBusy(false);
+          if (info.role === "assistant" && info.time?.completed) {
+            setBusy(false);
+            playSound("reply");
+          }
           // learn the server's real default from a reply we did NOT steer
           if (
             !sentExplicitModel.current &&

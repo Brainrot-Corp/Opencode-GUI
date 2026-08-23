@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { ProviderGroup } from "../types";
+import { playSound } from "../lib/sounds";
 import "../styles/composer.css";
 
 export default function Composer({
@@ -119,6 +120,7 @@ export default function Composer({
     const text = input.trim();
     if (!text || needsModel) return;
     setInput("");
+    playSound("send");
     onSend(text);
   };
 

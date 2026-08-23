@@ -65,7 +65,7 @@
   justify-content: space-between;
   gap: 12px;
   padding: 11px 12px;
-  border-radius: 10px;
+  border-radius: 0;
 }
 .setting-row:hover {
   background: rgba(127, 212, 212, 0.05);
@@ -101,7 +101,7 @@
   flex-shrink: 0;
   width: 42px;
   height: 22px;
-  border-radius: 4px;
+  border-radius: 0;
   border: 1px solid var(--line-strong);
   background: rgba(9, 13, 17, 0.6);
   cursor: pointer;
@@ -113,7 +113,7 @@
   left: 2px;
   width: 16px;
   height: 16px;
-  border-radius: 3px;
+  border-radius: 0;
   background: var(--text-faint);
   transition: transform 0.25s var(--ease), background 0.25s, box-shadow 0.25s;
 }
@@ -144,7 +144,7 @@
   color: var(--text-dim);
   background: rgba(9, 13, 17, 0.5);
   border: 1px solid var(--line);
-  border-radius: 4px;
+  border-radius: 0;
   cursor: pointer;
   transition: all 0.25s var(--ease);
 }
@@ -168,4 +168,87 @@
   font-size: 10.5px;
   letter-spacing: 0.06em;
   color: var(--text-faint);
+}
+
+/* sounds group box */
+.sound-box {
+  margin: 6px 12px 12px;
+  border: 1px solid var(--line-strong);
+  background: rgba(9, 13, 17, 0.35);
+  overflow: hidden;
+}
+
+.sound-box-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+}
+.sound-box-head .vol-slider {
+  margin-left: auto;
+}
+
+.vol-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 120px;
+  height: 3px;
+  background: var(--line-strong);
+  outline: none;
+}
+.vol-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 10px;
+  height: 16px;
+  background: var(--accent);
+  box-shadow: 0 0 8px var(--accent-glow);
+  cursor: pointer;
+}
+
+.sound-row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  background: transparent;
+  border: none;
+  border-top: 1px solid var(--line);
+  color: var(--text-dim);
+  font-family: var(--sans);
+  font-size: 12.5px;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.2s, color 0.2s;
+}
+.sound-row:hover {
+  background: rgba(127, 212, 212, 0.05);
+  color: var(--text);
+}
+.sound-row i {
+  width: 18px;
+  text-align: center;
+  color: var(--text-faint);
+}
+.sound-row.on {
+  color: var(--text);
+}
+.sound-row.on i {
+  color: var(--accent);
+}
+.sound-row .pill {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+.sound-row .pill.on {
+  color: var(--accent);
 }

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { listen } from "@tauri-apps/api/event";
 import Titlebar from "../components/Titlebar";
 import Sidebar from "../components/Sidebar";
 import MessageList from "../components/MessageList";
@@ -7,13 +8,14 @@ import PermissionBar from "../components/PermissionBar";
 import SettingsDrawer from "../components/SettingsDrawer";
 import { useOpencode } from "../hooks/useOpencode";
 import { useSettings } from "../hooks/useSettings";
+import { playSound } from "../lib/sounds";
 
 const SB_W_KEY = "oc.sb.w";
 const SB_C_KEY = "oc.sb.c";
 
 export default function ChatPage() {
   const oc = useOpencode();
-  const { settings, update } = useSettings();
+  const { settings, update, updateSounds } = useSettings();
   const [settingsOpen, setSettingsOpen] = useState(false);
 
   const [sbW, setSbW] = useState(() => {
@@ -41,6 +43,17 @@ export default function ChatPage() {
       window.removeEventListener("keydown", key);
       document.removeEventListener("contextmenu", ctx);
     };
+  }, []);
+
+  // Rust emits visibility://changed on tray click / Alt+Space / tray menu
+  useEffect(() => {
+    let un: (() => void) | undefined;
+    listen<boolean>("visibility://changed", (e) =>
+      playSound(e.payload ? "show" : "hide"),
+    ).then((f) => {
+      un = f;
+    });
+    return () => un?.();
   }, []);
 
   useEffect(() => {
@@ -89,6 +102,7 @@ export default function ChatPage() {
           onClose={() => setSettingsOpen(false)}
           settings={settings}
           update={update}
+          updateSounds={updateSounds}
         />
         <div
           className={`layout${resizing ? " no-anim" : ""}`}

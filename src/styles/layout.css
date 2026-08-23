@@ -45,7 +45,7 @@
 .brand i {
   width: 6px;
   height: 6px;
-  border-radius: 50%;
+  border-radius: 0;
   background: var(--accent);
   box-shadow: 0 0 8px var(--accent-glow);
   opacity: 0.85;
@@ -67,7 +67,7 @@
   justify-content: center;
   background: transparent;
   border: none;
-  border-radius: 9px;
+  border-radius: 0;
   cursor: pointer;
   color: var(--text-faint);
   transition: color 0.25s var(--ease), background 0.25s var(--ease), box-shadow 0.35s var(--ease);
@@ -85,6 +85,18 @@
   color: var(--danger);
   background: rgba(224, 143, 143, 0.12);
   box-shadow: 0 0 18px -6px rgba(224, 143, 143, 0.5);
+}
+.icon-btn.on {
+  color: var(--accent-bright);
+  background: var(--accent-dim);
+  box-shadow: 0 0 16px -2px var(--accent-glow), inset 0 0 10px -4px var(--accent-glow);
+}
+
+.ctrl-sep {
+  width: 1px;
+  height: 16px;
+  background: var(--line-strong);
+  margin: 0 6px;
 }
 
 .layout {
@@ -116,7 +128,7 @@
   width: 100%;
   margin: 0 0 6px;
   padding: 9px 16px;
-  border-radius: 12px;
+  border-radius: 0;
   background: rgba(224, 143, 143, 0.07);
   border: 1px solid rgba(224, 143, 143, 0.25);
   color: var(--danger);
@@ -135,20 +147,7 @@
 }
 
 @media (max-width: 900px) {
-.icon-btn.on {
-  color: var(--accent-bright);
-  background: var(--accent-dim);
-  box-shadow: 0 0 16px -2px var(--accent-glow), inset 0 0 10px -4px var(--accent-glow);
-}
-
-.ctrl-sep {
-  width: 1px;
-  height: 16px;
-  background: var(--line-strong);
-  margin: 0 6px;
-}
-
-.layout {
+  .layout {
     grid-template-columns: 210px 1fr;
   }
 }

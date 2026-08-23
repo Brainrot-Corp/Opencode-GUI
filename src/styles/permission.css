@@ -10,7 +10,7 @@
   padding: 14px 18px;
   background: var(--surface-2);
   border: 1px solid rgba(127, 212, 212, 0.28);
-  border-radius: 14px;
+  border-radius: 0;
   backdrop-filter: blur(18px);
   -webkit-backdrop-filter: blur(18px);
   box-shadow:
@@ -38,7 +38,7 @@
 }
 .permission-bar button {
   padding: 7px 16px;
-  border-radius: 999px;
+  border-radius: 0;
   cursor: pointer;
   font-family: var(--sans);
   font-size: 12.5px;

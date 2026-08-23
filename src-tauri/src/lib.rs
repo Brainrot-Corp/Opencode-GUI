@@ -46,6 +46,16 @@ fn show_main(app: &tauri::AppHandle) {
         let _ = w.unminimize();
         let _ = w.set_focus();
     }
+    use tauri::Emitter;
+    let _ = app.emit("visibility://changed", true);
+}
+
+fn hide_main(app: &tauri::AppHandle) {
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.hide();
+    }
+    use tauri::Emitter;
+    let _ = app.emit("visibility://changed", false);
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -68,7 +78,7 @@ pub fn run() {
                             let visible = w.is_visible().unwrap_or(false);
                             let focused = w.is_focused().unwrap_or(false);
                             if visible && focused {
-                                let _ = w.hide();
+                                hide_main(app);
                             } else {
                                 show_main(app);
                             }
@@ -109,7 +119,7 @@ pub fn run() {
                         let app = tray.app_handle();
                         if let Some(w) = app.get_webview_window("main") {
                             if w.is_visible().unwrap_or(false) {
-                                let _ = w.hide();
+                                hide_main(app);
                             } else {
                                 show_main(app);
                             }
