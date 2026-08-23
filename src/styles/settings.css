@@ -120,6 +120,7 @@
 .toggle.on {
   background: rgba(127, 212, 212, 0.13);
   border-color: rgba(127, 212, 212, 0.45);
+  box-shadow: 0 0 14px -6px var(--accent-glow);
 }
 .toggle.on .knob {
   transform: translateX(20px);

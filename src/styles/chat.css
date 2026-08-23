@@ -172,6 +172,7 @@
 }
 .tool-line.done {
   color: var(--accent);
+  text-shadow: 0 0 8px rgba(127, 212, 212, 0.45);
 }
 .tool-line.error {
   color: var(--danger);
