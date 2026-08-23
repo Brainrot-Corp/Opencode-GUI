@@ -7,6 +7,8 @@
   padding: 12px 14px 14px;
   background: linear-gradient(180deg, rgba(23, 32, 40, 0.38), rgba(15, 21, 27, 0.28));
   border: 1px solid var(--line);
+  /* chat history sits flush above — drop our top edge so no seam shows */
+  border-top: none;
   border-radius: 0;
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
