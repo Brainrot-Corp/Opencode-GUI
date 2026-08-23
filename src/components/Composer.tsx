@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ProviderGroup } from "../types";
 import "../styles/composer.css";
 
@@ -22,9 +22,27 @@ export default function Composer({
   onAbort: () => void;
 }) {
   const [input, setInput] = useState("");
+  const [open, setOpen] = useState(false);
+  const boxRef = useRef<HTMLDivElement>(null);
 
   // no selection and the server default is still unknown → require a pick
   const needsModel = !loadingModels && !modelSel && !defaultModel;
+
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      if (!boxRef.current?.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
 
   const pretty = (sel: string) => {
     const [pid, mid] = sel.split("/");
@@ -51,27 +69,56 @@ export default function Composer({
     <div className="composer">
       <div className="model-row">
         <span>{currentLabel()}</span>
-        <select value={modelSel} onChange={(e) => onModelSelect(e.target.value)} disabled={loadingModels}>
-          {loadingModels ? (
-            <option>Loading models…</option>
-          ) : (
-            <>
-              {needsModel && <option value="">Choose a model…</option>}
+        <div className={`model-select${open ? " open" : ""}${needsModel ? " needs-model" : ""}`} ref={boxRef}>
+          <button
+            type="button"
+            className="model-select-btn"
+            onClick={() => setOpen((o) => !o)}
+            disabled={loadingModels}
+          >
+            <span>{currentLabel()}</span>
+            <i className={`fa-solid fa-chevron-${open ? "up" : "down"}`} />
+          </button>
+          {open && (
+            <div className="model-menu">
               {defaultModel && (
-                <option value="">Server default · {pretty(defaultModel)}</option>
+                <button
+                  type="button"
+                  className={`model-opt${!modelSel ? " selected" : ""}`}
+                  onClick={() => {
+                    onModelSelect("");
+                    setOpen(false);
+                  }}
+                >
+                  <span>Server default · {pretty(defaultModel)}</span>
+                  {!modelSel && <i className="fa-solid fa-check" />}
+                </button>
               )}
               {providers.map((g) => (
-                <optgroup key={g.id} label={g.label}>
-                  {g.models.map((m) => (
-                    <option key={m.id} value={`${g.id}/${m.id}`}>
-                      {m.label}
-                    </option>
-                  ))}
-                </optgroup>
+                <div key={g.id} className="model-group">
+                  <div className="model-group-label">{g.label}</div>
+                  {g.models.map((m) => {
+                    const v = `${g.id}/${m.id}`;
+                    return (
+                      <button
+                        key={v}
+                        type="button"
+                        className={`model-opt${modelSel === v ? " selected" : ""}`}
+                        onClick={() => {
+                          onModelSelect(v);
+                          setOpen(false);
+                        }}
+                      >
+                        <span>{m.label}</span>
+                        {modelSel === v && <i className="fa-solid fa-check" />}
+                      </button>
+                    );
+                  })}
+                </div>
               ))}
-            </>
+            </div>
           )}
-        </select>
+        </div>
       </div>
               <div className="composer-row">
                 <textarea
