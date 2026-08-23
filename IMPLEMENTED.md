@@ -174,6 +174,7 @@ Root cause of "nothing populates": server responses are sometimes slow; the UI s
 - Model picker: disabled "Loading models…" until providers arrive.
 - Premature "Say something…" / "Select or create…" prompts suppressed during boot.
 - Temp diagnostics line removed (banner still shows real failures).
+- Session list sorted by `time.updated` descending (most recent first); last-opened session id persisted (`oc.lastSes`) and restored on launch when it still exists, otherwise the newest opens.
 
 ### Font Awesome icons ✅ (2026-08-23)
 

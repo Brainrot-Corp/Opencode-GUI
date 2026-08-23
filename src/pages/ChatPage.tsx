@@ -54,11 +54,16 @@ export default function ChatPage() {
       const startX = e.clientX;
       const startW = sbW;
       setResizing(true);
+      // keep the native Windows col-resize cursor locked during the whole drag
+      document.body.style.cursor = "col-resize";
+      document.body.style.userSelect = "none";
       const move = (ev: MouseEvent) => {
         setSbW(Math.min(Math.max(170, startW + (ev.clientX - startX)), 440));
       };
       const up = () => {
         setResizing(false);
+        document.body.style.cursor = "";
+        document.body.style.userSelect = "";
         window.removeEventListener("mousemove", move);
         window.removeEventListener("mouseup", up);
       };

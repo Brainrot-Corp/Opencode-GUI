@@ -18,16 +18,21 @@ export function useOpencode() {
   const activeRef = useRef(activeId);
   activeRef.current = activeId;
 
+  const LAST_KEY = "oc.lastSes";
+
   const refreshSessions = useCallback(async () => {
     const { client } = await opencode();
     const r = await client.session.list();
-    const list = (r.data ?? []) as Session[];
-    list.reverse(); // newest first
+    // most recently updated first
+    const list = ((r.data ?? []) as Session[]).slice().sort(
+      (a, b) => (b.time?.updated ?? 0) - (a.time?.updated ?? 0),
+    );
     setSessions(list);
     return list;
   }, []);
 
   const openSession = useCallback(async (id: string) => {
+    localStorage.setItem(LAST_KEY, id);
     setActiveId(id);
     setMsgs([]);
     setBusy(false);
@@ -130,8 +135,11 @@ export function useOpencode() {
         } catch (e) {
           if (!disposed) setError(`Failed to load sessions: ${e}`);
         }
-        if (list.length > 0 && !disposed) {
-          await openSession(list[0].id).catch((e) => {
+        // reopen the last-used session if it still exists, else the newest
+        const lastId = localStorage.getItem(LAST_KEY);
+        const target = list.find((s) => s.id === lastId) ?? list[0];
+        if (target && !disposed) {
+          await openSession(target.id).catch((e) => {
             if (!disposed) setError(`Failed to open session: ${e}`);
           });
         }
@@ -171,6 +179,7 @@ export function useOpencode() {
     const { client } = await opencode();
     const r = await client.session.create({ body: {} });
     const s = r.data as Session;
+    localStorage.setItem(LAST_KEY, s.id);
     setSessions((prev) => [s, ...prev]);
     setActiveId(s.id);
     setMsgs([]);

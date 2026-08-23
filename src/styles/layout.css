@@ -13,9 +13,9 @@
   align-items: center;
   justify-content: space-between;
   padding-left: 18px;
-  /* identical tones to the session sidebar, but running horizontally:
+  /* identical soft tones to the session sidebar, running horizontally:
      left edge matches the sidebar's top so they blend at the corner */
-  background: linear-gradient(90deg, rgba(20, 28, 35, 0.26), rgba(12, 17, 22, 0.38));
+  background: linear-gradient(90deg, rgba(20, 28, 35, 0.14), rgba(12, 17, 22, 0.22));
   user-select: none;
 }
 .titlebar .brand {

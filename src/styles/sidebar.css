@@ -4,7 +4,8 @@
   position: relative;
   /* no right padding: the scroll layer below must reach the panel edge
      so its scrollbar hugs the border; rows get their own right gap */
-  background: linear-gradient(180deg, rgba(20, 28, 35, 0.26), rgba(12, 17, 22, 0.38));
+  /* soft tint — same tones as the titlebar so the two read as one surface */
+  background: linear-gradient(180deg, rgba(20, 28, 35, 0.14), rgba(12, 17, 22, 0.22));
   border-right: 1px solid var(--line);
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
@@ -57,13 +58,22 @@
   margin-bottom: 0;
 }
 
-.sb-toggle {
+.sb-head .sb-toggle {
   width: 38px;
-  /* match New chat height via flex stretch; override .icon-btn fixed height */
+  /* match New chat height via flex stretch; beats .icon-btn fixed height */
   height: auto;
+  align-self: stretch;
 }
 .sb-toggle:hover {
   color: var(--accent);
+}
+
+/* while the resize indicator shows (hover), get the scrollbar out of the way */
+.sidebar:has(.sb-resize:hover) .sb-scroll {
+  scrollbar-width: none;
+}
+.sidebar:has(.sb-resize:hover) .sb-scroll::-webkit-scrollbar {
+  width: 0;
 }
 
 .sb-resize {
