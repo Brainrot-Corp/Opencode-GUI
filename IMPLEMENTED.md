@@ -237,6 +237,7 @@ Root cause of "nothing populates": server responses are sometimes slow; the UI s
 ### Streaming reliability fix ✅ (2026-08-23)
 
 - **Race fixed**: `message.part.updated` events arriving before their parent `message.updated` were silently dropped — streamed text could vanish or never appear. The hook now keeps an authoritative mutable message store (`msgsStore` ref) that SSE mutations apply synchronously, mirroring into React state afterwards; orphan parts are queued and flushed when the parent message is created. StrictMode/batching double-invocation hazards removed (no mutations inside state updaters).
+- **Delta streaming fixed**: opencode streams incremental chunks as `message.part.delta` (`{sessionID, messageID, partID, field:"text", delta}`) and may only fire the full-text `part.updated` at milestones/end — ignoring deltas made long replies pop in all at once. Deltas are now appended live onto their text part (stashed if the part isn't announced yet, flushed when it appears, cleared on authoritative updates and session switches).
 
 ### Font Awesome icons ✅ (2026-08-23)
 

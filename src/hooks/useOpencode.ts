@@ -27,6 +27,8 @@ export function useOpencode() {
   const msgsStore = useRef<Msg[]>([]);
   // parts that arrived before their parent message entry — flushed on creation
   const orphanParts = useRef<Map<string, Part[]>>(new Map());
+  // streamed text deltas for parts that don't officially exist yet
+  const pendingDeltas = useRef<Map<string, string>>(new Map());
 
   function upsertPart(part: Part) {
     const store = msgsStore.current;
@@ -35,8 +37,31 @@ export function useOpencode() {
     const pi = m.parts.findIndex((x) => x.id === part.id);
     if (pi < 0) m.parts.push(part);
     else m.parts[pi] = part;
+    // authoritative full-text update — drop any stashed deltas for this part
+    pendingDeltas.current.delete(`${part.messageID}:${part.id}`);
     setMsgs([...store]);
     return true;
+  }
+
+  // append stashed deltas to their parts once those parts exist
+  function flushDeltas() {
+    let changed = false;
+    for (const key of [...pendingDeltas.current.keys()]) {
+      const cut = key.lastIndexOf(":");
+      const mid = key.slice(0, cut);
+      const pid = key.slice(cut + 1);
+      const m = msgsStore.current.find((x) => x.info.id === mid);
+      const pt = m?.parts.find((x) => x.id === pid) as { type?: string; text?: string } | undefined;
+      if (m && pt && pt.type === "text") {
+        pt.text = (pt.text ?? "") + pendingDeltas.current.get(key);
+        pendingDeltas.current.delete(key);
+        changed = true;
+      } else if (!m) {
+        // message is gone — stale deltas
+        pendingDeltas.current.delete(key);
+      }
+    }
+    if (changed) setMsgs([...msgsStore.current]);
   }
 
   // remember the last hand-picked model across launches
@@ -71,6 +96,7 @@ export function useOpencode() {
     // replace (don't merge) — events that landed mid-fetch are already included
     msgsStore.current = list;
     orphanParts.current.clear();
+    pendingDeltas.current.clear();
     setMsgs(list);
   }, []);
 
@@ -111,6 +137,7 @@ export function useOpencode() {
             }
             setMsgs([...store]);
           }
+          flushDeltas();
           break;
         }
         case "message.part.updated": {
@@ -123,6 +150,25 @@ export function useOpencode() {
             orphanParts.current.set(part.messageID, q);
           } else {
             orphanParts.current.delete(part.messageID);
+          }
+          break;
+        }
+        case "message.part.delta": {
+          // incremental stream chunk: {sessionID, messageID, partID, field, delta}
+          if (p.sessionID !== activeRef.current || p.field !== "text") return;
+          const key = `${p.messageID}:${p.partID}`;
+          const store = msgsStore.current;
+          const m = store.find((x) => x.info.id === p.messageID);
+          const pt = m?.parts.find((x) => x.id === p.partID) as
+            | { type?: string; text?: string }
+            | undefined;
+          if (m && pt && pt.type === "text") {
+            pt.text = (pt.text ?? "") + p.delta;
+            pendingDeltas.current.delete(key);
+            setMsgs([...store]);
+          } else {
+            // part not announced yet — stash until it exists
+            pendingDeltas.current.set(key, (pendingDeltas.current.get(key) ?? "") + p.delta);
           }
           break;
         }
@@ -245,6 +291,7 @@ export function useOpencode() {
     setActiveId(s.id);
     msgsStore.current = [];
     orphanParts.current.clear();
+    pendingDeltas.current.clear();
     setMsgs([]);
     setBusy(false);
     setPermission(null);
@@ -303,6 +350,7 @@ export function useOpencode() {
         setActiveId("");
         msgsStore.current = [];
         orphanParts.current.clear();
+        pendingDeltas.current.clear();
         setMsgs([]);
       }
     },
