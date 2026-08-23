@@ -1,9 +1,32 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Part } from "@opencode-ai/sdk/client";
 import type { Msg } from "../types";
 import "../styles/chat.css";
+
+// one reasoning block — per-message visibility: the brain icon toggles THIS
+// block only; /thinking flips the default for blocks not manually toggled
+function Reasoning({ part, defaultOpen }: { part: Part; defaultOpen: boolean }) {
+  const [manual, setManual] = useState<boolean | null>(null);
+  const open = manual ?? defaultOpen;
+  const t = (part as any).text ?? "";
+  if (!t.trim()) return null;
+  return (
+    <div className={`reasoning${open ? " open" : ""}`}>
+      <button
+        type="button"
+        className="reasoning-toggle"
+        data-tip={open ? "Hide thinking for this message" : "Show thinking for this message"}
+        onClick={() => setManual(!open)}
+      >
+        <i className="fa-solid fa-brain" />
+        {!open && <span className="reasoning-label">thinking</span>}
+      </button>
+      {open && <div className="reasoning-body mono">{t}</div>}
+    </div>
+  );
+}
 
 function renderPart(part: Part, key: number, showThinking?: boolean) {
   if (part.type === "text") {
@@ -16,14 +39,7 @@ function renderPart(part: Part, key: number, showThinking?: boolean) {
     );
   }
   if (part.type === "reasoning") {
-    if (!showThinking) return null;
-    const t = (part as any).text ?? "";
-    if (!t.trim()) return null;
-    return (
-      <div key={key} className="reasoning mono">
-        {t}
-      </div>
-    );
+    return <Reasoning key={(part as any).id || key} part={part} defaultOpen={!!showThinking} />;
   }
   if (part.type === "tool") {
     const tool = part as any;

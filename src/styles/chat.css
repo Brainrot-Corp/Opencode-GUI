@@ -345,16 +345,52 @@
   to { background-position: -200% 0; }
 }
 
-/* reasoning (thinking) blocks - dim italic mono, visually secondary */
+/* reasoning (thinking) block - per-message toggle: brain icon + contrasted
+   label when collapsed, dim italic body when expanded */
 .msg .reasoning {
+  border-left: 2px solid var(--accent-dim);
+  padding-left: 8px;
+  margin: 3px 0;
+}
+.msg .reasoning-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-family: var(--sans);
+  color: var(--text-faint);
+  transition: color 0.2s;
+}
+.msg .reasoning-toggle:hover {
+  color: var(--accent-bright);
+}
+.msg .reasoning-toggle i {
+  font-size: 10px;
+  color: var(--accent);
+  text-shadow: 0 0 7px var(--accent-glow);
+}
+.msg .reasoning-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--accent-dim);
+  color: var(--accent-bright);
+}
+.msg .reasoning.open .reasoning-toggle i {
+  color: var(--text-faint);
+  text-shadow: none;
+}
+.msg .reasoning-body {
   font-family: var(--mono);
   font-size: 11px;
   font-style: italic;
   color: var(--text-faint);
   opacity: 0.85;
   padding: 2px 0 4px;
-  border-left: 2px solid var(--accent-dim);
-  padding-left: 8px;
-  margin: 3px 0;
   white-space: pre-wrap;
 }

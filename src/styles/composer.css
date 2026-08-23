@@ -69,6 +69,21 @@
 /* push picker (+ diff toggle) to the right edge */
 .model-row .model-select {
   margin-left: auto;
+  /* the picker never compresses or wraps — the row label absorbs squeezing */
+  flex-shrink: 0;
+}
+.model-row > span:first-child {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.model-select-btn span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .model-row select {
   display: none;
