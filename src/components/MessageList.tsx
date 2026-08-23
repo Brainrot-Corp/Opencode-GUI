@@ -62,16 +62,21 @@ export default function MessageList({
   loading,
   showThinking,
   onRevert,
+  sessionId,
 }: {
   msgs: Msg[];
   busy: boolean;
   loading?: boolean;
   showThinking?: boolean;
   onRevert?: (messageID: string) => void;
+  sessionId?: string;
 }) {
   const listRef = useRef<HTMLDivElement>(null);
   const raf = useRef(0);
-  // while streaming, follow the tail — until the user scrolls up
+  // "session:head-message" signature of the last render — a change means
+  // content was replaced (switch/fill), not streamed onto
+  const lastSig = useRef<string | undefined>(undefined);
+  // while streaming, follow the tail — until the user scrolls away from it
   const stick = useRef(true);
 
   useEffect(() => {
@@ -80,6 +85,7 @@ export default function MessageList({
     const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
     const snap = () => {
+      cancelAnimationFrame(raf.current);
       el.scrollTop = el.scrollHeight;
     };
     // eased chase toward the tail — text grows in place instead of snapping
@@ -100,36 +106,48 @@ export default function MessageList({
       raf.current = requestAnimationFrame(step);
     };
 
-    if (!busy) {
-      // history load / session switch / stream finished: land at the bottom
+    // replaced content (session switch / history fill): land at the bottom.
+    // detected via the head message id so stream-end and trailing updates
+    // on the SAME session never move the viewport
+    const sig = `${sessionId}:${msgs[0]?.info.id ?? ""}`;
+    if (sig !== lastSig.current) {
+      lastSig.current = sig;
       stick.current = true;
       snap();
       return;
     }
-    if (!stick.current) return;
+    // stream end / idle: leave the reader exactly where they are
+    if (!busy || !stick.current) return;
     const dist = el.scrollHeight - el.clientHeight - el.scrollTop;
-    // huge jump = fresh session content: snap; small growth: ease after it
-    if (dist > el.clientHeight * 3 || reduced) snap();
+    // tail ran far ahead (bulk output, or height grew above the viewport —
+    // e.g. an expanded thinking block): stop chasing, the reader decides
+    // when to come back. only a near-tail scroll re-attaches.
+    if (dist > el.clientHeight * 1.5) {
+      stick.current = false;
+      cancelAnimationFrame(raf.current);
+      return;
+    }
+    // small growth: ease after it (no animation under reduced motion)
+    if (reduced) snap();
     else follow();
-  }, [msgs, busy]);
+  }, [msgs, busy, sessionId]);
 
-  // stick/unstick: scrolling up detaches the follower, returning to the
+  // stick/unstick: ANY scroll that increases the gap to the tail detaches
+  // the follower (wheel-up, scrollbar drag, PageUp…), returning near the
   // tail re-attaches
   useEffect(() => {
     const el = listRef.current;
     if (!el) return;
-    const wheel = (e: WheelEvent) => {
-      if (e.deltaY < 0) stick.current = false;
-    };
+    let lastDist = 0;
     const scroll = () => {
       const dist = el.scrollHeight - el.clientHeight - el.scrollTop;
       if (dist < 48) stick.current = true;
+      else if (dist > lastDist + 2) stick.current = false;
+      lastDist = dist;
     };
-    el.addEventListener("wheel", wheel, { passive: true });
     el.addEventListener("scroll", scroll, { passive: true });
     return () => {
       cancelAnimationFrame(raf.current);
-      el.removeEventListener("wheel", wheel);
       el.removeEventListener("scroll", scroll);
     };
   }, []);

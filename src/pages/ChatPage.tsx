@@ -239,6 +239,7 @@ export default function ChatPage() {
                   loading={oc.booting}
                   showThinking={settings.showThinking}
                   onRevert={oc.revertTo}
+                  sessionId={oc.activeId}
                 />
                 {oc.revertId && (
                   <div className="revert-banner">

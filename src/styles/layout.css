@@ -8,6 +8,9 @@
 
 .titlebar {
   height: 42px;
+  /* flex child + z-index: paints above the main panels, so the theme
+     dropdown overflows past the glass stage instead of under it */
+  z-index: 10;
   flex-shrink: 0;
   display: flex;
   align-items: center;
