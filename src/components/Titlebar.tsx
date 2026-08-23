@@ -1,4 +1,5 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { playSound } from "../lib/sounds";
 
 export default function Titlebar({
   pinned,
@@ -40,18 +41,31 @@ export default function Titlebar({
         <button
           className="icon-btn"
           title="Hide to tray"
-          onClick={() => getCurrentWindow().hide()}
+          onClick={() => {
+            playSound("hide");
+            getCurrentWindow().hide();
+          }}
         >
           <i className="fa-solid fa-minus" />
         </button>
         <button
           className="icon-btn"
           title="Maximize / restore"
-          onClick={() => getCurrentWindow().toggleMaximize()}
+          onClick={() => {
+            playSound("maximize");
+            getCurrentWindow().toggleMaximize();
+          }}
         >
           <i className="fa-regular fa-square" />
         </button>
-        <button className="icon-btn close" title="Close" onClick={() => getCurrentWindow().close()}>
+        <button
+          className="icon-btn close"
+          title="Close"
+          onClick={() => {
+            playSound("close");
+            window.setTimeout(() => getCurrentWindow().close(), 130);
+          }}
+        >
           <i className="fa-solid fa-xmark" />
         </button>
       </div>

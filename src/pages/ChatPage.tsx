@@ -56,6 +56,21 @@ export default function ChatPage() {
     return () => un?.();
   }, []);
 
+  // generic click tick for every button that doesn't already play its own sound
+  useEffect(() => {
+    const onDown = (e: MouseEvent) => {
+      const b = (e.target as HTMLElement).closest("button");
+      if (!b) return;
+      if (b.closest(".win-controls")) return; // window buttons have their own
+      if (b.classList.contains("send-btn")) return; // send has its own
+      if (b.closest(".sb-toggle, .sb-expand")) return; // panels have their own
+      if (b.closest(".sound-row")) return; // don't click while editing sounds
+      playSound("click");
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, []);
+
   useEffect(() => {
     localStorage.setItem(SB_W_KEY, String(sbW));
   }, [sbW]);
@@ -68,12 +83,18 @@ export default function ChatPage() {
       e.preventDefault();
       const startX = e.clientX;
       const startW = sbW;
+      let lastTick = 0;
       setResizing(true);
       // keep the native Windows col-resize cursor locked during the whole drag
       document.body.style.cursor = "col-resize";
       document.body.style.userSelect = "none";
       const move = (ev: MouseEvent) => {
         setSbW(Math.min(Math.max(170, startW + (ev.clientX - startX)), 440));
+        const now = performance.now();
+        if (now - lastTick > 70) {
+          lastTick = now;
+          playSound("resize");
+        }
       };
       const up = () => {
         setResizing(false);
@@ -88,6 +109,16 @@ export default function ChatPage() {
     [sbW],
   );
 
+  function openSettings() {
+    playSound("expand");
+    setSettingsOpen(true);
+  }
+
+  function closeSettings() {
+    playSound("collapse");
+    setSettingsOpen(false);
+  }
+
   return (
     <>
       <div className="noise" aria-hidden="true" />
@@ -95,11 +126,11 @@ export default function ChatPage() {
         <Titlebar
           pinned={settings.alwaysOnTop}
           onTogglePin={() => update({ alwaysOnTop: !settings.alwaysOnTop })}
-          onOpenSettings={() => setSettingsOpen(true)}
+          onOpenSettings={openSettings}
         />
         <SettingsDrawer
           open={settingsOpen}
-          onClose={() => setSettingsOpen(false)}
+          onClose={closeSettings}
           settings={settings}
           update={update}
           updateSounds={updateSounds}

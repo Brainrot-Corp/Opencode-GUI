@@ -139,8 +139,14 @@ export default function SettingsDrawer({
               [
                 ["show", "fa-window-restore", "Show window"],
                 ["hide", "fa-window-minimize", "Hide window"],
+                ["maximize", "fa-up-right-and-down-left-from-center", "Maximize / restore"],
+                ["close", "fa-xmark", "Close window"],
                 ["send", "fa-paper-plane", "Message sent"],
                 ["reply", "fa-bell", "Reply finished"],
+                ["type", "fa-keyboard", "Typing"],
+                ["resize", "fa-arrows-left-right", "Resizing"],
+                ["panels", "fa-table-columns", "Panels & menus"],
+                ["click", "fa-hand-pointer", "Button clicks"],
               ] as const
             ).map(([key, icon, name]) => (
               <button

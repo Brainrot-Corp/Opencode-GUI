@@ -176,6 +176,12 @@ export default function Composer({
                   disabled={needsModel}
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={(e) => {
+                    // typing sounds: distinct for keys, erase, newline
+                    if (!e.ctrlKey && !e.metaKey && !e.altKey) {
+                      if (e.key === "Backspace" || e.key === "Delete") playSound("erase");
+                      else if (e.key === "Enter" && e.shiftKey) playSound("newline");
+                      else if (e.key.length === 1) playSound("type");
+                    }
                     if (e.key === "Enter" && !e.shiftKey) {
                       e.preventDefault();
                       send();

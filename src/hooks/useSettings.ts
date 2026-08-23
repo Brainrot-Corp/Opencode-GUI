@@ -13,7 +13,19 @@ const KEY = "oc.settings";
 const DEFAULTS: AppSettings = {
   alwaysOnTop: false,
   uiScale: 1,
-  sounds: { show: true, hide: true, send: true, reply: true, volume: 0.6 },
+  sounds: {
+    show: true,
+    hide: true,
+    send: true,
+    reply: true,
+    type: true,
+    resize: true,
+    panels: true,
+    maximize: true,
+    close: true,
+    click: true,
+    volume: 0.6,
+  },
 };
 
 function load(): AppSettings {
@@ -32,6 +44,12 @@ function load(): AppSettings {
         hide: p.sounds?.hide ?? true,
         send: p.sounds?.send ?? true,
         reply: p.sounds?.reply ?? true,
+        type: p.sounds?.type ?? true,
+        resize: p.sounds?.resize ?? true,
+        panels: p.sounds?.panels ?? true,
+        maximize: p.sounds?.maximize ?? true,
+        close: p.sounds?.close ?? true,
+        click: p.sounds?.click ?? true,
         volume:
           typeof p.sounds?.volume === "number" && p.sounds.volume >= 0 && p.sounds.volume <= 1
             ? p.sounds.volume

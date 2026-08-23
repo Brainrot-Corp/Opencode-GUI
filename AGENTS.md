@@ -32,8 +32,8 @@
 - **Cursors**: native Windows cursors only (`col-resize` etc.), locked on body
   during drags.
 - **State persistence** lives in localStorage under `oc.*` keys (`oc.sb.w`,
-  `oc.sb.c`, `oc.lastSes`, `oc.lastModel`, `oc.settings`) and is validated
-  before use.
+  `oc.sb.c`, `oc.lastSes`, `oc.lastModel`, `oc.settings` — the settings blob
+  includes a nested `sounds` prefs object) and is validated before use.
 
 ## Frontend architecture
 

@@ -206,6 +206,14 @@ Root cause of "nothing populates": server responses are sometimes slow; the UI s
 - **Settings drawer**: gear icon in the titlebar opens a right-side glass drawer (scrim + blur, Carriage drawer pattern). Extensible: add rows to `components/SettingsDrawer.tsx`, fields to `hooks/useSettings.ts`.
 - Capabilities added: `core:window:allow-set-always-on-top`, `autostart:allow-enable/disable/is-enabled`.
 - Alt+Space keeps hiding the window even when always-on-top is active (hide is orthogonal to pinning).
+
+### Sounds ✅ (2026-08-23)
+
+- All sounds are **synthesized** with the Web Audio API (`src/lib/sounds.ts`) — zero bundled assets.
+- Events: window show (rising blip) / hide (falling blip), message sent (tick), reply finished (bell), typing / erasing / newline (per-keyboard variants, one toggle), resizing (throttled ticks while dragging), panels & menus (collapse/expand sidebar + settings open/close), maximize/restore, close window, **generic button click** (soft tick on every button that doesn't have its own sound — window controls, Send, sidebar toggles and sound-pref rows are excluded to avoid doubles).
+- Settings drawer **Sounds box**: master volume slider + one On/Off row per event group; persisted in `oc.settings.sounds`.
+- Rust emits `visibility://changed` on tray click / tray menu / Alt+Space so hide/show sounds play even when the window is already hidden (frontend listens via Tauri events).
+- Close button delays `window.close()` by ~130 ms so its sound can ring out.
 - **Persistence bugfix**: the save-effect fired with `""` on mount and wiped the stored model before restore could read it; it now only persists non-empty selections.
 
 ### Font Awesome icons ✅ (2026-08-23)

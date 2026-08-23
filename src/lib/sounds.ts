@@ -2,13 +2,32 @@
 // prefs are mirrored here by useSettings so any component can trigger a sound
 // without prop-drilling.
 
-export type SoundKind = "show" | "hide" | "send" | "reply";
+export type SoundKind =
+  | "show"
+  | "hide"
+  | "send"
+  | "reply"
+  | "type"
+  | "erase"
+  | "newline"
+  | "resize"
+  | "collapse"
+  | "expand"
+  | "maximize"
+  | "close"
+  | "click";
 
 export type SoundPrefs = {
   show: boolean;
   hide: boolean;
   send: boolean;
   reply: boolean;
+  type: boolean;
+  resize: boolean;
+  panels: boolean;
+  maximize: boolean;
+  close: boolean;
+  click: boolean;
   volume: number; // 0..1 master
 };
 
@@ -17,6 +36,12 @@ let prefs: SoundPrefs = {
   hide: true,
   send: true,
   reply: true,
+  type: true,
+  resize: true,
+  panels: true,
+  maximize: true,
+  close: true,
+  click: true,
   volume: 0.6,
 };
 
@@ -55,8 +80,25 @@ function tone(from: number, to: number, dur: number, vol: number, delay = 0) {
   o.stop(t + dur + 0.02);
 }
 
+// which preference gate controls each playable kind
+const KIND_TOGGLE: Record<SoundKind, Exclude<keyof SoundPrefs, "volume">> = {
+  show: "show",
+  hide: "hide",
+  send: "send",
+  reply: "reply",
+  type: "type",
+  erase: "type",
+  newline: "type",
+  resize: "resize",
+  collapse: "panels",
+  expand: "panels",
+  maximize: "maximize",
+  close: "close",
+  click: "click",
+};
+
 export function playSound(kind: SoundKind) {
-  if (!prefs[kind]) return;
+  if (!prefs[KIND_TOGGLE[kind]]) return;
   const v = Math.min(1, prefs.volume) * 0.22; // master ceiling stays subtle
   if (v <= 0) return;
   switch (kind) {
@@ -73,6 +115,35 @@ export function playSound(kind: SoundKind) {
     case "reply":
       tone(880, 880, 0.13, v * 0.9);
       tone(1318, 1318, 0.18, v * 0.45, 0.06);
+      break;
+    case "type":
+      tone(2000 + Math.random() * 500, 1500, 0.03, v * 0.45);
+      break;
+    case "erase":
+      tone(900, 450, 0.055, v * 0.55);
+      break;
+    case "newline":
+      tone(1046, 1046, 0.06, v * 0.65);
+      tone(1568, 1568, 0.09, v * 0.4, 0.05);
+      break;
+    case "resize":
+      tone(1700 + Math.random() * 300, 1450, 0.022, v * 0.3);
+      break;
+    case "collapse":
+      tone(880, 500, 0.09, v * 0.7);
+      break;
+    case "expand":
+      tone(520, 900, 0.09, v * 0.7);
+      break;
+    case "maximize":
+      tone(600, 980, 0.08, v * 0.8);
+      break;
+    case "close":
+      tone(700, 480, 0.07, v * 0.8);
+      tone(480, 300, 0.1, v * 0.55, 0.07);
+      break;
+    case "click":
+      tone(1250, 1000, 0.03, v * 0.4);
       break;
   }
 }

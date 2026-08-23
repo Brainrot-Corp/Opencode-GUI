@@ -1,4 +1,5 @@
 import type { Session } from "@opencode-ai/sdk/client";
+import { playSound } from "../lib/sounds";
 import "../styles/sidebar.css";
 
 export default function Sidebar({
@@ -31,7 +32,14 @@ export default function Sidebar({
         className={`sidebar${collapsed ? " collapsed" : ""}${resizing ? " resizing" : ""}`}
       >
         {collapsed ? (
-          <button className="icon-btn sb-expand" title="Show session history" onClick={onToggle}>
+          <button
+            className="icon-btn sb-expand"
+            title="Show session history"
+            onClick={() => {
+              playSound("expand");
+              onToggle();
+            }}
+          >
             <i className="fa-solid fa-angles-right" />
           </button>
         ) : (
@@ -45,7 +53,10 @@ export default function Sidebar({
                 <button
                   className="icon-btn sb-toggle"
                   title="Hide session history"
-                  onClick={onToggle}
+                  onClick={() => {
+                    playSound("collapse");
+                    onToggle();
+                  }}
                 >
                   <i className="fa-solid fa-angles-left" />
                 </button>
