@@ -16,18 +16,12 @@
   border-radius: 0;
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
-  box-shadow:
-    0 40px 90px -40px rgba(0, 0, 0, 0.75),
-    0 0 70px -30px color-mix(in srgb, var(--accent) calc(0.09 * 100%), transparent),
-    inset 0 1px 0 rgba(255, 255, 255, 0.045);
-  transition: box-shadow 0.6s var(--ease), border-color 0.4s;
+  /* flush panel: no card shadow — it smears a dark gradient past the edges */
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.045);
+  transition: border-color 0.4s;
 }
 .composer:focus-within {
   border-color: color-mix(in srgb, var(--accent) calc(0.16 * 100%), transparent);
-  box-shadow:
-    0 40px 90px -40px rgba(0, 0, 0, 0.75),
-    0 0 90px -26px color-mix(in srgb, var(--accent) calc(0.16 * 100%), transparent),
-    inset 0 1px 0 rgba(255, 255, 255, 0.05);
 }
 
 .model-row {
