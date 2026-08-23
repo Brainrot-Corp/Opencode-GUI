@@ -225,9 +225,14 @@ export function useOpencode() {
             const store = storeFor(sid);
             const i = store.findIndex((m) => m.info.id === info.id);
             if (i < 0) {
-              // flush any parts that arrived before their parent message
+              // flush any parts that arrived before their parent message.
+              // their stashed pre-deltas are now stale — the queued parts are
+              // authoritative (same rule as upsertPart); keeping them makes
+              // flushDeltas re-append early text = duplicated streaming
               const queued = orphanParts.current.get(info.id);
               orphanParts.current.delete(info.id);
+              for (const pt of queued?.parts ?? [])
+                pendingDeltas.current.delete(`${info.id}:${(pt as any).id}`);
               store.push({ info, parts: queued?.parts ?? [] });
             } else {
               store[i] = { ...store[i], info };
