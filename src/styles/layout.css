@@ -13,7 +13,9 @@
   align-items: center;
   justify-content: space-between;
   padding-left: 18px;
-  background: linear-gradient(180deg, rgba(13, 18, 24, 0.55), rgba(13, 18, 24, 0.3) 80%, transparent);
+  /* identical tones to the session sidebar, but running horizontally:
+     left edge matches the sidebar's top so they blend at the corner */
+  background: linear-gradient(90deg, rgba(20, 28, 35, 0.26), rgba(12, 17, 22, 0.38));
   user-select: none;
 }
 .titlebar .brand {
@@ -102,13 +104,13 @@
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  padding: 22px clamp(18px, 4vw, 44px) 22px;
+  padding: 10px clamp(10px, 1.6vw, 18px) 10px;
   gap: 0;
 }
 
 .banner {
-  width: min(860px, 100%);
-  margin: 0 auto 12px;
+  width: 100%;
+  margin: 0 0 10px;
   padding: 9px 16px;
   border-radius: 12px;
   background: rgba(224, 143, 143, 0.07);
@@ -116,6 +118,13 @@
   color: var(--danger);
   font-size: 12.5px;
   letter-spacing: 0.02em;
+}
+
+.diag {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-faint);
+  padding: 2px 2px 8px;
 }
 
 .empty {

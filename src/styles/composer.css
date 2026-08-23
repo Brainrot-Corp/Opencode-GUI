@@ -1,8 +1,8 @@
 /* composer: input card, model picker row, send/stop buttons */
 
 .composer {
-  width: min(860px, 100%);
-  margin: 16px auto 0;
+  width: 100%;
+  margin: 10px 0 0;
   flex-shrink: 0;
   padding: 12px 14px 14px;
   background: linear-gradient(180deg, rgba(23, 32, 40, 0.38), rgba(15, 21, 27, 0.28));

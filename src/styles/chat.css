@@ -2,8 +2,7 @@
 
 .messages {
   position: relative;
-  width: min(860px, 100%);
-  margin: 0 auto;
+  width: 100%;
   flex: 1;
   min-height: 0;
   overflow-y: auto;

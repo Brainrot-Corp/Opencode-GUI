@@ -12,6 +12,7 @@ export function useOpencode() {
   const [providers, setProviders] = useState<ProviderGroup[]>([]);
   const [modelSel, setModelSel] = useState("");
   const [permission, setPermission] = useState<PermAsk | null>(null);
+  const [live, setLive] = useState(false);
 
   const activeRef = useRef(activeId);
   activeRef.current = activeId;
@@ -111,6 +112,8 @@ export function useOpencode() {
         const { base, client } = await opencode();
 
         es = new EventSource(`${base}/event`);
+        es.onopen = () => setLive(true);
+        es.onerror = () => setLive(false);
         es.onmessage = (ev) => {
           try {
             onEvent(JSON.parse(ev.data));
@@ -228,6 +231,7 @@ export function useOpencode() {
 
   return {
     error,
+    live,
     sessions,
     activeId,
     msgs,

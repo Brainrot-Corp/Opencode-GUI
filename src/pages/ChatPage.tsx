@@ -89,6 +89,13 @@ export default function ChatPage() {
             onDelete={(id) => oc.removeSession(id)}
           />
           <div className="main">
+            {/* TEMP boot diagnostics — remove once stable */}
+            <div className="diag">
+              server ✓ · sessions {oc.sessions.length} · models{" "}
+              {oc.providers.reduce((n, g) => n + g.models.length, 0)} · stream{" "}
+              {oc.live ? "live" : "down"}
+              {oc.error ? ` · ERROR: ${oc.error}` : ""}
+            </div>
             {oc.error && <div className="banner">{oc.error}</div>}
             {!oc.activeId ? (
               <p className="empty">Select or create a session to start.</p>
