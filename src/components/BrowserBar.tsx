@@ -5,16 +5,18 @@ import "../styles/browser.css";
 
 type NavState = { url: string; canBack: boolean; canFwd: boolean };
 
+export const BROWSER_BAR_H = 34;
+
 // browser chrome strip rendered by the main webview while the child webview
 // shows remote content below it — back/forward/reload/URL/open-external and
-// the return-to-app button
+// the return-to-app button. `top` is the child webview's y; the strip paints
+// in the band directly above it so the webview never covers it
 export default function BrowserBar({ top, onClose }: { top: number; onClose: () => void }) {
   const [nav, setNav] = useState<NavState>({ url: "", canBack: false, canFwd: false });
   // null = show the live url; a string = user is editing the field
   const [edit, setEdit] = useState<string | null>(null);
 
   useEffect(() => {
-    invoke("diag_log", { msg: "BrowserBar MOUNTED" }).catch(() => {});
     let un: (() => void) | undefined;
     listen<NavState>("browser://nav", (e) => {
       setNav(e.payload);
@@ -34,7 +36,7 @@ export default function BrowserBar({ top, onClose }: { top: number; onClose: () 
   };
 
   return (
-    <div className="browser-bar" style={{ top }}>
+    <div className="browser-bar" style={{ top: top - BROWSER_BAR_H }}>
       <button className="icon-btn" data-tip="Back (mouse4)" disabled={!nav.canBack}
         onClick={() => invoke("browser_back")}>
         <i className="fa-solid fa-arrow-left" />

@@ -72,7 +72,7 @@ fn hide_main(app: &tauri::AppHandle) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         // remembers window size/position across launches
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .plugin(tauri_plugin_autostart::init(
@@ -81,26 +81,6 @@ pub fn run() {
         ))
         // native folder picker for the workspace setting
         .plugin(tauri_plugin_dialog::init())
-        .plugin(
-            // global Alt+Space: toggle window visibility, works system-wide
-            tauri_plugin_global_shortcut::Builder::new()
-                .with_shortcuts(["alt+space"])
-                .expect("failed to register global shortcut")
-                .with_handler(|app, _shortcut, event| {
-                    if event.state() == tauri_plugin_global_shortcut::ShortcutState::Pressed {
-                        if let Some(w) = app.get_webview_window("main") {
-                            let visible = w.is_visible().unwrap_or(false);
-                            let focused = w.is_focused().unwrap_or(false);
-                            if visible && focused {
-                                hide_main(app);
-                            } else {
-                                show_main(app);
-                            }
-                        }
-                    }
-                })
-                .build(),
-        )
         .invoke_handler(tauri::generate_handler![
             server_url,
             browser_open,
@@ -109,9 +89,36 @@ pub fn run() {
             browser_navigate,
             browser_reload,
             browser_close,
-            open_external,
-            browser::diag_log
-        ])
+            open_external
+        ]);
+
+    // global Alt+Space: toggle window visibility, works system-wide.
+    // If the combo is already taken (PowerToys Run, etc.), warn and continue
+    // instead of panicking — tray click still works as fallback.
+    let builder = match tauri_plugin_global_shortcut::Builder::new()
+        .with_handler(|app, _shortcut, event| {
+            if event.state() == tauri_plugin_global_shortcut::ShortcutState::Pressed {
+                if let Some(w) = app.get_webview_window("main") {
+                    let visible = w.is_visible().unwrap_or(false);
+                    let focused = w.is_focused().unwrap_or(false);
+                    if visible && focused {
+                        hide_main(app);
+                    } else {
+                        show_main(app);
+                    }
+                }
+            }
+        })
+        .with_shortcuts(["alt+space"])
+    {
+        Ok(shortcuts_builder) => builder.plugin(shortcuts_builder.build()),
+        Err(e) => {
+            eprintln!("global shortcut Alt+Space unavailable: {e}");
+            builder
+        }
+    };
+
+    builder
         .setup(|app| {
             // system tray: left click toggles visibility, right click menu
             use tauri::{

@@ -19,16 +19,6 @@ pub struct BrowserState(pub Mutex<Option<Browser>>);
 
 static GEN: AtomicU64 = AtomicU64::new(0);
 
-// TEMP-DIAG: append a line to a trace file so the JS/Rust handoff can be
-// verified without a debugger attached
-fn diag(msg: &str) {
-    let path = std::env::temp_dir().join("opencode").join("browser-diag.log");
-    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
-        use std::io::Write;
-        let _ = writeln!(f, "[{:?}] {}", std::time::SystemTime::now(), msg);
-    }
-}
-
 // LOCK DISCIPLINE: every command here is async (sync commands run on the
 // MAIN thread, and add_child/navigate/close block waiting on it — holding
 // either while the other waits deadlocked the whole app). The mutex only
@@ -102,12 +92,10 @@ pub async fn browser_open(
     top: f64,
 ) -> Result<(), String> {
     let parsed = parse_http(&url)?;
-    diag(&format!("open entry url={url} top={top}"));
 
     // already browsing — follow the link in place
     let existing = state.0.lock().unwrap().as_ref().map(|b| b.webview.clone());
     if let Some(wv) = existing {
-        diag("open: already browsing, navigating");
         let s = parsed.to_string();
         wv.navigate(parsed).map_err(|e| e.to_string())?;
         if let Some(b) = state.0.lock().unwrap().as_mut() {
@@ -130,27 +118,19 @@ pub async fn browser_open(
     }
 
     let gen = GEN.fetch_add(1, Ordering::Relaxed);
-    let webview = match win.add_child(
-        WebviewBuilder::new("browser", WebviewUrl::External(parsed.clone())).incognito(true),
-        LogicalPosition::new(0.0, top),
-        LogicalSize::new(size.width, size.height - top),
-    ) {
-        Ok(w) => {
-            diag("open: webview created");
-            w
-        }
-        Err(e) => {
-            diag(&format!("open: add_child FAILED: {e}"));
-            return Err(e.to_string());
-        }
-    };
+    let webview = win
+        .add_child(
+            WebviewBuilder::new("browser", WebviewUrl::External(parsed.clone())).incognito(true),
+            LogicalPosition::new(0.0, top),
+            LogicalSize::new(size.width, size.height - top),
+        )
+        .map_err(|e| e.to_string())?;
 
     let mut guard = state.0.lock().unwrap();
     if guard.is_some() {
         // lost a race with another opener — keep theirs, drop ours
         drop(guard);
         let _ = webview.close();
-        diag("open: lost race, dropped duplicate");
         return Ok(());
     }
     *guard = Some(Browser {
@@ -161,20 +141,7 @@ pub async fn browser_open(
         gen,
     });
     drop(guard);
-    diag("open: stored state, spawning poll");
     spawn_poll(app.clone(), gen);
-    // nudge the main webview in case WebView2 paused its composition once
-    // the opaque child covered it (bar painted but never presented)
-    if let Some(w) = app.get_webview_window("main") {
-        let _ = w.eval("void 0");
-    }
-    diag("open: done");
-    Ok(())
-}
-
-#[tauri::command]
-pub async fn diag_log(msg: String) -> Result<(), String> {
-    diag(&format!("js: {msg}"));
     Ok(())
 }
 

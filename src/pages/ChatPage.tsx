@@ -7,7 +7,7 @@ import MessageList from "../components/MessageList";
 import Composer from "../components/Composer";
 import PermissionBar from "../components/PermissionBar";
 import QuestionPopup from "../components/QuestionPopup";
-import BrowserBar from "../components/BrowserBar";
+import BrowserBar, { BROWSER_BAR_H } from "../components/BrowserBar";
 import SettingsDrawer from "../components/SettingsDrawer";
 import DiffPanel from "../components/DiffPanel";
 import TooltipLayer from "../components/TooltipLayer";
@@ -34,27 +34,37 @@ export default function ChatPage() {
   const [resizing, setResizing] = useState(false);
   const [browserTop, setBrowserTop] = useState<number | null>(null);
 
-  // browser bar band = titlebar bottom + bar height; also the y the child
-  // webview is placed at
+  // browser bar band = titlebar bottom + bar height; the child webview starts
+  // right below the bar
   function barTop() {
     const tb = document.querySelector(".titlebar") as HTMLElement | null;
-    return (tb?.offsetHeight ?? 42) + 34;
+    return (tb?.offsetHeight ?? 42) + BROWSER_BAR_H;
   }
 
-  // TEMP-DIAG: auto-open a page so the browser bar can be screenshotted
-  useEffect(() => {
-    const t = setTimeout(() => {
-      invoke("browser_open", { url: "https://example.com", top: barTop() })
-        .then(() => {
-          setBrowserTop(barTop());
-          invoke("diag_log", { msg: "promise resolved, setBrowserTop done" }).catch(() => {});
-        })
-        .catch((e) => {
-          invoke("diag_log", { msg: `invoke REJECTED: ${e}` }).catch(() => {});
-        });
-    }, 2500);
-    return () => clearTimeout(t);
+  // open (or navigate) the embedded browser; the chrome strip renders in the
+  // band between titlebar and webview
+  const openBrowser = useCallback((url: string) => {
+    const top = barTop();
+    invoke("browser_open", { url, top })
+      .then(() => setBrowserTop(top))
+      .catch(() => {});
   }, []);
+
+  // follow links from chat content in the embedded browser — capture phase,
+  // because react-markdown anchors aren't ours to attach handlers to
+  useEffect(() => {
+    const click = (e: MouseEvent) => {
+      if (e.button !== 0) return;
+      const a = (e.target as HTMLElement).closest("a[href]") as HTMLAnchorElement | null;
+      if (!a) return;
+      const href = a.getAttribute("href") ?? "";
+      if (!/^(https?:)?\/\//i.test(href)) return;
+      e.preventDefault();
+      openBrowser(/^https?:\/\//i.test(href) ? href : `https:${href}`);
+    };
+    document.addEventListener("click", click, true);
+    return () => document.removeEventListener("click", click, true);
+  }, [openBrowser]);
 
   // block WebView2 zoom hotkeys entirely: Ctrl+wheel / Ctrl +/-/0
   // and suppress the raw browser right-click menu (desktop app, not a page)
