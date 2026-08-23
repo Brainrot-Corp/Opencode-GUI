@@ -187,6 +187,14 @@ Root cause of "nothing populates": server responses are sometimes slow; the UI s
 - Raw browser right-click menu suppressed app-wide (`contextmenu` preventDefault) — no more Reload/Inspect leaking through.
 - Global `:focus-visible` accent outlines on buttons/options for keyboard users.
 - Disabled textarea styled (dimmed + not-allowed cursor) in "pick a model" state.
+
+### System tray ✅ (2026-08-23)
+
+- Tray icon (app icon) with right-click menu: **Show OpenCode / Quit**; left-click toggles window visibility.
+- The minimize button now **hides to the tray** (`window.hide()`) instead of taskbar-minimizing — the server keeps running while hidden.
+- Quit via tray menu exits cleanly (RunEvent::Exit still kills the opencode serve child).
+- Tauri feature `tray-icon`; capabilities `core:window:allow-hide/show`.
+- Note: rebuilding while the old exe is running fails with "Access is denied" (Windows file lock) — close the app before recompiling.
 - **Persistence bugfix**: the save-effect fired with `""` on mount and wiped the stored model before restore could read it; it now only persists non-empty selections.
 
 ### Font Awesome icons ✅ (2026-08-23)

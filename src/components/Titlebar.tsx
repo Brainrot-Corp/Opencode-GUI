@@ -34,7 +34,11 @@ export default function Titlebar({
         </div>
       </div>
       <div className="win-controls">
-        <button className="icon-btn" title="Minimize" onClick={() => getCurrentWindow().minimize()}>
+        <button
+          className="icon-btn"
+          title="Hide to tray"
+          onClick={() => getCurrentWindow().hide()}
+        >
           <i className="fa-solid fa-minus" />
         </button>
         <button
