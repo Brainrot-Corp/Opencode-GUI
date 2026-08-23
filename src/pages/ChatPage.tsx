@@ -8,6 +8,7 @@ import PermissionBar from "../components/PermissionBar";
 import SettingsDrawer from "../components/SettingsDrawer";
 import DiffPanel from "../components/DiffPanel";
 import TooltipLayer from "../components/TooltipLayer";
+import { HelpDialog, ShareDialog } from "../components/CommandDialog";
 import { useOpencode } from "../hooks/useOpencode";
 import { useSettings } from "../hooks/useSettings";
 import { pickWorkspace } from "../lib/workspace";
@@ -229,16 +230,24 @@ export default function ChatPage() {
                   modelSel={oc.modelSel}
                   defaultModel={oc.defaultModel}
                   onModelSelect={oc.setModelSel}
-                  onSend={oc.send}
+                  onSend={oc.submit}
                   onAbort={oc.abort}
                   onToggleDiff={() => setDiffOpen((v) => !v)}
                   onPickWorkspace={() => pickWorkspace()}
                   workspace={settings.workspace}
+                  commands={oc.cmdList}
+                  onCommandsOpen={oc.refreshCommands}
                 />
               </>
             )}
           </div>
         </div>
+        {oc.dialog?.kind === "help" && (
+          <HelpDialog commands={oc.cmdList} onClose={oc.closeDialog} />
+        )}
+        {oc.dialog?.kind === "share" && (
+          <ShareDialog url={oc.dialog.url} onClose={oc.closeDialog} />
+        )}
         {diffOpen && oc.activeId && (
           <DiffPanel sessionId={oc.activeId} onClose={() => setDiffOpen(false)} />
         )}

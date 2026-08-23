@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { Msg } from "../types";
 import { opencode } from "../api";
+import Dialog from "./Dialog";
 import "../styles/diff.css";
 
 type FileDiff = {
@@ -22,12 +23,6 @@ export default function DiffPanel({
 }) {
   const [diffs, setDiffs] = useState<FileDiff[] | null>(null);
   const [error, setError] = useState("");
-
-  useEffect(() => {
-    const key = (e: KeyboardEvent) => e.key === "Escape" && onClose();
-    window.addEventListener("keydown", key);
-    return () => window.removeEventListener("keydown", key);
-  }, [onClose]);
 
   useEffect(() => {
     (async () => {
@@ -52,37 +47,27 @@ export default function DiffPanel({
   }, [sessionId]);
 
   return (
-    <div className="diff-scrim" onClick={onClose}>
-      <div className="diff-panel" onClick={(e) => e.stopPropagation()} role="dialog">
-        <div className="diff-head">
-          <span>Changes in this session</span>
-          <button className="icon-btn diff-close" data-tip="Close" onClick={onClose}>
-            <i className="fa-solid fa-xmark" />
-          </button>
+    <Dialog title="Changes in this session" onClose={onClose} wide>
+      {error && <p className="empty">{error}</p>}
+      {!error && diffs === null && <p className="empty">Loading…</p>}
+      {diffs?.length === 0 && (
+        <p className="empty">
+          No tracked changes yet — snapshots need a Git repository
+          as the server's working directory.
+        </p>
+      )}
+      {diffs?.map((d) => (
+        <div key={d.file} className="diff-file">
+          <div className="diff-file-head">
+            <span className="diff-path">{d.file}</span>
+            <span className="diff-stat">
+              <em>+{d.additions ?? 0}</em> <em className="del">-{d.deletions ?? 0}</em>
+            </span>
+          </div>
+          <DiffLines patch={d.patch ?? ""} />
         </div>
-        <div className="diff-body">
-          {error && <p className="empty">{error}</p>}
-          {!error && diffs === null && <p className="empty">Loading…</p>}
-          {diffs?.length === 0 && (
-            <p className="empty">
-              No tracked changes yet — snapshots need a Git repository
-              as the server's working directory.
-            </p>
-          )}
-          {diffs?.map((d) => (
-            <div key={d.file} className="diff-file">
-              <div className="diff-file-head">
-                <span className="diff-path">{d.file}</span>
-                <span className="diff-stat">
-                  <em>+{d.additions ?? 0}</em> <em className="del">-{d.deletions ?? 0}</em>
-                </span>
-              </div>
-              <DiffLines patch={d.patch ?? ""} />
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
+      ))}
+    </Dialog>
   );
 }
 

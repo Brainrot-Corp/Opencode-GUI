@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { ProviderGroup } from "../types";
+import type { CmdEntry } from "../hooks/useOpencode";
 import { playSound } from "../lib/sounds";
 import "../styles/composer.css";
 
@@ -15,6 +16,8 @@ export default function Composer({
   onToggleDiff,
   onPickWorkspace,
   workspace,
+  commands,
+  onCommandsOpen,
 }: {
   busy: boolean;
   loadingModels?: boolean;
@@ -27,15 +30,53 @@ export default function Composer({
   onToggleDiff?: () => void;
   onPickWorkspace?: () => void;
   workspace?: string;
+  commands?: CmdEntry[];
+  onCommandsOpen?: () => void;
 }) {
   const [input, setInput] = useState("");
   const [open, setOpen] = useState(false);
   const [hi, setHi] = useState(-1); // keyboard highlight index
+  const [hiCmd, setHiCmd] = useState(0); // slash-menu highlight
+  const [cmdClosed, setCmdClosed] = useState(false);
   const boxRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
   // no selection and the server default is still unknown → require a pick
   const needsModel = !loadingModels && !modelSel && !defaultModel;
+
+  // slash-command autocomplete: active while typing the leading /token only
+  // (no space yet) — file paths etc. never trigger it
+  const slashQ = /^\/([\w-]*)$/.exec(input)?.[1] ?? null;
+  useEffect(() => {
+    setCmdClosed(false);
+    setHiCmd(0);
+  }, [slashQ]);
+  const cmdEntries = useMemo(() => {
+    if (!commands) return [];
+    const q = (slashQ ?? "").toLowerCase();
+    return commands
+      .filter(
+        (c) =>
+          !q ||
+          c.name.toLowerCase().includes(q) ||
+          c.description.toLowerCase().includes(q),
+      )
+      .slice(0, 12);
+  }, [slashQ, commands]);
+  const cmdOpen = slashQ !== null && !cmdClosed && cmdEntries.length > 0;
+  useEffect(() => {
+    if (cmdOpen) onCommandsOpen?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cmdOpen]);
+
+  const fillCmd = (c: CmdEntry) => {
+    setInput(`/${c.name} `);
+  };
+  const runCmd = (c: CmdEntry) => {
+    setInput("");
+    playSound("send");
+    onSend(`/${c.name}`);
+  };
 
   const pretty = (sel: string) => {
     const [pid, mid] = sel.split("/");
@@ -77,6 +118,14 @@ export default function Composer({
       ?.querySelector('[data-hl="true"]')
       ?.scrollIntoView({ block: "nearest" });
   }, [hi, open]);
+
+  // same for the slash-command menu
+  const cmdMenuRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    cmdMenuRef.current
+      ?.querySelector('[data-hl="true"]')
+      ?.scrollIntoView({ block: "nearest" });
+  }, [hiCmd, cmdOpen]);
 
   function toggleMenu() {
     setOpen((o) => {
@@ -136,6 +185,19 @@ export default function Composer({
     setInput("");
     playSound("send");
     onSend(text);
+  };
+
+  // slash menu: Enter/Tab pick the highlighted entry — an exact, arg-less
+  // match executes right away, anything else fills the input for arguments
+  const cmdPick = () => {
+    const c = cmdEntries[Math.max(0, Math.min(hiCmd, cmdEntries.length - 1))];
+    if (!c) return;
+    if (`/${c.name}` === input.trimEnd()) {
+      if (c.takesArgs) fillCmd(c);
+      else runCmd(c);
+    } else {
+      fillCmd(c);
+    }
   };
 
   return (
@@ -204,12 +266,59 @@ export default function Composer({
           </button>
         )}
       </div>
-              <div className="composer-row">
+      {cmdOpen && (
+        <div className="cmd-menu" role="listbox" ref={cmdMenuRef}>
+          {cmdEntries.map((c, i) => (
+            <button
+              type="button"
+              role="option"
+              key={c.name}
+              aria-selected={i === hiCmd}
+              data-hl={i === hiCmd || undefined}
+              className={`cmd-opt${i === hiCmd ? " hl" : ""}`}
+              onMouseEnter={() => setHiCmd(i)}
+              onClick={() => (c.takesArgs ? fillCmd(c) : runCmd(c))}
+            >
+              <span className="mono cmd-opt-name">/{c.name}</span>
+              <span className="cmd-opt-desc">{c.description || "—"}</span>
+              {c.source !== "built-in" && <span className="cmd-opt-src">{c.source}</span>}
+            </button>
+          ))}
+        </div>
+      )}
+      <div className="composer-row">
                 <textarea
                   value={input}
                   disabled={needsModel}
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={(e) => {
+                    if (cmdOpen) {
+                      if (e.key === "ArrowDown") {
+                        e.preventDefault();
+                        setHiCmd((h) => Math.min(h + 1, cmdEntries.length - 1));
+                        return;
+                      }
+                      if (e.key === "ArrowUp") {
+                        e.preventDefault();
+                        setHiCmd((h) => Math.max(h - 1, 0));
+                        return;
+                      }
+                      if (e.key === "Tab") {
+                        e.preventDefault();
+                        cmdPick();
+                        return;
+                      }
+                      if (e.key === "Escape") {
+                        e.preventDefault();
+                        setCmdClosed(true);
+                        return;
+                      }
+                      if (e.key === "Enter" && !e.shiftKey) {
+                        e.preventDefault();
+                        cmdPick();
+                        return;
+                      }
+                    }
                     // typing sounds: distinct for keys, erase, newline
                     if (!e.ctrlKey && !e.metaKey && !e.altKey) {
                       if (e.key === "Backspace" || e.key === "Delete") playSound("erase");

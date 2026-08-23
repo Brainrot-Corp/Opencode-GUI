@@ -1,8 +1,21 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Message, Part, Session } from "@opencode-ai/sdk/client";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { opencode, getDirectory } from "../api";
 import { playSound } from "../lib/sounds";
-import type { Msg, OpenCodeEvent, PermAsk, ProviderGroup } from "../types";
+import type { Cmd, Msg, OpenCodeEvent, PermAsk, ProviderGroup } from "../types";
+
+// slash-command entries surfaced in the composer: app built-ins first,
+// then the server registry (custom + plugin + skill commands)
+export type CmdEntry = {
+  name: string;
+  description: string;
+  source: string;
+  takesArgs: boolean;
+  builtin?: boolean;
+};
+
+type DialogState = { kind: "help" } | { kind: "share"; url: string } | null;
 
 export function useOpencode() {
   const [error, setError] = useState("");
@@ -16,6 +29,8 @@ export function useOpencode() {
   const [modelSel, setModelSel] = useState("");
   const [defaultModel, setDefaultModel] = useState("");
   const [permission, setPermission] = useState<PermAsk | null>(null);
+  const [commands, setCommands] = useState<Cmd[]>([]);
+  const [dialog, setDialog] = useState<DialogState>(null);
   const [live, setLive] = useState(false);
   const [booting, setBooting] = useState(true);
 
@@ -32,6 +47,8 @@ export function useOpencode() {
   const stores = useRef<Map<string, Msg[]>>(new Map());
   // guards against a stale fetch overwriting a newer one (fast session hops)
   const fetchSeq = useRef<Map<string, number>>(new Map());
+  // command-registry refetch throttle for file-watcher bursts
+  const cmdFetchAt = useRef(0);
   // parts that arrived before their parent message entry — flushed on creation
   const orphanParts = useRef<Map<string, { sid: string; parts: Part[] }>>(new Map());
   // streamed text deltas for parts that don't officially exist yet
@@ -105,6 +122,16 @@ export function useOpencode() {
     );
     setSessions(list);
     return list;
+  }, []);
+
+  // server registry: custom + plugin-registered + skill commands.
+  // hot reload: refetched on "/" menu open, window focus, and .opencode
+  // file-watcher events — but NEW command files only appear after a sidecar
+  // restart (upstream scans command dirs once at startup; verified 2026-08-23)
+  const refreshCommands = useCallback(async () => {
+    const { client } = await opencode();
+    const r = await client.command.list();
+    setCommands(((r.data ?? []) as any[]).map((c) => ({ ...(c as Cmd) })));
   }, []);
 
   const openSession = useCallback(async (id: string) => {
@@ -244,6 +271,18 @@ export function useOpencode() {
           refreshSessions().catch(() => {});
           break;
         }
+        case "file.watcher.updated":
+          // something changed under the workspace — if it could be a command
+          // file, refresh the registry (debounced; new files still need an
+          // app restart per server behavior, edits/deletes of loaded ones show up)
+          {
+            const path = `${p.file ?? p.path ?? ""}`;
+            if (path.includes(".opencode") && Date.now() - cmdFetchAt.current > 1000) {
+              cmdFetchAt.current = Date.now();
+              refreshCommands().catch(() => {});
+            }
+          }
+          break;
       }
     };
 
@@ -313,6 +352,9 @@ export function useOpencode() {
           // provider listing is optional, but show why it failed
           if (!disposed) setError(`Failed to load models: ${e}`);
         }
+        // command registry is optional chrome — never block boot on it
+        refreshCommands().catch(() => {});
+
         if (!disposed) setBooting(false);
       } catch (e) {
         if (!disposed) {
@@ -326,7 +368,14 @@ export function useOpencode() {
       disposed = true;
       es?.close();
     };
-  }, [refreshSessions, openSession]);
+  }, [refreshSessions, openSession, refreshCommands]);
+
+  // keep the command registry warm across workspace switches done elsewhere
+  useEffect(() => {
+    const onFocus = () => refreshCommands().catch(() => {});
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [refreshCommands]);
 
   const newSession = useCallback(async () => {
     const { client } = await opencode();
@@ -417,6 +466,149 @@ export function useOpencode() {
     await openSession(id).catch(() => {});
   }, [refreshSessions, openSession]);
 
+  // /undo target: the user message to rewind TO — one before the last
+  // exchange normally, one before the rewind point when already viewing an
+  // earlier version. "" when there is nothing left to undo.
+  const undoTarget = useMemo(() => {
+    if (!activeId) return "";
+    const users = msgs.filter((m) => m.info.role === "user").map((m) => m.info.id);
+    const pos = revertId ? users.indexOf(revertId) : users.length;
+    const t = revertId ? pos - 1 : pos - 2;
+    return t >= 0 ? users[t] : "";
+  }, [msgs, revertId, activeId]);
+
+  const submit = useCallback(
+    async (text: string) => {
+      const trimmed = text.trim();
+      if (!trimmed) return;
+      const slash = /^\/([\w-]+)(?:\s+([\s\S]*))?$/.exec(trimmed);
+      const id = activeRef.current;
+      if (slash && id) {
+        const [, name, args] = slash;
+        // built-ins first (TUI parity), then the server registry
+        switch (name) {
+          case "help":
+            setDialog({ kind: "help" });
+            return;
+          case "exit":
+            playSound("close");
+            getCurrentWindow().close();
+            return;
+          case "new":
+            await newSession();
+            return;
+          case "undo":
+            if (undoTarget && !busyRef.current.has(id)) revertTo(undoTarget);
+            return;
+          case "redo":
+            if (revertId) unrevert();
+            return;
+          case "compact": {
+            if (busyRef.current.has(id)) return;
+            const sel = modelSel || defaultModel;
+            if (!sel) return;
+            const [providerID, modelID] = sel.split("/");
+            setSessionBusy(id, true);
+            const { client } = await opencode();
+            try {
+              await client.session.summarize({ path: { id }, body: { providerID, modelID } });
+            } catch (e) {
+              setSessionBusy(id, false);
+              setError(String(e));
+            }
+            return;
+          }
+          case "share": {
+            const { client } = await opencode();
+            try {
+              await client.session.share({ path: { id } });
+              const r = await client.session.get({ path: { id } });
+              const url = (r.data as any)?.share?.url ?? "";
+              if (url) setDialog({ kind: "share", url });
+              else setError("Sharing is disabled in this build's config");
+            } catch (e) {
+              setError(String(e));
+            }
+            return;
+          }
+          case "unshare": {
+            const { client } = await opencode();
+            await client.session.unshare({ path: { id } }).catch((e) => setError(String(e)));
+            return;
+          }
+          case "fork": {
+            if (busyRef.current.has(id)) return;
+            const { client } = await opencode();
+            try {
+              const r = await client.session.fork({ path: { id } });
+              const s = r.data as Session;
+              await refreshSessions();
+              await openSession(s.id);
+            } catch (e) {
+              setError(String(e));
+            }
+            return;
+          }
+        }
+        const reg = commands.find((c) => c.name === name);
+        if (reg) {
+          if (busyRef.current.has(id)) return;
+          setSessionBusy(id, true);
+          sentExplicitModel.current = false;
+          const { client } = await opencode();
+          try {
+            await client.session.command({
+              path: { id },
+              body: { command: name, arguments: args ?? "" },
+            });
+          } catch (e) {
+            setSessionBusy(id, false);
+            setError(String(e));
+          }
+          return;
+        }
+      }
+      send(text);
+    },
+    [
+      commands,
+      send,
+      newSession,
+      revertTo,
+      unrevert,
+      undoTarget,
+      revertId,
+      modelSel,
+      defaultModel,
+      refreshSessions,
+      openSession,
+    ],
+  );
+
+  // unified list for the composer autocomplete — built-ins first
+  const cmdList = useMemo<CmdEntry[]>(() => {
+    const builtins: CmdEntry[] = [
+      { name: "new", description: "Start a new session", source: "built-in", takesArgs: false, builtin: true },
+      { name: "undo", description: "Undo the last message", source: "built-in", takesArgs: false, builtin: true },
+      { name: "redo", description: "Redo the last undone message", source: "built-in", takesArgs: false, builtin: true },
+      { name: "compact", description: "Summarize the session to reduce context size", source: "built-in", takesArgs: false, builtin: true },
+      { name: "fork", description: "Create a new session from this one", source: "built-in", takesArgs: false, builtin: true },
+      { name: "share", description: "Share this session and copy the URL", source: "built-in", takesArgs: false, builtin: true },
+      { name: "unshare", description: "Stop sharing this session", source: "built-in", takesArgs: false, builtin: true },
+      { name: "help", description: "Show all available commands", source: "built-in", takesArgs: false, builtin: true },
+      { name: "exit", description: "Close OpenCode", source: "built-in", takesArgs: false, builtin: true },
+    ];
+    const reg: CmdEntry[] = [...commands]
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map((c) => ({
+        name: c.name,
+        description: c.description ?? "",
+        source: c.source ?? "command",
+        takesArgs: (c.hints ?? []).some((h) => h.includes("ARGUMENTS")) || /\$ARGUMENTS/.test(c.template ?? ""),
+      }));
+    return [...builtins, ...reg];
+  }, [commands]);
+
   const removeSession = useCallback(
     async (id: string) => {
       const { client } = await opencode();
@@ -458,6 +650,11 @@ export function useOpencode() {
     newSession,
     openSession,
     send,
+    submit,
+    cmdList,
+    refreshCommands,
+    dialog,
+    closeDialog: () => setDialog(null),
     abort,
     respondToPermission,
     removeSession,

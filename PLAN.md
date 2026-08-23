@@ -51,44 +51,55 @@ So we build a **thin GUI client** that spawns and talks to the server. All agent
 
 ```
 src/
-├── main.tsx              entry
+├── main.tsx              entry (+ Font Awesome import, styles split load)
 ├── App.tsx               thin shell → renders ChatPage
-├── api.ts                opencode client singleton (Tauri server_url → SDK client)
+├── api.ts                opencode client singleton (server_url → SDK client;
+│                         Proxy merges ?directory= into every call — workspace
+│                         switching without sidecar respawn)
 ├── types.ts              shared local types (Msg, PermAsk, ProviderGroup, OpenCodeEvent)
-├── styles.css            REMOVED → src/styles/ split by concern:
-│                           tokens.css (design vars/base/grain) + layout.css (shell/titlebar)
-│                           loaded once in main.tsx; sidebar/chat/composer/permission.css
-│                           imported by their owning components
+├── lib/
+│   ├── sounds.ts         WebAudio UI sound pack + persisted prefs
+│   └── workspace.ts      workspace picker → persists oc.settings, reloads webview
 ├── hooks/
-│   └── useOpencode.ts    ALL app state + actions: boot, SSE event stream,
-│                         sessions CRUD, send/abort, permission responses
-├── components/           reusable, presentational (props in, callbacks out)
-│   ├── Titlebar.tsx      custom window chrome (drag region, min/max/close)
-│   ├── Sidebar.tsx       session list
-│   ├── MessageList.tsx   message rendering + markdown + tool lines + autoscroll
-│   ├── Composer.tsx      input box + model picker + send/stop
-│   └── PermissionBar.tsx approve/deny floating dialog
-└── pages/
-    └── ChatPage.tsx      composes hook + components into the main screen
+│   ├── useOpencode.ts    ALL server state + actions: boot, SSE stream (per-session
+│   │                     stores), sessions CRUD, send/abort, revert/unrevert,
+│   │                     permission responses
+│   └── useSettings.ts    oc.settings blob (theme/mode/colors/uiScale/sounds/workspace)
+├── components/
+│   ├── Titlebar.tsx      frameless chrome: drag, pin (always-on-top), theme/mode selects, settings
+│   ├── Sidebar.tsx       Chats/Files tabs, collapse toggle + width resize (persisted)
+│   ├── FileTree.tsx      lazy directory browser + file preview overlay
+│   ├── MessageList.tsx   markdown rendering, tool lines, autoscroll follower, hover rewind
+│   ├── Composer.tsx      input, model picker, workspace + diff toggles, send/stop
+│   ├── PermissionBar.tsx approve/deny floating dialog
+│   ├── DiffPanel.tsx     session diff overlay (colors the server's unified patch)
+│   ├── SettingsDrawer.tsx themes, custom colors, ui scale, sounds, workspace
+│   ├── ThemeSelect.tsx   titlebar theme dropdown
+│   └── TooltipLayer.tsx  global data-tip renderer
+├── pages/
+│   └── ChatPage.tsx      composes hook + components into the main screen
+└── styles/               tokens, layout, sidebar, chat, composer, permission,
+                          diff, files, settings, tooltip — imported by owning components
 ```
 
 Rule of thumb: state and server talk live in `hooks/`; anything visual is a `component/` that takes props; a screen is a `page/` that wires them together. New screens go in `pages/` and get wired to their own hook.
 
 ## Phases
 
-### Phase 1 — Scaffold
+### Phase 1 — Scaffold ✅ 2026-08-23
 - Create Tauri v2 app in `E:\project\ai assistant` via `npm create tauri-app@latest` (React + TS template).
 - Strip template boilerplate.
 - `npm install @opencode-ai/sdk`.
 - Configure the `opencode.exe` binary as Tauri sidecar resource.
 
-### Phase 2 — Server lifecycle (Rust/Tauri side)
+### Phase 2 — Server lifecycle (Rust/Tauri side) ✅ 2026-08-23
 - On launch: spawn `opencode serve --port <free-port>`.
-- Poll `/global/health` until `{ healthy: true }`.
 - Kill child process on window close / app exit.
 - Pass base URL into the webview.
+- *(health polling replaced by first-request retry in the client)*
 
-### Phase 3 — Minimal chat client (React)
+### Phase 3 — Minimal chat client (React) ✅ 2026-08-23
+*(grew well past minimal — feature log lives in [IMPLEMENTED.md](./IMPLEMENTED.md))*
 Components:
 - **Session sidebar** — list sessions (`session.list()`), new-session button (`session.create()`).
 - **Chat view**
@@ -100,11 +111,12 @@ Components:
 - **Permission dialog** — on permission-request event: Approve/Deny → `POST /session/:id/permissions/:permissionID`. *Required even in MVP; without it the agent cannot run tools.*
 - **Abort button** while streaming (`session.abort()`).
 
-### Phase 4 — Package & verify
+### Phase 4 — Package & verify ⏳
 - `npm run tauri build` → verify installer size and cold-start time.
 - Smoke test with a real provider API key: create session → prompt → streamed reply → permission approval → abort mid-stream.
+- *(dev-run only so far; installer build pending)*
 
-## Key server APIs used (MVP)
+## Key server APIs used
 
 | Purpose | Endpoint / SDK call |
 |---|---|
@@ -117,6 +129,10 @@ Components:
 | Model/provider list | `config.providers()` |
 | Approve/deny tool | `POST /session/:id/permissions/:permissionID` |
 | Abort generation | `session.abort()` |
+| Revert / undo rewind | `POST /session/:id/revert` · `POST /session/:id/unrevert` |
+| File browse + read | `GET /file` · `GET /file/content` |
+| Session diff | `GET /session/:id/diff` |
+| Commands (planned) | `GET /command` · `POST /session/:id/command` |
 
 Full API reference: https://opencode.ai/docs/server · SDK: https://opencode.ai/docs/sdk
 
@@ -131,3 +147,9 @@ Add after the chat loop is solid:
 - Themes ✅ (theme system v2), keybinds
 - Multi-project support — declined by user
 - macOS/Linux builds
+- Slash-command autocomplete (`GET /command` registry: built-ins + config/markdown +
+  plugin-registered commands + skills → `POST /session/:id/command`) — designed, not built
+
+## Skipped — add if ever needed
+
+Command palette UI, fuzzy search over commands, hot-reload of command files.

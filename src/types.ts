@@ -10,4 +10,13 @@ export type ProviderGroup = {
   models: { id: string; label: string }[];
 };
 
+// GET /command entry — SDK type is stale (no source/hints)
+export type Cmd = {
+  name: string;
+  description?: string;
+  template?: string;
+  source?: string;
+  hints?: string[];
+};
+
 export type OpenCodeEvent = { type: string; properties: any };
