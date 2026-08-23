@@ -110,6 +110,7 @@ export default function ChatPage() {
                   loadingModels={oc.booting}
                   providers={oc.providers}
                   modelSel={oc.modelSel}
+                  defaultModel={oc.defaultModel}
                   onModelSelect={oc.setModelSel}
                   onSend={oc.send}
                   onAbort={oc.abort}

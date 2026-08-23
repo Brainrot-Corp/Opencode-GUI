@@ -7,6 +7,7 @@ export default function Composer({
   loadingModels,
   providers,
   modelSel,
+  defaultModel,
   onModelSelect,
   onSend,
   onAbort,
@@ -15,11 +16,25 @@ export default function Composer({
   loadingModels?: boolean;
   providers: ProviderGroup[];
   modelSel: string;
+  defaultModel?: string;
   onModelSelect: (value: string) => void;
   onSend: (text: string) => void;
   onAbort: () => void;
 }) {
   const [input, setInput] = useState("");
+
+  const pretty = (sel: string) => {
+    const [pid, mid] = sel.split("/");
+    const g = providers.find((x) => x.id === pid);
+    const m = g?.models.find((x) => x.id === mid);
+    return g && m ? `${g.label} · ${m.label}` : sel;
+  };
+
+  const currentLabel = () => {
+    if (loadingModels) return "loading models…";
+    if (modelSel) return pretty(modelSel);
+    return defaultModel ? `${pretty(defaultModel)} (server default)` : "server default model";
+  };
 
   const send = () => {
     const text = input.trim();
@@ -31,17 +46,15 @@ export default function Composer({
   return (
     <div className="composer">
       <div className="model-row">
-        <span>
-          {loadingModels
-            ? "loading models…"
-            : modelSel || (providers.length ? "server default model" : "")}
-        </span>
+        <span>{currentLabel()}</span>
         <select value={modelSel} onChange={(e) => onModelSelect(e.target.value)} disabled={loadingModels}>
           {loadingModels ? (
             <option>Loading models…</option>
           ) : (
             <>
-              <option value="">Default model</option>
+              <option value="">
+                {defaultModel ? `Server default · ${pretty(defaultModel)}` : "Default model"}
+              </option>
               {providers.map((g) => (
                 <optgroup key={g.id} label={g.label}>
                   {g.models.map((m) => (

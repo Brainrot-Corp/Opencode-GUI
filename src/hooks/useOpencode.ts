@@ -11,12 +11,18 @@ export function useOpencode() {
   const [busy, setBusy] = useState(false);
   const [providers, setProviders] = useState<ProviderGroup[]>([]);
   const [modelSel, setModelSel] = useState("");
+  const [defaultModel, setDefaultModel] = useState("");
   const [permission, setPermission] = useState<PermAsk | null>(null);
   const [live, setLive] = useState(false);
   const [booting, setBooting] = useState(true);
 
   const activeRef = useRef(activeId);
   activeRef.current = activeId;
+
+  // remember the last hand-picked model across launches
+  useEffect(() => {
+    localStorage.setItem("oc.lastModel", modelSel);
+  }, [modelSel]);
 
   const LAST_KEY = "oc.lastSes";
 
@@ -156,6 +162,51 @@ export function useOpencode() {
           }));
           groups.sort((a, b) => a.label.localeCompare(b.label));
           setProviders(groups);
+
+          // resolve the model the server will actually use:
+          // 1. config.model (from ~/.config/opencode/opencode.jsonc)
+          // 2. the opencode provider's default
+          // 3. any provider's default from the map
+          const def = pr.data?.default as Record<string, string> | undefined;
+          let dm = "";
+          let cfgModel: string | undefined;
+          try {
+            const cfg = await client.config.get();
+            cfgModel = (cfg.data as any)?.model;
+          } catch {
+            // config endpoint unavailable — fall through to heuristics
+          }
+          const trySel = (sel?: string) => {
+            if (!sel) return false;
+            const [pid, mid] = sel.split("/");
+            if (
+              pid &&
+              mid &&
+              groups.some((g) => g.id === pid && g.models.some((m) => m.id === mid))
+            ) {
+              dm = `${pid}/${mid}`;
+              return true;
+            }
+            return false;
+          };
+          if (!trySel(cfgModel) && !trySel(def?.["opencode"] ? `opencode/${def["opencode"]}` : undefined)) {
+            for (const g of groups) {
+              const mid = def?.[g.id];
+              if (mid && trySel(`${g.id}/${mid}`)) break;
+            }
+          }
+          setDefaultModel(dm);
+
+          // restore the last hand-picked model if it still exists
+          const saved = localStorage.getItem("oc.lastModel");
+          if (saved) {
+            const [pid, mid] = saved.split("/");
+            if (groups.some((g) => g.id === pid && g.models.some((m) => m.id === mid))) {
+              setModelSel(saved);
+            } else {
+              localStorage.removeItem("oc.lastModel");
+            }
+          }
         } catch (e) {
           // provider listing is optional, but show why it failed
           if (!disposed) setError(`Failed to load models: ${e}`);
@@ -248,6 +299,7 @@ export function useOpencode() {
     live,
     booting,
     sessions,
+    defaultModel,
     activeId,
     msgs,
     busy,

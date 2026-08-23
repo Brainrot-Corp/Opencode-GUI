@@ -175,6 +175,8 @@ Root cause of "nothing populates": server responses are sometimes slow; the UI s
 - Premature "Say something…" / "Select or create…" prompts suppressed during boot.
 - Temp diagnostics line removed (banner still shows real failures).
 - Session list sorted by `time.updated` descending (most recent first); last-opened session id persisted (`oc.lastSes`) and restored on launch when it still exists, otherwise the newest opens.
+- Model picker shows the **resolved** server default (e.g. "OpenCode · x-preview-f-free (server default)") instead of generic text; the last hand-picked model is persisted (`oc.lastModel`), validated against the provider list on launch, and re-selected if still available.
+- Default resolution order (matches actual server behavior): `config.model` from opencode.jsonc → the opencode provider's entry in the default map → any provider's default. The naive "first provider in map" heuristic was wrong — it claimed DeepSeek while the server really streamed `opencode/x-preview-f-free`.
 
 ### Font Awesome icons ✅ (2026-08-23)
 
