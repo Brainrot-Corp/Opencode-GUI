@@ -1,7 +1,7 @@
 /* sidebar: session list */
 
 .sidebar {
-  background: linear-gradient(180deg, rgba(20, 28, 35, 0.72), rgba(12, 17, 22, 0.85));
+  background: linear-gradient(180deg, rgba(20, 28, 35, 0.26), rgba(12, 17, 22, 0.38));
   border-right: 1px solid var(--line);
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);

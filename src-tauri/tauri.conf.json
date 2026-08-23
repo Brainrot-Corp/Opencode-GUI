@@ -15,7 +15,11 @@
         "title": "OpenCode",
         "width": 1100,
         "height": 720,
-        "decorations": false
+        "decorations": false,
+        "transparent": true,
+        "windowEffects": {
+          "effects": ["acrylic", "mica"]
+        }
       }
     ],
     "security": {

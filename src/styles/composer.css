@@ -5,7 +5,7 @@
   margin: 16px auto 0;
   flex-shrink: 0;
   padding: 12px 14px 14px;
-  background: linear-gradient(180deg, rgba(23, 32, 40, 0.6), rgba(15, 21, 27, 0.42));
+  background: linear-gradient(180deg, rgba(23, 32, 40, 0.38), rgba(15, 21, 27, 0.28));
   border: 1px solid var(--line);
   border-radius: 16px;
   backdrop-filter: blur(10px);
