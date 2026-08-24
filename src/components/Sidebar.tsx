@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { Session } from "@opencode-ai/sdk/client";
 import { playSound } from "../lib/sounds";
 import FileTree from "./FileTree";
+import GitPanel from "./GitPanel";
 import "../styles/sidebar.css";
 
 export default function Sidebar({
@@ -132,6 +133,7 @@ export default function Sidebar({
                 ))
               )}
             </div>
+            <GitPanel />
             <div className="sb-resize" data-tip="Drag to resize" onMouseDown={onStartResize} />
           </>
         )}

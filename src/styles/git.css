@@ -1,0 +1,263 @@
+/* git panel: source-control strip pinned to the sidebar bottom */
+
+.git-panel {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 6px 8px 6px 6px;
+}
+
+/* collapsed strip: branch + ahead/behind + change badge */
+.gp-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--accent) calc(0.05 * 100%), transparent);
+  cursor: pointer;
+  font-family: var(--sans);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-dim);
+  transition: background 0.2s, color 0.2s, box-shadow 0.3s, border-color 0.2s;
+}
+.gp-head:hover {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) calc(0.28 * 100%), transparent);
+  box-shadow: 0 0 16px -6px var(--accent-glow);
+}
+.gp-chev {
+  width: 12px;
+  font-size: 10px;
+  color: var(--text-faint);
+}
+.gp-head .fa-code-branch {
+  font-size: 11px;
+}
+.gp-none {
+  cursor: default;
+  color: var(--text-faint);
+}
+.gp-none:hover {
+  color: var(--text-faint);
+  box-shadow: none;
+  border-color: var(--line);
+}
+
+/* ahead/behind arrows */
+.gp-ab {
+  margin-left: auto;
+  display: flex;
+  gap: 5px;
+  font-size: 10px;
+}
+.gp-ab em {
+  font-style: normal;
+  color: var(--accent);
+}
+.gp-ab em.down {
+  color: var(--danger);
+}
+
+/* total-change count badge */
+.gp-badge {
+  min-width: 17px;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--accent) calc(0.14 * 100%), transparent);
+  color: var(--accent-bright);
+  font-family: var(--mono);
+  font-size: 10px;
+  text-align: center;
+}
+.gp-head .mono {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* when no arrows, push the badge right */
+.gp-head > .gp-badge:last-child {
+  margin-left: auto;
+}
+
+/* expanded body */
+.gp-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.gp-msg {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 12px;
+  outline: none;
+  transition: border-color 0.2s, box-shadow 0.3s;
+}
+.gp-msg::placeholder {
+  color: var(--text-faint);
+}
+.gp-msg:focus {
+  border-color: color-mix(in srgb, var(--accent) calc(0.35 * 100%), transparent);
+  box-shadow: 0 0 14px -6px var(--accent-glow);
+}
+
+.gp-actions {
+  display: flex;
+  gap: 4px;
+}
+.gp-actions button {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 7px 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  cursor: pointer;
+  font-family: var(--sans);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-faint);
+  transition: background 0.2s, color 0.2s;
+}
+.gp-actions button:hover:not(:disabled) {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) calc(0.08 * 100%), transparent);
+}
+.gp-actions button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.gp-err {
+  padding: 6px 8px;
+  border-left: 2px solid var(--danger);
+  background: rgba(224, 143, 143, 0.07);
+  color: var(--danger);
+  font-size: 11px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.gp-sect {
+  margin-top: 2px;
+  padding: 2px 2px 0;
+  font-family: var(--sans);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.gp-empty {
+  padding: 6px 2px;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+/* file rows */
+.gp-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 4px;
+  transition: background 0.15s;
+}
+.gp-row:hover {
+  background: color-mix(in srgb, var(--accent) calc(0.06 * 100%), transparent);
+}
+
+.gp-x {
+  width: 13px;
+  flex-shrink: 0;
+  text-align: center;
+  font-size: 11px;
+}
+.gp-x.mod {
+  color: #d9a662;
+}
+.gp-x.add {
+  color: #93c99c;
+}
+.gp-x.del {
+  color: var(--danger);
+}
+.gp-x.conf {
+  color: #c98fd9;
+}
+.gp-x.oth {
+  color: var(--text-faint);
+}
+
+.gp-file {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+  text-align: left;
+  font-size: 11px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: color 0.15s;
+}
+.gp-file:hover:not(:disabled) {
+  color: var(--text);
+}
+.gp-file:disabled {
+  cursor: default;
+  color: var(--text-faint);
+}
+
+/* hover actions; discard confirm state keeps the row tinted red */
+.gp-acts {
+  position: absolute;
+  right: 0;
+  display: none;
+  gap: 2px;
+  padding-left: 12px;
+  background: linear-gradient(90deg, transparent, rgba(var(--chrome-rgb), 0.95) 30%);
+}
+.gp-row:hover .gp-acts,
+.gp-row.confirming .gp-acts {
+  display: flex;
+}
+.gp-act {
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  cursor: pointer;
+  color: var(--text-dim);
+  font-size: 11px;
+  transition: color 0.15s, background 0.15s;
+}
+.gp-act:hover {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) calc(0.1 * 100%), transparent);
+}
+.gp-act.danger,
+.gp-act.danger:hover {
+  color: var(--danger);
+  background: rgba(224, 143, 143, 0.12);
+}

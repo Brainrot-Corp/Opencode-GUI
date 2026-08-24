@@ -13,6 +13,9 @@ mod voice;
 use voice::{install_bin_finalize, install_model_finalize, install_piper_bin, install_tts_voice_part, tts_remove_voice, tts_speak, tts_status, voice_download, voice_remove_model,
     voice_status, voice_transcribe};
 
+mod git;
+use git::{git_commit, git_diff, git_discard, git_pull, git_push, git_stage, git_status, git_unstage};
+
 struct ServerState {
     port: u16,
     child: Mutex<Option<Child>>,
@@ -192,7 +195,15 @@ pub fn run() {
             tts_speak,
             install_piper_bin,
             install_tts_voice_part,
-            tts_remove_voice
+            tts_remove_voice,
+            git_status,
+            git_stage,
+            git_unstage,
+            git_discard,
+            git_commit,
+            git_push,
+            git_pull,
+            git_diff
         ]);
 
     // global hotkeys, work system-wide.
