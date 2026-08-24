@@ -138,6 +138,18 @@ pub fn install_model_finalize(key: String, name: String) -> Result<(), String> {
     })
 }
 
+#[tauri::command]
+pub fn voice_remove_model(name: String) -> Result<(), String> {
+    if !name.ends_with(".bin") || name.contains('/') || name.contains('\\') || name.contains("..") {
+        return Err("bad model name".into());
+    }
+    match std::fs::remove_file(models_dir().join(&name)) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
 // runs whisper-cli over a 16 kHz mono s16 WAV produced by the webview;
 // returns the plain-text transcription (-nt strips timestamps)
 #[tauri::command]

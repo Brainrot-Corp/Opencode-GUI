@@ -10,8 +10,8 @@ use browser::{browser_back, browser_close, browser_forward, browser_navigate, br
     browser_reload, open_external};
 
 mod voice;
-use voice::{install_bin_finalize, install_model_finalize, voice_download, voice_status,
-    voice_transcribe};
+use voice::{install_bin_finalize, install_model_finalize, voice_download, voice_remove_model,
+    voice_status, voice_transcribe};
 
 struct ServerState {
     port: u16,
@@ -184,7 +184,8 @@ pub fn run() {
             voice_transcribe,
             voice_download,
             install_bin_finalize,
-            install_model_finalize
+            install_model_finalize,
+            voice_remove_model
         ]);
 
     // global Alt+Space: toggle window visibility, works system-wide.

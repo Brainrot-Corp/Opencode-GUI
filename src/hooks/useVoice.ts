@@ -92,6 +92,17 @@ export function useVoice(onResult: (text: string) => void, model: string) {
     window.speechSynthesis?.cancel();
     (async () => {
       try {
+        // gate before getUserMedia so an uninstalled engine can't prompt for
+        // the mic or record into a void — single check covers all callers
+        const st = await invoke<{ bin: boolean; models: string[] }>("voice_status").catch(() => null);
+        if (!st?.bin) {
+          setError("voice engine not installed — set it up in Settings › Voice");
+          return;
+        }
+        if (!st.models.includes(model)) {
+          setError(`model ${model} isn't downloaded — pick or fetch one in Settings › Voice`);
+          return;
+        }
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         const ctx = new AudioContext({ sampleRate: RATE });
         const src = ctx.createMediaStreamSource(stream);

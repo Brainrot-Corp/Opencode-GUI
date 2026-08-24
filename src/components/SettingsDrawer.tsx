@@ -93,6 +93,21 @@ export default function SettingsDrawer({
     }
   }
 
+  // removes a model file; if it was the active pick, fall back to another
+  async function removeModel(name: string) {
+    setVoiceErr("");
+    try {
+      await invoke("voice_remove_model", { name });
+      const left = (voice?.models ?? []).filter((m) => m !== name);
+      setVoice((v) => ({ bin: v?.bin ?? false, models: left }));
+      if (settings.voice.model === name) {
+        update({ voice: { ...settings.voice, model: left[0] ?? VOICE_MODELS[1].id } });
+      }
+    } catch (e) {
+      setVoiceErr(String(e));
+    }
+  }
+
   async function toggleAutoLaunch() {
     try {
       if (autoLaunch) {
@@ -315,12 +330,39 @@ export default function SettingsDrawer({
                 >
                   {VOICE_MODELS.map((m) => (
                     <option key={m.id} value={m.id}>
-                      {m.label}
+                      {m.label + (voice?.models.includes(m.id) ? "" : " — not downloaded")}
                     </option>
                   ))}
                 </select>
               </div>
             </div>
+
+            {voice?.models.length ? (
+              <div className="setting-row">
+                <div className="setting-info">
+                  <i className="fa-solid fa-database setting-icon" />
+                  <div>
+                    <div className="setting-name">Downloaded models</div>
+                    <div className="setting-desc">Click × to free the disk space</div>
+                  </div>
+                </div>
+                <div className="model-chips">
+                  {voice.models.map((m) => (
+                    <span key={m} className={`model-chip${settings.voice.model === m ? " active" : ""}`}>
+                      {m.replace("ggml-", "").replace(".bin", "")}
+                      <button
+                        type="button"
+                        aria-label={`Remove ${m}`}
+                        disabled={!!dl}
+                        onClick={() => void removeModel(m)}
+                      >
+                        <i className="fa-solid fa-xmark" />
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              </div>
+            ) : null}
 
             <div className="setting-row">
               <div className="setting-info">

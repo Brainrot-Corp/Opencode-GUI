@@ -63,7 +63,8 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  flex-wrap: wrap;
+  gap: 6px 12px;
   padding: 11px 12px;
   border-radius: 0;
 }
@@ -93,6 +94,7 @@
   margin-top: 2px;
   font-size: 11.5px;
   color: var(--text-faint);
+  overflow-wrap: anywhere;
 }
 
 /* blocky toggle switch */
@@ -169,6 +171,7 @@
   font-size: 10.5px;
   letter-spacing: 0.06em;
   color: var(--text-faint);
+  overflow-wrap: anywhere;
 }
 
 /* sounds group box */
@@ -210,13 +213,62 @@
 .color-controls {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
   gap: 8px;
-  flex-shrink: 0;
+  flex-shrink: 1;
+  min-width: 0;
+}
+
+/* downloaded whisper models as removable chips */
+.model-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.model-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 4px 3px 8px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--text-dim);
+  background: color-mix(in srgb, var(--accent) calc(0.06 * 100%), transparent);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+}
+.model-chip.active {
+  color: var(--accent-bright);
+  border-color: color-mix(in srgb, var(--accent) calc(0.45 * 100%), transparent);
+  box-shadow: 0 0 14px -6px var(--accent-glow);
+}
+.model-chip button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  font-size: 9px;
+  color: var(--text-faint);
+  background: transparent;
+  border: none;
+  border-radius: 2px;
+  cursor: pointer;
+  transition: all 0.2s var(--ease);
+}
+.model-chip button:hover:not(:disabled) {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) calc(0.15 * 100%), transparent);
+}
+.model-chip button:disabled {
+  opacity: 0.35;
+  cursor: default;
 }
 
 /* whisper model picker — native select, blocky chrome */
 .voice-select {
-  max-width: 210px;
+  max-width: 100%;
   padding: 4px 6px;
   background: var(--inset-bg);
   border: 1px solid var(--line);
@@ -291,6 +343,8 @@
   -webkit-appearance: none;
   appearance: none;
   width: 120px;
+  min-width: 60px;
+  flex-shrink: 1;
   height: 3px;
   background: var(--line-strong);
   outline: none;

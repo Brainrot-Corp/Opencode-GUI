@@ -392,6 +392,7 @@ export default function Composer({
         </div>
       )}
       {attach.note && <div className="composer-note">{attach.note}</div>}
+      {!attach.note && voiceError && <div className="composer-note">{voiceError}</div>}
       <div className="composer-row">
         <input
           ref={fileInputRef}
