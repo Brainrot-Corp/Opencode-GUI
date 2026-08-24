@@ -15,7 +15,8 @@ export type SoundKind =
   | "expand"
   | "maximize"
   | "close"
-  | "click";
+  | "click"
+  | "working";
 
 export type SoundPrefs = {
   show: boolean;
@@ -28,6 +29,7 @@ export type SoundPrefs = {
   maximize: boolean;
   close: boolean;
   click: boolean;
+  working: boolean;
   volume: number; // 0..1 master
 };
 
@@ -42,6 +44,7 @@ let prefs: SoundPrefs = {
   maximize: true,
   close: true,
   click: true,
+  working: true,
   volume: 0.6,
 };
 
@@ -95,6 +98,7 @@ const KIND_TOGGLE: Record<SoundKind, Exclude<keyof SoundPrefs, "volume">> = {
   maximize: "maximize",
   close: "close",
   click: "click",
+  working: "working",
 };
 
 export function playSound(kind: SoundKind) {
@@ -144,6 +148,11 @@ export function playSound(kind: SoundKind) {
       break;
     case "click":
       tone(1250, 1000, 0.03, v * 0.4);
+      break;
+    case "working":
+      // soft low double-pulse — a heartbeat "still working", not an alert
+      tone(494, 440, 0.16, v * 0.7);
+      tone(392, 349, 0.22, v * 0.55, 0.18);
       break;
   }
 }

@@ -986,6 +986,7 @@ export default function SettingsDrawer({
                 ["resize", "fa-arrows-left-right", "Resizing"],
                 ["panels", "fa-table-columns", "Panels & menus"],
                 ["click", "fa-hand-pointer", "Button clicks"],
+                ["working", "fa-wave-square", "Working pulse"],
               ] as const
             ).map(([key, icon, name]) => (
               <button

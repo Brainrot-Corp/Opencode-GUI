@@ -222,14 +222,19 @@ export default function ChatPage() {
   }, [voice.toggle]);
 
   // global Ctrl+Shift+M (Rust-registered) reaches here even when unfocused;
-  // different combo from Ctrl+M so both can't fire for one press
+  // different combo from Ctrl+M so both can't fire for one press.
+  // registered ONCE, calling through a ref: re-registering on every toggle
+  // identity change leaks listeners whenever cleanup runs before the async
+  // listen() resolves (StrictMode remount) — the stale copy then always sees
+  // phase "idle" and restarts the mic instead of stopping it
+  const toggleRef = useRef(voice.toggle);
+  toggleRef.current = voice.toggle;
   useEffect(() => {
-    let un: (() => void) | undefined;
-    listen("mic://toggle", () => voice.toggle()).then((f) => {
-      un = f;
-    });
-    return () => un?.();
-  }, [voice.toggle]);
+    const p = listen("mic://toggle", () => toggleRef.current());
+    return () => {
+      p.then((f) => f()).catch(() => {});
+    };
+  }, []);
 
   // speak-replies: narrate each finished assistant message (code stripped).
   // seenLive gates it: only messages that streamed while this view watched
@@ -355,65 +360,6 @@ export default function ChatPage() {
     if (cut >= 0) speak(pending.slice(0, cut + 1), cur.consumed + cut + 1);
   }, [oc.msgs, oc.busy, settings.speakReplies, settings.ttsVoice]);
 
-  // --- ambience ---------------------------------------------------------------
-  // soft noise bed under extended thinking: after 15s of continuous busy
-  // with nothing audible, hum at half the speech volume until the turn
-  // settles or any piper clip takes over
-  const ambRef = useRef<{ ctx: AudioContext; gain: GainNode } | null>(null);
-  const ambTimer = useRef(0);
-  const ambStop = useCallback(() => {
-    clearTimeout(ambTimer.current);
-    ambTimer.current = 0;
-    const bed = ambRef.current;
-    ambRef.current = null;
-    if (!bed) return;
-    bed.gain.gain.setTargetAtTime(0, bed.ctx.currentTime, 0.12); // fade, no click
-    setTimeout(() => void bed.ctx.close().catch(() => {}), 450);
-  }, []);
-
-  useEffect(() => {
-    if (!oc.busy) {
-      ambStop();
-      return;
-    }
-    ambTimer.current = window.setTimeout(() => {
-      if (replyAudio.current && !replyAudio.current.paused) return;
-      const ctx = new AudioContext();
-      void ctx.resume().catch(() => {});
-      // 4s seamless brown-noise loop, low-passed into a soft hum — no assets
-      const buf = ctx.createBuffer(1, ctx.sampleRate * 4, ctx.sampleRate);
-      const d = buf.getChannelData(0);
-      let last = 0;
-      for (let i = 0; i < d.length; i++) {
-        last = (last + 0.02 * (Math.random() * 2 - 1)) / 1.02;
-        d[i] = last * 3.5;
-      }
-      const src = ctx.createBufferSource();
-      src.buffer = buf;
-      src.loop = true;
-      const lp = ctx.createBiquadFilter();
-      lp.type = "lowpass";
-      lp.frequency.value = 400;
-      const gain = ctx.createGain();
-      const vol = Math.min(1, settingsNow.current.ttsVol) * 0.5;
-      gain.gain.setValueAtTime(0, ctx.currentTime);
-      gain.gain.linearRampToValueAtTime(vol, ctx.currentTime + 0.8);
-      src.connect(lp);
-      lp.connect(gain);
-      gain.connect(ctx.destination);
-      src.start();
-      ambRef.current = { ctx, gain };
-    }, 15000);
-    return ambStop;
-  }, [oc.busy, ambStop]);
-
-  // any piper playback (narration, tool cues, previews) silences the bed
-  useEffect(() => {
-    const live = () => ambStop();
-    window.addEventListener("oc:tts-live", live);
-    return () => window.removeEventListener("oc:tts-live", live);
-  }, [ambStop]);
-
   // top-bar stop-speech button pauses piper playback from anywhere; the
   // volume slider retunes a running reply via oc:tts-vol
   useEffect(() => {
@@ -421,7 +367,6 @@ export default function ChatPage() {
       ttsHushed.current = true;
       ttsQ.current = []; // nothing queued survives the stop
       replyAudio.current?.pause();
-      ambStop();
     };
     const vol = (e: Event) => {
       if (replyAudio.current) replyAudio.current.volume = (e as CustomEvent<number>).detail;
@@ -432,7 +377,34 @@ export default function ChatPage() {
       window.removeEventListener("oc:tts-stop", stop);
       window.removeEventListener("oc:tts-vol", vol);
     };
-  }, [ambStop]);
+  }, []);
+
+  // --- working pulse ----------------------------------------------------------
+  // speech is OFF → total silence, no exceptions. While it's ON and a turn
+  // runs long with nothing audible, a soft blip every 20s (first at 15s)
+  // says "still working" — never a constant noise bed. Any piper playback
+  // pushes the next blip out; oc:tts-stop silences them for the turn.
+  useEffect(() => {
+    if (!oc.busy || !settings.speakReplies) return;
+    const beat = () => {
+      if (!replyAudio.current || replyAudio.current.paused) playSound("working");
+      wait = window.setTimeout(beat, 20000);
+    };
+    let wait = window.setTimeout(beat, 15000);
+    const hush = () => {
+      // narration took over — restart the count so we never talk over it
+      clearTimeout(wait);
+      wait = window.setTimeout(beat, 20000);
+    };
+    const shut = () => clearTimeout(wait);
+    window.addEventListener("oc:tts-live", hush);
+    window.addEventListener("oc:tts-stop", shut);
+    return () => {
+      clearTimeout(wait);
+      window.removeEventListener("oc:tts-live", hush);
+      window.removeEventListener("oc:tts-stop", shut);
+    };
+  }, [oc.busy, settings.speakReplies]);
   useEffect(() => {
     if (!settings.speakReplies) return;
     const last = [...oc.msgs]
