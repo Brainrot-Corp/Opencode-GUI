@@ -93,9 +93,15 @@
   overflow-y: auto;
 }
 
+/* commit message row: input + AI generate button */
+.gp-msgrow {
+  position: relative;
+  display: flex;
+}
+
 .gp-msg {
-  width: 100%;
-  padding: 8px 10px;
+  flex: 1;
+  padding: 8px 32px 8px 10px;
   border: 1px solid var(--line);
   border-radius: 4px;
   background: rgba(255, 255, 255, 0.04);
@@ -111,6 +117,37 @@
 .gp-msg:focus {
   border-color: color-mix(in srgb, var(--accent) calc(0.35 * 100%), transparent);
   box-shadow: 0 0 14px -6px var(--accent-glow);
+}
+
+/* AI generate — sits inside the input's right edge */
+.gp-gen {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  cursor: pointer;
+  color: var(--text-faint);
+  font-size: 12px;
+  transition: color 0.2s, box-shadow 0.3s;
+}
+.gp-gen:hover:not(:disabled) {
+  color: var(--accent);
+  box-shadow: 0 0 10px -2px var(--accent-glow);
+}
+.gp-gen:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.gp-gen.spinning i {
+  animation: gp-spin 1s linear infinite;
+}
+@keyframes gp-spin {
+  to { transform: rotate(360deg); }
 }
 
 .gp-actions {
@@ -156,12 +193,50 @@
 .gp-sect {
   margin-top: 2px;
   padding: 2px 2px 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
   font-family: var(--sans);
   font-size: 10px;
   font-weight: 600;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--text-faint);
+}
+.gp-sect-acts {
+  display: flex;
+  gap: 4px;
+}
+.gp-sact {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 6px;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  cursor: pointer;
+  font-family: var(--sans);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  transition: color 0.15s, background 0.15s;
+}
+.gp-sact:hover:not(:disabled) {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) calc(0.1 * 100%), transparent);
+}
+.gp-sact.danger,
+.gp-sact.danger:hover {
+  color: var(--danger);
+  background: rgba(224, 143, 143, 0.12);
+}
+.gp-sact:disabled {
+  opacity: 0.35;
+  cursor: default;
 }
 
 .gp-empty {

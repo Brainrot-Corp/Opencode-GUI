@@ -527,6 +527,7 @@ export default function ChatPage() {
         />
         <SettingsDrawer
           open={settingsOpen}
+          providers={oc.providers}
           onClose={closeSettings}
           settings={settings}
           update={update}

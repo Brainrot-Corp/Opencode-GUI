@@ -150,11 +150,16 @@ pub async fn git_pull(dir: String) -> Result<String, String> {
 
 #[tauri::command]
 pub async fn git_diff(dir: String, path: String, staged: bool) -> Result<String, String> {
+    // empty path = whole diff (used for AI commit messages)
+    let mut args: Vec<&str> = vec!["diff", "--no-color"];
     if staged {
-        run(&dir, &["diff", "--no-color", "--cached", "--", &path])
-    } else {
-        run(&dir, &["diff", "--no-color", "--", &path])
+        args.push("--cached");
     }
+    if !path.is_empty() {
+        args.push("--");
+        args.push(&path);
+    }
+    run(&dir, &args)
 }
 
 #[cfg(test)]

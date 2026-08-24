@@ -5,7 +5,10 @@ import type { AppSettings, ColorSet } from "../hooks/useSettings";
 import type { ThemeMeta } from "../lib/themes";
 import type { SoundPrefs } from "../lib/sounds";
 import { applyWorkspace, pickWorkspace } from "../lib/workspace";
+import { splitModel } from "../lib/models";
 import ThemeSelect from "./ThemeSelect";
+import ModelMenu, { type ModelEntry } from "./ModelMenu";
+import type { ProviderGroup } from "../types";
 import "../styles/settings.css";
 
 const WHISPER_BIN_URL =
@@ -132,6 +135,7 @@ export default function SettingsDrawer({
   colorsFor,
   modes,
   effectiveMode,
+  providers,
 }: {
   open: boolean;
   onClose: () => void;
@@ -145,6 +149,8 @@ export default function SettingsDrawer({
   // variations the active theme provides — Mode selector hidden when one
   modes?: ("dark" | "light")[];
   effectiveMode?: "dark" | "light";
+  // live provider/model list from useOpencode — commit-message model picker
+  providers?: ProviderGroup[];
 }) {
   // custom themes have no stored color entry yet — cyan's shared base is the
   // starting point until the user overrides it
@@ -315,6 +321,36 @@ export default function SettingsDrawer({
 
   const scales = [0.8, 0.9, 1, 1.1, 1.25];
 
+  // commit-message model picker — same dropdown as the composer, fed from
+  // useOpencode's provider list; "" = off
+  const [gmOpen, setGmOpen] = useState(false);
+  const [gmHi, setGmHi] = useState(-1);
+  const [gmQuery, setGmQuery] = useState("");
+  const gmPretty = (sel: string) => {
+    if (!sel) return "Off";
+    const [pid, mid] = splitModel(sel);
+    const g = providers?.find((x) => x.id === pid);
+    const m = g?.models.find((x) => x.id === mid);
+    return g && m ? `${g.label} · ${m.label}` : sel;
+  };
+  const gmEntries: ModelEntry[] = [
+    { value: "", label: "Off — no AI messages" },
+    ...(providers ?? []).flatMap((g) =>
+      g.models.map((m) => ({ value: `${g.id}/${m.id}`, label: m.label, group: g.label })),
+    ),
+  ];
+  const gmFiltered = (() => {
+    const q = gmQuery.trim().toLowerCase();
+    return q
+      ? gmEntries.filter(
+          (e2) =>
+            e2.label.toLowerCase().includes(q) ||
+            e2.value.toLowerCase().includes(q) ||
+            (e2.group ?? "").toLowerCase().includes(q),
+        )
+      : gmEntries;
+  })();
+
   return (
     <>
       <div className={`drawer-scrim${open ? " open" : ""}`} onClick={onClose} />
@@ -356,6 +392,37 @@ export default function SettingsDrawer({
                 <i className="fa-solid fa-folder" />
                 Browse…
               </button>
+            </div>
+          </div>
+
+          <div className="setting-row">
+            <div className="setting-info">
+              <i className="fa-solid fa-code-branch setting-icon" />
+              <div>
+                <div className="setting-name">Commit message model</div>
+                <div className="setting-desc">
+                  Model for AI commit messages — pick a cheap one
+                </div>
+              </div>
+            </div>
+            <div className="color-controls">
+              <ModelMenu
+                open={gmOpen}
+                setOpen={setGmOpen}
+                hi={gmHi}
+                setHi={setGmHi}
+                entries={gmFiltered}
+                query={gmQuery}
+                setQuery={setGmQuery}
+                selected={settings.gitModel}
+                label={providers?.length ? gmPretty(settings.gitModel) : "loading models…"}
+                onPick={(v) => {
+                  update({ gitModel: v });
+                  setGmOpen(false);
+                  setGmHi(-1);
+                  setGmQuery("");
+                }}
+              />
             </div>
           </div>
 

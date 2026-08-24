@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { getDirectory } from "../api";
+import { getDirectory, opencode } from "../api";
+import { splitModel } from "../lib/models";
 import { extLang } from "../lib/syntax";
 import Dialog from "./Dialog";
 import { DiffLines } from "./DiffPanel";
@@ -19,6 +20,17 @@ const CLEAN: GitStatus = { repo: false, branch: "", ahead: 0, behind: 0, files: 
 
 const base = (p: string) => p.slice(p.lastIndexOf("/") + 1);
 
+// commit-message model from the settings blob — read at click time so
+// drawer edits apply without remounting (same pattern as api.ts workspace)
+function gitModel(): string {
+  try {
+    const v = JSON.parse(localStorage.getItem("oc.settings") ?? "{}").gitModel;
+    return typeof v === "string" ? v : "";
+  } catch {
+    return "";
+  }
+}
+
 // staged = index column meaningful; changes = worktree column or untracked
 const stagedOf = (files: GitFile[]) => files.filter((f) => f.x !== " " && f.x !== "?");
 const changedOf = (files: GitFile[]) => files.filter((f) => f.y !== " ");
@@ -34,6 +46,7 @@ export default function GitPanel() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [confirmPath, setConfirmPath] = useState(""); // discard two-step
+  const [gen, setGen] = useState(false); // AI message in flight
   const [diff, setDiff] = useState<{ path: string; patch: string; staged: boolean } | null>(null);
   const dir = useRef(getDirectory());
 
@@ -70,9 +83,76 @@ export default function GitPanel() {
       if (thenPush) await invoke("git_push", { dir: dir.current });
     });
 
+  // AI commit message: hidden temp session on the configured model —
+  // created, prompted (sync), deleted; never touches the sidebar list
+  const genMsg = async () => {
+    const model = gitModel();
+    if (!model) {
+      // nothing configured — jump straight to the settings drawer
+      window.dispatchEvent(new Event("oc:settings"));
+      setErr("Pick a commit-message model in Settings › Git.");
+      return;
+    }
+    if (gen || busy || !staged.length) return;
+    setGen(true);
+    setErr("");
+    try {
+      const diff = await invoke<string>("git_diff", { dir: dir.current, path: "", staged: true });
+      if (!diff.trim()) {
+        setErr("Staged diff is empty.");
+        return;
+      }
+      const { client } = await opencode();
+      const s = await client.session.create({ body: {} });
+      const sid = (s.data as any).id;
+      try {
+        const [providerID, modelID] = splitModel(model);
+        const r = await client.session.prompt({
+          path: { id: sid },
+          body: {
+            parts: [
+              {
+                type: "text",
+                text:
+                  "Write a git commit message for this staged diff. One line, " +
+                  "imperative mood, max 72 chars, no backticks or quotes — reply " +
+                  "with ONLY the message.\n\n" +
+                  diff.slice(0, 12000),
+              },
+            ],
+            model: { providerID, modelID },
+          },
+        });
+        const parts: any[] = ((r.data as any)?.parts ?? []) as any[];
+        const text = parts
+          .filter((p) => p.type === "text")
+          .map((p) => p.text ?? "")
+          .join("")
+          .trim();
+        if (text) setMsg(text);
+        else setErr("Model returned no message.");
+      } finally {
+        await client.session.delete({ path: { id: sid } }).catch(() => {});
+      }
+    } catch (e) {
+      setErr(String(e).replace(/^Error:\s*/, ""));
+    }
+    setGen(false);
+  };
+
   const rowAct = (cmd: string, path: string) => {
     setConfirmPath("");
     return act(() => invoke(cmd, { dir: dir.current, paths: [path] }));
+  };
+
+  // bulk revert — tracked files only; untracked need `git clean`, not restore
+  const discardAll = () => {
+    const paths = changes
+      .filter((f) => !(f.x === "?" && f.y === "?"))
+      .map((f) => f.path);
+    return act(() =>
+      invoke("git_discard", { dir: dir.current, paths }),
+    ).then(() => setConfirmPath(""));
   };
 
   const openDiff = async (f: GitFile, isStaged: boolean) => {
@@ -194,14 +274,28 @@ export default function GitPanel() {
 
       {open && (
         <div className="gp-body">
-          <input
-            className="gp-msg"
-            placeholder={`Message (${staged.length} staged)`}
-            value={msg}
-            onChange={(e) => setMsg(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && canCommit && commit(false)}
-            disabled={busy}
-          />
+          <div className="gp-msgrow">
+            <input
+              className="gp-msg"
+              placeholder={`Message (${staged.length} staged)`}
+              value={msg}
+              onChange={(e) => setMsg(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && canCommit && commit(false)}
+              disabled={busy}
+            />
+            <button
+              className={`gp-gen${gen ? " spinning" : ""}`}
+              data-tip={
+                gitModel()
+                  ? `Generate message (${gitModel()})`
+                  : "Pick a commit-message model in Settings"
+              }
+              disabled={gen || busy || !staged.length}
+              onClick={genMsg}
+            >
+              <i className="fa-solid fa-wand-magic-sparkles" />
+            </button>
+          </div>
           <div className="gp-actions">
             <button data-tip="Commit staged" disabled={!canCommit} onClick={() => commit(false)}>
               <i className="fa-solid fa-check" />
@@ -224,11 +318,71 @@ export default function GitPanel() {
 
           {staged.length > 0 && (
             <>
-              <div className="gp-sect">Staged</div>
+              <div className="gp-sect">
+                <span>Staged</span>
+                <button
+                  className="gp-sact"
+                  data-tip="Unstage all"
+                  disabled={busy}
+                  onClick={() => act(() => invoke("git_unstage", { dir: dir.current, paths: staged.map((f) => f.path) }))}
+                >
+                  <i className="fa-solid fa-minus" />
+                  Unstage all
+                </button>
+              </div>
               {staged.map((f) => row(f, true))}
             </>
           )}
-          <div className="gp-sect">Changes</div>
+          <div className="gp-sect">
+            <span>Changes</span>
+            <span className="gp-sect-acts">
+              {!!changes.length && (
+                <>
+                  <button
+                    className="gp-sact"
+                    data-tip="Stage all"
+                    disabled={busy}
+                    onClick={() => act(() => invoke("git_stage", { dir: dir.current, paths: changes.map((f) => f.path) }))}
+                  >
+                    <i className="fa-solid fa-plus" />
+                    Stage all
+                  </button>
+                  {/* revert-all: tracked files only — untracked need git clean */}
+                  {changes.some((f) => !(f.x === "?" && f.y === "?")) &&
+                    (confirmPath === "*" ? (
+                      <>
+                        <button
+                          className="gp-sact danger"
+                          data-tip="Really discard all"
+                          disabled={busy}
+                          onClick={discardAll}
+                        >
+                          <i className="fa-solid fa-check" />
+                          Sure?
+                        </button>
+                        <button
+                          className="gp-sact"
+                          data-tip="Keep"
+                          onClick={() => setConfirmPath("")}
+                        >
+                          <i className="fa-solid fa-xmark" />
+                        </button>
+                      </>
+                    ) : (
+                      <button
+                        className="gp-sact"
+                        data-tip="Discard all unstaged"
+                        disabled={busy}
+                        onClick={() => setConfirmPath("*")}
+                      >
+                        <i className="fa-solid fa-rotate-left" />
+                        Revert all
+                      </button>
+                    ))}
+                </>
+              )}
+            </span>
+          </div>
           {changes.length === 0 && <div className="gp-empty">Working tree clean</div>}
           {changes.map((f) => row(f, false))}
         </div>
