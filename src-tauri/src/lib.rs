@@ -24,8 +24,7 @@ struct ServerState {
 
 // ponytail: kill-on-exit handler covers normal close; a hard crash can orphan
 // the server. Windows Job Objects (KILL_ON_JOB_CLOSE) if that ever matters.
-fn spawn_server() -> std::io::Result<(Child, u16)> {
-    let port = TcpListener::bind("127.0.0.1:0")?.local_addr()?.port();
+fn spawn_server() -> std::io::Result<(Child, u16)> {    let port = TcpListener::bind("127.0.0.1:0")?.local_addr()?.port();
     let exe_dir = std::env::current_exe()?
         .parent()
         .expect("exe has parent")
@@ -50,6 +49,23 @@ fn spawn_server() -> std::io::Result<(Child, u16)> {
             .stderr(Stdio::null());
     }
     Ok((cmd.spawn()?, port))
+}
+
+// block until the spawned server actually accepts TCP connections —
+// `serve` takes a moment to bind its port, and the frontend fires
+// session/provider fetches the instant it gets the URL
+fn wait_ready(port: u16, timeout: std::time::Duration) -> bool {
+    let addr: std::net::SocketAddr = format!("127.0.0.1:{port}").parse().unwrap();
+    let start = std::time::Instant::now();
+    while start.elapsed() < timeout {
+        if std::net::TcpStream::connect_timeout(&addr, std::time::Duration::from_millis(250))
+            .is_ok()
+        {
+            return true;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    false
 }
 
 #[tauri::command]
@@ -304,11 +320,21 @@ pub fn run() {
                 .build(app)?;
 
             let state = match spawn_server() {
-                Ok((child, port)) => ServerState {
-                    port,
-                    child: Mutex::new(Some(child)),
-                    error: None,
-                },
+                Ok((child, port)) => {
+                    if wait_ready(port, std::time::Duration::from_secs(30)) {
+                        ServerState {
+                            port,
+                            child: Mutex::new(Some(child)),
+                            error: None,
+                        }
+                    } else {
+                        ServerState {
+                            port: 0,
+                            child: Mutex::new(Some(child)),
+                            error: Some("opencode serve did not become ready in 30s".into()),
+                        }
+                    }
+                }
                 Err(e) => ServerState {
                     port: 0,
                     child: Mutex::new(None),
