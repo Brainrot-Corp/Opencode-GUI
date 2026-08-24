@@ -244,8 +244,10 @@ pub fn tts_status() -> TtsStatus {
     if let Ok(rd) = std::fs::read_dir(tts_voices_dir()) {
         for e in rd.flatten() {
             let name = e.file_name().to_string_lossy().to_string();
-            if name.ends_with(".onnx") {
-                voices.push(name);
+            // frontend treats voices as bare ids ("<id>", no extension) —
+            // strip here so delete/preview/labels all address the same file
+            if let Some(id) = name.strip_suffix(".onnx") {
+                voices.push(id.to_string());
             }
         }
     }
