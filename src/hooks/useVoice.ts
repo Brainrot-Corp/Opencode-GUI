@@ -104,6 +104,9 @@ export function useVoice(
   }, []);
 
   const teardown = useCallback(() => {
+    // back to manual so an in-flight stream utterance's finally can't flip
+    // phase back to "recording" after the user switched the mic off
+    modeRef.current = "manual";
     nodeRef.current?.disconnect();
     nodeRef.current = null;
     streamRef.current?.getTracks().forEach((t) => t.stop());
@@ -141,6 +144,7 @@ export function useVoice(
   const stop = useCallback(async () => {
     teardown();
     setStreaming(false);
+    setPhase("idle");
     const merged = chunksRef.current;
     chunksRef.current = [];
     await transcribe(merge(merged));
@@ -157,11 +161,14 @@ export function useVoice(
   }, [transcribe]);
 
   const toggle = useCallback(() => {
-    if (phase === "recording") {
+    // busy finishing a manual clip — nothing to toggle
+    if (phase === "transcribing" && !streaming) return;
+    // any live mic (recording, or stream mode mid-transcribe) toggles off;
+    // this also stops the click-during-transcribe double-stream race
+    if (phase !== "idle" || streaming) {
       void stop();
       return;
     }
-    if (phase === "transcribing" && !streaming) return;
     setError("");
     // don't transcribe our own voice output
     window.speechSynthesis?.cancel();
