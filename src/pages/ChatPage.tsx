@@ -51,36 +51,59 @@ function full_text(m: Msg): string {
     .join(" ");
 }
 
-// batched enumeration keeps the old cue strings only as fallback documentation
-// (per-tool immediate speech replaced by 10s roll-up — see buildEnumPhrase)
-
-// batched enumeration labels — used to build "read 3 times, wrote 1 time…" phrases
-const ENUM_LABELS: Record<string, string> = {
-  read: "read",
-  write: "wrote",
-  edit: "edited",
-  multiedit: "edited",
-  patch: "patched",
-  bash: "ran commands",
-  grep: "searched",
-  glob: "found files",
-  list: "listed files",
-  webfetch: "fetched pages",
-  websearch: "searched the web",
-  task: "delegated",
-  todowrite: "planned",
-  question: "asked",
+// batched tool roll-up — built to sound like a person giving a status blip:
+// fuzzy quantities, rotating verbs/openers, at most two named items, and an
+// anti-repeat guard so consecutive ticks never parrot the same sentence
+const TOOL_SAY: Record<string, { v: string[]; n?: [string, string] }> = {
+  read: { v: ["read", "skimmed", "looked through"], n: ["file", "files"] },
+  write: { v: ["wrote", "created"], n: ["file", "files"] },
+  edit: { v: ["edited", "updated", "tweaked"], n: ["file", "files"] },
+  multiedit: { v: ["edited", "reworked"], n: ["file", "files"] },
+  patch: { v: ["patched"], n: ["file", "files"] },
+  bash: { v: ["ran", "kicked off"], n: ["command", "commands"] },
+  grep: { v: ["searched the codebase", "dug through the code"] },
+  glob: { v: ["scouted out candidate files", "rounded up matching files"] },
+  list: { v: ["mapped out some folders", "listed directories"] },
+  webfetch: { v: ["fetched", "pulled up"], n: ["web page", "web pages"] },
+  websearch: { v: ["searched the web", "looked something up online"] },
+  task: { v: ["delegated part of the work to a subagent"] },
+  todowrite: { v: ["updated its plan", "jotted down next steps"] },
+  question: { v: ["asked you something"] },
 };
+let lastSay = "";
+const sayPick = <T,>(a: T[]): T => a[Math.floor(Math.random() * a.length)];
+const qtyWord = (n: number) =>
+  n <= 1 ? "a" : n === 2 ? "a couple of" : n <= 4 ? "a few" : n <= 8 ? "several" : "a bunch of";
+
+function describeTool(tool: string, n: number): string {
+  const t = TOOL_SAY[tool];
+  if (!t) return `ran a ${tool} step`;
+  const verb = sayPick(t.v);
+  if (!t.n) return verb; // verb already carries the object ("searched the codebase")
+  return `${verb} ${qtyWord(n)} ${n === 1 ? t.n[0] : t.n[1]}`;
+}
+
+function buildOne(counts: Map<string, number>): string {
+  const items = [...counts.entries()].map(([tool, n]) => describeTool(tool, n));
+  let body: string;
+  if (items.length === 1) {
+    body = sayPick(["", "just ", "so far — "]) + items[0];
+  } else if (items.length === 2) {
+    body = sayPick([`${items[0]}, then ${items[1]}`, `${items[0]} and also ${items[1]}`, `${items[0]} — plus ${items[1]}`]);
+  } else {
+    // don't enumerate blindly — name two, wave at the rest
+    body = `${items[0]} and ${items[1]}, among other things`;
+  }
+  const s = body.trim();
+  return `${s.charAt(0).toUpperCase()}${s.slice(1)}.`;
+}
+
 function buildEnumPhrase(counts: Map<string, number>): string {
   if (!counts.size) return "";
-  const parts: string[] = [];
-  for (const [tool, n] of counts) {
-    const label = ENUM_LABELS[tool] ?? tool;
-    parts.push(`${label} ${n} time${n === 1 ? "" : "s"}`);
-  }
-  if (parts.length === 1) return `${parts[0]}.`;
-  if (parts.length === 2) return `${parts[0]} and ${parts[1]}.`;
-  return `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}.`;
+  let phrase = buildOne(counts);
+  for (let i = 0; phrase === lastSay && i < 4; i++) phrase = buildOne(counts);
+  lastSay = phrase;
+  return phrase;
 }
 
 function wordCount(s: string): number {
