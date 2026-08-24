@@ -61,8 +61,8 @@ export type AppSettings = {
   ttsVol: number;
   // speech rate multiplier (0.5 = half speed … 2 = double)
   ttsSpeed: number;
-  // provider/model used for AI commit messages ("provider/model", "" = off)
-  gitModel: string;
+  // secondary model for commit messages, debriefs & long-answer summaries ("provider/model", "" = off)
+  secondaryModel: string;
 };
 
 const KEY = "oc.settings";
@@ -95,7 +95,7 @@ const DEFAULTS: AppSettings = {
   ttsVoice: "",
   ttsVol: 1,
   ttsSpeed: 1,
-  gitModel: "",
+  secondaryModel: "",
 };
 
 function num(v: unknown, def: number, min: number, max: number) {
@@ -207,14 +207,12 @@ export function useSettings() {
           pauseMs: num(p.voice?.pauseMs, DEFAULTS.voice.pauseMs, 400, 4000),
           sens: num(p.voice?.sens, DEFAULTS.voice.sens, 0, 1),
         },
-        speakReplies: !!p.speakReplies,
-        // spoken replies are piper-only now — a stored Windows speechSynthesis
-        // URI (or old "piper:"-prefixed id) fails the .onnx check and resets
         ttsVoice:
           typeof p.ttsVoice === "string" && p.ttsVoice.endsWith(".onnx") ? p.ttsVoice : "",
         ttsVol: num(p.ttsVol, DEFAULTS.ttsVol, 0, 1),
         ttsSpeed: num(p.ttsSpeed, DEFAULTS.ttsSpeed, 0.5, 2),
-        gitModel: typeof p.gitModel === "string" ? p.gitModel : "",
+        secondaryModel: typeof p.secondaryModel === "string" ? p.secondaryModel : "",
+        speakReplies: !!p.speakReplies && typeof p.secondaryModel === "string" && !!p.secondaryModel && typeof p.ttsVoice === "string" && p.ttsVoice.endsWith(".onnx"),
         // legacy showThinking (true = thinking expanded) inverts into the new
         // collapsed flag so existing users keep their default; fresh installs
         // start fully collapsed
@@ -302,6 +300,13 @@ export function useSettings() {
     (patch: Partial<AppSettings>) => setSettings((s) => ({ ...s, ...patch })),
     [],
   );
+
+  // secondary + voice required for speech — auto-off if either cleared
+  useEffect(() => {
+    if (settings.speakReplies && (!settings.secondaryModel || !settings.ttsVoice)) {
+      update({ speakReplies: false });
+    }
+  }, [settings.secondaryModel, settings.ttsVoice, settings.speakReplies, update]);
 
   // deleted active theme: persist the fallback so it doesn't re-resolve
   useEffect(() => {

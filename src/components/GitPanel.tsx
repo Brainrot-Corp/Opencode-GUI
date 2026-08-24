@@ -20,11 +20,11 @@ const CLEAN: GitStatus = { repo: false, branch: "", ahead: 0, behind: 0, files: 
 
 const base = (p: string) => p.slice(p.lastIndexOf("/") + 1);
 
-// commit-message model from the settings blob — read at click time so
+// secondary model from the settings blob — read at click time so
 // drawer edits apply without remounting (same pattern as api.ts workspace)
-function gitModel(): string {
+function secondaryModel(): string {
   try {
-    const v = JSON.parse(localStorage.getItem("oc.settings") ?? "{}").gitModel;
+    const v = JSON.parse(localStorage.getItem("oc.settings") ?? "{}").secondaryModel;
     return typeof v === "string" ? v : "";
   } catch {
     return "";
@@ -112,11 +112,11 @@ export default function GitPanel() {
   // AI commit message: hidden temp session on the configured model —
   // created, prompted (sync), deleted; never touches the sidebar list
   const genMsg = async () => {
-    const model = gitModel();
+    const model = secondaryModel();
     if (!model) {
       // nothing configured — jump straight to the settings drawer
       window.dispatchEvent(new Event("oc:settings"));
-      setErr("Pick a commit-message model in Settings › Git.");
+      setErr("Pick a Secondary model in Settings.");
       return;
     }
     if (gen || busy || !staged.length) return;
@@ -133,6 +133,16 @@ export default function GitPanel() {
       const sid = (s.data as any).id;
       try {
         const [providerID, modelID] = splitModel(model);
+        // secondary tasks use low thinking effort if the model supports it
+        let variant: string | undefined;
+        try {
+          const pr: any = await client.config.providers();
+          const prov = (pr.data?.providers ?? []).find((p: any) => p.id === providerID);
+          const vars = Object.keys(prov?.models?.[modelID]?.variants ?? {});
+          if (vars.includes("low")) variant = "low";
+          else if (vars.includes("minimal")) variant = "minimal";
+          else if (vars.includes("fast")) variant = "fast";
+        } catch {}
         const r = await client.session.prompt({
           path: { id: sid },
           body: {
@@ -147,6 +157,7 @@ export default function GitPanel() {
               },
             ],
             model: { providerID, modelID },
+            ...(variant ? { variant } : {}),
           },
         });
         const parts: any[] = ((r.data as any)?.parts ?? []) as any[];
@@ -312,9 +323,9 @@ export default function GitPanel() {
             <button
               className={`gp-gen${gen ? " spinning" : ""}`}
               data-tip={
-                gitModel()
-                  ? `Generate message (${gitModel()})`
-                  : "Pick a commit-message model in Settings"
+                secondaryModel()
+                  ? `Generate message (${secondaryModel()})`
+                  : "Pick a Secondary model in Settings"
               }
               disabled={gen || busy || !staged.length}
               onClick={genMsg}

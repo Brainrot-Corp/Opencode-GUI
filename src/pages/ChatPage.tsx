@@ -52,7 +52,7 @@ function full_text(m: Msg): string {
 }
 
 // batched enumeration keeps the old cue strings only as fallback documentation
-// (per-tool immediate speech replaced by 3s roll-up — see buildEnumPhrase)
+// (per-tool immediate speech replaced by 4.5s roll-up — see buildEnumPhrase)
 
 // batched enumeration labels — used to build "read 3 times, wrote 1 time…" phrases
 const ENUM_LABELS: Record<string, string> = {
@@ -85,6 +85,18 @@ function buildEnumPhrase(counts: Map<string, number>): string {
 
 function wordCount(s: string): number {
   return s.trim().split(/\s+/).filter(Boolean).length;
+}
+function lowVariantFor(modelSel: string, providers: { id: string; models: { id: string; variants?: string[] }[] }[]): string | undefined {
+  const i = modelSel.indexOf("/");
+  const pid = i < 0 ? modelSel : modelSel.slice(0, i);
+  const mid = i < 0 ? "" : modelSel.slice(i + 1);
+  const prov = providers.find((g) => g.id === pid);
+  const m = prov?.models.find((x) => x.id === mid);
+  const vars = m?.variants ?? [];
+  if (vars.includes("low")) return "low";
+  if (vars.includes("minimal")) return "minimal";
+  if (vars.includes("fast")) return "fast";
+  return undefined;
 }
 
 export default function ChatPage() {
@@ -293,35 +305,56 @@ export default function ChatPage() {
       .trim();
 
   // queued speech — single FIFO, never cuts (debrief's speakNow is the only cutter)
+  // if an answer is queued while an enumeration is pending, flush both together
+  const flushPendingEnum = useCallback(() => {
+    if (!pendingEnum.current) return;
+    const busy =
+      ttsPumping.current ||
+      ttsQ.current.length > 0 ||
+      (replyAudio.current && !replyAudio.current.paused);
+    if (busy) return;
+    const toSay = pendingEnum.current;
+    pendingEnum.current = null;
+    ttsQ.current.push(toSay);
+    if (pendingAnswers.current.length) {
+      ttsQ.current.push(...pendingAnswers.current);
+      pendingAnswers.current = [];
+    }
+    pumpTTS();
+  }, []);
   const queueSpeech = useCallback(
     (phrase: string) => {
       const cleaned = cleanSpeech(phrase);
       if (!cleaned || ttsHushed.current) return;
       if (pendingEnum.current) {
         pendingAnswers.current.push(cleaned);
+        // answer arrived while enumeration pending — flush both as soon as pump is free
+        flushPendingEnum();
       } else {
         ttsQ.current.push(cleaned);
         pumpTTS();
       }
     },
-    [],
+    [flushPendingEnum],
   );
 
-  // summarize a long answer (>30 words) via the commit-message model (same as debrief)
+  // summarize a long answer (>30 words) via the secondary model (same as debrief)
   const summarizeWithCommitModel = useCallback(
     async (raw: string) => {
       if (ttsHushed.current || debriefing) return;
-      let gitModel = "";
+      let secondaryModel = "";
       try {
-        gitModel = JSON.parse(localStorage.getItem("oc.settings") ?? "{}").gitModel ?? "";
+        secondaryModel = JSON.parse(localStorage.getItem("oc.settings") ?? "{}").secondaryModel ?? "";
       } catch {}
       const st = settingsNow.current;
       if (!st.ttsVoice) return;
-      if (!gitModel) {
+      if (!secondaryModel) {
         // no model → fall back to queuing raw (short enough to speak directly)
         queueSpeech(raw);
         return;
       }
+      // announce waiting for answer — queued, never cuts
+      queueSpeech("Summarizing...");
       const rawVoice = st.ttsVoice.replace(/\.onnx$/, "");
       const locale = rawVoice.split("-")[0] || "en_US";
       const langHint =
@@ -342,10 +375,11 @@ export default function ChatPage() {
         const sid = (s.data as any).id as string;
         let summary = "";
         try {
-          const [providerID, modelID] = splitModel(gitModel);
+          const [providerID, modelID] = splitModel(secondaryModel);
+          const variant = lowVariantFor(secondaryModel, oc.providers as any);
           const r = await client.session.prompt({
             path: { id: sid },
-            body: { parts: [{ type: "text", text: prompt }], model: { providerID, modelID } },
+            body: { parts: [{ type: "text", text: prompt }], model: { providerID, modelID }, ...(variant ? { variant } : {}) },
           });
           const parts: any[] = ((r.data as any)?.parts ?? []) as any[];
           summary = parts.filter((p: any) => p.type === "text").map((p: any) => p.text ?? "").join("").trim();
@@ -362,7 +396,7 @@ export default function ChatPage() {
         queueSpeech(raw);
       }
     },
-    [queueSpeech, debriefing],
+    [queueSpeech, debriefing, oc.providers],
   );
 
   // serialized synth→play pump; 'pause' resolves alongside 'ended' so the
@@ -491,7 +525,7 @@ export default function ChatPage() {
     [settings.speakReplies, settings.ttsVoice, queueSpeech],
   );
 
-  // batched tool enumeration — array of tool uses, spoken every 3s
+  // batched tool enumeration — array of tool uses, spoken every 4.5s
   const toolSeen = useRef<Set<string>>(new Set());
   const toolCounts = useRef<Map<string, number>>(new Map());
 
@@ -538,13 +572,14 @@ export default function ChatPage() {
         toolCounts.current.set(tool, (toolCounts.current.get(tool) ?? 0) + 1);
         changed = true;
       }
-    // no speech here — ticker handles it every 3s
+    // no speech here — ticker handles it every 4.5s
     void changed;
   }, [oc.msgs, oc.busy]);
 
-  // ticker: every 3s while busy, queue the current totals behind any audio
+  // ticker: every 4.5s while busy, queue the current totals behind any audio
   // already playing — pumpTTS serializes, so a tick that fires mid-speech
   // naturally waits. pendingEnum coalesces rapid ticks into the latest totals.
+  // if an answer was queued while pending, flushPendingEnum will have cleared it early.
   useEffect(() => {
     if (!oc.busy || !settings.speakReplies || !settings.ttsVoice) return;
     let timer: number | undefined;
@@ -619,7 +654,7 @@ export default function ChatPage() {
           pumpTTS();
           schedule();
         }
-      }, 3000);
+      }, 4500);
     };
     schedule();
     return () => {
@@ -638,7 +673,7 @@ export default function ChatPage() {
   }, [oc.permission, announce]);
 
   // --- debrief (voice "debrief" + /debrief) — speech only, 2 paragraphs max ----------
-  // uses the same model as AI commit messages (settings.gitModel) and speaks the
+  // uses the secondary model (settings.secondaryModel) and speaks the
   // summary in the TTS voice locale, via the single piper queue (pumpTTS)
   const msgsRef = useRef(oc.msgs);
   msgsRef.current = oc.msgs;
@@ -657,6 +692,7 @@ export default function ChatPage() {
     // cleanSpeech/pumpTTS are stable closures over refs
     [],
   );
+  void speakNow; // kept for manual debrief cut elsewhere; queued paths use ttsQ directly
   // working pulse for debrief — same heartbeat as thinking, but every 5s
   useEffect(() => {
     if (!debriefing) return;
@@ -671,19 +707,29 @@ export default function ChatPage() {
         if (debriefBusy.current) return;
         debriefBusy.current = true;
         setDebriefing(true);
+        // debrief cuts everything — clear first, then queue "Debriefing..." as first item
+        ttsHushed.current = false;
+        ttsQ.current = [];
+        pendingEnum.current = null;
+        pendingAnswers.current = [];
+        replyAudio.current?.pause();
+        {
+          const c = cleanSpeech("Debriefing...");
+          if (c) { ttsQ.current.push(c); pumpTTS(); }
+        }
         try {
-          let gitModel = "";
+          let secondaryModel = "";
           try {
-            gitModel = JSON.parse(localStorage.getItem("oc.settings") ?? "{}").gitModel ?? "";
+            secondaryModel = JSON.parse(localStorage.getItem("oc.settings") ?? "{}").secondaryModel ?? "";
           } catch {}
-          if (!gitModel) {
-            speakNow("Pick a commit model in Settings, then try debrief again.");
+          if (!secondaryModel) {
+            { const c = cleanSpeech("Pick a Secondary model in Settings, then try debrief again."); if (c) { ttsQ.current.push(c); pumpTTS(); } }
             window.dispatchEvent(new Event("oc:settings"));
             return;
           }
           const st = settingsNow.current;
           if (!st.ttsVoice) {
-            speakNow("Install a neural voice in Settings, then try debrief again.");
+            { const c = cleanSpeech("Install a neural voice in Settings, then try debrief again."); if (c) { ttsQ.current.push(c); pumpTTS(); } }
             return;
           }
           const dir = getDirectory();
@@ -700,7 +746,7 @@ export default function ChatPage() {
           const diffTrim = diff.trim().slice(0, 9000);
           const logTrim = log.trim().slice(0, 2000);
           if (!diffTrim && !logTrim && !recent.trim()) {
-            speakNow("No recent changes or prompts to summarize.");
+            { const c = cleanSpeech("No recent changes or prompts to summarize."); if (c) { ttsQ.current.push(c); pumpTTS(); } }
             return;
           }
           // locale from piper voice id: en_US-amy-medium -> en_US
@@ -720,18 +766,20 @@ export default function ChatPage() {
             `\n\nGIT DIFF (working tree, may be empty):\n${diffTrim || "(empty)"}` +
             `\n\nGIT LOG (last commits):\n${logTrim || "(empty)"}` +
             `\n\nRECENT USER PROMPTS (why, most recent last):\n${recent || "(none)"}`;
-          // hidden temp session on the commit model — same pattern as GitPanel genMsg
+          // hidden temp session on the secondary model — same pattern as GitPanel genMsg
           const { client } = await opencode();
           const s = await client.session.create({ body: {} });
           const sid = (s.data as any).id as string;
           let summary = "";
           try {
-            const [providerID, modelID] = splitModel(gitModel);
+            const [providerID, modelID] = splitModel(secondaryModel);
+            const variant = lowVariantFor(secondaryModel, oc.providers as any);
             const r = await client.session.prompt({
               path: { id: sid },
               body: {
                 parts: [{ type: "text", text: prompt }],
                 model: { providerID, modelID },
+                ...(variant ? { variant } : {}),
               },
             });
             const parts: any[] = ((r.data as any)?.parts ?? []) as any[];
@@ -745,12 +793,12 @@ export default function ChatPage() {
             await client.session.delete({ path: { id: sid } }).catch(() => {});
           }
           if (!summary) {
-            speakNow("Debrief had nothing to say.");
+            { const c = cleanSpeech("Debrief had nothing to say."); if (c) { ttsQ.current.push(c); pumpTTS(); } }
             return;
           }
-          speakNow(summary);
+          { const c = cleanSpeech(summary); if (c) { ttsQ.current.push(c); pumpTTS(); } }
         } catch (e) {
-          speakNow(`Debrief failed: ${String(e).slice(0, 200)}`);
+          { const c = cleanSpeech(`Debrief failed: ${String(e).slice(0, 200)}`); if (c) { ttsQ.current.push(c); pumpTTS(); } }
         } finally {
           debriefBusy.current = false;
           setDebriefing(false);
@@ -759,7 +807,7 @@ export default function ChatPage() {
     };
     window.addEventListener("oc:debrief", onDebrief);
     return () => window.removeEventListener("oc:debrief", onDebrief);
-  }, [speakNow]);
+  }, [speakNow, oc.providers]);
 
   useEffect(() => {
     localStorage.setItem(SB_W_KEY, String(sbW));

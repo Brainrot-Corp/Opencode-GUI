@@ -321,8 +321,7 @@ export default function SettingsDrawer({
 
   const scales = [0.8, 0.9, 1, 1.1, 1.25];
 
-  // commit-message model picker — same dropdown as the composer, fed from
-  // useOpencode's provider list; "" = off
+  // secondary model picker — cheap model for commit messages, debriefs & long-answer summaries
   const [gmOpen, setGmOpen] = useState(false);
   const [gmHi, setGmHi] = useState(-1);
   const [gmQuery, setGmQuery] = useState("");
@@ -334,7 +333,7 @@ export default function SettingsDrawer({
     return g && m ? `${g.label} · ${m.label}` : sel;
   };
   const gmEntries: ModelEntry[] = [
-    { value: "", label: "Off — no AI messages" },
+    { value: "", label: "Off — no secondary tasks" },
     ...(providers ?? []).flatMap((g) =>
       g.models.map((m) => ({ value: `${g.id}/${m.id}`, label: m.label, group: g.label })),
     ),
@@ -395,13 +394,13 @@ export default function SettingsDrawer({
             </div>
           </div>
 
-          <div className="setting-row git-model-row">
+          <div className="setting-row git-model-row secondary-model-row">
             <div className="setting-info">
-              <i className="fa-solid fa-code-branch setting-icon" />
+              <i className="fa-solid fa-layer-group setting-icon" />
               <div>
-                <div className="setting-name">Commit message model</div>
+                <div className="setting-name">Secondary model</div>
                 <div className="setting-desc">
-                  Model for AI commit messages — pick a cheap one
+                  Cheap model for secondary tasks — commit messages, debriefs &amp; long-answer summaries (over 30 words)
                 </div>
               </div>
             </div>
@@ -414,10 +413,10 @@ export default function SettingsDrawer({
                 entries={gmFiltered}
                 query={gmQuery}
                 setQuery={setGmQuery}
-                selected={settings.gitModel}
-                label={providers?.length ? gmPretty(settings.gitModel) : "loading models…"}
+                selected={settings.secondaryModel}
+                label={providers?.length ? gmPretty(settings.secondaryModel) : "loading models…"}
                 onPick={(v) => {
-                  update({ gitModel: v });
+                  update({ secondaryModel: v });
                   setGmOpen(false);
                   setGmHi(-1);
                   setGmQuery("");
@@ -785,7 +784,12 @@ export default function SettingsDrawer({
                   type="button"
                   className={`toggle${settings.speakReplies ? " on" : ""}`}
                   aria-pressed={settings.speakReplies}
-                  onClick={() => update({ speakReplies: !settings.speakReplies })}
+                  disabled={!settings.secondaryModel || !settings.ttsVoice}
+                  data-tip={!settings.secondaryModel ? "Pick a Secondary model first" : !settings.ttsVoice ? "Pick a voice first" : settings.speakReplies ? "Turn off spoken replies" : "Turn on spoken replies"}
+                  onClick={() => {
+                    if (!settings.secondaryModel || !settings.ttsVoice) return;
+                    update({ speakReplies: !settings.speakReplies });
+                  }}
                 >
                   <span className="knob" />
                 </button>
