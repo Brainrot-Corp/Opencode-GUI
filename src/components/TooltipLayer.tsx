@@ -7,6 +7,9 @@ type TipState = { text: string; x: number; y: number };
     One global layer replaces native `title` popups app-wide. */
 export default function TooltipLayer() {
   const [tip, setTip] = useState<TipState | null>(null);
+  // position persists after the text clears so the fade-out happens in place
+  // instead of the bubble jumping to its static top-left corner mid-transition
+  const [pos, setPos] = useState({ x: -9999, y: -9999 });
   const ref = useRef<HTMLDivElement>(null);
   const anchor = useRef<HTMLElement | null>(null);
   const PAD = 8;
@@ -27,6 +30,7 @@ export default function TooltipLayer() {
     if (y + tb.height > window.innerHeight - PAD && r.top - 7 - tb.height >= PAD) {
       y = r.top - 7 - tb.height;
     }
+    setPos({ x, y });
     setTip((p) => (p && (p.x !== x || p.y !== y) ? { ...p, x, y } : p));
   }, [tip]);
 
@@ -40,6 +44,7 @@ export default function TooltipLayer() {
       anchor.current = el;
       const r = el.getBoundingClientRect();
       // rough first paint; the layout effect below clamps before it's seen
+      setPos({ x: r.left, y: r.bottom + 7 });
       setTip({ text: el.dataset.tip!, x: r.left, y: r.bottom + 7 });
     };
     const out = (e: MouseEvent) => {
@@ -67,7 +72,7 @@ export default function TooltipLayer() {
     <div
       ref={ref}
       className={`tip${tip ? " show" : ""}`}
-      style={tip ? { left: tip.x, top: tip.y } : undefined}
+      style={{ left: pos.x, top: pos.y }}
       role="tooltip"
     >
       {tip?.text}
