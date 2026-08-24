@@ -39,7 +39,7 @@ function playWav(bytes: number[], volume: number): HTMLAudioElement {
     const ms = Number.isFinite(a.duration) ? a.duration * 1000 : 3000;
     window.dispatchEvent(new CustomEvent<number>("oc:tts-live", { detail: ms }));
   });
-  void a.play().catch(() => {});
+  void a.play().catch(() => a.dispatchEvent(new Event("error")));
   return a;
 }
 
@@ -124,6 +124,7 @@ export default function ChatPage() {
   const [resizing, setResizing] = useState(false);
   const [browserTop, setBrowserTop] = useState<number | null>(null);
   const [debriefing, setDebriefing] = useState(false);
+  const [talking, setTalking] = useState(false); // TTS queue draining / audio audible
   const toggleDiff = useCallback(() => setDiffOpen((v) => !v), []);
   const openSettingsDrawer = useCallback(() => setSettingsOpen(true), []);
 
@@ -405,6 +406,7 @@ export default function ChatPage() {
   const pumpTTS = () => {
     if (ttsPumping.current) return;
     ttsPumping.current = true;
+    setTalking(true);
     (async () => {
       try {
         while (ttsQ.current.length && !ttsHushed.current) {
@@ -418,14 +420,17 @@ export default function ChatPage() {
           if (!bytes || ttsHushed.current || bytes.length < 1000) continue;
           const a = playWav(bytes, st.ttsVol);
           replyAudio.current = a;
+          // 'error'/failed play() must release the wait too, or the pump
+          // deadlocks and the queue never drains
           await new Promise<void>((res) => {
             a.addEventListener("ended", () => res(), { once: true });
             a.addEventListener("pause", () => res(), { once: true });
+            a.addEventListener("error", () => res(), { once: true });
           });
         }
-        ttsQ.current = [];
       } finally {
         ttsPumping.current = false;
+        setTalking(false);
       }
     })();
   };
@@ -537,6 +542,7 @@ export default function ChatPage() {
     prevBusy.current = oc.busy;
     // a new turn — reset batch, but never cut the queued voice (only debrief cuts)
     if (rising) {
+      ttsHushed.current = false; // stop-speech mutes the current reply only
       toolSeen.current.clear();
       toolCounts.current.clear();
       pendingEnum.current = null;
@@ -875,7 +881,7 @@ export default function ChatPage() {
           onThemeChange={(t) => update({ theme: t })}
           mode={effectiveMode}
           onModeChange={(m) => update({ mode: m })}
-          speechLive={settings.speakReplies}
+          talking={talking}
           debriefing={debriefing}
         />
         <SettingsDrawer

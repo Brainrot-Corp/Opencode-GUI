@@ -190,6 +190,25 @@
   50% { opacity: 0.55; transform: scale(0.85); }
 }
 
+/* speaking indicator — same material, clickable to stop speech */
+button.debrief-indicator {
+  cursor: pointer;
+  font: inherit;
+  font-size: 9px;
+  border-radius: 4px;
+}
+button.debrief-indicator i,
+button.debrief-indicator .debrief-dot {
+  font-size: 9px;
+  width: 5px;
+  height: 5px;
+}
+button.debrief-indicator:hover {
+  background: color-mix(in srgb, var(--danger) 22%, transparent);
+  border-color: color-mix(in srgb, var(--danger) 40%, transparent);
+  color: var(--danger);
+}
+
 .layout {
   display: grid;
   grid-template-columns: 248px 1fr;
