@@ -349,6 +349,7 @@ export default function ChatPage() {
   useEffect(() => {
     const stop = () => {
       ttsHushed.current = true;
+      ttsQ.current = []; // nothing queued survives the stop
       replyAudio.current?.pause();
     };
     const vol = (e: Event) => {
@@ -392,13 +393,14 @@ export default function ChatPage() {
       .trim();
     // spoken replies are piper-only; ttsVoice holds "<id>.onnx" and stays
     // empty until the user installs piper + downloads a voice in Settings
-    if (!text.trim() || !settings.ttsVoice) return;
+    if (!text.trim() || !settings.ttsVoice || ttsHushed.current) return;
+    // same single-voice pipeline as streaming: drop anything queued or
+    // playing, then let the pump carry this — a direct play here used to
+    // overlap the still-draining queue and dodge the stop button
+    ttsQ.current = [];
+    ttsQ.current.push(text);
     replyAudio.current?.pause();
-    invoke<number[]>("tts_speak", { text, voice: settings.ttsVoice, speed: settings.ttsSpeed })
-      .then((bytes) => {
-        replyAudio.current = playWav(bytes, settings.ttsVol);
-      })
-      .catch(() => {});
+    pumpTTS();
   }, [settings.speakReplies, settings.ttsVoice, oc.msgs]);
 
   // status cues: brief spoken notices while the model works — turn start
@@ -418,7 +420,16 @@ export default function ChatPage() {
     [settings.speakReplies, settings.ttsVoice],
   );
 
+  const prevBusy = useRef(false);
   useEffect(() => {
+    const rising = oc.busy && !prevBusy.current;
+    prevBusy.current = oc.busy;
+    // a new turn cuts off anything still talking — including speech
+    // carried over from a session the user just left — before the cue
+    if (rising) {
+      ttsQ.current = [];
+      replyAudio.current?.pause();
+    }
     if (oc.busy) announce("Thinking.");
   }, [oc.busy, announce]);
 
