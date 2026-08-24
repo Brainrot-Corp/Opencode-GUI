@@ -22,6 +22,38 @@ import { playSound } from "../lib/sounds";
 const SB_W_KEY = "oc.sb.w";
 const SB_C_KEY = "oc.sb.c";
 
+// plays synthesized wav bytes; returns the element so callers can pause it
+function playWav(bytes: number[], volume: number): HTMLAudioElement {
+  const url = URL.createObjectURL(
+    new Blob([new Uint8Array(bytes)], { type: "audio/wav" }),
+  );
+  const a = new Audio(url);
+  a.volume = volume;
+  a.onended = () => URL.revokeObjectURL(url);
+  void a.play().catch(() => {});
+  return a;
+}
+
+// concise spoken cues for tool activity — unknown tools fall back to "Using x"
+const TOOL_CUES: Record<string, string> = {
+  bash: "Running a command.",
+  read: "Reading files.",
+  grep: "Searching code.",
+  glob: "Finding files.",
+  list: "Listing files.",
+  webfetch: "Fetching a page.",
+  websearch: "Searching the web.",
+  edit: "Editing files.",
+  write: "Writing a file.",
+  multiedit: "Editing files.",
+  patch: "Applying changes.",
+  task: "Delegating to an agent.",
+  todowrite: "Updating the plan.",
+  question: "Asking you something.",
+};
+const cueFor = (tool: string) =>
+  TOOL_CUES[tool.toLowerCase()] ?? `Using ${tool}.`;
+
 export default function ChatPage() {
   const oc = useOpencode();
   const {
@@ -138,9 +170,11 @@ export default function ChatPage() {
   );
 
   // speak-replies: narrate each finished assistant message (code stripped).
-  // null = not armed yet - the first armed run adopts whatever is already
-  // in the transcript so a restored session is not re-read on launch
-  const lastSpoken = useRef<string | null>(null);
+  // launchAt gates it: only replies whose completion stamp is newer than app
+  // launch are spoken, so restored session history stays silent no matter
+  // when it arrives (msgs load async after mount)
+  const lastSpoken = useRef("");
+  const launchAt = useRef(Date.now());
   const replyAudio = useRef<HTMLAudioElement | null>(null);
 
   // top-bar stop-speech button pauses piper playback from anywhere; the
@@ -162,11 +196,8 @@ export default function ChatPage() {
     const last = [...oc.msgs]
       .reverse()
       .find((m) => (m.info as any).role === "assistant" && (m.info as any).time?.completed);
-    if (lastSpoken.current === null) {
-      lastSpoken.current = last?.info.id ?? "";
-      return;
-    }
     if (!last || last.info.id === lastSpoken.current) return;
+    if (((last.info as any).time?.completed ?? 0) <= launchAt.current) return;
     lastSpoken.current = last.info.id;
     const text = last.parts
       .filter((p: any) => p.type === "text")
@@ -193,17 +224,49 @@ export default function ChatPage() {
     replyAudio.current?.pause();
     invoke<number[]>("tts_speak", { text, voice: settings.ttsVoice })
       .then((bytes) => {
-        const url = URL.createObjectURL(
-          new Blob([new Uint8Array(bytes)], { type: "audio/wav" }),
-        );
-        const a = new Audio(url);
-        a.volume = settings.ttsVol;
-        replyAudio.current = a;
-        a.onended = () => URL.revokeObjectURL(url);
-        void a.play().catch(() => {});
+        replyAudio.current = playWav(bytes, settings.ttsVol);
       })
       .catch(() => {});
   }, [settings.speakReplies, settings.ttsVoice, oc.msgs]);
+
+  // status cues: brief spoken notices while the model works — turn start
+  // ("Thinking.") plus EVERY tool call (commands, edits, searches…), each
+  // announced once via its unique part id. A new cue interrupts the
+  // previous one so the voice never falls behind the work.
+  const lastToolKey = useRef("");
+  const announce = useCallback(
+    (phrase: string) => {
+      if (!settings.speakReplies || !settings.ttsVoice) return;
+      replyAudio.current?.pause();
+      invoke<number[]>("tts_speak", { text: phrase, voice: settings.ttsVoice })
+        .then((bytes) => {
+          replyAudio.current = playWav(bytes, settings.ttsVol);
+        })
+        .catch(() => {});
+    },
+    [settings.speakReplies, settings.ttsVoice, settings.ttsVol],
+  );
+
+  useEffect(() => {
+    if (oc.busy) announce("Thinking.");
+  }, [oc.busy, announce]);
+
+  useEffect(() => {
+    if (!oc.busy) return;
+    let latest: { key: string; tool: string } | null = null;
+    for (const m of oc.msgs)
+      for (const p of m.parts ?? []) {
+        if ((p as any).type !== "tool") continue;
+        const st = (p as any).state?.status;
+        if (st !== "running" && st !== "pending") continue;
+        const key = String((p as any).id ?? `${m.info.id}:${(p as any).tool}`);
+        latest = { key, tool: String((p as any).tool ?? "") };
+      }
+    if (latest && latest.key !== lastToolKey.current) {
+      lastToolKey.current = latest.key;
+      announce(cueFor(latest.tool));
+    }
+  }, [oc.msgs, oc.busy, announce]);
 
   useEffect(() => {
     localStorage.setItem(SB_W_KEY, String(sbW));

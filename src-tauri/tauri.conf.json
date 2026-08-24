@@ -20,7 +20,8 @@
         "dragDropEnabled": false,
         "windowEffects": {
           "effects": ["acrylic", "mica"]
-        }
+        },
+        "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --autoplay-policy=no-user-gesture-required"
       }
     ],
     "security": {
