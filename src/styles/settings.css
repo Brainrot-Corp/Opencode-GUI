@@ -314,27 +314,37 @@
   max-width: 320px;
 }
 
-/* commit-model ModelMenu reuses the composer dropdown, which opens
-   upward-right for a bottom-of-screen trigger. Here the row sits near the
-   TOP of a clipped scroll body — open downward instead and stay inside
-   the drawer on both axes */
-.settings-drawer .model-menu {
+/* commit-model picker: the squeezed controls can wrap to a line at the
+   drawer's left, dragging an absolutely-positioned menu out of bounds.
+   Give the picker its own full-width line and anchor the menu to the ROW
+   instead of the trigger — it then always lands inside the drawer */
+.git-model-row {
+  position: relative;
+  flex-wrap: wrap;
+}
+.git-model-row .color-controls {
+  width: 100%;
+}
+.git-model-row .model-select,
+.git-model-row .model-select-btn {
+  width: 100%;
+}
+.git-model-row .model-select-btn {
+  max-width: none;
+  min-width: 0;
+}
+.git-model-row .model-select {
+  /* static: the menu's positioned ancestor becomes this row */
+  position: static;
+}
+.git-model-row .model-menu {
+  position: absolute;
   top: calc(100% + 6px);
   bottom: auto;
-  right: 0;
+  right: 12px; /* align with the row's content edge */
   left: auto;
   min-width: min(280px, calc(100vw - 48px));
   max-height: min(300px, 50vh);
-}
-/* narrower trigger so the row never squeezes on small drawers */
-.settings-drawer .model-select-btn {
-  min-width: 150px;
-  max-width: 190px;
-}
-.settings-drawer .model-select-btn span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 .color-controls input[type="color"] {
   width: 30px;

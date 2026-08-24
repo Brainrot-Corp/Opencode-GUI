@@ -395,7 +395,7 @@ export default function SettingsDrawer({
             </div>
           </div>
 
-          <div className="setting-row">
+          <div className="setting-row git-model-row">
             <div className="setting-info">
               <i className="fa-solid fa-code-branch setting-icon" />
               <div>
