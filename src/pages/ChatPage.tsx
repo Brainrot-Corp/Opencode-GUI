@@ -156,8 +156,12 @@ export default function ChatPage() {
     window.speechSynthesis?.cancel();
     const u = new SpeechSynthesisUtterance(text);
     u.rate = 1.05;
+    const v = window.speechSynthesis
+      .getVoices()
+      .find((x) => x.voiceURI === settings.ttsVoice);
+    if (v) u.voice = v;
     window.speechSynthesis.speak(u);
-  }, [settings.speakReplies, oc.msgs]);
+  }, [settings.speakReplies, settings.ttsVoice, oc.msgs]);
 
   useEffect(() => {
     localStorage.setItem(SB_W_KEY, String(sbW));

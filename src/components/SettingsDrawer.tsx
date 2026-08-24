@@ -51,6 +51,7 @@ export default function SettingsDrawer({
   const [voice, setVoice] = useState<{ bin: boolean; models: string[] } | null>(null);
   const [dl, setDl] = useState<{ label: string; pct: number } | null>(null);
   const [voiceErr, setVoiceErr] = useState("");
+  const [ttsVoices, setTtsVoices] = useState<SpeechSynthesisVoice[]>([]);
 
   useEffect(() => {
     if (!open) return;
@@ -60,6 +61,13 @@ export default function SettingsDrawer({
     invoke<{ bin: boolean; models: string[] }>("voice_status")
       .then(setVoice)
       .catch(() => setVoice({ bin: false, models: [] }));
+    // TTS voices load async — getVoices() is empty until voiceschanged fires
+    const s = window.speechSynthesis;
+    if (!s) return;
+    const load = () => setTtsVoices(s.getVoices().sort((a, b) => a.name.localeCompare(b.name)));
+    load();
+    s.addEventListener("voiceschanged", load);
+    return () => s.removeEventListener("voiceschanged", load);
   }, [open]);
 
   // curl.exe does the fetching Rust-side (webview fetch dies on signed-CDN
@@ -483,14 +491,29 @@ export default function SettingsDrawer({
                       </div>
                 </div>
               </div>
-              <button
-                type="button"
-                className={`toggle${settings.speakReplies ? " on" : ""}`}
-                aria-pressed={settings.speakReplies}
-                onClick={() => update({ speakReplies: !settings.speakReplies })}
-              >
-                <span className="knob" />
-              </button>
+              <div className="color-controls">
+                <select
+                  className="voice-select"
+                  value={settings.ttsVoice}
+                  aria-label="Speak replies voice"
+                  onChange={(e) => update({ ttsVoice: e.target.value })}
+                >
+                  <option value="">System default</option>
+                  {ttsVoices.map((v) => (
+                    <option key={v.voiceURI} value={v.voiceURI}>
+                      {v.name} ({v.lang})
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  className={`toggle${settings.speakReplies ? " on" : ""}`}
+                  aria-pressed={settings.speakReplies}
+                  onClick={() => update({ speakReplies: !settings.speakReplies })}
+                >
+                  <span className="knob" />
+                </button>
+              </div>
             </div>
           </div>
 
