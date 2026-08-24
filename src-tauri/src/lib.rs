@@ -211,11 +211,31 @@ pub fn run() {
     // instead of panicking Ã¢â‚¬â€ tray click still works as fallback.
     let builder = match tauri_plugin_global_shortcut::Builder::new()
         .with_handler(|app, shortcut, event| {
-            if event.state() == tauri_plugin_global_shortcut::ShortcutState::Pressed {
-                // shortcut.to_string() renders "shift+control+KeyM" style —
-                // never equal to the registered spelling, so compare parsed
-                let mic: tauri_plugin_global_shortcut::Shortcut =
-                    "ctrl+shift+m".parse().expect("valid hotkey");
+            // Windows auto-repeats held hotkeys (WM_HOTKEY ~33ms apart after
+            // ~500ms hold) — act only on FRESH presses: ones where this key
+            // was physically released since its previous press
+            use std::sync::Mutex;
+            static HELD: Mutex<Option<u32>> = Mutex::new(None);
+            let mut held = HELD.lock().unwrap_or_else(|e| e.into_inner());
+            match event.state() {
+                tauri_plugin_global_shortcut::ShortcutState::Released => {
+                    if *held == Some(event.id) {
+                        *held = None;
+                    }
+                    return;
+                }
+                tauri_plugin_global_shortcut::ShortcutState::Pressed => {
+                    let prev = held.replace(event.id);
+                    if prev == Some(event.id) {
+                        return; // auto-repeat of a key still held down
+                    }
+                }
+            }
+            drop(held);
+            // shortcut.to_string() renders "shift+control+KeyM" style —
+            // never equal to the registered spelling, so compare parsed
+            let mic: tauri_plugin_global_shortcut::Shortcut =
+                "ctrl+shift+m".parse().expect("valid hotkey");
                 if *shortcut == mic {
                     // mic toggle anywhere — frontend owns the real start/stop
                     use tauri::Emitter;
@@ -231,7 +251,6 @@ pub fn run() {
                         }
                     }
                 }
-            }
         })
         .with_shortcuts(["alt+space", "ctrl+shift+m"])
     {

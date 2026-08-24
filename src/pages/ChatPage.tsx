@@ -246,6 +246,10 @@ export default function ChatPage() {
   // full message; the completed-message effect below remains as fallback
   // for non-streamed finishes and skips anything narrated here (lastSpoken)
   const streamTTS = useRef({ id: "", consumed: 0 }); // message being narrated
+  // narration progress per message id + which message owns current speech —
+  // lets a re-adopted message resume instead of restarting from scratch
+  const spokenUpto = useRef<Record<string, number>>({});
+  const narratingId = useRef("");
   const ttsQ = useRef<string[]>([]); // sentences awaiting piper playback
   const ttsPumping = useRef(false);
   const ttsHushed = useRef(false); // user hit stop-speech: mute this reply's rest
@@ -307,21 +311,28 @@ export default function ChatPage() {
     // unwatched live strays while idle are ignored too
     if (!tracked && !(done ? seenLive.current.has(id) : oc.busy)) return;
 
+    // how far narration reached per message — survives tracker resets so a
+    // re-adopted message RESUMES instead of reading itself again
+    const fresh = narratingId.current !== id;
     if (!tracked) {
-      streamTTS.current = { id, consumed: 0 };
+      streamTTS.current = { id, consumed: spokenUpto.current[id] ?? 0 };
       ttsHushed.current = false; // a fresh reply may talk again
-      // a newly tracked reply supersedes whatever is still talking — even
-      // speech carried over from a session the user just left
-      ttsQ.current = [];
-      replyAudio.current?.pause();
+      // only a genuinely NEW message supersedes whatever is talking —
+      // re-adopting the current one must not cut it off
+      if (fresh) {
+        ttsQ.current = [];
+        replyAudio.current?.pause();
+      }
     }
     const cur = streamTTS.current;
     const pending = full_text(last).slice(cur.consumed);
 
     const speak = (chunk: string, upto?: number) => {
       if (upto !== undefined) cur.consumed = upto;
+      spokenUpto.current[id] = cur.consumed;
       const cleaned = cleanSpeech(chunk);
       if (cleaned && !ttsHushed.current) {
+        narratingId.current = id;
         ttsQ.current.push(cleaned);
         pumpTTS();
       }
@@ -344,6 +355,65 @@ export default function ChatPage() {
     if (cut >= 0) speak(pending.slice(0, cut + 1), cur.consumed + cut + 1);
   }, [oc.msgs, oc.busy, settings.speakReplies, settings.ttsVoice]);
 
+  // --- ambience ---------------------------------------------------------------
+  // soft noise bed under extended thinking: after 15s of continuous busy
+  // with nothing audible, hum at half the speech volume until the turn
+  // settles or any piper clip takes over
+  const ambRef = useRef<{ ctx: AudioContext; gain: GainNode } | null>(null);
+  const ambTimer = useRef(0);
+  const ambStop = useCallback(() => {
+    clearTimeout(ambTimer.current);
+    ambTimer.current = 0;
+    const bed = ambRef.current;
+    ambRef.current = null;
+    if (!bed) return;
+    bed.gain.gain.setTargetAtTime(0, bed.ctx.currentTime, 0.12); // fade, no click
+    setTimeout(() => void bed.ctx.close().catch(() => {}), 450);
+  }, []);
+
+  useEffect(() => {
+    if (!oc.busy) {
+      ambStop();
+      return;
+    }
+    ambTimer.current = window.setTimeout(() => {
+      if (replyAudio.current && !replyAudio.current.paused) return;
+      const ctx = new AudioContext();
+      void ctx.resume().catch(() => {});
+      // 4s seamless brown-noise loop, low-passed into a soft hum — no assets
+      const buf = ctx.createBuffer(1, ctx.sampleRate * 4, ctx.sampleRate);
+      const d = buf.getChannelData(0);
+      let last = 0;
+      for (let i = 0; i < d.length; i++) {
+        last = (last + 0.02 * (Math.random() * 2 - 1)) / 1.02;
+        d[i] = last * 3.5;
+      }
+      const src = ctx.createBufferSource();
+      src.buffer = buf;
+      src.loop = true;
+      const lp = ctx.createBiquadFilter();
+      lp.type = "lowpass";
+      lp.frequency.value = 400;
+      const gain = ctx.createGain();
+      const vol = Math.min(1, settingsNow.current.ttsVol) * 0.5;
+      gain.gain.setValueAtTime(0, ctx.currentTime);
+      gain.gain.linearRampToValueAtTime(vol, ctx.currentTime + 0.8);
+      src.connect(lp);
+      lp.connect(gain);
+      gain.connect(ctx.destination);
+      src.start();
+      ambRef.current = { ctx, gain };
+    }, 15000);
+    return ambStop;
+  }, [oc.busy, ambStop]);
+
+  // any piper playback (narration, tool cues, previews) silences the bed
+  useEffect(() => {
+    const live = () => ambStop();
+    window.addEventListener("oc:tts-live", live);
+    return () => window.removeEventListener("oc:tts-live", live);
+  }, [ambStop]);
+
   // top-bar stop-speech button pauses piper playback from anywhere; the
   // volume slider retunes a running reply via oc:tts-vol
   useEffect(() => {
@@ -351,6 +421,7 @@ export default function ChatPage() {
       ttsHushed.current = true;
       ttsQ.current = []; // nothing queued survives the stop
       replyAudio.current?.pause();
+      ambStop();
     };
     const vol = (e: Event) => {
       if (replyAudio.current) replyAudio.current.volume = (e as CustomEvent<number>).detail;
@@ -361,7 +432,7 @@ export default function ChatPage() {
       window.removeEventListener("oc:tts-stop", stop);
       window.removeEventListener("oc:tts-vol", vol);
     };
-  }, []);
+  }, [ambStop]);
   useEffect(() => {
     if (!settings.speakReplies) return;
     const last = [...oc.msgs]
@@ -371,6 +442,14 @@ export default function ChatPage() {
     // only messages watched streaming may speak after the fact — a session
     // switch or app restore must never read history aloud
     if (!seenLive.current.has(last.info.id)) return;
+    // and never CUT speech that's already running: this fallback exists for
+    // silent completions, so stand down while the pump is mid-narration
+    if (
+      ttsPumping.current ||
+      ttsQ.current.length > 0 ||
+      (replyAudio.current && !replyAudio.current.paused)
+    )
+      return;
     lastSpoken.current = last.info.id;
     const text = last.parts
       .filter((p: any) => p.type === "text")
