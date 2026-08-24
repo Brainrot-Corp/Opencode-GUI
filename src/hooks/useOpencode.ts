@@ -392,6 +392,8 @@ export function useOpencode() {
         await client.session.promptAsync({ path: { id: sid }, body });
       } catch (e) {
         tracker.markBusy(sid, false);
+        // surface it in the history (synthetic error bubble) + the banner
+        store.addError(sid, String(e));
         setError(String(e));
       }
     },

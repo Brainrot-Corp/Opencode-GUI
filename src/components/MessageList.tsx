@@ -473,6 +473,11 @@ function renderPart(part: Part, key: number, collapsedDefault?: boolean) {
   return null;
 }
 
+// human-readable text from a NamedError-shaped message error
+function errText(err: any): string {
+  return err?.data?.message || err?.message || err?.name || "unknown error";
+}
+
 export default function MessageList({
   msgs,
   busy,
@@ -580,9 +585,21 @@ export default function MessageList({
         </>
       )}
       {!loading && msgs.length === 0 && !busy && <p className="empty">Say something…</p>}
-      {msgs.map((m) =>
-        m.parts.some((p) => renderPart(p, 0, collapsed)) || m.info.role === "user" ? (
-          <div key={m.info.id} className={`msg ${m.info.role}`}>
+      {msgs.map((m) => {
+        const err =
+          m.info.role === "assistant" ? (m.info as any).error : null;
+        const showErr = err && err.name !== "MessageAbortedError";
+        if (
+          !m.parts.some((p) => renderPart(p, 0, collapsed)) &&
+          m.info.role !== "user" &&
+          !showErr
+        )
+          return null;
+        return (
+          <div
+            key={m.info.id}
+            className={`msg ${m.info.role}${showErr ? " msg-error" : ""}`}
+          >
             {m.info.role === "user" && onRevert && (
               <button
                 className="rewind"
@@ -592,10 +609,16 @@ export default function MessageList({
                 <i className="fa-solid fa-clock-rotate-left" />
               </button>
             )}
+            {showErr && (
+              <div className="msg-err-line">
+                <i className="fa-solid fa-triangle-exclamation" />
+                <span>{errText(err)}</span>
+              </div>
+            )}
             {m.parts.map((part, i) => renderPart(part, i, collapsed))}
           </div>
-        ) : null,
-      )}
+        );
+      })}
       {busy && (
         <div className="thinking">
           <span className="cursor-dot" /> thinking

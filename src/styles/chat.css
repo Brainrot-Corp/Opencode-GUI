@@ -182,6 +182,22 @@
   color: var(--text);
 }
 
+/* turn-level failure — danger tint, warning icon + message line */
+.msg.msg-error {
+  border-color: color-mix(in srgb, var(--danger) calc(0.35 * 100%), transparent);
+}
+.msg .msg-err-line {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  color: var(--danger);
+  font-size: 12px;
+}
+.msg .msg-err-line i {
+  flex-shrink: 0;
+  font-size: 10px;
+}
+
 .msg.skel {
   border: none;
   background: rgba(255, 255, 255, 0.05);

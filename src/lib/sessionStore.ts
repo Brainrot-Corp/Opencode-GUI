@@ -144,6 +144,36 @@ export function createSessionStore(onChange: (sid: string) => void) {
     pendingDeltas.clear();
   }
 
+  // synthetic entry for a prompt that failed before the server created any
+  // message — renders as an error bubble; the next authoritative fetch
+  // replaces it (the failed send was never persisted server-side either)
+  let errSeq = 0;
+  function addError(sid: string, message: string) {
+    storeFor(sid).push({
+      info: {
+        id: `err-${++errSeq}`,
+        sessionID: sid,
+        role: "assistant",
+        time: { created: Date.now() },
+        parentID: "",
+        modelID: "",
+        providerID: "",
+        mode: "",
+        path: { cwd: "", root: "" },
+        cost: 0,
+        tokens: {
+          input: 0,
+          output: 0,
+          reasoning: 0,
+          cache: { read: 0, write: 0 },
+        },
+        error: { name: "UnknownError", data: { message } } as any,
+      } as Message,
+      parts: [],
+    });
+    onChange(sid);
+  }
+
   return {
     snapshot,
     applyMessage,
@@ -155,6 +185,7 @@ export function createSessionStore(onChange: (sid: string) => void) {
     dropStashes,
     remove,
     clearStashes,
+    addError,
     cached: (sid: string) => stores.get(sid),
   };
 }
