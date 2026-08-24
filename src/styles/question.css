@@ -29,10 +29,13 @@
   border-top: 1px solid color-mix(in srgb, var(--accent) calc(0.14 * 100%), transparent);
 }
 
-/* one line per option — description dimmed inline, full text on hover */
+/* Highlight is driven ONLY by the .hl class (React hover/keyboard state).
+   No :hover selectors here on purpose: WebView2 keeps stale :hover matches
+   when sibling classes churn during streaming re-renders, which lit up the
+   row after the one actually hovered. */
 .question-pop .q-opt {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   gap: 9px;
   width: 100%;
   text-align: left;
@@ -45,29 +48,29 @@
   color: var(--text);
   font-family: var(--sans);
   font-size: 12.5px;
-  white-space: nowrap;
-  transition: all 0.3s var(--ease);
+  transition: background-color 0.15s var(--ease), border-color 0.15s var(--ease),
+    color 0.15s var(--ease);
 }
 .question-pop .q-opt > i {
   font-size: 10px;
   color: var(--text-faint);
   flex-shrink: 0;
+  align-self: center;
 }
 .question-pop .q-opt span {
   flex-shrink: 0;
   max-width: 60%;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  overflow-wrap: anywhere;
 }
 .question-pop .q-opt small {
   flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--text-faint);
   font-size: 11.5px;
 }
-.question-pop .q-opt:hover,
 .question-pop .q-opt.hl {
   background: color-mix(in srgb, var(--accent) calc(0.09 * 100%), transparent);
   border-color: color-mix(in srgb, var(--accent) calc(0.4 * 100%), transparent);
@@ -81,7 +84,8 @@
   color: var(--accent-bright);
 }
 
-/* free-text "Other…" row */
+/* free-text "Other…" row — selectable like any option: typing fills it,
+   which clears that question's option picks (mutual exclusion) */
 .question-pop .q-custom {
   display: flex;
   align-items: center;
@@ -89,10 +93,17 @@
   padding: 2px 8px 3px;
   color: var(--text-faint);
   font-size: 10px;
+  cursor: text;
 }
-.question-pop .q-custom.hl,
-.question-pop .q-custom:hover {
+.question-pop .q-custom.hl {
   background: color-mix(in srgb, var(--accent) calc(0.09 * 100%), transparent);
+}
+.question-pop .q-custom.filled > i {
+  color: var(--accent-bright);
+}
+.question-pop .q-custom.filled input {
+  border-color: color-mix(in srgb, var(--accent) calc(0.4 * 100%), transparent);
+  color: var(--accent-bright);
 }
 .question-pop .q-custom input {
   flex: 1;
@@ -104,7 +115,7 @@
   color: var(--text);
   font-family: var(--mono);
   font-size: 11.5px;
-  transition: all 0.3s var(--ease);
+  transition: border-color 0.15s var(--ease), box-shadow 0.15s var(--ease);
 }
 .question-pop .q-custom input:focus {
   outline: none;
@@ -138,4 +149,32 @@
   font-size: 10px;
   letter-spacing: 0.08em;
   color: var(--text-faint);
+}
+
+/* scrollable body — long multi-question forms keep the action row visible */
+.question-pop .q-body {
+  max-height: min(52vh, 440px);
+  overflow-y: auto;
+}
+
+/* narrow windows / small sidebar: tighter chrome, footer wraps, hint drops */
+@media (max-width: 900px) {
+  .question-pop {
+    padding: 8px 12px;
+  }
+  .question-pop .q-opt {
+    gap: 7px;
+    padding: 5px 6px;
+  }
+  .question-pop .q-opt span {
+    max-width: none;
+  }
+}
+@media (max-width: 620px) {
+  .question-pop .actions {
+    flex-wrap: wrap;
+  }
+  .question-pop .q-hint {
+    display: none;
+  }
 }

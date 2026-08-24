@@ -19,7 +19,13 @@ import { useVoice } from "../hooks/useVoice";
 import { routeVoice } from "../lib/voiceRouter";
 import { pickWorkspace } from "../lib/workspace";
 import { playSound } from "../lib/sounds";
-import { getDirectory, opencode } from "../api";
+import {
+  getDirectory,
+  opencode,
+  tempSession,
+  dropSession,
+  withDeadline,
+} from "../api";
 import { splitModel } from "../lib/models";
 import type { Msg } from "../types";
 
@@ -397,17 +403,21 @@ export default function ChatPage() {
         `Respond in ${langHint} (locale ${locale}, TTS voice ${rawVoice}). No markdown, no bullets, no code, no preface.` +
         `\n\nASSISTANT ANSWER:\n${raw.slice(0, 12000)}`;
       try {
+        // hidden temp session on the secondary model
         const { client } = await opencode();
-        const s = await client.session.create({ body: {} });
-        const sid = (s.data as any).id as string;
+        const sid = await tempSession();
         let summary = "";
         try {
           const [providerID, modelID] = splitModel(secondaryModel);
           const variant = lowVariantFor(secondaryModel, oc.providers as any);
-          const r = await client.session.prompt({
-            path: { id: sid },
-            body: { parts: [{ type: "text", text: prompt }], model: { providerID, modelID }, ...(variant ? { variant } : {}) },
-          });
+          const r = await withDeadline(
+            client.session.prompt({
+              path: { id: sid },
+              body: { parts: [{ type: "text", text: prompt }], model: { providerID, modelID }, ...(variant ? { variant } : {}) },
+            }),
+            120_000,
+            "Summary",
+          );
           const parts: any[] = ((r.data as any)?.parts ?? []) as any[];
           summary = parts.filter((p: any) => p.type === "text").map((p: any) => p.text ?? "").join("").trim();
           if (!summary) {
@@ -415,7 +425,7 @@ export default function ChatPage() {
             if (Array.isArray(alt?.parts)) summary = alt.parts.filter((p: any) => p.type === "text").map((p: any) => p.text).join("").trim();
           }
         } finally {
-          await client.session.delete({ path: { id: sid } }).catch(() => {});
+          await dropSession(sid);
         }
         if (summary) queueSpeech(summary);
         else queueSpeech(raw);
@@ -809,20 +819,23 @@ export default function ChatPage() {
             `\n\nRECENT USER PROMPTS (why, most recent last):\n${recent || "(none)"}`;
           // hidden temp session on the secondary model — same pattern as GitPanel genMsg
           const { client } = await opencode();
-          const s = await client.session.create({ body: {} });
-          const sid = (s.data as any).id as string;
+          const sid = await tempSession();
           let summary = "";
           try {
             const [providerID, modelID] = splitModel(secondaryModel);
             const variant = lowVariantFor(secondaryModel, oc.providers as any);
-            const r = await client.session.prompt({
-              path: { id: sid },
-              body: {
-                parts: [{ type: "text", text: prompt }],
-                model: { providerID, modelID },
-                ...(variant ? { variant } : {}),
-              },
-            });
+            const r = await withDeadline(
+              client.session.prompt({
+                path: { id: sid },
+                body: {
+                  parts: [{ type: "text", text: prompt }],
+                  model: { providerID, modelID },
+                  ...(variant ? { variant } : {}),
+                },
+              }),
+              180_000,
+              "Debrief",
+            );
             const parts: any[] = ((r.data as any)?.parts ?? []) as any[];
             summary = parts.filter((p) => p.type === "text").map((p) => p.text ?? "").join("").trim();
             if (!summary) {
@@ -831,7 +844,7 @@ export default function ChatPage() {
               if (Array.isArray(alt?.parts)) summary = alt.parts.filter((p: any)=>p.type==="text").map((p:any)=>p.text).join("").trim();
             }
           } finally {
-            await client.session.delete({ path: { id: sid } }).catch(() => {});
+            await dropSession(sid);
           }
           if (!summary) {
             { const c = cleanSpeech("Debrief had nothing to say."); if (c) { ttsQ.current.push(c); pumpTTS(); } }
@@ -934,7 +947,13 @@ export default function ChatPage() {
         />
         <div
           className={`layout${resizing ? " no-anim" : ""}`}
-          style={{ gridTemplateColumns: sbClosed ? "46px 1fr" : `${sbW}px 1fr` }}
+          style={
+            {
+              gridTemplateColumns: sbClosed ? "46px 1fr" : `${sbW}px 1fr`,
+              // floating popups (permission/question) center inside the main column
+              "--sb-w": sbClosed ? "46px" : `${sbW}px`,
+            } as React.CSSProperties
+          }
         >
           <Sidebar
             sessions={oc.sessions}

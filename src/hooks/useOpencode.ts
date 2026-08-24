@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Message, Session } from "@opencode-ai/sdk/client";
-import { opencode, getDirectory, serverFetch } from "../api";
+import { opencode, getDirectory, serverFetch, hiddenSessions, HIDDEN_TITLE } from "../api";
 import { playSound } from "../lib/sounds";
 import { createSessionStore } from "../lib/sessionStore";
 import { splitModel } from "../lib/models";
@@ -97,10 +97,12 @@ export function useOpencode() {
   const refreshSessions = useCallback(async () => {
     const { client } = await opencode();
     const r = await client.session.list();
-    // most recently updated first
-    const list = ((r.data ?? []) as Session[]).slice().sort(
-      (a, b) => (b.time?.updated ?? 0) - (a.time?.updated ?? 0),
-    );
+    // most recently updated first; helper sessions (summary/debrief/commit
+    // gen) are dropped — live-tracked ids plus title-marked crash orphans
+    const list = ((r.data ?? []) as Session[])
+      .filter((s) => !hiddenSessions.has(s.id) && s.title !== HIDDEN_TITLE)
+      .slice()
+      .sort((a, b) => (b.time?.updated ?? 0) - (a.time?.updated ?? 0));
     setSessions(list);
     return list;
   }, []);

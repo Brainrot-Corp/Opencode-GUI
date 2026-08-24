@@ -58,3 +58,41 @@ export async function serverFetch(path: string, init?: RequestInit) {
   const url = `${base}${path}${directory ? `${sep}directory=${encodeURIComponent(directory)}` : ""}`;
   return fetch(url, init);
 }
+
+// --- hidden helper sessions (summary / debrief / commit-message gen) -------
+// tracked live so refreshSessions can drop them from the sidebar, plus a
+// title marker so orphans left by a crash vanish on the next boot too
+export const HIDDEN_TITLE = "__temp__";
+export const hiddenSessions = new Set<string>();
+
+export async function tempSession(): Promise<string> {
+  const { client } = await opencode();
+  const s = await client.session.create({ body: { title: HIDDEN_TITLE } });
+  const id = (s.data as any).id as string;
+  hiddenSessions.add(id);
+  return id;
+}
+
+export async function dropSession(id: string) {
+  hiddenSessions.delete(id);
+  const { client } = await opencode();
+  await client.session.delete({ path: { id } }).catch(() => {});
+}
+
+// sync prompts have no deadline server-side — a stalled provider hangs the
+// caller forever (e.g. the git-panel spinner). Reject instead.
+export function withDeadline<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((res, rej) => {
+    const t = window.setTimeout(() => rej(new Error(`${label} timed out`)), ms);
+    p.then(
+      (v) => {
+        clearTimeout(t);
+        res(v);
+      },
+      (e) => {
+        clearTimeout(t);
+        rej(e);
+      },
+    );
+  });
+}

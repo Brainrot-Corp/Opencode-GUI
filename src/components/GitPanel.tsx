@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { getDirectory, opencode } from "../api";
+import { getDirectory, opencode, tempSession, dropSession, withDeadline } from "../api";
 import { splitModel } from "../lib/models";
 import { extLang } from "../lib/syntax";
 import Dialog from "./Dialog";
@@ -129,8 +129,7 @@ export default function GitPanel() {
         return;
       }
       const { client } = await opencode();
-      const s = await client.session.create({ body: {} });
-      const sid = (s.data as any).id;
+      const sid = await tempSession();
       try {
         const [providerID, modelID] = splitModel(model);
         // secondary tasks use low thinking effort if the model supports it
@@ -143,23 +142,27 @@ export default function GitPanel() {
           else if (vars.includes("minimal")) variant = "minimal";
           else if (vars.includes("fast")) variant = "fast";
         } catch {}
-        const r = await client.session.prompt({
-          path: { id: sid },
-          body: {
-            parts: [
-              {
-                type: "text",
-                text:
-                  "Write a git commit message for this staged diff. One line, " +
-                  "imperative mood, max 72 chars, no backticks or quotes — reply " +
-                  "with ONLY the message.\n\n" +
-                  diff.slice(0, 12000),
-              },
-            ],
-            model: { providerID, modelID },
-            ...(variant ? { variant } : {}),
-          },
-        });
+        const r = await withDeadline(
+          client.session.prompt({
+            path: { id: sid },
+            body: {
+              parts: [
+                {
+                  type: "text",
+                  text:
+                    "Write a git commit message for this staged diff. One line, " +
+                    "imperative mood, max 72 chars, no backticks or quotes — reply " +
+                    "with ONLY the message.\n\n" +
+                    diff.slice(0, 12000),
+                },
+              ],
+              model: { providerID, modelID },
+              ...(variant ? { variant } : {}),
+            },
+          }),
+          120_000,
+          "Commit message",
+        );
         const parts: any[] = ((r.data as any)?.parts ?? []) as any[];
         const text = parts
           .filter((p) => p.type === "text")
@@ -169,7 +172,7 @@ export default function GitPanel() {
         if (text) setMsg(text);
         else setErr("Model returned no message.");
       } finally {
-        await client.session.delete({ path: { id: sid } }).catch(() => {});
+        await dropSession(sid);
       }
     } catch (e) {
       setErr(String(e).replace(/^Error:\s*/, ""));

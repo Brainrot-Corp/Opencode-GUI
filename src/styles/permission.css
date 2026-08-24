@@ -1,11 +1,13 @@
 /* permission approval floating card */
 
 .permission-bar {
+  /* --sb-w is set inline on .layout (live sidebar width, collapsed = 46px);
+     falls back to the default 248px when rendered outside it */
   position: fixed;
   bottom: 128px;
-  left: calc(248px + (100vw - 248px) / 2);
+  left: calc(var(--sb-w, 248px) + (100vw - var(--sb-w, 248px)) / 2);
   transform: translateX(-50%);
-  width: min(680px, calc(100vw - 248px - 48px));
+  width: min(680px, calc(100vw - var(--sb-w, 248px) - 48px));
   z-index: 30;
   padding: 14px 18px;
   background: var(--surface-2);
@@ -73,5 +75,11 @@
   .permission-bar {
     left: 50%;
     width: calc(100vw - 40px);
+  }
+}
+@media (max-width: 620px) {
+  .permission-bar {
+    padding: 10px 12px;
+    bottom: 108px;
   }
 }

@@ -21,6 +21,12 @@ export default function QuestionPopup({ ask, onAnswer, onReject }: Props) {
   const [customs, setCustoms] = useState<string[]>(() => qs.map(() => ""));
   const [hi, setHi] = useState(0);
   const listRef = useRef<HTMLDivElement>(null);
+  // scroll-under-cursor guard: programmatic scrollIntoView slides fresh rows
+  // under a stationary pointer, whose stray mouseenter would yank the
+  // highlight (e.g. onto the next question's first option). Only keyboard
+  // nav scrolls, and hover updates pause while that scroll settles.
+  const kbNav = useRef(false);
+  const hoverLock = useRef(false);
 
   // flat keyboard-nav order: each question's options, then its Other row
   // (oi = -1 marks the custom input)
@@ -30,8 +36,11 @@ export default function QuestionPopup({ ask, onAnswer, onReject }: Props) {
   );
   const complete = qs.every((_, qi) => picks[qi]?.size || customs[qi]?.trim());
 
+  // custom text and option picks are mutually exclusive per question —
+  // one answer each, never a checkbox plus a typed extra
   const choose = (qi: number, label: string) => {
     if (instant) return onAnswer([[label]]);
+    setCustoms((prev) => prev.map((v, j) => (j === qi ? "" : v)));
     setPicks((prev) =>
       prev.map((s, i) => {
         if (i !== qi) return s;
@@ -42,6 +51,11 @@ export default function QuestionPopup({ ask, onAnswer, onReject }: Props) {
         return next;
       }),
     );
+  };
+
+  const typeCustom = (qi: number, text: string) => {
+    if (text.trim()) setPicks((prev) => prev.map((s, j) => (j === qi ? new Set<string>() : s)));
+    setCustoms((prev) => prev.map((v, j) => (j === qi ? text : v)));
   };
 
   const submitAll = () => {
@@ -61,6 +75,7 @@ export default function QuestionPopup({ ask, onAnswer, onReject }: Props) {
       if (e.target instanceof HTMLInputElement) return;
       if (e.key === "ArrowDown" || e.key === "ArrowUp") {
         e.preventDefault();
+        kbNav.current = true;
         setHi((h) =>
           Math.min(Math.max(h + (e.key === "ArrowDown" ? 1 : -1), 0), Math.max(rows.length - 1, 0)),
         );
@@ -81,15 +96,24 @@ export default function QuestionPopup({ ask, onAnswer, onReject }: Props) {
   });
 
   useEffect(() => {
+    if (!kbNav.current) return;
+    kbNav.current = false;
+    hoverLock.current = true; // swallow the mouseenter storm mid-scroll
     listRef.current?.querySelector('[data-hl="true"]')?.scrollIntoView({ block: "nearest" });
+    const t = window.setTimeout(() => (hoverLock.current = false), 150);
+    return () => clearTimeout(t);
   }, [hi]);
+
+  const hoverRow = (i: number) => {
+    if (!hoverLock.current) setHi(i);
+  };
 
   let idx = -1;
 
   return (
     <div className="permission-bar question-pop" role="dialog">
       <div className="title">AI question</div>
-      <div ref={listRef}>
+      <div ref={listRef} className="q-body">
         {qs.map((q, qi) => (
           <div className="q-section" key={qi}>
             {qs.length > 1 && <div className="q-head">{q.header}</div>}
@@ -105,7 +129,7 @@ export default function QuestionPopup({ ask, onAnswer, onReject }: Props) {
                   className={`q-opt${sel ? " sel" : ""}${i === hi ? " hl" : ""}`}
                   data-hl={i === hi || undefined}
                   data-tip={o.description}
-                  onMouseEnter={() => setHi(i)}
+                  onMouseEnter={() => hoverRow(i)}
                   onClick={() => choose(qi, o.label)}
                 >
                   <i
@@ -119,8 +143,10 @@ export default function QuestionPopup({ ask, onAnswer, onReject }: Props) {
               );
             })}
             <div
-              className={`q-custom${rows.findIndex((r) => r.qi === qi && r.oi === -1) === hi ? " hl" : ""}`}
-              onMouseEnter={() => setHi(rows.findIndex((r) => r.qi === qi && r.oi === -1))}
+              className={`q-custom${customs[qi]?.trim() ? " filled" : ""}${
+                rows.findIndex((r) => r.qi === qi && r.oi === -1) === hi ? " hl" : ""
+              }`}
+              onMouseEnter={() => hoverRow(rows.findIndex((r) => r.qi === qi && r.oi === -1))}
               onClick={() =>
                 listRef.current?.querySelector<HTMLInputElement>(`input[data-q="${qi}"]`)?.focus()
               }
@@ -130,9 +156,7 @@ export default function QuestionPopup({ ask, onAnswer, onReject }: Props) {
                 data-q={qi}
                 placeholder="Other…"
                 value={customs[qi]}
-                onChange={(e) =>
-                  setCustoms((prev) => prev.map((v, j) => (j === qi ? e.target.value : v)))
-                }
+                onChange={(e) => typeCustom(qi, e.target.value)}
                 onKeyDown={(e) => {
                   if (e.key === "Enter") {
                     e.preventDefault();
