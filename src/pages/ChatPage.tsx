@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import Titlebar from "../components/Titlebar";
 import Sidebar from "../components/Sidebar";
 import MessageList from "../components/MessageList";
@@ -30,6 +31,11 @@ function playWav(bytes: number[], volume: number): HTMLAudioElement {
   const a = new Audio(url);
   a.volume = volume;
   a.onended = () => URL.revokeObjectURL(url);
+  // tell the voice hook piper is audible so hands-free VAD gates its echo
+  a.addEventListener("play", () => {
+    const ms = Number.isFinite(a.duration) ? a.duration * 1000 : 3000;
+    window.dispatchEvent(new CustomEvent<number>("oc:tts-live", { detail: ms }));
+  });
   void a.play().catch(() => {});
   return a;
 }
@@ -151,6 +157,23 @@ export default function ChatPage() {
             .then((app) => announce(`Opening ${app}.`))
             .catch(() => announce(`Couldn't find ${act.arg}.`));
           break;
+        case "closeApp":
+        case "minimizeApp":
+        case "killApp": {
+          const verb =
+            act.type === "closeApp"
+              ? "Closing"
+              : act.type === "minimizeApp"
+                ? "Minimizing"
+                : "Killing";
+          invoke<string>("window_app", {
+            name: act.arg,
+            action: act.type === "killApp" ? "kill" : act.type === "closeApp" ? "close" : "minimize",
+          })
+            .then((app) => announce(`${verb} ${app}.`))
+            .catch(() => announce(`Couldn't find ${act.arg}.`));
+          break;
+        }
         case "send":
           window.dispatchEvent(new Event("oc:voice-send"));
           break;
@@ -159,6 +182,9 @@ export default function ChatPage() {
           break;
         case "quiet":
           replyAudio.current?.pause();
+          break;
+        case "hearCheck":
+          announce("Yes, I can hear you.");
           break;
       }
     },
@@ -173,6 +199,28 @@ export default function ChatPage() {
     settings.voice.pauseMs,
     settings.voice.sens,
   );
+
+  // Ctrl+M toggles the mic — same path as clicking the composer button
+  useEffect(() => {
+    const key = (e: KeyboardEvent) => {
+      if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "m") {
+        e.preventDefault();
+        voice.toggle();
+      }
+    };
+    window.addEventListener("keydown", key);
+    return () => window.removeEventListener("keydown", key);
+  }, [voice.toggle]);
+
+  // global Ctrl+Shift+M (Rust-registered) reaches here even when unfocused;
+  // different combo from Ctrl+M so both can't fire for one press
+  useEffect(() => {
+    let un: (() => void) | undefined;
+    listen("mic://toggle", () => voice.toggle()).then((f) => {
+      un = f;
+    });
+    return () => un?.();
+  }, [voice.toggle]);
 
   // speak-replies: narrate each finished assistant message (code stripped).
   // launchAt gates it: only replies whose completion stamp is newer than app

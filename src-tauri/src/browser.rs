@@ -398,6 +398,73 @@ fn launch_detached(target: &str) -> Result<(), String> {
         .map_err(|e| format!("failed to launch: {e}"))
 }
 
+// same charset guard as open_app
+fn sane_phrase(phrase: &str) -> bool {
+    !phrase.is_empty()
+        && phrase.len() <= 64
+        && phrase
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, ' ' | '.' | '-' | '_'))
+}
+
+// close ("quit"), minimize, or force-kill the app behind a spoken phrase:
+// match visible main-window titles word-by-word (same AND-of-words idea as
+// the launcher) and act on every hit. CloseMainWindow asks nicely
+// (WM_CLOSE); minimize is ShowWindow(SW_MINIMIZE); kill resolves the
+// process name then taskkill /F's every process under it (windows included).
+// Returns the matched process name for the UI to speak; errors when nothing
+// matched.
+//
+// ponytail: shells PowerShell instead of a Win32 EnumWindows dependency —
+// a few hundred ms per call is fine for voice; swap for the windows crate
+// if it ever feels slow.
+#[tauri::command]
+pub async fn window_app(name: String, action: String) -> Result<String, String> {
+    let phrase = name.trim().to_string();
+    if !sane_phrase(&phrase) {
+        return Err("bad app name".into());
+    }
+    let minimize = match action.as_str() {
+        "close" => false,
+        "minimize" => true,
+        "kill" => false,
+        _ => return Err("bad action".into()),
+    };
+    // -match is case-insensitive; lookaheads make every spoken word required
+    let rx: String = phrase
+        .split_whitespace()
+        .map(|w| format!("(?=.*{w})"))
+        .collect();
+    let add_type = if minimize {
+        "if(-not('U.W' -as [type])){Add-Type -MemberDefinition '[DllImport(\"user32.dll\")] public static extern bool ShowWindow(IntPtr h,int c);' -Name W -Namespace U};"
+    } else {
+        ""
+    };
+    // close/minimize act per window; kill goes through taskkill so hidden
+    // child processes die too
+    let act = if action == "kill" {
+        "$ps|Select-Object -Unique -ExpandProperty ProcessName|ForEach-Object{& taskkill /F /IM ($_+'.exe')|Out-Null}".to_string()
+    } else if minimize {
+        "foreach($p in $ps){[void][U.W]::ShowWindow($p.MainWindowHandle,6)}".to_string()
+    } else {
+        "foreach($p in $ps){[void]$p.CloseMainWindow()}".to_string()
+    };
+    let script = format!(
+        "$ErrorActionPreference='SilentlyContinue';{add_type}$ps=Get-Process|Where-Object{{$_.MainWindowHandle -ne 0 -and $_.MainWindowTitle -match '{rx}'}};{act};if($ps){{Write-Output $ps[0].ProcessName}}"
+    );
+    let out = Command::new("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .map_err(|e| format!("shell failed: {e}"))?;
+    let proc_name = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if proc_name.is_empty() {
+        Err(format!("no window found for '{phrase}'"))
+    } else {
+        Ok(proc_name)
+    }
+}
+
 // re-fit the child webview under the browser bar whenever the main window
 // changes size (also fires on minimize/restore — bounds of 0 are harmless).
 // Runs on the MAIN thread — clone-then-act keeps this deadlock-free against
@@ -416,4 +483,24 @@ pub fn on_main_resize(app: &AppHandle, size: PhysicalSize<u32>) {
         position: LogicalPosition::new(0.0, top).into(),
         size: LogicalSize::new(s.width, (s.height - top).max(0.0)).into(),
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // the window_app scripts rely on $vars and 'quoted' strings surviving
+    // Command::new → powershell.exe arg passing; this runs the same shape of
+    // script for real so quoting regressions fail loudly here, not in voice
+    #[test]
+    fn ps_quoting_survives_command_invocation() {
+        let out = Command::new("powershell")
+            .args(["-NoProfile", "-NonInteractive", "-Command",
+                "$ErrorActionPreference='SilentlyContinue';$ps=Get-Process|Where-Object{$_.MainWindowHandle -ne 0};if($ps){Write-Output $ps[0].ProcessName}else{Write-Output 'none'}"])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+            .unwrap();
+        let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        assert!(!s.is_empty(), "stdout empty, stderr: {}", String::from_utf8_lossy(&out.stderr));
+    }
 }

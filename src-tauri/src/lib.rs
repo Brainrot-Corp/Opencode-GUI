@@ -7,7 +7,7 @@ use tauri::{Manager, RunEvent, State, WindowEvent};
 
 mod browser;
 use browser::{browser_back, browser_close, browser_forward, browser_navigate, browser_open,
-    browser_reload, open_app, open_external};
+    browser_reload, open_app, open_external, window_app};
 
 mod voice;
 use voice::{install_bin_finalize, install_model_finalize, install_piper_bin, install_tts_voice_part, tts_remove_voice, tts_speak, tts_status, voice_download, voice_remove_model,
@@ -181,6 +181,7 @@ pub fn run() {
             browser_close,
               open_external,
               open_app,
+              window_app,
             voice_status,
             voice_transcribe,
             voice_download,
@@ -194,24 +195,33 @@ pub fn run() {
             tts_remove_voice
         ]);
 
-    // global Alt+Space: toggle window visibility, works system-wide.
-    // If the combo is already taken (PowerToys Run, etc.), warn and continue
+    // global hotkeys, work system-wide.
+    // If a combo is already taken (PowerToys Run, etc.), warn and continue
     // instead of panicking Ã¢â‚¬â€ tray click still works as fallback.
     let builder = match tauri_plugin_global_shortcut::Builder::new()
-        .with_handler(|app, _shortcut, event| {
+        .with_handler(|app, shortcut, event| {
             if event.state() == tauri_plugin_global_shortcut::ShortcutState::Pressed {
-                if let Some(w) = app.get_webview_window("main") {
-                    let visible = w.is_visible().unwrap_or(false);
-                    let focused = w.is_focused().unwrap_or(false);
-                    if visible && focused {
-                        hide_main(app);
-                    } else {
-                        show_main(app);
+                match shortcut.to_string().as_str() {
+                    // mic toggle anywhere — frontend owns the real start/stop
+                    "ctrl+shift+m" => {
+                        use tauri::Emitter;
+                        let _ = app.emit("mic://toggle", ());
+                    }
+                    _ => {
+                        if let Some(w) = app.get_webview_window("main") {
+                            let visible = w.is_visible().unwrap_or(false);
+                            let focused = w.is_focused().unwrap_or(false);
+                            if visible && focused {
+                                hide_main(app);
+                            } else {
+                                show_main(app);
+                            }
+                        }
                     }
                 }
             }
         })
-        .with_shortcuts(["alt+space"])
+        .with_shortcuts(["alt+space", "ctrl+shift+m"])
     {
         Ok(shortcuts_builder) => builder.plugin(shortcuts_builder.build()),
         Err(e) => {

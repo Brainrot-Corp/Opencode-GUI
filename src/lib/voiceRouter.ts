@@ -10,9 +10,13 @@ export type VoiceAct =
   | { type: "cycleAgent" }
   | { type: "runCmd"; arg: string; rest: string }
   | { type: "launchApp"; arg: string }
+  | { type: "closeApp"; arg: string }
+  | { type: "minimizeApp"; arg: string }
+  | { type: "killApp"; arg: string }
   | { type: "send" }
   | { type: "clear" }
-  | { type: "quiet" };
+  | { type: "quiet" }
+  | { type: "hearCheck" };
 
 export type VoiceCtx = {
   themes: string[];
@@ -43,7 +47,19 @@ export function routeVoice(text: string, ctx: VoiceCtx): VoiceAct | null {
   if (/^(send|submit)( it| that| this| the prompt| message)?$/.test(t)) return { type: "send" };
   if (/^(envoi|envoie|envoyer|envoyez|envoyé)$/.test(t)) return { type: "send" };
   if (/^(be quiet|stop speaking|stop talking)$/.test(t)) return { type: "quiet" };
-  if (/^clear (the )?(input|composer|text)$/.test(t)) return { type: "clear" };
+  if (/^(erase|clear)( the | )?(input|composer|text|prompt)$/.test(t)) return { type: "clear" };
+  if (/^(can|do)( you)? hear me$/.test(t)) return { type: "hearCheck" };
+
+  // "close google chrome" / "minimize the calculator" / "quit spotify" /
+  // "kill chrome" — placed before the launcher catch-all; "close settings"
+  // already matched above as a settings action
+  const appAct = /^(close|quit|minimize|kill)(?: (?:the|my))? (.+)$/.exec(t);
+  if (appAct) {
+    const verb = appAct[1];
+    if (verb === "minimize") return { type: "minimizeApp", arg: appAct[2] };
+    if (verb === "kill") return { type: "killApp", arg: appAct[2] };
+    return { type: "closeApp", arg: appAct[2] };
+  }
 
   // "launch google chrome" / "open the spotify" — app finder; placed last so
   // the specific intents above ("open settings", "start a new session") win

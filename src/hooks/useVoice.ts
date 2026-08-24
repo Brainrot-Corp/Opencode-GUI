@@ -103,6 +103,17 @@ export function useVoice(
     return Date.now() < ttsUntilRef.current;
   }, []);
 
+  // piper playback (playWav) announces itself here — gate through its tail
+  // so hands-free never transcribes our own spoken replies
+  useEffect(() => {
+    const live = (e: Event) => {
+      const ms = (e as CustomEvent<number>).detail || 3000;
+      ttsUntilRef.current = Date.now() + ms + 500;
+    };
+    window.addEventListener("oc:tts-live", live);
+    return () => window.removeEventListener("oc:tts-live", live);
+  }, []);
+
   const teardown = useCallback(() => {
     // back to manual so an in-flight stream utterance's finally can't flip
     // phase back to "recording" after the user switched the mic off
