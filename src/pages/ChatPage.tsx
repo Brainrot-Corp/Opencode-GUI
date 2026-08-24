@@ -52,7 +52,7 @@ function full_text(m: Msg): string {
 }
 
 // batched enumeration keeps the old cue strings only as fallback documentation
-// (per-tool immediate speech replaced by 4.5s roll-up — see buildEnumPhrase)
+// (per-tool immediate speech replaced by 10s roll-up — see buildEnumPhrase)
 
 // batched enumeration labels — used to build "read 3 times, wrote 1 time…" phrases
 const ENUM_LABELS: Record<string, string> = {
@@ -366,7 +366,8 @@ export default function ChatPage() {
         locale.startsWith("pl") ? "Polish" :
         locale.startsWith("en_GB") ? "British English" : "English";
       const prompt =
-        `You are a concise spoken-summary assistant. Summarize the ASSISTANT ANSWER below in exactly 2 concise paragraphs max, spoken aloud. ` +
+        `You are an ultra-concise spoken-summary assistant. Summarize the ASSISTANT ANSWER below in a single short paragraph, spoken aloud. ` +
+        `Keep total under 30 words, 1-2 short sentences, only the essential outcome. Be extremely terse, no filler, no intro, no repetition. ` +
         `Respond in ${langHint} (locale ${locale}, TTS voice ${rawVoice}). No markdown, no bullets, no code, no preface.` +
         `\n\nASSISTANT ANSWER:\n${raw.slice(0, 12000)}`;
       try {
@@ -525,7 +526,7 @@ export default function ChatPage() {
     [settings.speakReplies, settings.ttsVoice, queueSpeech],
   );
 
-  // batched tool enumeration — array of tool uses, spoken every 4.5s
+  // batched tool enumeration — array of tool uses, spoken every 10s
   const toolSeen = useRef<Set<string>>(new Set());
   const toolCounts = useRef<Map<string, number>>(new Map());
 
@@ -572,11 +573,11 @@ export default function ChatPage() {
         toolCounts.current.set(tool, (toolCounts.current.get(tool) ?? 0) + 1);
         changed = true;
       }
-    // no speech here — ticker handles it every 4.5s
+    // no speech here — ticker handles it every 10s
     void changed;
   }, [oc.msgs, oc.busy]);
 
-  // ticker: every 4.5s while busy, queue the current totals behind any audio
+  // ticker: every 10s while busy, queue the current totals behind any audio
   // already playing — pumpTTS serializes, so a tick that fires mid-speech
   // naturally waits. pendingEnum coalesces rapid ticks into the latest totals.
   // if an answer was queued while pending, flushPendingEnum will have cleared it early.
@@ -654,7 +655,7 @@ export default function ChatPage() {
           pumpTTS();
           schedule();
         }
-      }, 4500);
+      }, 10000);
     };
     schedule();
     return () => {
