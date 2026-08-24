@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { enable, isEnabled, disable } from "@tauri-apps/plugin-autostart";
 import type { AppSettings, ColorSet } from "../hooks/useSettings";
@@ -17,6 +17,44 @@ const VOICE_MODELS = [
   { id: "ggml-small.en.bin", label: "small.en · 488 MB · best accuracy" },
   { id: "ggml-base.bin", label: "base multilingual · 148 MB" },
 ];
+
+// Piper neural TTS — exe release + curated single-speaker voices from
+// huggingface.co/rhasspy/piper-voices (id layout: <lang>_<REGION>-<speaker>-<quality>)
+const PIPER_BIN_URL =
+  "https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_windows_amd64.zip";
+const PIPER_VOICE_BASE = "https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/";
+const PIPER_VOICES = [
+  "en_US-amy-medium",
+  "en_US-lessac-medium",
+  "en_US-ryan-high",
+  "en_GB-alba-medium",
+  "en_GB-southern_english_female-low",
+  "de_DE-thorsten-medium",
+  "fr_FR-siwis-medium",
+  "es_ES-sharvard-medium",
+  "zh_CN-huayan-medium",
+  "pt_BR-faber-medium",
+  "pl_PL-darkman-medium",
+];
+function piperUrl(id: string, ext = ".onnx"): string {
+  const [family, speaker, quality] = id.split("-");
+  return `${PIPER_VOICE_BASE}${family.slice(0, 2)}/${family}/${speaker}/${quality}/${id}${ext}`;
+}
+const PIPER_LANGS: Record<string, string> = {
+  en_US: "US English",
+  en_GB: "British English",
+  de_DE: "German",
+  fr_FR: "French",
+  es_ES: "Spanish",
+  zh_CN: "Chinese",
+  pt_BR: "Portuguese",
+  pl_PL: "Polish",
+};
+function piperLabel(id: string): string {
+  const [family, speaker, quality] = id.split("-");
+  return `${speaker} (${quality}) · ${PIPER_LANGS[family] ?? family}`;
+}
+const PREVIEW_TEXT = "Hey, this is how I will read replies aloud.";
 
 export default function SettingsDrawer({
   open,
@@ -51,7 +89,9 @@ export default function SettingsDrawer({
   const [voice, setVoice] = useState<{ bin: boolean; models: string[] } | null>(null);
   const [dl, setDl] = useState<{ label: string; pct: number } | null>(null);
   const [voiceErr, setVoiceErr] = useState("");
-  const [ttsVoices, setTtsVoices] = useState<SpeechSynthesisVoice[]>([]);
+  // piper neural TTS: engine + downloaded voices (id list without .onnx)
+  const [piper, setPiper] = useState<{ bin: boolean; voices: string[] } | null>(null);
+  const previewRef = useRef<HTMLAudioElement | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -61,14 +101,20 @@ export default function SettingsDrawer({
     invoke<{ bin: boolean; models: string[] }>("voice_status")
       .then(setVoice)
       .catch(() => setVoice({ bin: false, models: [] }));
-    // TTS voices load async — getVoices() is empty until voiceschanged fires
-    const s = window.speechSynthesis;
-    if (!s) return;
-    const load = () => setTtsVoices(s.getVoices().sort((a, b) => a.name.localeCompare(b.name)));
-    load();
-    s.addEventListener("voiceschanged", load);
-    return () => s.removeEventListener("voiceschanged", load);
+    invoke<{ bin: boolean; voices: string[] }>("tts_status")
+      .then(setPiper)
+      .catch(() => setPiper({ bin: false, voices: [] }));
+
   }, [open]);
+
+  // live volume: the slider retunes a running preview via oc:tts-vol
+  useEffect(() => {
+    const set = (e: Event) => {
+      if (previewRef.current) previewRef.current.volume = (e as CustomEvent<number>).detail;
+    };
+    window.addEventListener("oc:tts-vol", set);
+    return () => window.removeEventListener("oc:tts-vol", set);
+  }, []);
 
   // curl.exe does the fetching Rust-side (webview fetch dies on signed-CDN
   // CORS redirects); progress is indeterminate until curl reports
@@ -116,6 +162,69 @@ export default function SettingsDrawer({
     }
   }
 
+
+  // plays a short sample through the given piper voice — used by the picker
+  // and the preview button; value is the stored "<id>.onnx" filename.
+  // falls back to the first downloaded voice so the button never dead-ends
+  function previewVoice(value: string) {
+    const voice =
+      value ||
+      (piper?.voices.length ? `${piper.voices[0]}.onnx` : "");
+    if (!voice) {
+      setVoiceErr("no neural voice yet — install Piper and download one below");
+      return;
+    }
+    previewRef.current?.pause();
+    invoke<number[]>("tts_speak", { text: PREVIEW_TEXT, voice })
+      .then((bytes) => {
+        const url = URL.createObjectURL(
+          new Blob([new Uint8Array(bytes)], { type: "audio/wav" }),
+        );
+        const a = new Audio(url);
+        a.volume = settings.ttsVol;
+        previewRef.current = a;
+        a.onended = () => URL.revokeObjectURL(url);
+        a.play().catch((e) => setVoiceErr(`audio playback failed: ${e}`));
+      })
+      .catch((e) => setVoiceErr(String(e)));
+  }
+
+  // whisper-model flow: picking an unavailable voice fetches whatever is
+  // missing (engine first, then the onnx + json sidecar pair), then
+  // selects and previews it
+  async function ensureVoice(id: string) {
+    if (dl) return;
+    try {
+      if (!piper?.bin) {
+        await downloadTo("piper-bin", PIPER_BIN_URL, "piper engine");
+        await invoke("install_piper_bin", { key: "piper-bin" });
+        setPiper((t) => ({ bin: true, voices: t?.voices ?? [] }));
+      }
+      if (!(piper?.voices ?? []).includes(id)) {
+        await downloadTo(`tts-${id}`, piperUrl(id), `${id} · voice`);
+        await downloadTo(`tts-${id}-cfg`, piperUrl(id, ".onnx.json"), `${id} · config`);
+        await invoke("install_tts_voice_part", { key: `tts-${id}`, name: `${id}.onnx` });
+        await invoke("install_tts_voice_part", { key: `tts-${id}-cfg`, name: `${id}.onnx.json` });
+        setPiper((t) => ({ bin: true, voices: [...(t?.voices ?? []), id].sort() }));
+      }
+      update({ ttsVoice: `${id}.onnx` });
+      previewVoice(`${id}.onnx`);
+    } catch (e) {
+      setVoiceErr(String(e));
+    }
+  }
+
+  async function removePiperVoice(id: string) {
+    try {
+      await invoke("tts_remove_voice", { name: `${id}.onnx` });
+      const left = (piper?.voices ?? []).filter((v) => v !== id);
+      setPiper((t) => ({ bin: t?.bin ?? false, voices: left }));
+      if (settings.ttsVoice === `${id}.onnx`) update({ ttsVoice: "" });
+    } catch (e) {
+      setVoiceErr(String(e));
+    }
+  }
+
   async function toggleAutoLaunch() {
     try {
       if (autoLaunch) {
@@ -129,6 +238,16 @@ export default function SettingsDrawer({
       setAutoLaunch((v) => (v === null ? false : !v));
     }
   }
+
+  // the voice currently streaming in — derived from the shared download
+  // indicator label ("<id> · voice" / "<id> · config") so the picker can
+  // mark it live without extra state
+  const dlVoiceId = (() => {
+    const l = dl?.label ?? "";
+    return l.endsWith("· voice") || l.endsWith("· config")
+      ? l.slice(0, l.lastIndexOf(" · "))
+      : "";
+  })();
 
   const scales = [0.8, 0.9, 1, 1.1, 1.25];
 
@@ -496,15 +615,41 @@ export default function SettingsDrawer({
                   className="voice-select"
                   value={settings.ttsVoice}
                   aria-label="Speak replies voice"
-                  onChange={(e) => update({ ttsVoice: e.target.value })}
+                  disabled={!!dl}
+                  onChange={(e) => {
+                    const file = e.target.value;
+                    if (!file) return;
+                    const id = file.replace(/\.onnx$/, "");
+                    if (piper?.voices.includes(id)) {
+                      update({ ttsVoice: file });
+                      previewVoice(file);
+                    } else {
+                      void ensureVoice(id);
+                    }
+                  }}
                 >
-                  <option value="">System default</option>
-                  {ttsVoices.map((v) => (
-                    <option key={v.voiceURI} value={v.voiceURI}>
-                      {v.name} ({v.lang})
+                  {!settings.ttsVoice && <option value="">Pick a voice…</option>}
+                  {PIPER_VOICES.map((id) => (
+                    <option key={id} value={`${id}.onnx`}>
+                      {piperLabel(id)}
+                      {(piper?.voices ?? []).includes(id)
+                        ? ""
+                        : id === dlVoiceId
+                          ? " — downloading…"
+                          : " — not downloaded"}
                     </option>
                   ))}
                 </select>
+                <button
+                  type="button"
+                  className="reset-btn"
+                  data-tip="Preview voice"
+                  aria-label="Preview voice"
+                  disabled={!(settings.ttsVoice || piper?.voices.length)}
+                  onClick={() => previewVoice(settings.ttsVoice)}
+                >
+                  <i className="fa-solid fa-play" />
+                </button>
                 <button
                   type="button"
                   className={`toggle${settings.speakReplies ? " on" : ""}`}
@@ -515,6 +660,81 @@ export default function SettingsDrawer({
                 </button>
               </div>
             </div>
+
+            <div className="setting-row">
+              <div className="setting-info">
+                <i className="fa-solid fa-volume-low setting-icon" />
+                <div>
+                  <div className="setting-name">Speech volume</div>
+                  <div className="setting-desc">Loudness of spoken replies and previews</div>
+                </div>
+              </div>
+              <div className="color-controls">
+                <input
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.05}
+                  value={settings.ttsVol}
+                  aria-label="Speech volume"
+                  onChange={(e) => {
+                    const v = Number(e.target.value);
+                    update({ ttsVol: v });
+                    // retune any speech playing right now
+                    window.dispatchEvent(new CustomEvent("oc:tts-vol", { detail: v }));
+                  }}
+                />
+                <span className="alpha-num">{Math.round(settings.ttsVol * 100)}%</span>
+              </div>
+            </div>
+
+            {/* piper engine + neural voice management, same pattern as whisper */}
+            <div className="setting-row">
+              <div className="setting-info">
+                <i className="fa-solid fa-wand-magic-sparkles setting-icon" />
+                <div>
+                  <div className="setting-name">Neural voices</div>
+                  <div className="setting-desc">
+                    {piper?.bin
+                      ? `Piper ready · ${piper.voices.length} voice${piper.voices.length === 1 ? "" : "s"} downloaded`
+                      : dl
+                        ? "Downloading Piper engine…"
+                        : "Pick any voice above — Piper installs on demand"}
+                  </div>
+                </div>
+              </div>
+
+            </div>
+
+            {!!piper?.voices.length && (
+              <div className="setting-row">
+                <div className="setting-info">
+                  <i className="fa-solid fa-database setting-icon" />
+                  <div>
+                    <div className="setting-name">Downloaded neural voices</div>
+                    <div className="setting-desc">Click × to free the disk space</div>
+                  </div>
+                </div>
+                <div className="model-chips">
+                  {piper.voices.map((id) => (
+                    <span
+                      key={id}
+                      className={`model-chip${settings.ttsVoice === `${id}.onnx` ? " active" : ""}`}
+                    >
+                      {piperLabel(id)}
+                      <button
+                        type="button"
+                        aria-label={`Remove ${id}`}
+                        disabled={!!dl}
+                        onClick={() => void removePiperVoice(id)}
+                      >
+                        <i className="fa-solid fa-xmark" />
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="sound-box">

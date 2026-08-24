@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-// everything lives under ~/.config/.opencode-gui/whisper/ — same root as themes.json
+// everything lives under ~/.config/.opencode-gui/whisper/ Ã¢â‚¬â€ same root as themes.json
 fn whisper_dir() -> PathBuf {
     let home = std::env::var("USERPROFILE").unwrap_or_default();
     PathBuf::from(home)
@@ -57,9 +57,9 @@ pub fn voice_status() -> VoiceStatus {
     }
 }
 
-// downloads url to <downloads>/<key>.part using the OS curl.exe — the
+// downloads url to <downloads>/<key>.part using the OS curl.exe Ã¢â‚¬â€ the
 // webview's fetch() can't follow GitHub/HF release redirects cross-origin
-// async so curl runs off the main thread — sync commands freeze the UI
+// async so curl runs off the main thread Ã¢â‚¬â€ sync commands freeze the UI
 #[tauri::command]
 pub async fn voice_download(key: String, url: String) -> Result<(), String> {
     if !url.starts_with("https://") {
@@ -129,7 +129,7 @@ pub async fn install_model_finalize(key: String, name: String) -> Result<(), Str
     let part = part_path(&key)?;
     std::fs::create_dir_all(models_dir()).map_err(|e| e.to_string())?;
     std::fs::rename(&part, models_dir().join(&name)).or_else(|_| {
-        // rename across volumes fails — fall back to copy
+        // rename across volumes fails Ã¢â‚¬â€ fall back to copy
         let n = std::fs::copy(&part, models_dir().join(&name)).map_err(|e| e.to_string())?;
         let _ = std::fs::remove_file(&part);
         if n == 0 {
@@ -156,7 +156,7 @@ pub fn voice_remove_model(name: String) -> Result<(), String> {
 #[tauri::command]
 pub async fn voice_transcribe(audio: Vec<u8>, model: String) -> Result<String, String> {
     let cli = find_cli()
-        .ok_or_else(|| "voice engine not installed — set it up in Settings > Voice".to_string())?;
+        .ok_or_else(|| "voice engine not installed Ã¢â‚¬â€ set it up in Settings > Voice".to_string())?;
     if !model.ends_with(".bin") || model.contains("..") {
         return Err("bad model name".into());
     }
@@ -216,5 +216,199 @@ pub async fn voice_transcribe(audio: Vec<u8>, model: String) -> Result<String, S
     })();
 
     let _ = std::fs::remove_file(&tmp);
+    result
+}
+
+// ---------- piper neural TTS (offline, better than system voices) ----------
+fn piper_dir() -> PathBuf {
+    whisper_dir().join("piper")
+}
+
+fn piper_exe() -> PathBuf {
+    piper_dir().join("piper.exe")
+}
+
+fn tts_voices_dir() -> PathBuf {
+    piper_dir().join("voices")
+}
+
+#[derive(serde::Serialize)]
+pub struct TtsStatus {
+    bin: bool,
+    voices: Vec<String>,
+}
+
+#[tauri::command]
+pub fn tts_status() -> TtsStatus {
+    let mut voices = Vec::new();
+    if let Ok(rd) = std::fs::read_dir(tts_voices_dir()) {
+        for e in rd.flatten() {
+            let name = e.file_name().to_string_lossy().to_string();
+            if name.ends_with(".onnx") {
+                voices.push(name);
+            }
+        }
+    }
+    voices.sort();
+    TtsStatus {
+        bin: piper_exe().exists(),
+        voices,
+    }
+}
+
+// unzip preserving directory layout - piper ships espeak-ng-data/ + dlls
+// next to the exe, so the whisper-style flatten would break it
+#[tauri::command]
+pub async fn install_piper_bin(key: String) -> Result<(), String> {
+    let part = part_path(&key)?;
+    let data = std::fs::read(&part).map_err(|e| format!("download incomplete: {e}"))?;
+    let _ = std::fs::remove_file(&part);
+    let mut archive =
+        zip::ZipArchive::new(std::io::Cursor::new(data)).map_err(|e| e.to_string())?;
+    let dest = piper_dir();
+    std::fs::create_dir_all(&dest).map_err(|e| e.to_string())?;
+    for i in 0..archive.len() {
+        let mut f = archive.by_index(i).map_err(|e| e.to_string())?;
+        let name = f.name().replace('\\', "/");
+        if name.contains("..") || name.starts_with('/') {
+            continue; // zip-slip guard
+        }
+        let out = dest.join(&name);
+        if f.is_dir() {
+            let _ = std::fs::create_dir_all(&out);
+            continue;
+        }
+        if let Some(p) = out.parent() {
+            let _ = std::fs::create_dir_all(p);
+        }
+        let mut w = std::fs::File::create(&out).map_err(|e| e.to_string())?;
+        std::io::copy(&mut f, &mut w).map_err(|e| e.to_string())?;
+    }
+    // some releases wrap everything in a folder - hoist one level if needed
+    if !dest.join("piper.exe").exists() {
+        let inner = std::fs::read_dir(&dest)
+            .ok()
+            .and_then(|rd| rd.flatten().find(|e| e.path().join("piper.exe").exists()));
+        if let Some(inner) = inner {
+            for e in std::fs::read_dir(inner.path())
+                .map_err(|e| e.to_string())?
+                .flatten()
+            {
+                let _ = std::fs::rename(e.path(), dest.join(e.file_name()));
+            }
+        }
+    }
+    if !dest.join("piper.exe").exists() {
+        return Err("zip extracted but piper.exe not found".into());
+    }
+    Ok(())
+}
+
+// moves a downloaded .part into the voice store as <name>
+// (.onnx model or its .onnx.json sidecar)
+#[tauri::command]
+pub async fn install_tts_voice_part(key: String, name: String) -> Result<(), String> {
+    let ok = name.ends_with(".onnx") || name.ends_with(".onnx.json");
+    if !ok || name.contains('/') || name.contains('\\') || name.contains("..") {
+        return Err("bad voice file name".into());
+    }
+    let part = part_path(&key)?;
+    std::fs::create_dir_all(tts_voices_dir()).map_err(|e| e.to_string())?;
+    std::fs::rename(&part, tts_voices_dir().join(&name)).or_else(|_| {
+        // rename across volumes fails - fall back to copy
+        std::fs::copy(&part, tts_voices_dir().join(&name))
+            .map(|_| ())
+            .map_err(|e| e.to_string())?;
+        let _ = std::fs::remove_file(&part);
+        Ok(())
+    })
+}
+
+// removes a voice and its .json sidecar
+#[tauri::command]
+pub fn tts_remove_voice(name: String) -> Result<(), String> {
+    if !name.ends_with(".onnx")
+        || name.contains('/')
+        || name.contains('\\')
+        || name.contains("..")
+    {
+        return Err("bad voice name".into());
+    }
+    let dir = tts_voices_dir();
+    match std::fs::remove_file(dir.join(&name)) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(e.to_string()),
+    }
+    let _ = std::fs::remove_file(dir.join(format!("{name}.json")));
+    Ok(())
+}
+
+// synthesizes text with piper, returns WAV bytes for the webview to play
+#[tauri::command]
+pub async fn tts_speak(text: String, voice: String) -> Result<Vec<u8>, String> {
+    if text.trim().is_empty() || text.len() > 20_000 {
+        return Err("bad speak text".into());
+    }
+    if !voice.ends_with(".onnx")
+        || voice.contains('/')
+        || voice.contains('\\')
+        || voice.contains("..")
+    {
+        return Err("bad voice name".into());
+    }
+    let exe = piper_exe();
+    if !exe.exists() {
+        return Err("piper is not installed - set it up in Settings > Voice".into());
+    }
+    let model = tts_voices_dir().join(&voice);
+    if !model.exists() {
+        return Err(format!("voice {voice} is not downloaded"));
+    }
+
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let wav = std::env::temp_dir().join(format!("oc-tts-{}-{}.wav", std::process::id(), ts));
+
+    let result = (|| -> Result<Vec<u8>, String> {
+        let mut cmd = Command::new(&exe);
+        cmd.arg("-m").arg(&model).arg("-f").arg(&wav);
+        // piper logs to stderr; nothing reads it here, so send it to null
+        // rather than risk a full pipe blocking the child
+        cmd.stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        #[cfg(all(windows, not(debug_assertions)))]
+        {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+            cmd.creation_flags(CREATE_NO_WINDOW);
+        }
+        let mut child = cmd.spawn().map_err(|e| format!("failed to run piper: {e}"))?;
+        // feed the text, then close stdin so piper starts synthesis
+        if let Some(mut stdin) = child.stdin.take() {
+            use std::io::Write as _;
+            let _ = stdin.write_all(text.as_bytes());
+        }
+        // hard cap so a wedged process can't hang the UI forever
+        let deadline = Instant::now() + Duration::from_secs(60);
+        loop {
+            match child.try_wait().map_err(|e| e.to_string())? {
+                Some(_) => break,
+                None => {
+                    if Instant::now() > deadline {
+                        let _ = child.kill();
+                        return Err("speech synthesis timed out".into());
+                    }
+                    std::thread::sleep(Duration::from_millis(40));
+                }
+            }
+        }
+        std::fs::read(&wav).map_err(|e| format!("synthesis failed: {e}"))
+    })();
+
+    let _ = std::fs::remove_file(&wav);
     result
 }

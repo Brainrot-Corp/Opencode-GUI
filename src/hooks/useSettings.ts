@@ -56,8 +56,9 @@ export type AppSettings = {
     sens: number;
   };
   speakReplies: boolean;
-  // speechSynthesis voiceURI for spoken replies — "" = system default
+  // piper voice file ("<id>.onnx") for spoken replies — "" = none yet
   ttsVoice: string;
+  ttsVol: number;
 };
 
 const KEY = "oc.settings";
@@ -87,6 +88,7 @@ const DEFAULTS: AppSettings = {
   voice: { model: "ggml-base.en.bin", autoSend: false, handsFree: false, pauseMs: 1500, sens: 0.7 },
   speakReplies: false,
   ttsVoice: "",
+  ttsVol: 1,
 };
 
 function num(v: unknown, def: number, min: number, max: number) {
@@ -198,7 +200,11 @@ export function useSettings() {
           sens: num(p.voice?.sens, DEFAULTS.voice.sens, 0, 1),
         },
         speakReplies: !!p.speakReplies,
-        ttsVoice: typeof p.ttsVoice === "string" ? p.ttsVoice : "",
+        // spoken replies are piper-only now — a stored Windows speechSynthesis
+        // URI (or old "piper:"-prefixed id) fails the .onnx check and resets
+        ttsVoice:
+          typeof p.ttsVoice === "string" && p.ttsVoice.endsWith(".onnx") ? p.ttsVoice : "",
+        ttsVol: num(p.ttsVol, DEFAULTS.ttsVol, 0, 1),
         // legacy showThinking (true = thinking expanded) inverts into the new
         // collapsed flag so existing users keep their default; fresh installs
         // start fully collapsed

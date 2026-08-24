@@ -10,7 +10,7 @@ use browser::{browser_back, browser_close, browser_forward, browser_navigate, br
     browser_reload, open_external};
 
 mod voice;
-use voice::{install_bin_finalize, install_model_finalize, voice_download, voice_remove_model,
+use voice::{install_bin_finalize, install_model_finalize, install_piper_bin, install_tts_voice_part, tts_remove_voice, tts_speak, tts_status, voice_download, voice_remove_model,
     voice_status, voice_transcribe};
 
 struct ServerState {
@@ -36,7 +36,7 @@ fn spawn_server() -> std::io::Result<(Child, u16)> {
     }
     #[cfg(debug_assertions)]
     let _ = cmd.stdout(Stdio::inherit()).stderr(Stdio::inherit());
-    // release: null stdio AND CREATE_NO_WINDOW — without the flag a visible
+    // release: null stdio AND CREATE_NO_WINDOW Ã¢â‚¬â€ without the flag a visible
     // console window pops up next to our frameless GUI
     #[cfg(all(windows, not(debug_assertions)))]
     {
@@ -57,7 +57,7 @@ fn server_url(state: State<'_, ServerState>) -> Result<String, String> {
     }
 }
 
-// theme config: ~/.config/.opencode-gui/themes.json — read by the frontend,
+// theme config: ~/.config/.opencode-gui/themes.json Ã¢â‚¬â€ read by the frontend,
 // seeded once by it, and watched here so edits hot-reload the UI
 fn themes_dir() -> PathBuf {
     let home = std::env::var("USERPROFILE").unwrap_or_default();
@@ -185,12 +185,17 @@ pub fn run() {
             voice_download,
             install_bin_finalize,
             install_model_finalize,
-            voice_remove_model
+            voice_remove_model,
+            tts_status,
+            tts_speak,
+            install_piper_bin,
+            install_tts_voice_part,
+            tts_remove_voice
         ]);
 
     // global Alt+Space: toggle window visibility, works system-wide.
     // If the combo is already taken (PowerToys Run, etc.), warn and continue
-    // instead of panicking — tray click still works as fallback.
+    // instead of panicking Ã¢â‚¬â€ tray click still works as fallback.
     let builder = match tauri_plugin_global_shortcut::Builder::new()
         .with_handler(|app, _shortcut, event| {
             if event.state() == tauri_plugin_global_shortcut::ShortcutState::Pressed {
@@ -270,7 +275,7 @@ pub fn run() {
             app.manage(state);
             app.manage(browser::BrowserState::default());
             watch_themes(app.handle().clone());
-            // make sure the window actually owns keyboard focus on launch —
+            // make sure the window actually owns keyboard focus on launch Ã¢â‚¬â€
             // otherwise the first Alt+Space sees "visible but unfocused" and
             // only focuses it instead of hiding it
             if let Some(w) = app.get_webview_window("main") {

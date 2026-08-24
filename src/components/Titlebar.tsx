@@ -14,6 +14,7 @@ export default function Titlebar({
   mode,
   onModeChange,
   modes,
+  speechLive,
 }: {
   pinned?: boolean;
   onTogglePin?: () => void;
@@ -25,6 +26,8 @@ export default function Titlebar({
   onModeChange?: (m: Mode) => void;
   // variations the active theme provides — hidden toggle when only one
   modes?: Mode[];
+  // speak-replies is on — show the stop-speech button
+  speechLive?: boolean;
 }) {
   return (
     <header
@@ -53,6 +56,19 @@ export default function Titlebar({
             }}
           >
             <i className={`fa-solid ${mode === "light" ? "fa-moon" : "fa-regular fa-sun"}`} />
+          </button>
+        )}
+        {speechLive && (
+          <button
+            className="icon-btn"
+            data-tip="Stop speech"
+            aria-label="Stop speech"
+            onClick={() => {
+              playSound("click");
+              window.dispatchEvent(new Event("oc:tts-stop"));
+            }}
+          >
+            <i className="fa-solid fa-volume-xmark" />
           </button>
         )}
         <span className="ctrl-sep" />

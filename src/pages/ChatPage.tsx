@@ -121,7 +121,7 @@ export default function ChatPage() {
           window.dispatchEvent(new Event("oc:voice-clear"));
           break;
         case "quiet":
-          window.speechSynthesis?.cancel();
+          replyAudio.current?.pause();
           break;
       }
     },
@@ -137,13 +137,35 @@ export default function ChatPage() {
     settings.voice.sens,
   );
 
-  // speak-replies: narrate each finished assistant message (code stripped)
-  const lastSpoken = useRef("");
+  // speak-replies: narrate each finished assistant message (code stripped).
+  // null = not armed yet - the first armed run adopts whatever is already
+  // in the transcript so a restored session is not re-read on launch
+  const lastSpoken = useRef<string | null>(null);
+  const replyAudio = useRef<HTMLAudioElement | null>(null);
+
+  // top-bar stop-speech button pauses piper playback from anywhere; the
+  // volume slider retunes a running reply via oc:tts-vol
+  useEffect(() => {
+    const stop = () => replyAudio.current?.pause();
+    const vol = (e: Event) => {
+      if (replyAudio.current) replyAudio.current.volume = (e as CustomEvent<number>).detail;
+    };
+    window.addEventListener("oc:tts-stop", stop);
+    window.addEventListener("oc:tts-vol", vol);
+    return () => {
+      window.removeEventListener("oc:tts-stop", stop);
+      window.removeEventListener("oc:tts-vol", vol);
+    };
+  }, []);
   useEffect(() => {
     if (!settings.speakReplies) return;
     const last = [...oc.msgs]
       .reverse()
       .find((m) => (m.info as any).role === "assistant" && (m.info as any).time?.completed);
+    if (lastSpoken.current === null) {
+      lastSpoken.current = last?.info.id ?? "";
+      return;
+    }
     if (!last || last.info.id === lastSpoken.current) return;
     lastSpoken.current = last.info.id;
     const text = last.parts
@@ -151,16 +173,36 @@ export default function ChatPage() {
       .map((p: any) => p.text ?? "")
       .join(" ")
       .replace(/```[\s\S]*?```/g, " code block omitted. ")
-      .replace(/`([^`]*)`/g, "$1");
-    if (!text.trim()) return;
-    window.speechSynthesis?.cancel();
-    const u = new SpeechSynthesisUtterance(text);
-    u.rate = 1.05;
-    const v = window.speechSynthesis
-      .getVoices()
-      .find((x) => x.voiceURI === settings.ttsVoice);
-    if (v) u.voice = v;
-    window.speechSynthesis.speak(u);
+      .replace(/`([^`]*)`/g, "$1")
+      // strip markdown so the voice reads words, not formatting characters
+      .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1") // links/images -> label only
+      .replace(/https?:\/\/\S+/g, " a link ") // bare urls are unreadable aloud
+      .replace(/^#{1,6}\s+/gm, "") // headings
+      .replace(/^\s*[-*+]\s+/gm, "") // bullets
+      .replace(/^\s*>\s?/gm, "") // quotes
+      .replace(/(\*\*\*|___)(.*?)\1/g, "$2")
+      .replace(/(\*\*|__)(.*?)\1/g, "$2") // bold
+      .replace(/(\*|_)(.*?)\1/g, "$2") // italic
+      .replace(/~~(.*?)~~/g, "$1") // strikethrough
+      .replace(/[|*_~#>`]/g, " ") // leftover markers (tables etc.)
+      .replace(/\s{2,}/g, " ")
+      .trim();
+    // spoken replies are piper-only; ttsVoice holds "<id>.onnx" and stays
+    // empty until the user installs piper + downloads a voice in Settings
+    if (!text.trim() || !settings.ttsVoice) return;
+    replyAudio.current?.pause();
+    invoke<number[]>("tts_speak", { text, voice: settings.ttsVoice })
+      .then((bytes) => {
+        const url = URL.createObjectURL(
+          new Blob([new Uint8Array(bytes)], { type: "audio/wav" }),
+        );
+        const a = new Audio(url);
+        a.volume = settings.ttsVol;
+        replyAudio.current = a;
+        a.onended = () => URL.revokeObjectURL(url);
+        void a.play().catch(() => {});
+      })
+      .catch(() => {});
   }, [settings.speakReplies, settings.ttsVoice, oc.msgs]);
 
   useEffect(() => {
@@ -228,6 +270,7 @@ export default function ChatPage() {
           onThemeChange={(t) => update({ theme: t })}
           mode={effectiveMode}
           onModeChange={(m) => update({ mode: m })}
+          speechLive={settings.speakReplies}
         />
         <SettingsDrawer
           open={settingsOpen}
