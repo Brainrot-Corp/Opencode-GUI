@@ -222,7 +222,7 @@ export default function ChatPage() {
     // empty until the user installs piper + downloads a voice in Settings
     if (!text.trim() || !settings.ttsVoice) return;
     replyAudio.current?.pause();
-    invoke<number[]>("tts_speak", { text, voice: settings.ttsVoice })
+    invoke<number[]>("tts_speak", { text, voice: settings.ttsVoice, speed: settings.ttsSpeed })
       .then((bytes) => {
         replyAudio.current = playWav(bytes, settings.ttsVol);
       })
@@ -238,13 +238,13 @@ export default function ChatPage() {
     (phrase: string) => {
       if (!settings.speakReplies || !settings.ttsVoice) return;
       replyAudio.current?.pause();
-      invoke<number[]>("tts_speak", { text: phrase, voice: settings.ttsVoice })
+      invoke<number[]>("tts_speak", { text: phrase, voice: settings.ttsVoice, speed: settings.ttsSpeed })
         .then((bytes) => {
           replyAudio.current = playWav(bytes, settings.ttsVol);
         })
         .catch(() => {});
     },
-    [settings.speakReplies, settings.ttsVoice, settings.ttsVol],
+    [settings.speakReplies, settings.ttsVoice, settings.ttsVol, settings.ttsSpeed],
   );
 
   useEffect(() => {
@@ -267,6 +267,14 @@ export default function ChatPage() {
       announce(cueFor(latest.tool));
     }
   }, [oc.msgs, oc.busy, announce]);
+
+  // permission popup opened — say what needs approval (once per ask)
+  const lastPermId = useRef("");
+  useEffect(() => {
+    if (!oc.permission || oc.permission.id === lastPermId.current) return;
+    lastPermId.current = oc.permission.id;
+    announce(`Permission needed: ${oc.permission.title}.`);
+  }, [oc.permission, announce]);
 
   useEffect(() => {
     localStorage.setItem(SB_W_KEY, String(sbW));

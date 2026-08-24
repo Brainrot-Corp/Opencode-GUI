@@ -59,6 +59,8 @@ export type AppSettings = {
   // piper voice file ("<id>.onnx") for spoken replies — "" = none yet
   ttsVoice: string;
   ttsVol: number;
+  // speech rate multiplier (0.5 = half speed … 2 = double)
+  ttsSpeed: number;
 };
 
 const KEY = "oc.settings";
@@ -89,6 +91,7 @@ const DEFAULTS: AppSettings = {
   speakReplies: false,
   ttsVoice: "",
   ttsVol: 1,
+  ttsSpeed: 1,
 };
 
 function num(v: unknown, def: number, min: number, max: number) {
@@ -205,6 +208,7 @@ export function useSettings() {
         ttsVoice:
           typeof p.ttsVoice === "string" && p.ttsVoice.endsWith(".onnx") ? p.ttsVoice : "",
         ttsVol: num(p.ttsVol, DEFAULTS.ttsVol, 0, 1),
+        ttsSpeed: num(p.ttsSpeed, DEFAULTS.ttsSpeed, 0.5, 2),
         // legacy showThinking (true = thinking expanded) inverts into the new
         // collapsed flag so existing users keep their default; fresh installs
         // start fully collapsed

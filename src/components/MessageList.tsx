@@ -400,6 +400,8 @@ function renderPart(part: Part, key: number, collapsedDefault?: boolean) {
     const sf = part as any;
     const tk = sf.tokens ?? {};
     const total = (tk.input ?? 0) + (tk.output ?? 0) + (tk.reasoning ?? 0);
+    // an empty step (no tokens, no cost) is noise — hide it
+    if (!total && !sf.cost) return null;
     return (
       <div key={key} className="part-note mono">
         <i className="fa-solid fa-shoe-prints" />

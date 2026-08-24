@@ -239,7 +239,7 @@ export default function SettingsDrawer({
       return;
     }
     previewRef.current?.pause();
-    invoke<number[]>("tts_speak", { text: PREVIEW_TEXT, voice })
+    invoke<number[]>("tts_speak", { text: PREVIEW_TEXT, voice, speed: settings.ttsSpeed })
       .then((bytes) => {
         const url = URL.createObjectURL(
           new Blob([new Uint8Array(bytes)], { type: "audio/wav" }),
@@ -749,6 +749,28 @@ export default function SettingsDrawer({
                   }}
                 />
                 <span className="alpha-num">{Math.round(settings.ttsVol * 100)}%</span>
+              </div>
+            </div>
+
+            <div className="setting-row">
+              <div className="setting-info">
+                <i className="fa-solid fa-gauge-high setting-icon" />
+                <div>
+                  <div className="setting-name">Speech speed</div>
+                  <div className="setting-desc">Rate of spoken replies — applies to the next phrase</div>
+                </div>
+              </div>
+              <div className="color-controls">
+                <input
+                  type="range"
+                  min={0.5}
+                  max={2}
+                  step={0.05}
+                  value={settings.ttsSpeed}
+                  aria-label="Speech speed"
+                  onChange={(e) => update({ ttsSpeed: Number(e.target.value) })}
+                />
+                <span className="alpha-num">{settings.ttsSpeed.toFixed(2)}×</span>
               </div>
             </div>
 

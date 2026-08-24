@@ -346,7 +346,7 @@ pub fn tts_remove_voice(name: String) -> Result<(), String> {
 
 // synthesizes text with piper, returns WAV bytes for the webview to play
 #[tauri::command]
-pub async fn tts_speak(text: String, voice: String) -> Result<Vec<u8>, String> {
+pub async fn tts_speak(text: String, voice: String, speed: Option<f64>) -> Result<Vec<u8>, String> {
     if text.trim().is_empty() || text.len() > 20_000 {
         return Err("bad speak text".into());
     }
@@ -375,6 +375,11 @@ pub async fn tts_speak(text: String, voice: String) -> Result<Vec<u8>, String> {
     let result = (|| -> Result<Vec<u8>, String> {
         let mut cmd = Command::new(&exe);
         cmd.arg("-m").arg(&model).arg("-f").arg(&wav);
+        // piper's length-scale is inverse speed; clamp to sane bounds
+        let sp = speed.unwrap_or(1.0).clamp(0.5, 2.0);
+        if (sp - 1.0).abs() > f64::EPSILON {
+            cmd.arg("--length-scale").arg(format!("{}", 1.0 / sp));
+        }
         // piper logs to stderr; nothing reads it here, so send it to null
         // rather than risk a full pipe blocking the child
         cmd.stdin(Stdio::piped())
