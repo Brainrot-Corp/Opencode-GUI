@@ -285,15 +285,26 @@ export default function SettingsDrawer({
             <div className="sound-box-head">
               <i className="fa-solid fa-microphone setting-icon" />
               <span>Voice</span>
-              <span className="mono-hint">
-                {dl
-                  ? `${dl.label} ${dl.pct >= 0 ? `— ${Math.round(dl.pct * 100)}%` : "…"}`
-                  : !voice?.bin
+              {dl ? (
+                <span className="dl-live" role="status">
+                  <i className="fa-solid fa-download setting-icon" />
+                  <span className="mono-hint">{dl.label}</span>
+                  <span className="dl-bar">
+                    <span
+                      className={`dl-fill${dl.pct >= 0 ? " set" : ""}`}
+                      style={dl.pct >= 0 ? { width: `${dl.pct * 100}%` } : undefined}
+                    />
+                  </span>
+                </span>
+              ) : (
+                <span className="mono-hint">
+                  {!voice?.bin
                     ? "not installed"
                     : voiceErr
                       ? "error — see below"
                       : "ready"}
-              </span>
+                </span>
+              )}
             </div>
 
             {voiceErr && <div className="setting-desc" style={{ padding: "0 12px 6px" }}>{voiceErr}</div>}
