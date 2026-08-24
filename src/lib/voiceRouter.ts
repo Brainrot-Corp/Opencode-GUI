@@ -40,6 +40,7 @@ export function routeVoice(text: string, ctx: VoiceCtx): VoiceAct | null {
   if (/^hide( the)? sidebar$/.test(t)) return { type: "sidebar", open: false };
   if (/^(cycle|next) agent$/.test(t)) return { type: "cycleAgent" };
   if (/^(send|submit)( it| that| this| the prompt| message)?$/.test(t)) return { type: "send" };
+  if (/^(envoi|envoie|envoyer|envoyez|envoyé)$/.test(t)) return { type: "send" };
   if (/^(be quiet|stop speaking|stop talking)$/.test(t)) return { type: "quiet" };
   if (/^clear (the )?(input|composer|text)$/.test(t)) return { type: "clear" };
 

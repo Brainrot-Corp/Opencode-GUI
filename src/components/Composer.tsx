@@ -30,7 +30,8 @@ export default function Composer({
   variantSel,
   usage,
   caps,
-  voicePhase,
+   voicePhase,
+  voiceStreaming,
   voiceError,
   onVoiceToggle,
 }: {
@@ -56,6 +57,7 @@ export default function Composer({
   caps?: { attachment?: boolean; input?: string[] };
   usage?: { cost: number; tokens: number };
   voicePhase?: "idle" | "recording" | "transcribing";
+  voiceStreaming?: boolean;
   voiceError?: string;
   onVoiceToggle?: () => void;
 }) {
@@ -419,16 +421,20 @@ export default function Composer({
         {onVoiceToggle && (
           <button
             type="button"
-            className={`icon-btn diff-btn mic-btn${voicePhase === "recording" ? " recording" : ""}`}
+            className={`icon-btn diff-btn mic-btn${
+              voicePhase === "recording" || voiceStreaming ? " recording" : ""
+            }`}
             data-tip={
               voiceError ||
-              (voicePhase === "recording"
-                ? "Recording… click to transcribe"
-                : voicePhase === "transcribing"
-                  ? "Transcribing…"
-                  : "Voice input — dictate a prompt or say 'new session', 'theme latte', 'run compact'…")
+              (voicePhase === "transcribing"
+                ? "Transcribing…"
+                : voiceStreaming
+                  ? "Hands-free listening… pause to review, then say 'envoyé' / 'send it' — click to stop"
+                  : voicePhase === "recording"
+                    ? "Recording… click to transcribe"
+                    : "Voice input — dictate a prompt or say 'new session', 'theme latte', 'run compact'…")
             }
-            disabled={voicePhase === "transcribing"}
+            disabled={voicePhase === "transcribing" && !voiceStreaming}
             onClick={onVoiceToggle}
           >
             <i

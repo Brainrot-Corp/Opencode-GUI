@@ -386,6 +386,83 @@ export default function SettingsDrawer({
 
             <div className="setting-row">
               <div className="setting-info">
+                <i className="fa-solid fa-headset setting-icon" />
+                <div>
+                  <div className="setting-name">Hands-free dictation</div>
+                  <div className="setting-desc">
+                    Mic stays live; each pause becomes text for review — say
+                    "envoyé" / "send it" to send
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                className={`toggle${settings.voice.handsFree ? " on" : ""}`}
+                aria-pressed={settings.voice.handsFree}
+                onClick={() =>
+                  update({ voice: { ...settings.voice, handsFree: !settings.voice.handsFree } })
+                }
+              >
+                <span className="knob" />
+              </button>
+            </div>
+
+            {settings.voice.handsFree && (
+              <>
+                <div className="setting-row">
+                  <div className="setting-info">
+                    <i className="fa-solid fa-hourglass-half setting-icon" />
+                    <div>
+                      <div className="setting-name">Pause before transcription</div>
+                      <div className="setting-desc">Silence length that ends a spoken phrase</div>
+                    </div>
+                  </div>
+                  <div className="color-controls">
+                    <input
+                      type="range"
+                      min={400}
+                      max={4000}
+                      step={100}
+                      value={settings.voice.pauseMs}
+                      aria-label="Pause before transcription"
+                      onChange={(e) =>
+                        update({ voice: { ...settings.voice, pauseMs: Number(e.target.value) } })
+                      }
+                    />
+                    <span className="alpha-num">{(settings.voice.pauseMs / 1000).toFixed(1)}s</span>
+                  </div>
+                </div>
+
+                <div className="setting-row">
+                  <div className="setting-info">
+                    <i className="fa-solid fa-wave-square setting-icon" />
+                    <div>
+                      <div className="setting-name">Mic sensitivity</div>
+                      <div className="setting-desc">
+                        Higher picks up quieter voices (and more background noise)
+                      </div>
+                    </div>
+                  </div>
+                  <div className="color-controls">
+                    <input
+                      type="range"
+                      min={0}
+                      max={1}
+                      step={0.05}
+                      value={settings.voice.sens}
+                      aria-label="Microphone sensitivity"
+                      onChange={(e) =>
+                        update({ voice: { ...settings.voice, sens: Number(e.target.value) } })
+                      }
+                    />
+                    <span className="alpha-num">{Math.round(settings.voice.sens * 100)}%</span>
+                  </div>
+                </div>
+              </>
+            )}
+
+            <div className="setting-row">
+              <div className="setting-info">
                 <i className="fa-solid fa-volume-high setting-icon" />
                 <div>
                   <div className="setting-name">Speak replies</div>

@@ -59,8 +59,9 @@ pub fn voice_status() -> VoiceStatus {
 
 // downloads url to <downloads>/<key>.part using the OS curl.exe — the
 // webview's fetch() can't follow GitHub/HF release redirects cross-origin
+// async so curl runs off the main thread — sync commands freeze the UI
 #[tauri::command]
-pub fn voice_download(key: String, url: String) -> Result<(), String> {
+pub async fn voice_download(key: String, url: String) -> Result<(), String> {
     if !url.starts_with("https://") {
         return Err("bad download url".into());
     }
@@ -95,7 +96,7 @@ fn part_path(key: &str) -> Result<PathBuf, String> {
 }
 
 #[tauri::command]
-pub fn install_bin_finalize(key: String) -> Result<(), String> {
+pub async fn install_bin_finalize(key: String) -> Result<(), String> {
     let part = part_path(&key)?;
     let data = std::fs::read(&part).map_err(|e| format!("download incomplete: {e}"))?;
     let _ = std::fs::remove_file(&part);
@@ -121,7 +122,7 @@ pub fn install_bin_finalize(key: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn install_model_finalize(key: String, name: String) -> Result<(), String> {
+pub async fn install_model_finalize(key: String, name: String) -> Result<(), String> {
     if !name.ends_with(".bin") || name.contains('/') || name.contains('\\') || name.contains("..") {
         return Err("bad model name".into());
     }
@@ -153,7 +154,7 @@ pub fn voice_remove_model(name: String) -> Result<(), String> {
 // runs whisper-cli over a 16 kHz mono s16 WAV produced by the webview;
 // returns the plain-text transcription (-nt strips timestamps)
 #[tauri::command]
-pub fn voice_transcribe(audio: Vec<u8>, model: String) -> Result<String, String> {
+pub async fn voice_transcribe(audio: Vec<u8>, model: String) -> Result<String, String> {
     let cli = find_cli()
         .ok_or_else(|| "voice engine not installed — set it up in Settings > Voice".to_string())?;
     if !model.ends_with(".bin") || model.contains("..") {

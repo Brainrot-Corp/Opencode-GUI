@@ -48,7 +48,13 @@ export type AppSettings = {
   workspace: string;
   // global collapse-by-default for thinking + tool-call blocks (/collapse)
   collapsed: boolean;
-  voice: { model: string; autoSend: boolean };
+  voice: {
+    model: string;
+    autoSend: boolean;
+    handsFree: boolean;
+    pauseMs: number;
+    sens: number;
+  };
   speakReplies: boolean;
 };
 
@@ -76,7 +82,7 @@ const DEFAULTS: AppSettings = {
   colors: structuredClone(DEFAULT_COLOR_SETS),
   workspace: "",
   collapsed: true,
-  voice: { model: "ggml-base.en.bin", autoSend: false },
+  voice: { model: "ggml-base.en.bin", autoSend: false, handsFree: false, pauseMs: 1500, sens: 0.7 },
   speakReplies: false,
 };
 
@@ -184,6 +190,9 @@ export function useSettings() {
               ? p.voice.model
               : "ggml-base.en.bin",
           autoSend: !!p.voice?.autoSend,
+          handsFree: !!p.voice?.handsFree,
+          pauseMs: num(p.voice?.pauseMs, DEFAULTS.voice.pauseMs, 400, 4000),
+          sens: num(p.voice?.sens, DEFAULTS.voice.sens, 0, 1),
         },
         speakReplies: !!p.speakReplies,
         // legacy showThinking (true = thinking expanded) inverts into the new

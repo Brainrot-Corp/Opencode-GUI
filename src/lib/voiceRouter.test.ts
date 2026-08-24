@@ -23,6 +23,10 @@ eq(routeVoice("open settings", ctx), { type: "settings", open: true }, "open set
 eq(routeVoice("hide the sidebar", ctx), { type: "sidebar", open: false }, "hide sidebar");
 eq(routeVoice("cycle agent", ctx), { type: "cycleAgent" }, "cycle agent");
 eq(routeVoice("send it", ctx), { type: "send" }, "send it");
+eq(routeVoice("Envoyé.", ctx), { type: "send" }, "envoyé");
+eq(routeVoice("envoie", ctx), { type: "send" }, "envoie");
+eq(routeVoice("envoyez", ctx), { type: "send" }, "envoyez");
+eq(routeVoice("je vais l'envoyer demain", ctx), null, "envoyer inside a sentence stays dictation");
 eq(routeVoice("clear composer", ctx), { type: "clear" }, "clear");
 eq(routeVoice("be quiet", ctx), { type: "quiet" }, "quiet");
 eq(routeVoice("run compact", ctx), { type: "runCmd", arg: "compact", rest: "" }, "run cmd");

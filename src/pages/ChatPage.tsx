@@ -129,7 +129,13 @@ export default function ChatPage() {
     [themes, oc.cmdList, settings.voice.autoSend],
   );
 
-  const voice = useVoice(handleVoiceTranscript, settings.voice.model);
+  const voice = useVoice(
+    handleVoiceTranscript,
+    settings.voice.model,
+    settings.voice.handsFree,
+    settings.voice.pauseMs,
+    settings.voice.sens,
+  );
 
   // speak-replies: narrate each finished assistant message (code stripped)
   const lastSpoken = useRef("");
@@ -322,6 +328,7 @@ export default function ChatPage() {
                   usage={oc.sessionUsage}
                   caps={oc.modelCaps}
                   voicePhase={voice.phase}
+                  voiceStreaming={voice.streaming}
                   voiceError={voice.error}
                   onVoiceToggle={voice.toggle}
                 />

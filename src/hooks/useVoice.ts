@@ -5,6 +5,13 @@ export type VoicePhase = "idle" | "recording" | "transcribing";
 
 const RATE = 16000; // whisper's required sample rate — AudioContext resamples
 
+// hands-free VAD defaults
+const SILENCE_MS = 1500; // pause length that ends an utterance
+const MIN_SPEECH_MS = 350; // shorter voiced blips are ignored
+const PRE_CHUNKS = 5; // ~320ms pre-roll ring so word onsets don't clip
+// sensitivity slider (0..1) maps to an rms threshold: lenient → strict
+export const THRESH_FOR = (sens: number) => 0.03 - sens * 0.028;
+
 // Float32 samples → 16-bit mono PCM WAV (44-byte header + data)
 function f32ToWav(samples: Float32Array): Uint8Array {
   const buf = new ArrayBuffer(44 + samples.length * 2);
@@ -33,14 +40,49 @@ function f32ToWav(samples: Float32Array): Uint8Array {
   return new Uint8Array(buf);
 }
 
-export function useVoice(onResult: (text: string) => void, model: string) {
+function merge(chunks: Float32Array[]): Float32Array {
+  const total = chunks.reduce((n, c) => n + c.length, 0);
+  const all = new Float32Array(total);
+  let o = 0;
+  for (const c of chunks) {
+    all.set(c, o);
+    o += c.length;
+  }
+  return all;
+}
+
+function rms(chunk: Float32Array): number {
+  let sum = 0;
+  for (let i = 0; i < chunk.length; i++) sum += chunk[i] * chunk[i];
+  return Math.sqrt(sum / chunk.length);
+}
+
+export function useVoice(
+  onResult: (text: string) => void,
+  model: string,
+  handsFree = false,
+  pauseMs = SILENCE_MS,
+  sens = 0.7,
+) {
   const [phase, setPhase] = useState<VoicePhase>("idle");
+  // streaming = always-on mic: pauses are cut into utterances automatically
+  const [streaming, setStreaming] = useState(false);
   const [error, setError] = useState("");
+  // live VAD tuning — read per audio chunk so slider changes apply instantly
+  // without restarting the stream
+  const vadRef = useRef({ pauseMs, thresh: THRESH_FOR(sens) });
+  vadRef.current = { pauseMs, thresh: THRESH_FOR(sens) };
   // recording machinery lives in refs so start/stop closures stay stable
   const ctxRef = useRef<AudioContext | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const nodeRef = useRef<ScriptProcessorNode | null>(null);
   const chunksRef = useRef<Float32Array[]>([]);
+  const modeRef = useRef<"manual" | "stream">("manual");
+  // stream-mode VAD state
+  const uttRef = useRef<Float32Array[]>([]);
+  const preRef = useRef<Float32Array[]>([]);
+  const speechMsRef = useRef(0);
+  const silenceMsRef = useRef(0);
 
   const teardown = useCallback(() => {
     nodeRef.current?.disconnect();
@@ -49,44 +91,58 @@ export function useVoice(onResult: (text: string) => void, model: string) {
     streamRef.current = null;
     void ctxRef.current?.close().catch(() => {});
     ctxRef.current = null;
+    uttRef.current = [];
+    preRef.current = [];
+    speechMsRef.current = 0;
+    silenceMsRef.current = 0;
   }, []);
 
   useEffect(() => () => teardown(), [teardown]);
 
+  const transcribe = useCallback(
+    async (all: Float32Array) => {
+      if (all.length < RATE / 2) return; // sub-half-second click — ignore
+      setPhase("transcribing");
+      try {
+        const wav = f32ToWav(all);
+        const text = await invoke<string>("voice_transcribe", {
+          audio: Array.from(wav),
+          model,
+        });
+        if (text.trim()) onResult(text.trim());
+      } catch (e) {
+        setError(String(e));
+      } finally {
+        setPhase(modeRef.current === "stream" ? "recording" : "idle");
+      }
+    },
+    [onResult, model],
+  );
+
   const stop = useCallback(async () => {
     teardown();
+    setStreaming(false);
     const merged = chunksRef.current;
     chunksRef.current = [];
-    if (!merged.length) return;
-    setPhase("transcribing");
-    try {
-      const total = merged.reduce((n, c) => n + c.length, 0);
-      const all = new Float32Array(total);
-      let o = 0;
-      for (const c of merged) {
-        all.set(c, o);
-        o += c.length;
-      }
-      if (all.length < RATE / 2) return; // sub-half-second click — ignore
-      const wav = f32ToWav(all);
-      const text = await invoke<string>("voice_transcribe", {
-        audio: Array.from(wav),
-        model,
-      });
-      if (text.trim()) onResult(text.trim());
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setPhase("idle");
-    }
-  }, [teardown, onResult, model]);
+    await transcribe(merge(merged));
+  }, [teardown, transcribe]);
+
+  // stream mode: close the open utterance when silence settles
+  const closeUtterance = useCallback(() => {
+    const seg = uttRef.current;
+    uttRef.current = [];
+    const spoke = speechMsRef.current >= MIN_SPEECH_MS;
+    speechMsRef.current = 0;
+    silenceMsRef.current = 0;
+    if (seg.length && spoke) void transcribe(merge(seg));
+  }, [transcribe]);
 
   const toggle = useCallback(() => {
     if (phase === "recording") {
       void stop();
       return;
     }
-    if (phase === "transcribing") return;
+    if (phase === "transcribing" && !streaming) return;
     setError("");
     // don't transcribe our own voice output
     window.speechSynthesis?.cancel();
@@ -107,20 +163,47 @@ export function useVoice(onResult: (text: string) => void, model: string) {
         const ctx = new AudioContext({ sampleRate: RATE });
         const src = ctx.createMediaStreamSource(stream);
         const node = ctx.createScriptProcessor(4096, 1, 1);
+        modeRef.current = handsFree ? "stream" : "manual";
         node.onaudioprocess = (e) => {
-          chunksRef.current.push(new Float32Array(e.inputBuffer.getChannelData(0)));
+          const ch = new Float32Array(e.inputBuffer.getChannelData(0));
+          if (modeRef.current === "manual") {
+            chunksRef.current.push(ch);
+            return;
+          }
+          // VAD: quiet before speech fills the pre-roll ring; speech opens an
+          // utterance; pauseMs of trailing quiet closes and transcribes it
+          const level = rms(ch);
+          const chunkMs = (ch.length / RATE) * 1000;
+          if (!uttRef.current.length && level < vadRef.current.thresh) {
+            preRef.current.push(ch);
+            if (preRef.current.length > PRE_CHUNKS) preRef.current.shift();
+            return;
+          }
+          if (!uttRef.current.length) {
+            uttRef.current = preRef.current;
+            preRef.current = [];
+          }
+          uttRef.current.push(ch);
+          if (level >= vadRef.current.thresh) {
+            speechMsRef.current += chunkMs;
+            silenceMsRef.current = 0;
+          } else {
+            silenceMsRef.current += chunkMs;
+            if (silenceMsRef.current >= vadRef.current.pauseMs) closeUtterance();
+          }
         };
         src.connect(node);
         node.connect(ctx.destination); // ScriptProcessor only runs when wired to output
         streamRef.current = stream;
         ctxRef.current = ctx;
         nodeRef.current = node;
+        setStreaming(handsFree);
         setPhase("recording");
       } catch (e) {
         setError(String(e));
       }
     })();
-  }, [phase, stop]);
+  }, [phase, streaming, stop, handsFree, model, closeUtterance]);
 
-  return { phase, error, toggle };
+  return { phase, streaming, error, toggle };
 }
