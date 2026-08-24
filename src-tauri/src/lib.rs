@@ -201,21 +201,22 @@ pub fn run() {
     let builder = match tauri_plugin_global_shortcut::Builder::new()
         .with_handler(|app, shortcut, event| {
             if event.state() == tauri_plugin_global_shortcut::ShortcutState::Pressed {
-                match shortcut.to_string().as_str() {
+                // shortcut.to_string() renders "shift+control+KeyM" style —
+                // never equal to the registered spelling, so compare parsed
+                let mic: tauri_plugin_global_shortcut::Shortcut =
+                    "ctrl+shift+m".parse().expect("valid hotkey");
+                if *shortcut == mic {
                     // mic toggle anywhere — frontend owns the real start/stop
-                    "ctrl+shift+m" => {
-                        use tauri::Emitter;
-                        let _ = app.emit("mic://toggle", ());
-                    }
-                    _ => {
-                        if let Some(w) = app.get_webview_window("main") {
-                            let visible = w.is_visible().unwrap_or(false);
-                            let focused = w.is_focused().unwrap_or(false);
-                            if visible && focused {
-                                hide_main(app);
-                            } else {
-                                show_main(app);
-                            }
+                    use tauri::Emitter;
+                    let _ = app.emit("mic://toggle", ());
+                } else {
+                    if let Some(w) = app.get_webview_window("main") {
+                        let visible = w.is_visible().unwrap_or(false);
+                        let focused = w.is_focused().unwrap_or(false);
+                        if visible && focused {
+                            hide_main(app);
+                        } else {
+                            show_main(app);
                         }
                     }
                 }

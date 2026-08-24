@@ -232,11 +232,13 @@ export default function ChatPage() {
   }, [voice.toggle]);
 
   // speak-replies: narrate each finished assistant message (code stripped).
-  // launchAt gates it: only replies whose completion stamp is newer than app
-  // launch are spoken, so restored session history stays silent no matter
-  // when it arrives (msgs load async after mount)
+  // seenLive gates it: only messages that streamed while this view watched
+  // them may speak after the fact — switching/restoring a session stays
+  // silent no matter how recent its history is
   const lastSpoken = useRef("");
-  const launchAt = useRef(Date.now());
+  // assistant messages watched streaming in the current view — the only ones
+  // the fallback may read; restored/session history never qualifies
+  const seenLive = useRef<Set<string>>(new Set());
   const replyAudio = useRef<HTMLAudioElement | null>(null);
 
   // --- streaming speech ------------------------------------------------------
@@ -292,20 +294,26 @@ export default function ChatPage() {
   };
 
   useEffect(() => {
-    if (!settings.speakReplies || !settings.ttsVoice) return;
     const last = [...oc.msgs].reverse().find((m) => (m.info as any).role === "assistant");
     if (!last) return;
     const id = last.info.id;
     const info = last.info as any;
     const done = !!info.time?.completed;
+    if (!done) seenLive.current.add(id); // watched streaming → narratable
+    if (!settings.speakReplies || !settings.ttsVoice) return;
     const tracked = streamTTS.current.id === id;
     if (done && lastSpoken.current === id) return;
-    // historical message while idle — the completed-message effect owns it
-    if (!tracked && !oc.busy) return;
+    // never adopt a message we didn't watch stream (session history);
+    // unwatched live strays while idle are ignored too
+    if (!tracked && !(done ? seenLive.current.has(id) : oc.busy)) return;
 
     if (!tracked) {
       streamTTS.current = { id, consumed: 0 };
       ttsHushed.current = false; // a fresh reply may talk again
+      // a newly tracked reply supersedes whatever is still talking — even
+      // speech carried over from a session the user just left
+      ttsQ.current = [];
+      replyAudio.current?.pause();
     }
     const cur = streamTTS.current;
     const pending = full_text(last).slice(cur.consumed);
@@ -359,7 +367,9 @@ export default function ChatPage() {
       .reverse()
       .find((m) => (m.info as any).role === "assistant" && (m.info as any).time?.completed);
     if (!last || last.info.id === lastSpoken.current) return;
-    if (((last.info as any).time?.completed ?? 0) <= launchAt.current) return;
+    // only messages watched streaming may speak after the fact — a session
+    // switch or app restore must never read history aloud
+    if (!seenLive.current.has(last.info.id)) return;
     lastSpoken.current = last.info.id;
     const text = last.parts
       .filter((p: any) => p.type === "text")
@@ -393,20 +403,19 @@ export default function ChatPage() {
 
   // status cues: brief spoken notices while the model works — turn start
   // ("Thinking.") plus EVERY tool call (commands, edits, searches…), each
-  // announced once via its unique part id. A new cue interrupts the
-  // previous one so the voice never falls behind the work.
+  // announced once via its unique part id. Cues jump to the front of the
+  // TTS queue instead of playing directly: playing alongside the pump made
+  // every cue a second simultaneous voice. Pause advances the pump, which
+  // then picks the cue up next — one voice, ever.
   const lastToolKey = useRef("");
   const announce = useCallback(
     (phrase: string) => {
-      if (!settings.speakReplies || !settings.ttsVoice) return;
+      if (!settings.speakReplies || !settings.ttsVoice || ttsHushed.current) return;
       replyAudio.current?.pause();
-      invoke<number[]>("tts_speak", { text: phrase, voice: settings.ttsVoice, speed: settings.ttsSpeed })
-        .then((bytes) => {
-          replyAudio.current = playWav(bytes, settings.ttsVol);
-        })
-        .catch(() => {});
+      ttsQ.current.unshift(phrase);
+      pumpTTS();
     },
-    [settings.speakReplies, settings.ttsVoice, settings.ttsVol, settings.ttsSpeed],
+    [settings.speakReplies, settings.ttsVoice],
   );
 
   useEffect(() => {
