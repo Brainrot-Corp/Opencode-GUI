@@ -7,7 +7,7 @@ use tauri::{Manager, RunEvent, State, WindowEvent};
 
 mod browser;
 use browser::{browser_back, browser_close, browser_forward, browser_navigate, browser_open,
-    browser_reload, open_external};
+    browser_reload, open_app, open_external};
 
 mod voice;
 use voice::{install_bin_finalize, install_model_finalize, install_piper_bin, install_tts_voice_part, tts_remove_voice, tts_speak, tts_status, voice_download, voice_remove_model,
@@ -179,7 +179,8 @@ pub fn run() {
             browser_navigate,
             browser_reload,
             browser_close,
-            open_external,
+              open_external,
+              open_app,
             voice_status,
             voice_transcribe,
             voice_download,
@@ -312,3 +313,4 @@ pub fn run() {
             }
         });
 }
+

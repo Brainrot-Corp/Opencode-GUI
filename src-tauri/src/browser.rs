@@ -220,8 +220,7 @@ pub async fn open_external(url: String) -> Result<(), String> {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        std::process::Command::new("cmd")
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;        std::process::Command::new("cmd")
             .args(["/c", "start", "", &url])
             .creation_flags(CREATE_NO_WINDOW)
             .spawn()
@@ -235,6 +234,168 @@ pub async fn open_external(url: String) -> Result<(), String> {
             .map_err(|e| e.to_string())?;
     }
     Ok(())
+}
+
+// ---------- voice app launcher: "launch google chrome" ----------
+
+#[cfg(windows)]
+use std::process::Command;
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+// lowercase alphanumerics only — comparison key immune to spacing/punctuation
+// differences between the Start Menu label and a whisper transcript
+fn norm_app(s: &str) -> String {
+    s.chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .flat_map(|c| c.to_lowercase())
+        .collect()
+}
+
+fn collect_lnks(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>, depth: u32) {
+    if depth > 6 {
+        return;
+    }
+    let rd = match std::fs::read_dir(dir) {
+        Ok(rd) => rd,
+        Err(_) => return,
+    };
+    for e in rd.flatten() {
+        let p = e.path();
+        if p.is_dir() {
+            collect_lnks(&p, out, depth + 1);
+        } else if p.extension().and_then(|x| x.to_str()) == Some("lnk") {
+            out.push(p);
+        }
+    }
+}
+
+// does every word of `cand` appear somewhere in the app name?
+fn words_contained(cand: &[String], stem: &str) -> bool {
+    cand.iter()
+        .all(|w| stem.to_lowercase().contains(w.as_str()))
+}
+
+// launch an installed app by spoken phrase: scan Start Menu .lnk files and
+// try progressively shorter prefixes of the phrase (longest-first), scoring
+// exact > prefix > all-words-contained; fall back to PATH for bare exes.
+// Returns the resolved display name so the UI can speak it.
+//
+// ponytail: rescans Start Menu on every call (hundreds of files, single-digit
+// ms) and skips the App Paths registry check — add a cache / reg query if a
+// missing app ever bites.
+#[tauri::command]
+pub async fn open_app(name: String) -> Result<String, String> {
+    let phrase = name.trim().to_string();
+    if phrase.is_empty()
+        || phrase.len() > 64
+        || !phrase
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, ' ' | '.' | '-' | '_'))
+    {
+        return Err("bad app name".into());
+    }
+
+    // prefix candidates longest-first: "visual studio code" → … → "visual"
+    let words: Vec<String> = phrase.split_whitespace().map(String::from).collect();
+
+    let mut lnks = Vec::new();
+    for root in [
+        std::env::var("ProgramData").ok(),
+        std::env::var("APPDATA").ok(),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        collect_lnks(
+            std::path::Path::new(&root)
+                .join("Microsoft")
+                .join("Windows")
+                .join("Start Menu")
+                .join("Programs")
+                .as_path(),
+            &mut lnks,
+            0,
+        );
+    }
+
+    let mut best: Option<(u8, String)> = None; // (score, display stem)
+    for n in (1..=words.len()).rev() {
+        let cand_words = &words[..n];
+        let cand = norm_app(&cand_words.join(""));
+        if cand.is_empty() {
+            continue;
+        }
+        for p in &lnks {
+            let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
+            let ns = norm_app(&stem);
+            let score = if ns == cand {
+                3
+            } else if ns.starts_with(&cand) {
+                2
+            } else if words_contained(cand_words, &stem) {
+                1
+            } else {
+                continue;
+            };
+            if best.as_ref().map(|(s, _)| score > *s).unwrap_or(true) {
+                best = Some((score, stem));
+                if score == 3 {
+                    break;
+                }
+            }
+        }
+        if best.as_ref().map(|(s, _)| *s == 3).unwrap_or(false) {
+            break;
+        }
+    }
+
+    if let Some((_, stem)) = best {
+        let path = lnks
+            .iter()
+            .find(|p| {
+                p.file_stem().and_then(|s| s.to_str()) == Some(stem.as_str())
+            })
+            .ok_or("match lost")?;
+        launch_detached(&path.to_string_lossy())?;
+        return Ok(stem);
+    }
+
+    // no Start Menu hit: try PATH for bare executables ("notepad", "code")
+    for n in (1..=words.len()).rev() {
+        let exe = format!("{}.exe", words[..n].join("-"));
+        let output = Command::new("where")
+            .arg(&exe)
+            .creation_flags(CREATE_NO_WINDOW)
+            .output();
+        if let Ok(o) = output {
+            if o.status.success() {
+                let full = String::from_utf8_lossy(&o.stdout)
+                    .lines()
+                    .next()
+                    .unwrap_or("")
+                    .trim()
+                    .to_string();
+                if !full.is_empty() {
+                    launch_detached(&full)?;
+                    return Ok(exe.trim_end_matches(".exe").replace('-', " "));
+                }
+            }
+        }
+    }
+
+    Err(format!("no app found for '{phrase}'"))
+}
+
+fn launch_detached(target: &str) -> Result<(), String> {
+    Command::new("cmd")
+        .args(["/c", "start", "", target])
+        .creation_flags(CREATE_NO_WINDOW)
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| format!("failed to launch: {e}"))
 }
 
 // re-fit the child webview under the browser bar whenever the main window

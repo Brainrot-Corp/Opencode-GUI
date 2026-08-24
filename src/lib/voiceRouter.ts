@@ -9,6 +9,7 @@ export type VoiceAct =
   | { type: "sidebar"; open?: boolean }
   | { type: "cycleAgent" }
   | { type: "runCmd"; arg: string; rest: string }
+  | { type: "launchApp"; arg: string }
   | { type: "send" }
   | { type: "clear" }
   | { type: "quiet" };
@@ -43,6 +44,11 @@ export function routeVoice(text: string, ctx: VoiceCtx): VoiceAct | null {
   if (/^(envoi|envoie|envoyer|envoyez|envoyé)$/.test(t)) return { type: "send" };
   if (/^(be quiet|stop speaking|stop talking)$/.test(t)) return { type: "quiet" };
   if (/^clear (the )?(input|composer|text)$/.test(t)) return { type: "clear" };
+
+  // "launch google chrome" / "open the spotify" — app finder; placed last so
+  // the specific intents above ("open settings", "start a new session") win
+  const appM = /^(?:launch|open|start)(?: (?:the|my))? (.+)$/.exec(t);
+  if (appM) return { type: "launchApp", arg: appM[1] };
 
   // "theme latte" / "switch to the strawberry theme"
   const themeM = /^(?:theme|switch to(?: the)? theme) (\w+)$/.exec(t) ?? /^switch to (?:the )?(\w+)(?: theme)?$/.exec(t);

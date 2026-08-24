@@ -146,6 +146,11 @@ export default function ChatPage() {
         case "runCmd":
           void oc.submit(act.rest ? `/${act.arg} ${act.rest}` : `/${act.arg}`);
           break;
+        case "launchApp":
+          invoke<string>("open_app", { name: act.arg })
+            .then((app) => announce(`Opening ${app}.`))
+            .catch(() => announce(`Couldn't find ${act.arg}.`));
+          break;
         case "send":
           window.dispatchEvent(new Event("oc:voice-send"));
           break;
