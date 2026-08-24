@@ -2,6 +2,8 @@
 
 Lightweight Windows GUI client for [opencode](https://opencode.ai). Tauri v2 + React + TypeScript, talks to an `opencode serve` sidecar over HTTP.
 
+![opencode-gui screenshot](./readme-ressources/opencode-gui-ressource.png)
+
 See [PLAN.md](./PLAN.md) for architecture and [IMPLEMENTED.md](./IMPLEMENTED.md) for progress.
 
 ## Dev
