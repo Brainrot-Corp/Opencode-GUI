@@ -289,7 +289,7 @@ export default function ChatPage() {
   const ttsQ = useRef<string[]>([]); // sentences awaiting piper playback
   const ttsPumping = useRef(false);
   const ttsHushed = useRef(false); // user hit stop-speech: mute this reply's rest
-  const pendingEnum = useRef<string | null>(null); // coalesced enumeration waiting for pump to free
+  const pendingEnum = useRef<string | null>(null); // "*" = enumeration waiting for pump to free
   const pendingAnswers = useRef<string[]>([]); // answer sentences waiting behind pendingEnum
   const settingsNow = useRef(settings);
   settingsNow.current = settings;
@@ -314,13 +314,15 @@ export default function ChatPage() {
       ttsQ.current.length > 0 ||
       (replyAudio.current && !replyAudio.current.paused);
     if (busy) return;
-    const toSay = pendingEnum.current;
     pendingEnum.current = null;
-    ttsQ.current.push(toSay);
+    const toSay = cleanSpeech(buildEnumPhrase(toolCounts.current));
+    if (toSay) ttsQ.current.push(toSay);
     if (pendingAnswers.current.length) {
       ttsQ.current.push(...pendingAnswers.current);
       pendingAnswers.current = [];
     }
+    // spoken — next enumeration reports only what happened after this
+    toolCounts.current.clear();
     pumpTTS();
   }, []);
   const queueSpeech = useCallback(
@@ -536,13 +538,19 @@ export default function ChatPage() {
   const toolCounts = useRef<Map<string, number>>(new Map());
 
   const prevBusy = useRef(false);
+  const lastPromptId = useRef("");
   useEffect(() => {
     const rising = oc.busy && !prevBusy.current;
     const falling = !oc.busy && prevBusy.current;
     prevBusy.current = oc.busy;
-    // a new turn — reset batch, but never cut the queued voice (only debrief cuts)
-    if (rising) {
-      ttsHushed.current = false; // stop-speech mutes the current reply only
+    // a new live prompt — latest user message changed. Covers back-to-back
+    // turns too (drained queue), where busy never visibly rises again.
+    const lastUser = [...oc.msgs].reverse().find((m) => (m.info as any).role === "user");
+    const newPrompt = !!lastUser && lastUser.info.id !== lastPromptId.current;
+    if (lastUser) lastPromptId.current = lastUser.info.id;
+    // reset batch on a fresh prompt, but never cut queued voice (only debrief cuts)
+    if (newPrompt || rising) {
+      if (rising) ttsHushed.current = false; // stop-speech mutes the current reply only
       // seed with tools already in history WITHOUT counting them — clearing
       // toolSeen here makes the collector re-count last turn's parts
       for (const m of oc.msgs)
@@ -591,9 +599,9 @@ export default function ChatPage() {
     void changed;
   }, [oc.msgs, oc.busy]);
 
-  // ticker: every 10s while busy, queue the current totals behind any audio
-  // already playing — pumpTTS serializes, so a tick that fires mid-speech
-  // naturally waits. pendingEnum coalesces rapid ticks into the latest totals.
+  // ticker: every 10s while busy, speak what happened since the LAST
+  // enumeration (counts reset once spoken) — pumpTTS serializes, so a tick
+  // that fires mid-speech naturally waits. pendingEnum coalesces rapid ticks.
   // if an answer was queued while pending, flushPendingEnum will have cleared it early.
   useEffect(() => {
     if (!oc.busy || !settings.speakReplies || !settings.ttsVoice) return;
@@ -620,8 +628,9 @@ export default function ChatPage() {
           ttsQ.current.length > 0 ||
           (replyAudio.current && !replyAudio.current.paused);
         if (busy) {
-          // coalesce: keep only latest phrase until pump frees
-          pendingEnum.current = cleaned;
+          // coalesce: marker only — the phrase is built fresh at flush time so
+          // tools counted while waiting are included, never dropped
+          pendingEnum.current = "*";
           const wait = () => {
             if (disposed || ttsHushed.current || !oc.busy) {
               pendingEnum.current = null;
@@ -637,35 +646,29 @@ export default function ChatPage() {
               return;
             }
             if (pendingEnum.current) {
-              const toSay = pendingEnum.current;
               pendingEnum.current = null;
               // both enumerations and answers share the same FIFO — this enqueues
               // behind any narrative that was queued while we waited
-              ttsQ.current.push(toSay);
+              ttsQ.current.push(cleanSpeech(buildEnumPhrase(toolCounts.current)));
               if (pendingAnswers.current.length) {
                 ttsQ.current.push(...pendingAnswers.current);
                 pendingAnswers.current = [];
               }
+              // spoken — next enumeration reports only what happened after this
+              toolCounts.current.clear();
               pumpTTS();
             }
             schedule();
           };
           wait();
         } else {
-          // also respect pending enumeration that may have been coalesced
-          if (pendingEnum.current) {
-            const toSay = pendingEnum.current;
-            pendingEnum.current = null;
-            // if we coalesced, the current tick's phrase is stale — use the latest
-            void cleaned;
-            ttsQ.current.push(toSay);
-            if (pendingAnswers.current.length) {
-              ttsQ.current.push(...pendingAnswers.current);
-              pendingAnswers.current = [];
-            }
-          } else {
-            ttsQ.current.push(cleaned);
+          ttsQ.current.push(cleaned);
+          if (pendingAnswers.current.length) {
+            ttsQ.current.push(...pendingAnswers.current);
+            pendingAnswers.current = [];
           }
+          // spoken — next enumeration reports only what happened after this
+          toolCounts.current.clear();
           pumpTTS();
           schedule();
         }

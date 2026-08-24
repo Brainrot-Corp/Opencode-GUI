@@ -174,12 +174,21 @@
   overflow-wrap: anywhere;
 }
 
-/* sounds group box */
+/* sounds group box — rows separate themselves with top borders */
 .sound-box {
   margin: 6px 12px 12px;
   border: 1px solid var(--line-strong);
   background: var(--inset-bg);
   overflow: hidden;
+}
+.sound-box > :not(:first-child) {
+  border-top: 1px solid var(--line);
+}
+
+.voice-err {
+  padding: 8px 12px;
+  font-size: 11.5px;
+  color: var(--danger);
 }
 
 /* small blocky action button (reset, workspace browse…) */
@@ -220,11 +229,13 @@
   min-width: 0;
 }
 
-/* downloaded whisper models as removable chips */
+/* downloaded whisper models as removable chips — take the full row width so
+   several chips wrap cleanly under the label instead of squeezing beside it */
 .model-chips {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+  flex-basis: 100%;
 }
 .model-chip {
   display: inline-flex;
@@ -289,6 +300,12 @@
   font-size: 11px;
   cursor: pointer;
   transition: border-color 0.25s, box-shadow 0.3s, color 0.25s;
+}
+.picker-trigger span {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 .picker-trigger i {
   font-size: 9px;
@@ -431,12 +448,20 @@
 .sound-box-head {
   display: flex;
   align-items: center;
-  gap: 10px;
+  flex-wrap: wrap;
+  gap: 6px 10px;
   padding: 10px 12px;
-  border-bottom: 1px solid var(--line);
   font-size: 13px;
   font-weight: 500;
   color: var(--text);
+}
+/* head hints truncate instead of wrapping mid-word when space runs out */
+.sound-box-head .mono-hint,
+.dl-live .mono-hint {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 .sound-box-head .vol-slider {
   margin-left: auto;

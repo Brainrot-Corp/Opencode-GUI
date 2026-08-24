@@ -452,15 +452,17 @@ export default function SettingsDrawer({
           </div>
 
           {(!modes || modes.length > 1) && (
-            <div className="setting-row">
-              <div className="setting-info">
-                <i className="fa-solid fa-circle-half-stroke setting-icon" />
-                <div>
-                  <div className="setting-name">Mode</div>
-                  <div className="setting-desc">Dark or light variant of the theme</div>
+            <>
+              <div className="setting-row">
+                <div className="setting-info">
+                  <i className="fa-solid fa-circle-half-stroke setting-icon" />
+                  <div>
+                    <div className="setting-name">Mode</div>
+                    <div className="setting-desc">Dark or light variant of the theme</div>
+                  </div>
                 </div>
               </div>
-              <div className="seg-row mode-seg" role="radiogroup" aria-label="Mode">
+              <div className="seg-row" role="radiogroup" aria-label="Mode">
                 {(modes ?? (["dark", "light"] as const)).map((m) => (
                   <button
                     key={m}
@@ -474,7 +476,7 @@ export default function SettingsDrawer({
                   </button>
                 ))}
               </div>
-            </div>
+            </>
           )}
 
           <div className="setting-row">
@@ -564,7 +566,7 @@ export default function SettingsDrawer({
               )}
             </div>
 
-            {voiceErr && <div className="setting-desc" style={{ padding: "0 12px 6px" }}>{voiceErr}</div>}
+            {voiceErr && <div className="voice-err">{voiceErr}</div>}
 
             <div className="setting-row">
               <div className="setting-info">
@@ -734,11 +736,11 @@ export default function SettingsDrawer({
               <div className="setting-info">
                 <i className="fa-solid fa-volume-high setting-icon" />
                 <div>
-                      <div className="setting-name">Speak replies</div>
-                      <div className="setting-desc">
-                        Read assistant answers aloud (code skipped) — hands-free
-                        listening pauses during playback
-                      </div>
+                  <div className="setting-name">Speak replies</div>
+                  <div className="setting-desc">
+                    Read assistant answers aloud (code skipped) — hands-free
+                    listening pauses during playback
+                  </div>
                 </div>
               </div>
               <div className="color-controls">
@@ -933,7 +935,7 @@ export default function SettingsDrawer({
               </div>
             </div>
 
-            <div className="setting-row" style={{ borderTop: "1px solid var(--line)" }}>
+            <div className="setting-row">
               <div className="setting-info">
                 <i className="fa-solid fa-layer-group setting-icon" />
                 <div>
