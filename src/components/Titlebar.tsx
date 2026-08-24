@@ -34,7 +34,8 @@ export default function Titlebar({
   return (
     <header
       className="titlebar"
-      data-tauri-drag-region
+      // no data-tauri-drag-region: Tauri's own region handler maximizes on
+      // double-click — dragging is done manually below, dblclick is a no-op
       onMouseDown={(e) => {
         if (e.button !== 0) return;
         // buttons handle their own clicks; only bare titlebar drags the window

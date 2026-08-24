@@ -51,16 +51,18 @@ export default function Sidebar({
     <>
       <aside
         className={`sidebar${collapsed ? " collapsed" : ""}${resizing ? " resizing" : ""}`}
+        {...(collapsed ? { "data-tip": "Show session history" } : {})}
+        onClick={
+          collapsed
+            ? () => {
+                playSound("expand");
+                onToggle();
+              }
+            : undefined
+        }
       >
         {collapsed ? (
-          <button
-            className="icon-btn sb-expand"
-            data-tip="Show session history"
-            onClick={() => {
-              playSound("expand");
-              onToggle();
-            }}
-          >
+          <button className="icon-btn sb-expand">
             <i className="fa-solid fa-angles-right" />
           </button>
         ) : (

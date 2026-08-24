@@ -19,16 +19,19 @@
   align-items: center;
   justify-content: center;
   border-right: 1px solid var(--line);
+  cursor: pointer;
 }
 
-/* expand button inside the collapsed rail, vertically centered */
+/* expand button inside the collapsed rail, vertically centered —
+   the whole rail is the click target, the button just shows the icon */
 .sb-expand {
   width: 34px;
   height: 42px;
   margin: 0;
   color: var(--text-dim);
+  pointer-events: none;
 }
-.sb-expand:hover {
+.sidebar.collapsed:hover .sb-expand {
   color: var(--accent);
   box-shadow: 0 0 16px -4px var(--accent-glow);
 }
