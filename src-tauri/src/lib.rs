@@ -10,7 +10,7 @@ use browser::{browser_back, browser_close, browser_forward, browser_navigate, br
     browser_reload, open_external};
 
 mod voice;
-use voice::{install_append, install_bin_finalize, install_model_finalize, voice_status,
+use voice::{install_bin_finalize, install_model_finalize, voice_download, voice_status,
     voice_transcribe};
 
 struct ServerState {
@@ -182,7 +182,7 @@ pub fn run() {
             open_external,
             voice_status,
             voice_transcribe,
-            install_append,
+            voice_download,
             install_bin_finalize,
             install_model_finalize
         ]);

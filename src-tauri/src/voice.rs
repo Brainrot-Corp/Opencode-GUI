@@ -1,4 +1,3 @@
-use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
@@ -87,26 +86,12 @@ pub fn voice_download(key: String, url: String) -> Result<(), String> {
     Ok(())
 }
 
-#[tauri::command]
+fn part_path(key: &str) -> Result<PathBuf, String> {
     let safe: String = key.chars().filter(|c| c.is_alphanumeric() || *c == '-' || *c == '_' || *c == '.').collect();
     if safe.is_empty() || safe.contains("..") {
         return Err("bad download key".into());
     }
     Ok(downloads_dir().join(format!("{safe}.part")))
-}
-
-#[tauri::command]
-pub fn install_append(key: String, chunk: Vec<u8>, first: bool) -> Result<(), String> {
-    let path = part_path(&key)?;
-    std::fs::create_dir_all(downloads_dir()).map_err(|e| e.to_string())?;
-    let mut f = std::fs::OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(first)
-        .append(!first)
-        .open(&path)
-        .map_err(|e| e.to_string())?;
-    f.write_all(&chunk).map_err(|e| e.to_string())
 }
 
 #[tauri::command]

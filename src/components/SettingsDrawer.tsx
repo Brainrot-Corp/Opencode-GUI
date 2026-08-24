@@ -62,27 +62,13 @@ export default function SettingsDrawer({
       .catch(() => setVoice({ bin: false, models: [] }));
   }, [open]);
 
-  // streams a URL to disk in chunks so a 500MB model never sits in memory
+  // curl.exe does the fetching Rust-side (webview fetch dies on signed-CDN
+  // CORS redirects); progress is indeterminate until curl reports
   async function downloadTo(key: string, url: string, label: string) {
     setVoiceErr("");
-    setDl({ label, pct: 0 });
+    setDl({ label, pct: -1 });
     try {
-      const res = await fetch(url);
-      if (!res.ok) throw new Error(`download failed (${res.status})`);
-      const total = Number(res.headers.get("content-length")) || 0;
-      const reader = res.body!.getReader();
-      let first = true;
-      let got = 0;
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        await invoke("install_append", { key, chunk: Array.from(value), first });
-        first = false;
-        got += value.length;
-        setDl({ label, pct: total ? got / total : -1 });
-      }
-    } catch (e) {
-      setVoiceErr(String(e));
+      await invoke("voice_download", { key, url });
     } finally {
       setDl(null);
     }
