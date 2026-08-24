@@ -195,11 +195,14 @@ button.debrief-indicator {
   cursor: pointer;
   font: inherit;
   font-size: 9px;
+  line-height: 1;
   border-radius: 4px;
 }
-button.debrief-indicator i,
-button.debrief-indicator .debrief-dot {
+button.debrief-indicator i {
   font-size: 9px;
+  line-height: 1;
+}
+button.debrief-indicator .debrief-dot {
   width: 5px;
   height: 5px;
 }

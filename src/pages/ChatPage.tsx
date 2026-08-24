@@ -543,7 +543,15 @@ export default function ChatPage() {
     // a new turn — reset batch, but never cut the queued voice (only debrief cuts)
     if (rising) {
       ttsHushed.current = false; // stop-speech mutes the current reply only
-      toolSeen.current.clear();
+      // seed with tools already in history WITHOUT counting them — clearing
+      // toolSeen here makes the collector re-count last turn's parts
+      for (const m of oc.msgs)
+        for (const p of m.parts ?? []) {
+          if ((p as any).type !== "tool") continue;
+          toolSeen.current.add(
+            String((p as any).id ?? `${m.info.id}:${(p as any).tool}`),
+          );
+        }
       toolCounts.current.clear();
       pendingEnum.current = null;
       pendingAnswers.current = [];
@@ -561,7 +569,7 @@ export default function ChatPage() {
         pumpTTS();
       }
     }
-  }, [oc.busy, announce]);
+  }, [oc.busy, oc.msgs, announce]);
 
   // collector: count distinct tool parts once when they appear (pending/running/completed)
   useEffect(() => {
