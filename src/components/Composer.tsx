@@ -30,6 +30,9 @@ export default function Composer({
   variantSel,
   usage,
   caps,
+  voicePhase,
+  voiceError,
+  onVoiceToggle,
 }: {
   busy: boolean;
   loadingModels?: boolean;
@@ -52,6 +55,9 @@ export default function Composer({
   variantSel?: string;
   caps?: { attachment?: boolean; input?: string[] };
   usage?: { cost: number; tokens: number };
+  voicePhase?: "idle" | "recording" | "transcribing";
+  voiceError?: string;
+  onVoiceToggle?: () => void;
 }) {
   const [input, setInput] = useState("");
   const [open, setOpen] = useState(false);
@@ -100,6 +106,30 @@ export default function Composer({
     };
     window.addEventListener("oc:models", openEvt);
     return () => window.removeEventListener("oc:models", openEvt);
+  });
+
+  // voice dictation events (dispatched by useVoice routing in ChatPage):
+  // text lands in the textarea for review, "send it" fires the real send
+  useEffect(() => {
+    const onText = (e: Event) => {
+      const text = (e as CustomEvent<string>).detail;
+      setInput((prev) => (prev ? `${prev} ${text}` : text));
+      playSound("type");
+      inputRef.current?.focus();
+    };
+    const onSend = () => send();
+    const onClear = () => {
+      setInput("");
+      inputRef.current?.focus();
+    };
+    window.addEventListener("oc:voice-text", onText);
+    window.addEventListener("oc:voice-send", onSend);
+    window.addEventListener("oc:voice-clear", onClear);
+    return () => {
+      window.removeEventListener("oc:voice-text", onText);
+      window.removeEventListener("oc:voice-send", onSend);
+      window.removeEventListener("oc:voice-clear", onClear);
+    };
   });
 
   // ONE keyboard brain for the composer: a fresh closure every render, so
@@ -385,6 +415,28 @@ export default function Composer({
         >
           <i className="fa-solid fa-paperclip" />
         </button>
+        {onVoiceToggle && (
+          <button
+            type="button"
+            className={`icon-btn diff-btn mic-btn${voicePhase === "recording" ? " recording" : ""}`}
+            data-tip={
+              voiceError ||
+              (voicePhase === "recording"
+                ? "Recording… click to transcribe"
+                : voicePhase === "transcribing"
+                  ? "Transcribing…"
+                  : "Voice input — dictate a prompt or say 'new session', 'theme latte', 'run compact'…")
+            }
+            disabled={voicePhase === "transcribing"}
+            onClick={onVoiceToggle}
+          >
+            <i
+              className={`fa-solid ${
+                voicePhase === "transcribing" ? "fa-spinner fa-spin" : "fa-microphone"
+              }`}
+            />
+          </button>
+        )}
         <textarea
                   ref={inputRef}
                   value={input}

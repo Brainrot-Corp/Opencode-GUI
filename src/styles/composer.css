@@ -108,6 +108,22 @@
   box-shadow: 0 0 12px -4px var(--accent-glow);
 }
 
+/* voice input — pulsing danger tint while recording */
+.mic-btn.recording {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  animation: mic-pulse 1.2s ease-in-out infinite;
+}
+@keyframes mic-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 4px -2px var(--danger);
+  }
+  50% {
+    box-shadow: 0 0 14px 0 color-mix(in srgb, var(--danger) 55%, transparent);
+  }
+}
+
 /* custom model dropdown (native select popups can't be styled) */
 .model-select {
   position: relative;

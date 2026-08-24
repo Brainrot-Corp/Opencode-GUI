@@ -48,6 +48,8 @@ export type AppSettings = {
   workspace: string;
   // global collapse-by-default for thinking + tool-call blocks (/collapse)
   collapsed: boolean;
+  voice: { model: string; autoSend: boolean };
+  speakReplies: boolean;
 };
 
 const KEY = "oc.settings";
@@ -74,6 +76,8 @@ const DEFAULTS: AppSettings = {
   colors: structuredClone(DEFAULT_COLOR_SETS),
   workspace: "",
   collapsed: true,
+  voice: { model: "ggml-base.en.bin", autoSend: false },
+  speakReplies: false,
 };
 
 function num(v: unknown, def: number, min: number, max: number) {
@@ -174,6 +178,14 @@ export function useSettings() {
         },
         colors: loadColors(p, legacy ? "light" : theme),
         workspace: typeof p.workspace === "string" ? p.workspace : "",
+        voice: {
+          model:
+            typeof p.voice?.model === "string" && p.voice.model
+              ? p.voice.model
+              : "ggml-base.en.bin",
+          autoSend: !!p.voice?.autoSend,
+        },
+        speakReplies: !!p.speakReplies,
         // legacy showThinking (true = thinking expanded) inverts into the new
         // collapsed flag so existing users keep their default; fresh installs
         // start fully collapsed

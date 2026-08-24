@@ -8,6 +8,16 @@ import { applyWorkspace, pickWorkspace } from "../lib/workspace";
 import ThemeSelect from "./ThemeSelect";
 import "../styles/settings.css";
 
+const WHISPER_BIN_URL =
+  "https://github.com/ggml-org/whisper.cpp/releases/latest/download/whisper-bin-x64.zip";
+const MODEL_BASE = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/";
+const VOICE_MODELS = [
+  { id: "ggml-tiny.en.bin", label: "tiny.en · 78 MB · fastest, rougher" },
+  { id: "ggml-base.en.bin", label: "base.en · 148 MB · recommended" },
+  { id: "ggml-small.en.bin", label: "small.en · 488 MB · best accuracy" },
+  { id: "ggml-base.bin", label: "base multilingual · 148 MB" },
+];
+
 export default function SettingsDrawer({
   open,
   onClose,
@@ -38,13 +48,64 @@ export default function SettingsDrawer({
   // starting point until the user overrides it
   const cs = (colorsFor?.(settings.theme) ?? settings.colors.cyan)[settings.mode];
   const [autoLaunch, setAutoLaunch] = useState<boolean | null>(null);
+  const [voice, setVoice] = useState<{ bin: boolean; models: string[] } | null>(null);
+  const [dl, setDl] = useState<{ label: string; pct: number } | null>(null);
+  const [voiceErr, setVoiceErr] = useState("");
 
   useEffect(() => {
     if (!open) return;
     isEnabled()
       .then(setAutoLaunch)
       .catch(() => setAutoLaunch(false));
+    invoke<{ bin: boolean; models: string[] }>("voice_status")
+      .then(setVoice)
+      .catch(() => setVoice({ bin: false, models: [] }));
   }, [open]);
+
+  // streams a URL to disk in chunks so a 500MB model never sits in memory
+  async function downloadTo(key: string, url: string, label: string) {
+    setVoiceErr("");
+    setDl({ label, pct: 0 });
+    try {
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`download failed (${res.status})`);
+      const total = Number(res.headers.get("content-length")) || 0;
+      const reader = res.body!.getReader();
+      let first = true;
+      let got = 0;
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        await invoke("install_append", { key, chunk: Array.from(value), first });
+        first = false;
+        got += value.length;
+        setDl({ label, pct: total ? got / total : -1 });
+      }
+    } catch (e) {
+      setVoiceErr(String(e));
+    } finally {
+      setDl(null);
+    }
+  }
+
+  async function installVoice() {
+    const model =
+      VOICE_MODELS.find((m) => m.id === settings.voice.model) ?? VOICE_MODELS[1];
+    try {
+      if (!voice?.bin) {
+        await downloadTo("whisper-bin", WHISPER_BIN_URL, "voice engine");
+        await invoke("install_bin_finalize", { key: "whisper-bin" });
+        setVoice((v) => ({ bin: true, models: v?.models ?? [] }));
+      }
+      if (!voice?.models.includes(model.id)) {
+        await downloadTo(model.id, MODEL_BASE + model.id, model.label);
+        await invoke("install_model_finalize", { key: model.id, name: model.id });
+        setVoice((v) => ({ bin: v?.bin ?? false, models: [...(v?.models ?? []), model.id] }));
+      }
+    } catch (e) {
+      setVoiceErr(String(e));
+    }
+  }
 
   async function toggleAutoLaunch() {
     try {
@@ -217,6 +278,101 @@ export default function SettingsDrawer({
                 {Math.round(s * 100)}%
               </button>
             ))}
+          </div>
+
+          <div className="sound-box">
+            <div className="sound-box-head">
+              <i className="fa-solid fa-microphone setting-icon" />
+              <span>Voice</span>
+              <span className="mono-hint">
+                {dl
+                  ? `${dl.label} ${dl.pct >= 0 ? `— ${Math.round(dl.pct * 100)}%` : "…"}`
+                  : !voice?.bin
+                    ? "not installed"
+                    : voiceErr
+                      ? "error — see below"
+                      : "ready"}
+              </span>
+            </div>
+
+            {voiceErr && <div className="setting-desc" style={{ padding: "0 12px 6px" }}>{voiceErr}</div>}
+
+            <div className="setting-row">
+              <div className="setting-info">
+                <i className="fa-solid fa-microchip setting-icon" />
+                <div>
+                  <div className="setting-name">Speech engine</div>
+                  <div className="setting-desc">
+                    {voice?.bin
+                      ? `whisper.cpp ready · ${voice.models.length} model${voice.models.length === 1 ? "" : "s"} downloaded`
+                      : "Local whisper.cpp — downloads once, runs offline"}
+                  </div>
+                </div>
+              </div>
+              <div className="color-controls">
+                {(!voice?.bin || !voice.models.includes(settings.voice.model)) && (
+                  <button
+                    type="button"
+                    className="reset-btn"
+                    disabled={!!dl}
+                    onClick={() => void installVoice()}
+                  >
+                    <i className="fa-solid fa-download" />
+                    {!voice?.bin ? "Install (~10 MB)" : "Download model"}
+                  </button>
+                )}
+                <select
+                  className="voice-select"
+                  value={settings.voice.model}
+                  aria-label="Whisper model"
+                  onChange={(e) => update({ voice: { ...settings.voice, model: e.target.value } })}
+                >
+                  {VOICE_MODELS.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div className="setting-row">
+              <div className="setting-info">
+                <i className="fa-solid fa-paper-plane setting-icon" />
+                <div>
+                  <div className="setting-name">Auto-send dictation</div>
+                  <div className="setting-desc">Send spoken prompts without review</div>
+                </div>
+              </div>
+              <button
+                type="button"
+                className={`toggle${settings.voice.autoSend ? " on" : ""}`}
+                aria-pressed={settings.voice.autoSend}
+                onClick={() =>
+                  update({ voice: { ...settings.voice, autoSend: !settings.voice.autoSend } })
+                }
+              >
+                <span className="knob" />
+              </button>
+            </div>
+
+            <div className="setting-row">
+              <div className="setting-info">
+                <i className="fa-solid fa-volume-high setting-icon" />
+                <div>
+                  <div className="setting-name">Speak replies</div>
+                  <div className="setting-desc">Read assistant answers aloud (code skipped)</div>
+                </div>
+              </div>
+              <button
+                type="button"
+                className={`toggle${settings.speakReplies ? " on" : ""}`}
+                aria-pressed={settings.speakReplies}
+                onClick={() => update({ speakReplies: !settings.speakReplies })}
+              >
+                <span className="knob" />
+              </button>
+            </div>
           </div>
 
           <div className="sound-box">

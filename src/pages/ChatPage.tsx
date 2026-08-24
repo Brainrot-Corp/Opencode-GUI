@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import Titlebar from "../components/Titlebar";
 import Sidebar from "../components/Sidebar";
@@ -14,6 +14,8 @@ import { HelpDialog, ShareDialog, VariantsDialog } from "../components/CommandDi
 import { useOpencode } from "../hooks/useOpencode";
 import { useSettings } from "../hooks/useSettings";
 import { useGlobalShortcuts } from "../hooks/useGlobalShortcuts";
+import { useVoice } from "../hooks/useVoice";
+import { routeVoice } from "../lib/voiceRouter";
 import { pickWorkspace } from "../lib/workspace";
 import { playSound } from "../lib/sounds";
 
@@ -72,6 +74,84 @@ export default function ChatPage() {
     themeIds: themes.map((t) => t.id),
     activeModes,
   });
+
+  // voice transcripts: recognized phrases drive the UI, everything else is
+  // dictation — dropped into the composer for review (or sent on autoSend)
+  const handleVoiceTranscript = useCallback(
+    (text: string) => {
+      const act = routeVoice(text, {
+        themes: themes.map((t) => t.id),
+        commands: oc.cmdList.map((c) => c.name),
+      });
+      if (!act) {
+        if (settings.voice.autoSend) void oc.submit(text);
+        else window.dispatchEvent(new CustomEvent("oc:voice-text", { detail: text }));
+        return;
+      }
+      playSound("click");
+      switch (act.type) {
+        case "newSession":
+          void oc.newSession();
+          break;
+        case "abort":
+          void oc.abort();
+          break;
+        case "theme":
+          update({ theme: act.arg });
+          break;
+        case "mode":
+          update({ mode: act.arg });
+          break;
+        case "settings":
+          act.open ? openSettingsDrawer() : closeSettings();
+          break;
+        case "sidebar":
+          setSbClosed((v) => (act.open === undefined ? !v : !act.open));
+          break;
+        case "cycleAgent":
+          oc.cycleAgent();
+          break;
+        case "runCmd":
+          void oc.submit(act.rest ? `/${act.arg} ${act.rest}` : `/${act.arg}`);
+          break;
+        case "send":
+          window.dispatchEvent(new Event("oc:voice-send"));
+          break;
+        case "clear":
+          window.dispatchEvent(new Event("oc:voice-clear"));
+          break;
+        case "quiet":
+          window.speechSynthesis?.cancel();
+          break;
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [themes, oc.cmdList, settings.voice.autoSend],
+  );
+
+  const voice = useVoice(handleVoiceTranscript, settings.voice.model);
+
+  // speak-replies: narrate each finished assistant message (code stripped)
+  const lastSpoken = useRef("");
+  useEffect(() => {
+    if (!settings.speakReplies) return;
+    const last = [...oc.msgs]
+      .reverse()
+      .find((m) => (m.info as any).role === "assistant" && (m.info as any).time?.completed);
+    if (!last || last.info.id === lastSpoken.current) return;
+    lastSpoken.current = last.info.id;
+    const text = last.parts
+      .filter((p: any) => p.type === "text")
+      .map((p: any) => p.text ?? "")
+      .join(" ")
+      .replace(/```[\s\S]*?```/g, " code block omitted. ")
+      .replace(/`([^`]*)`/g, "$1");
+    if (!text.trim()) return;
+    window.speechSynthesis?.cancel();
+    const u = new SpeechSynthesisUtterance(text);
+    u.rate = 1.05;
+    window.speechSynthesis.speak(u);
+  }, [settings.speakReplies, oc.msgs]);
 
   useEffect(() => {
     localStorage.setItem(SB_W_KEY, String(sbW));
@@ -241,6 +321,9 @@ export default function ChatPage() {
                   variantSel={oc.variantSel}
                   usage={oc.sessionUsage}
                   caps={oc.modelCaps}
+                  voicePhase={voice.phase}
+                  voiceError={voice.error}
+                  onVoiceToggle={voice.toggle}
                 />
               </>
             )}
