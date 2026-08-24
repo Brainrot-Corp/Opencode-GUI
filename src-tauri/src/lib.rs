@@ -14,7 +14,7 @@ use voice::{install_bin_finalize, install_model_finalize, install_piper_bin, ins
     voice_status, voice_transcribe};
 
 mod git;
-use git::{git_commit, git_diff, git_discard, git_pull, git_push, git_stage, git_status, git_unstage};
+use git::{git_commit, git_diff, git_discard, git_log, git_pull, git_push, git_stage, git_status, git_unstage};
 
 struct ServerState {
     port: u16,
@@ -203,7 +203,8 @@ pub fn run() {
             git_commit,
             git_push,
             git_pull,
-            git_diff
+            git_diff,
+            git_log
         ]);
 
     // global hotkeys, work system-wide.

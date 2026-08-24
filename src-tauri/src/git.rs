@@ -162,6 +162,11 @@ pub async fn git_diff(dir: String, path: String, staged: bool) -> Result<String,
     run(&dir, &args)
 }
 
+#[tauri::command]
+pub async fn git_log(dir: String) -> Result<String, String> {
+    run(&dir, &["log", "--oneline", "-n", "10"])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

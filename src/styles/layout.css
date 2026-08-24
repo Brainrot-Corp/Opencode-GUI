@@ -151,6 +151,45 @@
   min-width: 180px;
 }
 
+/* debrief indicator — right side of titlebar, next to win-controls */
+.debrief-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+  padding: 0 8px 0 7px;
+  margin-right: 6px;
+  background: var(--accent-dim);
+  border: 1px solid color-mix(in srgb, var(--accent) 18%, transparent);
+  box-shadow: 0 0 12px var(--accent-glow);
+  color: var(--accent-bright);
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  user-select: none;
+}
+.debrief-indicator i.fa-spinner {
+  font-size: 11px;
+  opacity: 0.9;
+}
+.debrief-indicator em {
+  font-style: normal;
+  font-weight: 600;
+}
+.debrief-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 8px var(--accent-glow);
+  animation: debrief-pulse 1.2s ease-in-out infinite;
+}
+@keyframes debrief-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.55; transform: scale(0.85); }
+}
+
 .layout {
   display: grid;
   grid-template-columns: 248px 1fr;

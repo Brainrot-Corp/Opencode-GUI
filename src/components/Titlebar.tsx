@@ -15,6 +15,7 @@ export default function Titlebar({
   onModeChange,
   modes,
   speechLive,
+  debriefing,
 }: {
   pinned?: boolean;
   onTogglePin?: () => void;
@@ -28,6 +29,7 @@ export default function Titlebar({
   modes?: Mode[];
   // speak-replies is on — show the stop-speech button
   speechLive?: boolean;
+  debriefing?: boolean;
 }) {
   return (
     <header
@@ -45,6 +47,13 @@ export default function Titlebar({
         <span>OpenCode</span>
       </div>
       <div className="win-controls">
+        {debriefing && (
+          <span className="debrief-indicator" data-tip="Debrief in progress — preparing summary">
+            <i className="fa-solid fa-spinner fa-spin" aria-hidden="true" />
+            <em>Debriefing</em>
+            <i className="debrief-dot" aria-hidden="true" />
+          </span>
+        )}
         <ThemeSelect themes={themes ?? []} value={theme ?? "cyan"} onChange={(t) => onThemeChange?.(t)} />
         {(!modes || modes.length > 1) && (
           <button

@@ -76,6 +76,9 @@ export async function handleSlash(text: string, ctx: SlashCtx): Promise<boolean>
       playSound("close");
       getCurrentWindow().close();
       return true;
+    case "debrief":
+      window.dispatchEvent(new Event("oc:debrief"));
+      return true;
     case "models":
     case "themes":
     case "scheme":
@@ -226,6 +229,7 @@ export function buildCmdList(
     { name: "next", description: "Open the next session", source: "built-in", takesArgs: false, builtin: true },
     { name: "prev", description: "Open the previous session", source: "built-in", takesArgs: false, builtin: true },
     { name: "diff", description: "Toggle files changed in this session", source: "built-in", takesArgs: false, builtin: true },
+    { name: "debrief", description: "Spoken 2-paragraph debrief of last changes (uses commit model)", source: "built-in", takesArgs: false, builtin: true },
     { name: "settings", description: "Open settings", source: "built-in", takesArgs: false, builtin: true },
     { name: "help", description: "Show all available commands", source: "built-in", takesArgs: false, builtin: true },
     { name: "exit", description: "Close OpenCode", source: "built-in", takesArgs: false, builtin: true },

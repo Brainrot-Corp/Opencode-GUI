@@ -16,6 +16,8 @@ export type VoiceAct =
   | { type: "send" }
   | { type: "clear" }
   | { type: "quiet" }
+  | { type: "shut" }
+  | { type: "debrief" }
   | { type: "hearCheck" };
 
 export type VoiceCtx = {
@@ -47,6 +49,9 @@ export function routeVoice(text: string, ctx: VoiceCtx): VoiceAct | null {
   if (/^(send|submit)( it| that| this| the prompt| message)?$/.test(t)) return { type: "send" };
   if (/^(envoi|envoie|envoyer|envoyez|envoyé)$/.test(t)) return { type: "send" };
   if (/^(be quiet|stop speaking|stop talking)$/.test(t)) return { type: "quiet" };
+  if (/^(shut|shut up|tais-toi|chut)$/.test(t)) return { type: "shut" };
+  if (/^(debrief|de brief|fais[ -]?moi un debrief|give me a debrief|what did we change|what did we do|summary of changes)$/.test(t))
+    return { type: "debrief" };
   if (/^(erase|clear)( the | )?(input|composer|text|prompt)$/.test(t)) return { type: "clear" };
   if (/^(can|do)( you)? hear me$/.test(t)) return { type: "hearCheck" };
 
