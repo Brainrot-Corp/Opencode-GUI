@@ -465,8 +465,11 @@ export default function SettingsDrawer({
               <div className="setting-info">
                 <i className="fa-solid fa-volume-high setting-icon" />
                 <div>
-                  <div className="setting-name">Speak replies</div>
-                  <div className="setting-desc">Read assistant answers aloud (code skipped)</div>
+                      <div className="setting-name">Speak replies</div>
+                      <div className="setting-desc">
+                        Read assistant answers aloud (code skipped) — hands-free
+                        listening pauses during playback
+                      </div>
                 </div>
               </div>
               <button

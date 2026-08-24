@@ -83,6 +83,25 @@ export function useVoice(
   const preRef = useRef<Float32Array[]>([]);
   const speechMsRef = useRef(0);
   const silenceMsRef = useRef(0);
+  // TTS echo gate: hands-free must not transcribe our own spoken replies
+  const ttsSpeakingRef = useRef(false);
+  const ttsUntilRef = useRef(0);
+
+  // true while speech synthesis is audible (+ grace tail for speaker reverb)
+  const ttsActive = useCallback(() => {
+    const s = window.speechSynthesis;
+    if (!s) return false;
+    if (s.speaking) {
+      ttsSpeakingRef.current = true;
+      return true;
+    }
+    if (ttsSpeakingRef.current) {
+      ttsSpeakingRef.current = false;
+      ttsUntilRef.current = Date.now() + 500;
+      return true;
+    }
+    return Date.now() < ttsUntilRef.current;
+  }, []);
 
   const teardown = useCallback(() => {
     nodeRef.current?.disconnect();
@@ -170,6 +189,15 @@ export function useVoice(
             chunksRef.current.push(ch);
             return;
           }
+          // our own spoken replies are in the air — drop everything absorbed
+          // so the app can't transcribe itself (feedback loop)
+          if (ttsActive()) {
+            uttRef.current = [];
+            preRef.current = [];
+            speechMsRef.current = 0;
+            silenceMsRef.current = 0;
+            return;
+          }
           // VAD: quiet before speech fills the pre-roll ring; speech opens an
           // utterance; pauseMs of trailing quiet closes and transcribes it
           const level = rms(ch);
@@ -203,7 +231,7 @@ export function useVoice(
         setError(String(e));
       }
     })();
-  }, [phase, streaming, stop, handsFree, model, closeUtterance]);
+  }, [phase, streaming, stop, handsFree, model, closeUtterance, ttsActive]);
 
   return { phase, streaming, error, toggle };
 }
