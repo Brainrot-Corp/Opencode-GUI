@@ -2,16 +2,19 @@ import { useEffect, useRef } from "react";
 
 export type ModelEntry = { value: string; label: string; group?: string };
 
-// model picker dropdown: trigger button + grouped option list. Selection
-// state (open / highlight) is owned by the composer so its single global
-// keydown router keeps driving navigation; this component owns only the
-// outside-click close and highlight scroll-into-view.
+// model picker dropdown: trigger button + filter input + grouped option
+// list. Selection state (open / highlight / query) is owned by the composer
+// so its single global keydown router keeps driving navigation; this
+// component owns only the outside-click close, search focus, and
+// highlight scroll-into-view.
 export default function ModelMenu({
   open,
   setOpen,
   hi,
   setHi,
   entries,
+  query,
+  setQuery,
   selected,
   label,
   disabled,
@@ -23,6 +26,8 @@ export default function ModelMenu({
   hi: number;
   setHi: (fn: (h: number) => number) => void;
   entries: ModelEntry[];
+  query: string;
+  setQuery: (q: string) => void;
   selected: string;
   label: string;
   disabled?: boolean;
@@ -31,6 +36,7 @@ export default function ModelMenu({
 }) {
   const boxRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -54,6 +60,11 @@ export default function ModelMenu({
       ?.querySelector('[data-hl="true"]')
       ?.scrollIntoView({ block: "nearest" });
   }, [hi, open]);
+
+  // focus the filter when the menu opens so typing starts filtering at once
+  useEffect(() => {
+    if (open) searchRef.current?.focus();
+  }, [open]);
 
   function toggleMenu() {
     setOpen((o) => {
@@ -82,6 +93,19 @@ export default function ModelMenu({
       </button>
       {open && (
         <div className="model-menu" role="listbox" ref={menuRef}>
+          <div className="model-search-wrap">
+            <i className="fa-solid fa-magnifying-glass" />
+            <input
+              ref={searchRef}
+              className="model-search"
+              type="text"
+              placeholder="Filter models…"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              spellCheck={false}
+            />
+          </div>
+          {entries.length === 0 && <div className="model-empty">No models match</div>}
           {entries.map((it, i) => {
             const showGroup = it.group && entries[i - 1]?.group !== it.group;
             return (

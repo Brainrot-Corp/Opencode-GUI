@@ -3,6 +3,7 @@ import type { Message, Session } from "@opencode-ai/sdk/client";
 import { opencode, getDirectory, serverFetch } from "../api";
 import { playSound } from "../lib/sounds";
 import { createSessionStore } from "../lib/sessionStore";
+import { splitModel } from "../lib/models";
 import { createBusyTracker } from "../lib/busyTracker";
 import {
   buildCmdList,
@@ -384,7 +385,7 @@ export function useOpencode() {
         const body: any = { parts };
         prov.sentExplicitModel.current = !!prov.modelSel;
         if (prov.modelSel) {
-          const [providerID, modelID] = prov.modelSel.split("/");
+          const [providerID, modelID] = splitModel(prov.modelSel);
           body.model = { providerID, modelID };
         }
         if (agentSel) body.agent = agentSel;
@@ -664,3 +665,4 @@ export function useOpencode() {
     removeSession,
   };
 }
+

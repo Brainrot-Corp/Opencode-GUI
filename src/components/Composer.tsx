@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { Attachment, ProviderGroup } from "../types";
 import { prettySize, iconFor } from "../lib/attachments";
 import type { CmdEntry } from "../hooks/useOpencode";
+import { splitModel } from "../lib/models";
 import { useAttachments } from "../hooks/useAttachments";
 import ModelMenu, { type ModelEntry } from "./ModelMenu";
 import SlashMenu from "./SlashMenu";
@@ -229,22 +230,44 @@ export default function Composer({
   };
 
   const pretty = (sel: string) => {
-    const [pid, mid] = sel.split("/");
+    const [pid, mid] = splitModel(sel);
     const g = providers.find((x) => x.id === pid);
     const m = g?.models.find((x) => x.id === mid);
     return g && m ? `${g.label} · ${m.label}` : sel;
   };
 
   // flat selectable entries (server default first, then provider models)
-  const entries: ModelEntry[] = [];
+  const allEntries: ModelEntry[] = [];
   if (defaultModel) {
-    entries.push({ value: "", label: `Server default · ${pretty(defaultModel)}` });
+    allEntries.push({ value: "", label: `Server default · ${pretty(defaultModel)}` });
   }
   providers.forEach((g) =>
     g.models.forEach((m) =>
-      entries.push({ value: `${g.id}/${m.id}`, label: m.label, group: g.label }),
+      allEntries.push({ value: `${g.id}/${m.id}`, label: m.label, group: g.label }),
     ),
   );
+
+  // model-menu filter: keyboard brain navigates the FILTERED list, so
+  // highlight indices always match what's on screen
+  const [mq, setMq] = useState("");
+  const q = mq.trim().toLowerCase();
+  const entries: ModelEntry[] = q
+    ? allEntries.filter(
+        (e2) =>
+          e2.label.toLowerCase().includes(q) ||
+          e2.value.toLowerCase().includes(q) ||
+          (e2.group ?? "").toLowerCase().includes(q),
+      )
+    : allEntries;
+  // typing restarts highlight from the top of the results
+  useEffect(() => {
+    if (open) setHi(q ? 0 : allEntries.findIndex((e2) => e2.value === modelSel));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [q]);
+  // stale query would leak into the next open
+  useEffect(() => {
+    if (!open) setMq("");
+  }, [open]);
 
   function pick(v: string) {
     onModelSelect(v);
@@ -337,6 +360,8 @@ export default function Composer({
           hi={hi}
           setHi={setHi}
           entries={entries}
+          query={mq}
+          setQuery={setMq}
           selected={modelSel}
           label={currentLabel()}
           disabled={loadingModels}
@@ -492,3 +517,4 @@ export default function Composer({
     </div>
   );
 }
+

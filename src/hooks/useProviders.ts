@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { playSound } from "../lib/sounds";
+import { splitModel } from "../lib/models";
 import type { ProviderGroup } from "../types";
 
 type OcClient = Awaited<ReturnType<typeof import("../api").opencode>>["client"];
@@ -90,7 +91,7 @@ export function useProviders(onError: (msg: string) => void) {
         // restore the last hand-picked model if it still exists
         const saved = localStorage.getItem("oc.lastModel");
         if (saved) {
-          const [pid, mid] = saved.split("/");
+          const [pid, mid] = splitModel(saved);
           if (groups.some((g) => g.id === pid && g.models.some((m) => m.id === mid))) {
             setModelSel(saved);
           } else {
@@ -108,7 +109,7 @@ export function useProviders(onError: (msg: string) => void) {
   // thinking-effort options for the selected model
   const modelVariants = useMemo(() => {
     if (!modelSel) return [];
-    const [pid, mid] = modelSel.split("/");
+    const [pid, mid] = splitModel(modelSel);
     return (
       providers.find((g) => g.id === pid)?.models.find((m) => m.id === mid)?.variants ?? []
     );
@@ -117,7 +118,7 @@ export function useProviders(onError: (msg: string) => void) {
   // attachment capabilities of the selected model (undefined = allow all)
   const modelCaps = useMemo(() => {
     if (!modelSel) return undefined;
-    const [pid, mid] = modelSel.split("/");
+    const [pid, mid] = splitModel(modelSel);
     const m = providers.find((g) => g.id === pid)?.models.find((m) => m.id === mid);
     return m ? { attachment: m.attachment, input: m.input } : undefined;
   }, [providers, modelSel]);
@@ -173,3 +174,4 @@ export function useProviders(onError: (msg: string) => void) {
     cycleVariant,
   };
 }
+

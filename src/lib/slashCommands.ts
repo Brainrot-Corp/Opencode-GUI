@@ -1,6 +1,7 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { Session } from "@opencode-ai/sdk/client";
 import { opencode } from "../api";
+import { splitModel } from "./models";
 import { playSound } from "../lib/sounds";
 import type { Cmd } from "../types";
 
@@ -103,7 +104,7 @@ export async function handleSlash(text: string, ctx: SlashCtx): Promise<boolean>
         if (ctx.isBusy(id)) return true;
         const sel = ctx.modelSel || ctx.defaultModel;
         if (!sel) return true;
-        const [providerID, modelID] = sel.split("/");
+        const [providerID, modelID] = splitModel(sel);
         ctx.setBusy(id, true);
         const { client } = await opencode();
         try {
@@ -239,3 +240,4 @@ export function buildCmdList(
     }));
   return [...builtins, ...reg];
 }
+
