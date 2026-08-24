@@ -26,11 +26,17 @@ export function createSessionStore(onChange: (sid: string) => void) {
 
   function upsertPart(part: Part): boolean {
     const store = storeFor(part.sessionID);
-    const m = store.find((x) => x.info.id === part.messageID);
-    if (!m) return false;
+    const mi = store.findIndex((x) => x.info.id === part.messageID);
+    if (mi < 0) return false;
+    const m = store[mi];
     const pi = m.parts.findIndex((x) => x.id === part.id);
-    if (pi < 0) m.parts.push(part);
-    else m.parts[pi] = part;
+    // fresh message identity — memoized rows compare msg references, so an
+    // update must swap its own object or the row never re-renders
+    store[mi] = {
+      ...m,
+      parts:
+        pi < 0 ? [...m.parts, part] : m.parts.map((x) => (x.id === part.id ? part : x)),
+    };
     // authoritative full-text update — drop any stashed deltas for this part
     pendingDeltas.delete(`${part.messageID}:${part.id}`);
     onChange(part.sessionID);
@@ -44,12 +50,20 @@ export function createSessionStore(onChange: (sid: string) => void) {
       const mid = key.slice(0, cut);
       const pid = key.slice(cut + 1);
       const store = stores.get(entry.sid);
-      const m = store?.find((x) => x.info.id === mid);
-      const pt = m?.parts.find((x) => x.id === pid) as
-        | { type?: string; text?: string }
-        | undefined;
+      const mi = store?.findIndex((x) => x.info.id === mid) ?? -1;
+      const m = mi >= 0 ? store![mi] : undefined;
+      const pi = m?.parts.findIndex((x) => x.id === pid) ?? -1;
+      const pt = pi >= 0 ? (m!.parts[pi] as { type?: string; text?: string }) : undefined;
       if (m && pt && (pt.type === "text" || pt.type === "reasoning")) {
-        pt.text = (pt.text ?? "") + entry.text;
+        // fresh identities — see upsertPart
+        store![mi] = {
+          ...m,
+          parts: m.parts.map((x) =>
+            x.id === pid
+              ? ({ ...x, text: (((x as any).text ?? "") + entry.text) as string } as Part)
+              : x,
+          ),
+        };
         pendingDeltas.delete(key);
         if (entry.sid) onChange(entry.sid);
       } else if (!store || !m) {
@@ -96,12 +110,19 @@ export function createSessionStore(onChange: (sid: string) => void) {
     const sid = p.sessionID;
     const key = `${p.messageID}:${p.partID}`;
     const store = storeFor(sid);
-    const m = store.find((x) => x.info.id === p.messageID);
-    const pt = m?.parts.find((x) => x.id === p.partID) as
-      | { type?: string; text?: string }
-      | undefined;
+    const mi = store.findIndex((x) => x.info.id === p.messageID);
+    const m = mi >= 0 ? store[mi] : undefined;
+    const pt = m?.parts.find(
+      (x) => x.id === p.partID,
+    ) as { type?: string; text?: string } | undefined;
     if (m && pt && (pt.type === "text" || pt.type === "reasoning")) {
-      pt.text = (pt.text ?? "") + p.delta;
+      // fresh identities for just this message — see upsertPart
+      store[mi] = {
+        ...m,
+        parts: m.parts.map((x) =>
+          x.id === p.partID ? { ...x, text: ((x as any).text ?? "") + p.delta } : x,
+        ),
+      };
       pendingDeltas.delete(key);
       onChange(sid);
     } else {

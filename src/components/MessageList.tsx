@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
@@ -480,6 +480,65 @@ function errText(err: any): string {
   return err?.data?.message || err?.message || err?.name || "unknown error";
 }
 
+// cheap row-visibility check mirroring renderPart's null branches — without
+// building throwaway elements (the old .some(renderPart(…)) rendered every
+// message on every pass just to decide what to skip)
+function rowVisible(m: Msg): boolean {
+  if (m.info.role === "user") return true;
+  const err = m.info.role === "assistant" ? (m.info as any).error : null;
+  if (err && err.name !== "MessageAbortedError") return true;
+  return m.parts.some((p: any) => {
+    switch (p.type) {
+      case "text":
+        return !!(p.text ?? "").trim();
+      case "step-finish": {
+        const tk = p.tokens ?? {};
+        return !!((tk.input ?? 0) + (tk.output ?? 0) + (tk.reasoning ?? 0)) || !!p.cost;
+      }
+      case "patch":
+        return !!(p.files ?? []).length;
+      default:
+        return ["reasoning", "tool", "retry", "compaction", "agent", "subtask"].includes(p.type);
+    }
+  });
+}
+
+// one conversation row — memoized so a streaming delta re-renders ONLY the
+// message that grew; every other row skips its markdown/highlight pipeline
+// (store swaps msg identity for touched messages, keeps others stable)
+const MsgRow = memo(function MsgRow({
+  m,
+  collapsed,
+  onRevert,
+}: {
+  m: Msg;
+  collapsed?: boolean;
+  onRevert?: (messageID: string) => void;
+}) {
+  const err = m.info.role === "assistant" ? (m.info as any).error : null;
+  const showErr = err && err.name !== "MessageAbortedError";
+  return (
+    <div className={`msg ${m.info.role}${showErr ? " msg-error" : ""}`}>
+      {m.info.role === "user" && onRevert && (
+        <button
+          className="rewind"
+          data-tip="Rewind conversation to here"
+          onClick={() => onRevert(m.info.id)}
+        >
+          <i className="fa-solid fa-clock-rotate-left" />
+        </button>
+      )}
+      {showErr && (
+        <div className="msg-err-line">
+          <i className="fa-solid fa-triangle-exclamation" />
+          <span>{errText(err)}</span>
+        </div>
+      )}
+      {m.parts.map((part, i) => renderPart(part, i, collapsed))}
+    </div>
+  );
+});
+
 export default function MessageList({
   msgs,
   busy,
@@ -587,40 +646,9 @@ export default function MessageList({
         </>
       )}
       {!loading && msgs.length === 0 && !busy && <p className="empty">Say something…</p>}
-      {msgs.map((m) => {
-        const err =
-          m.info.role === "assistant" ? (m.info as any).error : null;
-        const showErr = err && err.name !== "MessageAbortedError";
-        if (
-          !m.parts.some((p) => renderPart(p, 0, collapsed)) &&
-          m.info.role !== "user" &&
-          !showErr
-        )
-          return null;
-        return (
-          <div
-            key={m.info.id}
-            className={`msg ${m.info.role}${showErr ? " msg-error" : ""}`}
-          >
-            {m.info.role === "user" && onRevert && (
-              <button
-                className="rewind"
-                data-tip="Rewind conversation to here"
-                onClick={() => onRevert(m.info.id)}
-              >
-                <i className="fa-solid fa-clock-rotate-left" />
-              </button>
-            )}
-            {showErr && (
-              <div className="msg-err-line">
-                <i className="fa-solid fa-triangle-exclamation" />
-                <span>{errText(err)}</span>
-              </div>
-            )}
-            {m.parts.map((part, i) => renderPart(part, i, collapsed))}
-          </div>
-        );
-      })}
+      {msgs.filter(rowVisible).map((m) => (
+        <MsgRow key={m.info.id} m={m} collapsed={collapsed} onRevert={onRevert} />
+      ))}
       {busy && (
         <div className="thinking">
           <span className="cursor-dot" /> thinking
