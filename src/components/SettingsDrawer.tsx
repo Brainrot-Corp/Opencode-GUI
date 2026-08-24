@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { enable, isEnabled, disable } from "@tauri-apps/plugin-autostart";
 import type { AppSettings, ColorSet } from "../hooks/useSettings";
 import type { ThemeMeta } from "../lib/themes";
@@ -113,12 +114,22 @@ export default function SettingsDrawer({
                 <div className="setting-desc">Interface color scheme</div>
               </div>
             </div>
-            <ThemeSelect
-              themes={themes ?? []}
-              variant="drawer"
-              value={settings.theme}
-              onChange={(t) => update({ theme: t })}
-            />
+            <div className="color-controls">
+              <button
+                type="button"
+                className="reset-btn"
+                data-tip="Open config folder"
+                onClick={() => invoke("reveal_config_dir").catch(() => {})}
+              >
+                <i className="fa-solid fa-folder-tree" />
+              </button>
+              <ThemeSelect
+                themes={themes ?? []}
+                variant="drawer"
+                value={settings.theme}
+                onChange={(t) => update({ theme: t })}
+              />
+            </div>
           </div>
 
           {(!modes || modes.length > 1) && (

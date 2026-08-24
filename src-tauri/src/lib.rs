@@ -76,6 +76,30 @@ fn theme_config_write(content: String) -> Result<(), String> {
     std::fs::write(dir.join("themes.json"), content).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+fn reveal_config_dir() -> Result<(), String> {
+    let dir = themes_dir();
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        std::process::Command::new("explorer")
+            .arg(&dir)
+            .creation_flags(CREATE_NO_WINDOW)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    #[cfg(not(windows))]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(&dir)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 // watch the theme config dir; coalesce bursts of events into one emit
 fn watch_themes(handle: tauri::AppHandle) {
     use notify::Watcher as _;
@@ -144,6 +168,7 @@ pub fn run() {
             server_url,
             theme_config_read,
             theme_config_write,
+            reveal_config_dir,
             browser_open,
             browser_back,
             browser_forward,
