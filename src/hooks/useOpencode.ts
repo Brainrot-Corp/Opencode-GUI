@@ -244,6 +244,21 @@ export function useOpencode() {
           // mid-turn idles in heavier tasks are ignored
           if (!tracker.hasInflight(p.sessionID)) tracker.settle(p.sessionID);
           break;
+        case "session.updated": {
+          // server-side metadata changes — auto-generated titles after the
+          // first reply, pin/archive flags — must reach the sidebar live
+          const s = p.info as Session | undefined;
+          if (!s?.id) break;
+          setSessions((prev) => {
+            const i = prev.findIndex((x) => x.id === s.id);
+            if (i < 0) return prev;
+            // keep refreshSessions' ordering rule: newest activity first
+            return [...prev.map((x, j) => (j === i ? s : x))].sort(
+              (a, b) => (b.time?.updated ?? 0) - (a.time?.updated ?? 0),
+            );
+          });
+          break;
+        }
         case "session.deleted": {
           const delId = p.sessionID ?? p.id;
           if (delId) {

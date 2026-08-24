@@ -19,6 +19,7 @@ import { useVoice } from "../hooks/useVoice";
 import { routeVoice } from "../lib/voiceRouter";
 import { pickWorkspace } from "../lib/workspace";
 import { playSound } from "../lib/sounds";
+import type { Msg } from "../types";
 
 const SB_W_KEY = "oc.sb.w";
 const SB_C_KEY = "oc.sb.c";
@@ -38,6 +39,14 @@ function playWav(bytes: number[], volume: number): HTMLAudioElement {
   });
   void a.play().catch(() => {});
   return a;
+}
+
+// all text-part content of a message, joined — streaming deltas included
+function full_text(m: Msg): string {
+  return m.parts
+    .filter((p: any) => p.type === "text")
+    .map((p: any) => p.text ?? "")
+    .join(" ");
 }
 
 // concise spoken cues for tool activity — unknown tools fall back to "Using x"
@@ -230,10 +239,110 @@ export default function ChatPage() {
   const launchAt = useRef(Date.now());
   const replyAudio = useRef<HTMLAudioElement | null>(null);
 
+  // --- streaming speech ------------------------------------------------------
+  // narrate sentences while the reply streams instead of waiting for the
+  // full message; the completed-message effect below remains as fallback
+  // for non-streamed finishes and skips anything narrated here (lastSpoken)
+  const streamTTS = useRef({ id: "", consumed: 0 }); // message being narrated
+  const ttsQ = useRef<string[]>([]); // sentences awaiting piper playback
+  const ttsPumping = useRef(false);
+  const ttsHushed = useRef(false); // user hit stop-speech: mute this reply's rest
+  const settingsNow = useRef(settings);
+  settingsNow.current = settings;
+
+  // markdown scrub for mid-stream narration — complete code blocks become a
+  // placeholder, an open fence holds its text back until it closes
+  const cleanSpeech = (s: string) =>
+    s
+      .replace(/```[\s\S]*?```/g, " code block omitted. ")
+      .replace(/```[\s\S]*$/, "")
+      .replace(/`([^`]*)`/g, "$1")
+      .replace(/(\*\*|__)(.*?)\1/g, "$2")
+      .replace(/\s{2,}/g, " ")
+      .trim();
+
+  // serialized synth→play pump; 'pause' resolves alongside 'ended' so the
+  // stop-speech button breaks the wait instead of deadlocking the queue
+  const pumpTTS = () => {
+    if (ttsPumping.current) return;
+    ttsPumping.current = true;
+    (async () => {
+      try {
+        while (ttsQ.current.length && !ttsHushed.current) {
+          const phrase = ttsQ.current.shift()!;
+          const st = settingsNow.current;
+          const bytes = await invoke<number[]>("tts_speak", {
+            text: phrase,
+            voice: st.ttsVoice,
+            speed: st.ttsSpeed,
+          }).catch(() => null);
+          if (!bytes || ttsHushed.current || bytes.length < 1000) continue;
+          const a = playWav(bytes, st.ttsVol);
+          replyAudio.current = a;
+          await new Promise<void>((res) => {
+            a.addEventListener("ended", () => res(), { once: true });
+            a.addEventListener("pause", () => res(), { once: true });
+          });
+        }
+        ttsQ.current = [];
+      } finally {
+        ttsPumping.current = false;
+      }
+    })();
+  };
+
+  useEffect(() => {
+    if (!settings.speakReplies || !settings.ttsVoice) return;
+    const last = [...oc.msgs].reverse().find((m) => (m.info as any).role === "assistant");
+    if (!last) return;
+    const id = last.info.id;
+    const info = last.info as any;
+    const done = !!info.time?.completed;
+    const tracked = streamTTS.current.id === id;
+    if (done && lastSpoken.current === id) return;
+    // historical message while idle — the completed-message effect owns it
+    if (!tracked && !oc.busy) return;
+
+    if (!tracked) {
+      streamTTS.current = { id, consumed: 0 };
+      ttsHushed.current = false; // a fresh reply may talk again
+    }
+    const cur = streamTTS.current;
+    const pending = full_text(last).slice(cur.consumed);
+
+    const speak = (chunk: string, upto?: number) => {
+      if (upto !== undefined) cur.consumed = upto;
+      const cleaned = cleanSpeech(chunk);
+      if (cleaned && !ttsHushed.current) {
+        ttsQ.current.push(cleaned);
+        pumpTTS();
+      }
+    };
+
+    if (done) {
+      speak(pending);
+      lastSpoken.current = id; // fallback effect stands down
+      streamTTS.current = { id: "", consumed: 0 };
+      return;
+    }
+    // live: speak up to the last complete sentence, hold the fragment back
+    const cut = Math.max(
+      pending.lastIndexOf(". "),
+      pending.lastIndexOf("! "),
+      pending.lastIndexOf("? "),
+      pending.lastIndexOf("…"),
+      pending.lastIndexOf("\n"),
+    );
+    if (cut >= 0) speak(pending.slice(0, cut + 1), cur.consumed + cut + 1);
+  }, [oc.msgs, oc.busy, settings.speakReplies, settings.ttsVoice]);
+
   // top-bar stop-speech button pauses piper playback from anywhere; the
   // volume slider retunes a running reply via oc:tts-vol
   useEffect(() => {
-    const stop = () => replyAudio.current?.pause();
+    const stop = () => {
+      ttsHushed.current = true;
+      replyAudio.current?.pause();
+    };
     const vol = (e: Event) => {
       if (replyAudio.current) replyAudio.current.volume = (e as CustomEvent<number>).detail;
     };
