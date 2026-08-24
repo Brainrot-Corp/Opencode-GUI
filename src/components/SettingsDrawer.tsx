@@ -56,6 +56,70 @@ function piperLabel(id: string): string {
 }
 const PREVIEW_TEXT = "Hey, this is how I will read replies aloud.";
 
+// custom dropdown matching the model picker design language (native select
+// popups can't be styled) — trigger + glass menu, closes on outside click
+function PickerMenu({
+  value,
+  onPick,
+  entries,
+  label,
+  disabled,
+}: {
+  value: string;
+  onPick: (v: string) => void;
+  entries: { value: string; label: string }[];
+  label: string;
+  disabled?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: Event) => {
+      if (!ref.current?.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("pointerdown", onDoc, true);
+    return () => document.removeEventListener("pointerdown", onDoc, true);
+  }, [open]);
+
+  return (
+    <div className={`picker-menu${open ? " open" : ""}`} ref={ref}>
+      <button
+        type="button"
+        className="picker-trigger"
+        onClick={() => setOpen((o) => !o)}
+        disabled={disabled}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+      >
+        <span>{label}</span>
+        <i className={`fa-solid fa-chevron-${open ? "up" : "down"}`} />
+      </button>
+      {open && (
+        <div className="model-menu picker-drop" role="listbox">
+          {entries.map((it) => (
+            <button
+              key={it.value}
+              type="button"
+              role="option"
+              aria-selected={it.value === value}
+              className={`model-opt${it.value === value ? " selected" : ""}`}
+              onClick={() => {
+                onPick(it.value);
+                setOpen(false);
+              }}
+            >
+              <span>{it.label}</span>
+              {it.value === value && <i className="fa-solid fa-check" />}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function SettingsDrawer({
   open,
   onClose,
@@ -460,18 +524,19 @@ export default function SettingsDrawer({
                     {!voice?.bin ? "Install (~10 MB)" : "Download model"}
                   </button>
                 )}
-                <select
-                  className="voice-select"
+                <PickerMenu
                   value={settings.voice.model}
-                  aria-label="Whisper model"
-                  onChange={(e) => update({ voice: { ...settings.voice, model: e.target.value } })}
-                >
-                  {VOICE_MODELS.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.label + (voice?.models.includes(m.id) ? "" : " — not downloaded")}
-                    </option>
-                  ))}
-                </select>
+                  disabled={!!dl}
+                  label={
+                    VOICE_MODELS.find((m) => m.id === settings.voice.model)?.label.split(" · ")[0] ??
+                    "model"
+                  }
+                  entries={VOICE_MODELS.map((m) => ({
+                    value: m.id,
+                    label: m.label + (voice?.models.includes(m.id) ? "" : " — not downloaded"),
+                  }))}
+                  onPick={(v) => update({ voice: { ...settings.voice, model: v } })}
+                />
               </div>
             </div>
 
@@ -611,14 +676,25 @@ export default function SettingsDrawer({
                 </div>
               </div>
               <div className="color-controls">
-                <select
-                  className="voice-select"
+                <PickerMenu
                   value={settings.ttsVoice}
-                  aria-label="Speak replies voice"
                   disabled={!!dl}
-                  onChange={(e) => {
-                    const file = e.target.value;
-                    if (!file) return;
+                  label={
+                    settings.ttsVoice
+                      ? piperLabel(settings.ttsVoice.replace(/\.onnx$/, ""))
+                      : "Pick a voice…"
+                  }
+                  entries={PIPER_VOICES.map((id) => ({
+                    value: `${id}.onnx`,
+                    label:
+                      piperLabel(id) +
+                      ((piper?.voices ?? []).includes(id)
+                        ? ""
+                        : id === dlVoiceId
+                          ? " — downloading…"
+                          : " — not downloaded"),
+                  }))}
+                  onPick={(file) => {
                     const id = file.replace(/\.onnx$/, "");
                     if (piper?.voices.includes(id)) {
                       update({ ttsVoice: file });
@@ -627,19 +703,7 @@ export default function SettingsDrawer({
                       void ensureVoice(id);
                     }
                   }}
-                >
-                  {!settings.ttsVoice && <option value="">Pick a voice…</option>}
-                  {PIPER_VOICES.map((id) => (
-                    <option key={id} value={`${id}.onnx`}>
-                      {piperLabel(id)}
-                      {(piper?.voices ?? []).includes(id)
-                        ? ""
-                        : id === dlVoiceId
-                          ? " — downloading…"
-                          : " — not downloaded"}
-                    </option>
-                  ))}
-                </select>
+                />
                 <button
                   type="button"
                   className="reset-btn"

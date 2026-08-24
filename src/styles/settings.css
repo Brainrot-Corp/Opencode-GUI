@@ -266,32 +266,52 @@
   cursor: default;
 }
 
-/* whisper model picker / piper voice picker — native select, blocky chrome;
-   grows to fill its row so controls stay flush on narrow drawers */
-.voice-select {
-  max-width: 100%;
-  min-width: 120px;
+/* whisper model picker / piper voice picker — custom dropdown matching the
+   model picker design language (native select popups can't be styled) */
+.picker-menu {
+  position: relative;
   flex: 1 1 150px;
+  min-width: 120px;
+  max-width: 100%;
+}
+.picker-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
   padding: 4px 6px;
   background: var(--inset-bg);
+  color: var(--text-dim);
   border: 1px solid var(--line);
   border-radius: 4px;
-  color: var(--text-dim);
   font-family: var(--mono);
   font-size: 11px;
   cursor: pointer;
+  transition: border-color 0.25s, box-shadow 0.3s, color 0.25s;
 }
-.voice-select:disabled {
+.picker-trigger i {
+  font-size: 9px;
+  color: var(--text-faint);
+}
+.picker-trigger:hover:not(:disabled),
+.picker-menu.open .picker-trigger {
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--accent) calc(0.4 * 100%), transparent);
+  box-shadow: 0 0 12px -4px var(--accent-glow);
+}
+.picker-trigger:disabled {
   opacity: 0.55;
   cursor: default;
 }
-.voice-select:hover {
-  color: var(--text);
-  border-color: color-mix(in srgb, var(--accent) calc(0.45 * 100%), transparent);
-}
-.voice-select option {
-  background: var(--inset-bg);
-  color: var(--text);
+.picker-menu .picker-drop {
+  /* opens downward from the trigger, hugging its left edge */
+  top: calc(100% + 6px);
+  bottom: auto;
+  right: auto;
+  left: 0;
+  min-width: min(280px, calc(100vw - 40px));
+  max-width: 320px;
 }
 .color-controls input[type="color"] {
   width: 30px;
