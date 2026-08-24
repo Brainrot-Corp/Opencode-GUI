@@ -172,6 +172,34 @@
   box-shadow: 0 0 24px -8px var(--accent-glow);
 }
 
+/* clear-all sits beside New chat — one row that fills the panel width and
+   stretches both buttons to equal height */
+.new-chat-row {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+}
+.new-chat-row .new-chat {
+  flex: 1 1 0;
+  min-width: 0;
+  white-space: nowrap;
+}
+.new-chat-row .sb-clear {
+  flex: 0 1 38px;
+  min-width: 30px;
+  align-self: stretch;
+  height: auto;
+  margin-right: 0;
+  border-radius: 0;
+  background: color-mix(in srgb, var(--accent) calc(0.07 * 100%), transparent);
+}
+.sb-clear:hover,
+.sb-clear.armed {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) calc(0.15 * 100%), transparent);
+  box-shadow: 0 0 14px -6px var(--danger);
+}
+
 /* boot skeletons */
 .skel-row {
   height: 38px;

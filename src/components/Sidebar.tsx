@@ -18,6 +18,7 @@ export default function Sidebar({
   onNew,
   onOpen,
   onDelete,
+  onClearAll,
 }: {
   sessions: Session[];
   activeId: string;
@@ -32,10 +33,13 @@ export default function Sidebar({
   onNew: () => void;
   onOpen: (id: string) => void;
   onDelete: (id: string) => void;
+  onClearAll: () => void;
 }) {
   const [tab, setTab] = useState(() =>
     localStorage.getItem("oc.sb.tab") === "files" ? "files" : "chats",
   );
+  // two-step confirm for clear-all — first click arms, second fires
+  const [clearArmed, setClearArmed] = useState(false);
   const switchTab = (t: "chats" | "files") => {
     if (t === tab) return;
     playSound("click");
@@ -95,10 +99,31 @@ export default function Sidebar({
                 </button>
               </div>
               {tab === "chats" && (
-                <button className="new-chat" onClick={onNew}>
-                  <i className="fa-solid fa-plus" />
-                  New chat
-                </button>
+                <div className="new-chat-row">
+                  <button className="new-chat" onClick={onNew}>
+                    <i className="fa-solid fa-plus" />
+                    New chat
+                  </button>
+                  {!!sessions.length && (
+                    <button
+                      className={`icon-btn sb-clear${clearArmed ? " armed" : ""}`}
+                      data-tip={clearArmed ? "Click again to delete ALL sessions" : "Clear all sessions"}
+                      aria-label="Clear all sessions"
+                      onClick={() => {
+                        if (clearArmed) {
+                          setClearArmed(false);
+                          onClearAll();
+                        } else {
+                          playSound("click");
+                          setClearArmed(true);
+                          window.setTimeout(() => setClearArmed(false), 3000);
+                        }
+                      }}
+                    >
+                      <i className={`fa-solid ${clearArmed ? "fa-triangle-exclamation" : "fa-trash-can"}`} />
+                    </button>
+                  )}
+                </div>
               )}
               {loading && sessions.length === 0 ? (
                 <>

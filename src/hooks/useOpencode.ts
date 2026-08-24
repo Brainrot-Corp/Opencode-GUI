@@ -44,6 +44,8 @@ export function useOpencode() {
   activeRef.current = activeId;
   const busyRef = useRef(busyIds);
   busyRef.current = busyIds;
+  const sessionsRef = useRef(sessions);
+  sessionsRef.current = sessions;
   // command-registry refetch throttle for file-watcher bursts
   const cmdFetchAt = useRef(0);
 
@@ -634,6 +636,24 @@ export function useOpencode() {
     [],
   );
 
+  // clear every session in the current workspace — server delete + local reset
+  const clearSessions = useCallback(async () => {
+    const { client } = await opencode();
+    const ids = sessionsRef.current.map((s) => s.id);
+    await Promise.all(
+      ids.map((id) => client.session.delete({ path: { id } }).catch(() => {})),
+    );
+    for (const id of ids) {
+      store.remove(id);
+      questionsRef.current.delete(id);
+      tracker.reset(id);
+    }
+    setActiveId("");
+    store.clearStashes();
+    setMsgs([]);
+    setQuestion(null);
+  }, [store, tracker]);
+
   // the active session's busy state, derived from the per-session set
   const busy = busyIds.has(activeId);
 
@@ -659,6 +679,7 @@ export function useOpencode() {
     rejectQuestion,
     newSession,
     openSession,
+    clearSessions,
     send,
     submit,
     cmdList,

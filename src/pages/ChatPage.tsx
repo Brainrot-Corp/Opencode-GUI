@@ -927,6 +927,7 @@ export default function ChatPage() {
             onNew={oc.newSession}
             onOpen={(id) => oc.openSession(id)}
             onDelete={(id) => oc.removeSession(id)}
+            onClearAll={() => void oc.clearSessions()}
           />
           <div className="main">
             {oc.error && <div className="banner">{oc.error}</div>}
