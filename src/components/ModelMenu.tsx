@@ -61,6 +61,25 @@ export default function ModelMenu({
       ?.scrollIntoView({ block: "nearest" });
   }, [hi, open]);
 
+  // clamp the open menu inside the viewport: measure after mount and nudge
+  // with a transform — anchors vary per host (composer opens upward, the
+  // settings drawer drops down) and narrow windows let either poke out
+  useEffect(() => {
+    if (!open) return;
+    const el = menuRef.current;
+    if (!el) return;
+    el.style.transform = "";
+    const r = el.getBoundingClientRect();
+    const pad = 8;
+    let dx = 0;
+    if (r.right > window.innerWidth - pad) dx = window.innerWidth - pad - r.right;
+    if (r.left + dx < pad) dx = pad - r.left;
+    let dy = 0;
+    if (r.bottom > window.innerHeight - pad) dy = window.innerHeight - pad - r.bottom;
+    if (r.top + dy < pad) dy = pad - r.top;
+    if (dx || dy) el.style.transform = `translate(${dx}px, ${dy}px)`;
+  }, [open]);
+
   // focus the filter when the menu opens so typing starts filtering at once
   useEffect(() => {
     if (open) searchRef.current?.focus();

@@ -179,6 +179,20 @@
   opacity: 0.35;
   cursor: default;
 }
+/* push confirmed — brief accent flash before returning to rest */
+.gp-actions button.pushed {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) calc(0.12 * 100%), transparent);
+  animation: gp-pushed 1.8s var(--ease);
+}
+@keyframes gp-pushed {
+  0% {
+    box-shadow: 0 0 22px -4px var(--accent-glow);
+  }
+  100% {
+    box-shadow: 0 0 6px -4px transparent;
+  }
+}
 
 .gp-err {
   padding: 6px 8px;

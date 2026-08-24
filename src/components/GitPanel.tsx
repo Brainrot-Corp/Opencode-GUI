@@ -59,19 +59,24 @@ export default function GitPanel() {
     }
   }, []);
 
-  // one serialized wrapper for every mutating action: run, refresh, surface
+  // one serialized wrapper for every mutating action: run, ALWAYS refresh
+  // (even on failure — e.g. commit-ok/push-fail must reconcile), surface
+  // errors; returns whether it succeeded
   const act = useCallback(
     async (fn: () => Promise<unknown>) => {
-      if (busy) return;
+      if (busy) return false;
       setBusy(true);
       setErr("");
+      let ok = true;
       try {
         await fn();
-        await refresh();
       } catch (e) {
         setErr(String(e).replace(/^Error:\s*/, ""));
+        ok = false;
       }
+      await refresh();
       setBusy(false);
+      return ok;
     },
     [busy, refresh],
   );
@@ -79,9 +84,30 @@ export default function GitPanel() {
   const commit = (thenPush = false) =>
     act(async () => {
       await invoke("git_commit", { dir: dir.current, message: msg.trim() });
-      setMsg(""); // committed even if a chained push fails
+      // committed entries leave the lists immediately — don't wait for the
+      // status roundtrip (a chained push failing must not resurrect them)
+      setSt((s) => ({
+        ...s,
+        files: s.files.filter((f) => f.x === " " || f.x === "?"),
+      }));
+      setMsg("");
       if (thenPush) await invoke("git_push", { dir: dir.current });
     });
+
+  // push with visible progress: spinner while running, check + glow briefly
+  // once confirmed
+  const [pushed, setPushed] = useState<"idle" | "run" | "ok">("idle");
+  const doPush = async () => {
+    if (pushed !== "idle") return;
+    setPushed("run");
+    const ok = await act(() => invoke("git_push", { dir: dir.current }));
+    setPushed(ok ? "ok" : "idle");
+  };
+  useEffect(() => {
+    if (pushed !== "ok") return;
+    const t = setTimeout(() => setPushed("idle"), 1800);
+    return () => clearTimeout(t);
+  }, [pushed]);
 
   // AI commit message: hidden temp session on the configured model —
   // created, prompted (sync), deleted; never touches the sidebar list
@@ -305,9 +331,22 @@ export default function GitPanel() {
               <i className="fa-solid fa-check-double" />
               Commit + Push
             </button>
-            <button data-tip="Push" disabled={busy || (!st.ahead && !staged.length)} onClick={() => act(() => invoke("git_push", { dir: dir.current }))}>
-              <i className="fa-solid fa-arrow-up" />
-              Push
+            <button
+              className={`push${pushed === "ok" ? " pushed" : ""}`}
+              data-tip="Push to remote"
+              disabled={busy || pushed === "run" || (!st.ahead && !staged.length)}
+              onClick={doPush}
+            >
+              <i
+                className={`fa-solid ${
+                  pushed === "run"
+                    ? "fa-spinner fa-spin-pulse"
+                    : pushed === "ok"
+                      ? "fa-check"
+                      : "fa-arrow-up"
+                }`}
+              />
+              {pushed === "ok" ? "Pushed" : "Push"}
             </button>
             <button data-tip="Pull" disabled={busy} onClick={() => act(() => invoke("git_pull", { dir: dir.current }))}>
               <i className="fa-solid fa-arrow-down" />
