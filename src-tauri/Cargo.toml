@@ -11,6 +11,10 @@ edition = "2021"
 [features]
 noglass = []
 
+# faster rebuilds when switching build variants (win10/win11) and small edits
+[profile.release]
+incremental = true
+
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [lib]

@@ -150,9 +150,17 @@ export default function GitPanel() {
                 {
                   type: "text",
                   text:
-                    "Write a git commit message for this staged diff. One line, " +
-                    "imperative mood, max 72 chars, no backticks or quotes — reply " +
-                    "with ONLY the message.\n\n" +
+                    "You generate git commit messages. Study the staged diff below and " +
+                    "produce exactly one commit subject line for it.\n\n" +
+                    "Rules:\n" +
+                    "- Conventional Commit style when the change type is clear " +
+                    "(feat:/fix:/refactor:/docs:/chore:/test:/perf:); plain otherwise\n" +
+                    "- Imperative mood, present tense (\"add\", never \"added\" or \"adds\")\n" +
+                    "- Maximum 72 characters, no trailing period\n" +
+                    "- Cover the single most significant change; ignore incidental churn\n" +
+                    "- No quotation marks, backticks, or markdown formatting\n\n" +
+                    "Reply with the message only — no preamble, explanation, or code fences.\n\n" +
+                    "Staged diff:\n" +
                     diff.slice(0, 12000),
                 },
               ],

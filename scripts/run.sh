@@ -1,17 +1,19 @@
 #!/usr/bin/env bash
 # OpenCode GUI task runner (Linux/WSL/macOS)
-# usage:  ./scripts/run.sh <command> [win11|win10|both]
+# usage:  ./scripts/run.sh <command> [win11|win10|both] [bundles]
 # commands: setup | dev | build | check | clean   (build/portable take a target, default win11)
-# win11 = glass build (Mica), win10 = no-glass build (--features noglass)
+# win11 = glass build (acrylic), win10 = no-glass build (--features noglass)
+# build only: 3rd arg picks bundle types (default msi per tauri.conf.json; e.g. "nsis")
 set -e
 cd "$(dirname "$0")/.."
 
 CMD="${1:-dev}"
 TARGET="${2:-win11}"
+BUNDLES="${3:-}"
 case "$TARGET" in
     win11) TARGETS="win11" ;;
     win10) TARGETS="win10" ;;
-    both)  TARGETS="win11 win10" ;;
+    both)  TARGETS="win10 win11" ;; # win11 last → it stays staged in OpenCode/
     *) echo "!! target must be win11, win10 or both"; exit 1 ;;
 esac
 
@@ -35,10 +37,15 @@ fetch_sidecar() {
 }
 
 build_one() {
+    # $2 = nobundle skips packaging (portable zips only need the exe);
+    # $3 = optional bundle types override, e.g. "nsis"
+    local extra=""
+    [ "$2" = "nobundle" ] && extra="--no-bundle"
+    [ -n "$3" ] && extra="$extra --bundles $3"
     if [ "$1" = "win10" ]; then
-        npm run tauri build -- --features noglass
+        npm run tauri build -- --features noglass $extra
     else
-        npm run tauri build
+        npm run tauri build -- $extra
     fi
 }
 
@@ -54,7 +61,7 @@ case "${CMD}" in
         ;;
     build)
         for t in $TARGETS; do
-            build_one "$t"
+            build_one "$t" "" "$BUNDLES"
             # suffix installers so variants don't clobber each other
             bundle="src-tauri/target/release/bundle"
             find "$bundle/nsis" "$bundle/msi" -type f \( -name "*.exe" -o -name "*.msi" \) 2>/dev/null |
@@ -69,7 +76,7 @@ case "${CMD}" in
         rel="src-tauri/target/release"
         out="$rel/bundle/portable"
         for t in $TARGETS; do
-            build_one "$t"
+            build_one "$t" nobundle
             mkdir -p "$out/OpenCode"
             cp "$rel/opencode-gui.exe" "$out/OpenCode/"
             cp "$rel/opencode.exe" "$out/OpenCode/"
@@ -87,7 +94,7 @@ case "${CMD}" in
         echo ">> cleaned"
         ;;
     *)
-        echo "usage: run.sh [setup|dev|build|portable|check|clean] [win11|win10|both]"
+        echo "usage: run.sh [setup|dev|build|portable|check|clean] [win11|win10|both] [bundles]"
         exit 1
         ;;
 esac

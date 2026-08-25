@@ -1,9 +1,11 @@
 # OpenCode GUI task runner (Windows)
-# usage:  powershell -ExecutionPolicy Bypass -File scripts\run.ps1 <command> [win11|win10|both]
+# usage:  powershell -ExecutionPolicy Bypass -File scripts\run.ps1 <command> [win11|win10|both] [bundles]
 # commands: setup | dev | build | check | clean   (build/portable take a target, default win11)
 # win11 = glass build (acrylic), win10 = no-glass build (--features noglass)
+# build only: 3rd arg picks bundle types (default msi; e.g. "nsis", "msi nsis")
 param([Parameter(Position = 0)][string]$Cmd = "dev",
-      [Parameter(Position = 1)][string]$Target = "win11")
+      [Parameter(Position = 1)][string]$Target = "win11",
+      [Parameter(Position = 2)][string]$Bundles = "")
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
@@ -13,7 +15,7 @@ $sidecar = Join-Path $root "src-tauri\binaries\opencode-x86_64-pc-windows-msvc.e
 switch ($Target) {
     "win11" { $targets = @("win11") }
     "win10" { $targets = @("win10") }
-    "both"  { $targets = @("win11", "win10") }
+    "both"  { $targets = @("win10", "win11") } # win11 last → it stays staged in OpenCode\
     default { Write-Host "!! target must be win11, win10 or both" -ForegroundColor Red; exit 1 }
 }
 
@@ -35,10 +37,15 @@ function Fetch-Sidecar {
     & $sidecar --version
 }
 
-function Build-One([string]$T) {
+# Bundle=$false skips packaging (portable zips only need the exe);
+# $Bundles optionally overrides bundle types, e.g. "nsis" or "msi nsis"
+function Build-One([string]$T, [bool]$Bundle = $true, [string]$Bundles = "") {
     Push-Location $root
-    if ($T -eq "win10") { npm run tauri build -- --features noglass }
-    else { npm run tauri build }
+    $extra = @()
+    if (-not $Bundle) { $extra += "--no-bundle" }
+    if ($Bundles) { $extra += @("--bundles", $Bundles) }
+    if ($T -eq "win10") { npm run tauri build -- --features noglass @extra }
+    else { npm run tauri build -- @extra }
     Pop-Location
     # PS 5.1 doesn't abort on native nonzero exits — check or we'd zip the
     # previous variant's exe under the wrong name
@@ -57,7 +64,7 @@ switch ($Cmd) {
     }
     "build" {
         foreach ($t in $targets) {
-            Build-One $t
+            Build-One $t $true $Bundles
             # suffix installers so variants don't clobber each other
             $bundle = Join-Path $root "src-tauri\target\release\bundle"
             Get-ChildItem $bundle -Recurse -Include *.exe, *.msi |
@@ -70,7 +77,7 @@ switch ($Cmd) {
     }
     "portable" {
         foreach ($t in $targets) {
-            Build-One $t
+            Build-One $t $false
             $rel = Join-Path $root "src-tauri\target\release"
             $out = Join-Path $rel "bundle\portable"
             $stage = Join-Path $out "OpenCode"
@@ -92,7 +99,7 @@ switch ($Cmd) {
         Write-Host ">> cleaned"
     }
     default {
-        Write-Host "usage: run.ps1 [setup|dev|build|portable|check|clean] [win11|win10|both]"
+        Write-Host "usage: run.ps1 [setup|dev|build|portable|check|clean] [win11|win10|both] [bundles]"
         exit 1
     }
 }
