@@ -126,8 +126,10 @@ export default function InfoDialog({
         <>
           <Groups data={VOICE} />
           <p className="cmd-note">
-            Unrecognized speech is ignored — start with "prompt" to fill the composer or "send" to fill and send.
-            A command buried mid-sentence is read back and waits for a yes.
+            English, French &amp; Spanish phrasing all work, politeness words are ignored, and
+            one-letter typos in device/color words are forgiven. Start with "prompt" to fill the
+            composer or "send" to fill and send; a command buried mid-sentence is read back and
+            waits for a yes.
           </p>
         </>
       )}

@@ -26,7 +26,11 @@ eq(routeVoice("send it", ctx), { type: "send" }, "send it");
 eq(routeVoice("Envoyé.", ctx), { type: "send" }, "envoyé");
 eq(routeVoice("envoie", ctx), { type: "send" }, "envoie");
 eq(routeVoice("envoyez", ctx), { type: "send" }, "envoyez");
-eq(routeVoice("je vais l'envoyer demain", ctx), null, "envoyer inside a sentence stays dictation");
+eq(
+  routeVoice("je vais l'envoyer demain", ctx),
+  { type: "embedded", act: { type: "dictateSend", arg: "demain" } },
+  "fr send inside a sentence → embedded (confirmation gates it)",
+);
 eq(routeVoice("clear composer", ctx), { type: "clear" }, "clear");
 eq(routeVoice("clear prompt", ctx), { type: "clear" }, "clear prompt");
 eq(routeVoice("erase the prompt", ctx), { type: "clear" }, "erase the prompt");
@@ -34,7 +38,7 @@ eq(routeVoice("can you hear me?", ctx), { type: "hearCheck" }, "hear check");
 eq(routeVoice("do you hear me", ctx), { type: "hearCheck" }, "hear check do");
 eq(routeVoice("be quiet", ctx), { type: "quiet" }, "quiet");
 eq(routeVoice("run compact", ctx), { type: "runCmd", arg: "compact", rest: "" }, "run cmd");
-eq(routeVoice("run fix all now please", ctx), { type: "runCmd", arg: "fix-all", rest: "now please" }, "multi-word cmd + args");
+eq(routeVoice("run fix all now please", ctx), { type: "runCmd", arg: "fix-all", rest: "now" }, "multi-word cmd + args (politeness stripped)");
 eq(routeVoice("run does-not-exist", ctx), null, "unknown run falls through");
 eq(routeVoice("launch google chrome", ctx), { type: "launchApp", arg: "google chrome" }, "launch app");
 eq(routeVoice("open the spotify", ctx), { type: "launchApp", arg: "spotify" }, "article stripped");
@@ -69,8 +73,8 @@ eq(
 );
 eq(
   routeVoice("oh and prompt write tests please", ctx),
-  { type: "embedded", act: { type: "dictate", arg: "write tests please" } },
-  "embedded prompt prefix",
+  { type: "embedded", act: { type: "dictate", arg: "write tests" } },
+  "embedded prompt prefix (politeness stripped)",
 );
 eq(
   routeVoice("stop the music and turn the lights off", ctx),
@@ -80,6 +84,28 @@ eq(
 eq(routeVoice("turn the lights off when you leave", ctx), null, "conditional tail rejected");
 eq(routeVoice("we turned the lights off yesterday", ctx), null, "past tense is not a trigger");
 eq(routeVoice("turn the bedroom lamp off.", ctx), { type: "light", sw: "off", name: "bedroom" }, "direct hit stays unwrapped");
+
+// lexicon — French / Spanish rewrites land on the same canonical patterns
+eq(routeVoice("allume la lumière", ctx), { type: "light", sw: "on", name: "" }, "fr turn on the light");
+eq(routeVoice("éteins la lampe du bureau", ctx), { type: "light", sw: "off", name: "bureau" }, "fr possessive swap keeps device last");
+eq(routeVoice("enciende las luces", ctx), { type: "light", sw: "on", name: "" }, "es turn on the lights");
+eq(routeVoice("met la lumière rouge", ctx), { type: "lightColor", color: "red", name: "" }, "fr set the light red");
+eq(routeVoice("luz roja", ctx), { type: "lightColor", color: "red", name: "" }, "es bare device+color");
+eq(routeVoice("lumiere rouge", ctx), { type: "lightColor", color: "red", name: "" }, "fr bare device+color");
+
+// naturalness — fillers and whisper typos
+eq(
+  routeVoice("could you dim the lights to fifty percent please", ctx),
+  { type: "lightBright", pct: 50, name: "" },
+  "politeness stripped both ends",
+);
+eq(
+  routeVoice("turn on the lihgts", ctx),
+  { type: "light", sw: "on", name: "" },
+  "typo tolerance fixes content words",
+);
+eq(routeVoice("est-ce que tu m'entends", ctx), { type: "hearCheck" }, "fr mic check");
+eq(routeVoice("prompt write a haiku about rain", ctx), { type: "dictate", arg: "write a haiku about rain" }, "prefix unaffected by lexicon");
 eq(routeVoice("", ctx), null, "empty");
 eq(routeVoice("please refactor src/main.rs carefully", ctx), null, "prompt-looking text stays freeform");
 

@@ -406,6 +406,24 @@ afterwards (user call) — VAD utterance close is the fixed SILENCE_MS (1.5s) ag
 
 `npm run build` green.
 
+### Lexicon-driven voice commands (EN/FR/ES) ✅ (2026-08-25)
+
+User ask: rethink commands for naturalness — "one trigger word becomes many". Implemented as a
+rewrite layer, not per-language pattern packs:
+
+- **`src/lib/voiceLexicon.ts`**: deaccent → politeness strip (can you/est-ce que/puedes…,
+  please/merci/gracias…) → ordered rewrite table mapping EN+FR+ES variants onto canonical English
+  vocabulary the router already matches ("allume la lumière"→"turn on the light", possessive swap
+  "lampe du bureau"→"bureau lamp", colors/tones/devices/numbers/actions). JS `\b` ignores "é"
+  (word-char is ASCII-only) — hence deaccent-before-match; documented.
+- **Typo tolerance**: failed match retries with content words corrected 1 edit
+  (substitution/insert/transposition — naive Hamming calls a swap 2). Verbs never fuzzed.
+- **Bare device forms** added: "lights red" / "light warm" / "luz roja" direct-execute.
+- Router: expand → matchChain → fixTypos retry → embedded scan on corrected text. hearCheck
+  pattern widened (filler strip eats "can you"). Bare "envoye" (deaccented) added to send list.
+- Confirmation yes/no answers trilingual (oui/sí/claro… non/anula/cancela…).
+- Tests 78 (fr/es/typo/filler cases); build green. Design doc: `docs/voice-lexicon.md`.
+
 ## Notes / Decisions log
 
 - 2026-08-23: Project started. Plan finalized in PLAN.md (Windows only, Tauri v2, React+TS, fresh UI, minimal scope).

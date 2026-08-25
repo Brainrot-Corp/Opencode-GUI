@@ -238,12 +238,13 @@ export default function ChatPage() {
       const p = pendingRef.current;
       if (p && Date.now() < p.until) {
         const t0 = text.toLowerCase().replace(/[.,!?;:]+$/, "").trim();
-        if (/^(yes|yeah|yep|yup|sure|do it|confirm|go ahead)\b/.test(t0)) {
+        // yes/no in EN/FR/ES — "si" matches Spanish sí (whisper drops accents)
+        if (/^(yes|yeah|yep|yup|sure|do it|confirm|go ahead|oui|ouais|ouep|vas-?y|si|sí|claro|dale|vale)\b/.test(t0)) {
           pendingRef.current = null;
           playSound("click");
           announce("On it.");
           execAct(p.act);
-        } else if (/^(no|nope|nah|cancel|forget it)\b/.test(t0)) {
+        } else if (/^(no|nope|nah|cancel|forget it|non|annule|annuler|anula|cancela)\b/.test(t0)) {
           pendingRef.current = null;
           announce("Cancelled.");
         } else {

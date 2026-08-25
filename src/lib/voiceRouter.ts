@@ -1,5 +1,7 @@
 // spoken-phrase router: maps a whisper transcript to a UI action, or returns
 // null when the text is freeform dictation (lands in the composer instead).
+import { expandVoice, fixTypos } from "./voiceLexicon.ts";
+
 export type VoiceAct =
   | { type: "newSession" }
   | { type: "abort" }
@@ -88,13 +90,13 @@ function matchChain(t: string, ctx: VoiceCtx): VoiceAct | null {
   if (dm) return { type: "dictate", arg: dm[1] };
   const dsm = /^send (.+)$/.exec(t);
   if (dsm) return { type: "dictateSend", arg: dsm[1] };
-  if (/^(envoi|envoie|envoyer|envoyez|envoyé)$/.test(t)) return { type: "send" };
+  if (/^(envoi|envoie|envoyer|envoyez|envoyé|envoye)$/.test(t)) return { type: "send" };
   if (/^(be quiet|stop speaking|stop talking)$/.test(t)) return { type: "quiet" };
   if (/^(shut|shut up|tais-toi|chut)$/.test(t)) return { type: "shut" };
   if (/^(debrief|de brief|fais[ -]?moi un debrief|give me a debrief|what did we change|what did we do|summary of changes)$/.test(t))
     return { type: "debrief" };
   if (/^(erase|clear)( the | )?(input|composer|text|prompt)$/.test(t)) return { type: "clear" };
-  if (/^(can|do)( you)? hear me$/.test(t)) return { type: "hearCheck" };
+  if (/^(?:(?:can|do)(?: you)? )?hear me$/.test(t)) return { type: "hearCheck" };
 
   // light intents — before the app-launcher catch-all so device names win.
   // name group = up to 3 short words between the verb and the device word
@@ -121,6 +123,12 @@ function matchChain(t: string, ctx: VoiceCtx): VoiceAct | null {
   if (toneM) return { type: "lightTemp", tone: toneM[3], name: (toneM[1] ?? "").trim() };
   const colM = new RegExp(`^(?:turn|make|set|change|color)(?: the| my)? ?([a-z ]*?)?(${DEV})(?: to)? (${COLORS})$`).exec(t);
   if (colM) return { type: "lightColor", color: colM[3], name: (colM[1] ?? "").trim() };
+
+  // natural bare forms — "lights red", "light warm", "luz roja" (post-lexicon)
+  const bareTone = new RegExp(`^(?:the )?(?:${DEV}) (${TONES})(?: white)?$`).exec(t);
+  if (bareTone) return { type: "lightTemp", tone: bareTone[1], name: "" };
+  const bareCol = new RegExp(`^(?:the )?(?:${DEV}) (${COLORS})$`).exec(t);
+  if (bareCol) return { type: "lightColor", color: bareCol[1], name: "" };
 
   // "close google chrome" / "minimize the calculator" / "quit spotify" /
   // "kill chrome" — placed before the launcher catch-all; "close settings"
@@ -164,18 +172,27 @@ export function routeVoice(text: string, ctx: VoiceCtx): VoiceAct | null {
   if (!t) return null;
   // "one hundred percent" → "hundred percent" so the word map hits
   t = t.replace(/\b(?:one|a)\s+hundred\b/g, "hundred");
+  // lexicon pass — natural / FR / ES phrasing → canonical English words
+  t = expandVoice(t);
 
   const direct = matchChain(t, ctx);
   if (direct) return direct;
 
-  // mid-sentence scan: a command buried in conversation ("yeah anyway turn
-  // the lights off") is matched on the tail after each trigger word and comes
-  // back wrapped for spoken confirmation. Suffix must match to the END of the
-  // fragment — trailing clauses ("…off when you leave") never fire.
+  // gentle typo retry: content words one letter off get corrected ("lihgts")
+  const fixed = fixTypos(t);
+  if (fixed !== t) {
+    const retry = matchChain(fixed, ctx);
+    if (retry) return retry;
+  }
+
+  // mid-sentence scan on the corrected text: a command buried in conversation
+  // ("yeah anyway turn the lights off") is matched on the tail after each
+  // trigger word and comes back wrapped for spoken confirmation. Suffix must
+  // match to the END of the fragment — trailing clauses never fire.
   const re = new RegExp(`\\b(?:${TRIGGERS})\\b`, "g");
   let m: RegExpExecArray | null;
-  while ((m = re.exec(t))) {
-    const act = matchChain(t.slice(m.index), ctx);
+  while ((m = re.exec(fixed))) {
+    const act = matchChain(fixed.slice(m.index), ctx);
     if (act) return { type: "embedded", act };
   }
   return null;
