@@ -22,8 +22,17 @@
   cursor: pointer;
 }
 
+/* hover tint covers the entire rail because the rail itself is the
+   click target; layered over the base chrome gradient */
+.sidebar.collapsed:hover {
+  background-image:
+    linear-gradient(color-mix(in srgb, var(--accent) calc(0.06 * 100%), transparent), color-mix(in srgb, var(--accent) calc(0.06 * 100%), transparent)),
+    linear-gradient(180deg, rgba(var(--chrome-rgb), 0.14), rgba(var(--chrome-rgb), 0.22));
+}
+
 /* expand button inside the collapsed rail, vertically centered —
-   the whole rail is the click target, the button just shows the icon */
+   the whole rail is the click target, the button just shows the icon.
+   pointer-events:none keeps :hover on the rail only (no per-icon box) */
 .sb-expand {
   width: 34px;
   height: 42px;
@@ -33,7 +42,6 @@
 }
 .sidebar.collapsed:hover .sb-expand {
   color: var(--accent);
-  box-shadow: 0 0 16px -4px var(--accent-glow);
 }
 
 /* scrollable content layer — the resize handle stays outside it,

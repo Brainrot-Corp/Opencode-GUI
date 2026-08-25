@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Message, Session } from "@opencode-ai/sdk/client";
-import { opencode, getDirectory, serverFetch, hiddenSessions, HIDDEN_TITLE } from "../api";
+import {
+  opencode,
+  getDirectory,
+  serverFetch,
+  hiddenSessions,
+  HIDDEN_TITLE,
+  withDeadline,
+} from "../api";
 import { playSound } from "../lib/sounds";
 import { createSessionStore } from "../lib/sessionStore";
 import { splitModel } from "../lib/models";
@@ -289,14 +296,22 @@ export function useOpencode() {
 
     (async () => {
       // the UI renders immediately on skeletons. Phase 1: poll silently
-      // until the sidecar actually answers a real request — ONLY connection
-      // failures retry here, nothing else can strand boot in skeletons.
+      // until the sidecar actually answers a real request. Each attempt is
+      // deadline-wrapped — a stalled request (sidecar accepts TCP but hangs)
+      // must reject so the loop can retry instead of freezing mid-await.
       let list: Session[] = [];
+      const bootStarted = Date.now();
       while (!disposed) {
         try {
-          list = await refreshSessions();
+          list = await withDeadline(refreshSessions(), 10_000, "session list");
           break;
-        } catch {
+        } catch (e) {
+          // cold start gets ~20s; past that, surface why and boot anyway
+          // (phase 2 + finally still run, degrading to a banner not skeletons)
+          if (Date.now() - bootStarted > 20_000 && !disposed) {
+            setError(`Server not responding: ${e}`);
+            break;
+          }
           await new Promise((r) => setTimeout(r, 600));
         }
       }
@@ -326,7 +341,10 @@ export function useOpencode() {
         // reopen the last-used session if it still exists, else the newest
         const lastId = localStorage.getItem(LAST_KEY);
         const target = list.find((s) => s.id === lastId) ?? list[0];
-        if (target && !disposed) await openSession(target.id).catch(() => {});
+        // deadline-wrapped: a hung messages fetch must not stall the boot
+        // effect before its finally (loadProviders + setBooting(false))
+        if (target && !disposed)
+          await withDeadline(openSession(target.id), 15_000, "session reopen").catch(() => {});
 
         if (!disposed) await prov.loadProviders(client).catch(() => {});
       } catch (e) {
@@ -358,12 +376,19 @@ export function useOpencode() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refreshSessions, openSession, refreshCommands]);
 
-  // keep the command registry warm across workspace switches done elsewhere
+  // keep the command registry + provider list warm across workspace switches
+  // done elsewhere. Provider refetch self-heals a transient boot failure that
+  // would otherwise leave an empty model picker until relaunch.
   useEffect(() => {
-    const onFocus = () => refreshCommands().catch(() => {});
+    const onFocus = () => {
+      refreshCommands().catch(() => {});
+      opencode()
+        .then(({ client }) => prov.loadProviders(client))
+        .catch(() => {});
+    };
     window.addEventListener("focus", onFocus);
     return () => window.removeEventListener("focus", onFocus);
-  }, [refreshCommands]);
+  }, [refreshCommands, prov.loadProviders]);
 
   const newSession = useCallback(async () => {
     const { client } = await opencode();

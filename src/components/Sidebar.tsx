@@ -51,7 +51,9 @@ export default function Sidebar({
     <>
       <aside
         className={`sidebar${collapsed ? " collapsed" : ""}${resizing ? " resizing" : ""}`}
-        {...(collapsed ? { "data-tip": "Show session history" } : {})}
+        {...(collapsed
+          ? ({ "data-tip": "Show session history", "data-tip-cursor": "" } as any)
+          : {})}
         onClick={
           collapsed
             ? () => {

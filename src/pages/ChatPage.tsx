@@ -526,7 +526,7 @@ export default function ChatPage() {
             {(oc.activeId || oc.booting) && (
               <>
                 {settings.workspace && (
-                  <div className="stage-head" data-tip={settings.workspace}>
+                  <div className="stage-head" data-tip={settings.workspace} data-tip-cursor="">
                     <i className="fa-solid fa-folder-open" />
                     <span className="mono">{settings.workspace}</span>
                   </div>

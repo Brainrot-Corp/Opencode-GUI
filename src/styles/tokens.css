@@ -92,6 +92,7 @@ button:focus-visible,
 /* scrollbars: blocky + subtle accent glow to match the UI */
 ::-webkit-scrollbar {
   width: 8px;
+  height: 8px;
 }
 ::-webkit-scrollbar-track {
   background: var(--inset-bg);
