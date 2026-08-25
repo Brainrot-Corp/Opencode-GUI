@@ -337,6 +337,21 @@ echo gate in `useVoice.ts` with:
 
 `npm run build` green; all router/tuya checks pass. Live hands-free behavior needs a GUI test.
 
+### Info dialog — tabbed guide from Settings ✅ (2026-08-25)
+
+Settings header gained a circle-info button opening a glass `InfoDialog` layered above the drawer
+(`Dialog` new `top` prop → z-70; the drawer sits at 65, dialogs default 30). Clickable tabs,
+extensible via its data arrays:
+
+- **Voice commands** — curated phrase list grouped like voiceRouter (Sessions & UI / Apps /
+  Dictation & speech / Lights), rendered as mono cmd-rows
+- **Commands** — the live slash registry grouped by source; grouping extracted from HelpDialog
+  into shared `CommandRows`
+- **Hotkeys** — cheatsheet: system-wide (Alt+Space, Ctrl+Shift+M), in-app (Ctrl+M/P, Tab agent
+  cycle, Enter/Esc), composer autocomplete; notes for blocked zoom hotkeys
+
+Wiring: ChatPage passes `oc.cmdList` into SettingsDrawer as a prop. `npm run build` green.
+
 ## Notes / Decisions log
 
 - 2026-08-23: Project started. Plan finalized in PLAN.md (Windows only, Tauri v2, React+TS, fresh UI, minimal scope).

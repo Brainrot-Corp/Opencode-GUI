@@ -21,6 +21,36 @@
   border: 1px solid color-mix(in srgb, var(--accent) calc(0.22 * 100%), var(--line));
   box-shadow: 0 24px 64px -24px var(--accent-glow);
 }
+/* above the settings drawer */
+.dlg-scrim.dlg-top {
+  z-index: 70;
+}
+
+/* info dialog tabs */
+.dlg-tabs {
+  display: flex;
+  gap: 6px;
+  padding: 2px 6px 6px;
+}
+.dlg-tab {
+  padding: 5px 12px;
+  font-family: var(--sans);
+  font-size: 11.5px;
+  color: var(--text-dim);
+  background: var(--inset-bg);
+  border: 1px solid transparent;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: color 0.15s var(--ease), border-color 0.15s var(--ease), background 0.15s var(--ease);
+}
+.dlg-tab:hover {
+  color: var(--text);
+}
+.dlg-tab.on {
+  color: var(--accent-bright);
+  background: color-mix(in srgb, var(--accent) calc(0.09 * 100%), transparent);
+  border-color: color-mix(in srgb, var(--accent) calc(0.4 * 100%), transparent);
+}
 .dlg-panel.dlg-wide {
   width: min(720px, calc(100% - 48px));
 }

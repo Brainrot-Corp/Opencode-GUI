@@ -2,14 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import Dialog from "./Dialog";
 import type { CmdEntry } from "../hooks/useOpencode";
 
-// /help — every registered command, grouped by source
-export function HelpDialog({
-  commands,
-  onClose,
-}: {
-  commands: CmdEntry[];
-  onClose: () => void;
-}) {
+// grouped command rows shared by /help and the settings Info dialog
+export function CommandRows({ commands }: { commands: CmdEntry[] }) {
   const groups = new Map<string, CmdEntry[]>();
   for (const c of commands) {
     const g =
@@ -18,7 +12,7 @@ export function HelpDialog({
     groups.get(g)!.push(c);
   }
   return (
-    <Dialog title="Commands" onClose={onClose}>
+    <>
       {[...groups.entries()].map(([g, list]) => (
         <div key={g} className="cmd-group">
           <div className="cmd-group-label">{g}</div>
@@ -30,6 +24,21 @@ export function HelpDialog({
           ))}
         </div>
       ))}
+    </>
+  );
+}
+
+// /help — every registered command, grouped by source
+export function HelpDialog({
+  commands,
+  onClose,
+}: {
+  commands: CmdEntry[];
+  onClose: () => void;
+}) {
+  return (
+    <Dialog title="Commands" onClose={onClose}>
+      <CommandRows commands={commands} />
     </Dialog>
   );
 }

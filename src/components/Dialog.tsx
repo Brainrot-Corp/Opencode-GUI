@@ -6,11 +6,14 @@ export default function Dialog({
   title,
   onClose,
   wide,
+  top,
   children,
 }: {
   title: string;
   onClose: () => void;
   wide?: boolean;
+  // layer above the settings drawer (drawer z-65, dialogs default z-30)
+  top?: boolean;
   children: React.ReactNode;
 }) {
   useEffect(() => {
@@ -20,7 +23,7 @@ export default function Dialog({
   }, [onClose]);
 
   return (
-    <div className="dlg-scrim" onClick={onClose}>
+    <div className={`dlg-scrim${top ? " dlg-top" : ""}`} onClick={onClose}>
       <div
         className={`dlg-panel${wide ? " dlg-wide" : ""}`}
         onClick={(e) => e.stopPropagation()}

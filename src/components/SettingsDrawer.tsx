@@ -4,6 +4,7 @@ import { enable, isEnabled, disable } from "@tauri-apps/plugin-autostart";
 import type { AppSettings, ColorSet } from "../hooks/useSettings";
 import type { ThemeMeta } from "../lib/themes";
 import type { SoundPrefs } from "../lib/sounds";
+import type { CmdEntry } from "../hooks/useOpencode";
 import { applyWorkspace, pickWorkspace } from "../lib/workspace";
 import { splitModel } from "../lib/models";
 import ThemeSelect from "./ThemeSelect";
@@ -12,6 +13,7 @@ import VoiceSettings from "./VoiceSettings";
 import TuyaSettings from "./TuyaSettings";
 import AppearanceSettings from "./AppearanceSettings";
 import SoundsSettings from "./SoundsSettings";
+import InfoDialog from "./InfoDialog";
 import type { ProviderGroup } from "../types";
 import "../styles/settings.css";
 
@@ -28,6 +30,7 @@ export default function SettingsDrawer({
   modes,
   effectiveMode,
   providers,
+  commands,
 }: {
   open: boolean;
   onClose: () => void;
@@ -43,11 +46,14 @@ export default function SettingsDrawer({
   effectiveMode?: "dark" | "light";
   // live provider/model list from useOpencode — commit-message model picker
   providers?: ProviderGroup[];
+  // live command registry — Info dialog's Commands tab
+  commands?: CmdEntry[];
 }) {
   // custom themes have no stored color entry yet — cyan's shared base is the
   // starting point until the user overrides it
   const cs = (colorsFor?.(settings.theme) ?? settings.colors.cyan)[settings.mode];
   const [autoLaunch, setAutoLaunch] = useState<boolean | null>(null);
+  const [infoOpen, setInfoOpen] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -111,9 +117,14 @@ export default function SettingsDrawer({
       >
         <div className="settings-head">
           <h2>Settings</h2>
-          <button className="icon-btn" data-tip="Close" onClick={onClose}>
-            <i className="fa-solid fa-xmark" />
-          </button>
+          <div className="color-controls">
+            <button className="icon-btn" data-tip="Voice, commands & hotkeys" onClick={() => setInfoOpen(true)}>
+              <i className="fa-solid fa-circle-info" />
+            </button>
+            <button className="icon-btn" data-tip="Close" onClick={onClose}>
+              <i className="fa-solid fa-xmark" />
+            </button>
+          </div>
         </div>
 
         <div className="settings-body">
@@ -310,6 +321,7 @@ export default function SettingsDrawer({
           <span className="mono-hint">Alt+Space toggles the window anywhere · Ctrl+P pins on top · Ctrl+M mic · Ctrl+Shift+M mic anywhere</span>
         </div>
       </aside>
+      {infoOpen && <InfoDialog commands={commands ?? []} onClose={() => setInfoOpen(false)} />}
     </>
   );
 }
