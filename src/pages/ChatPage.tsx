@@ -16,7 +16,7 @@ import { useOpencode } from "../hooks/useOpencode";
 import { useSettings } from "../hooks/useSettings";
 import { useGlobalShortcuts } from "../hooks/useGlobalShortcuts";
 import { useVoice } from "../hooks/useVoice";
-import { routeVoice, type VoiceAct } from "../lib/voiceRouter";
+import { routeVoice, routerInput, type VoiceAct } from "../lib/voiceRouter";
 import { runLightAct, type LightAct } from "../lib/tuya";
 import { pickWorkspace } from "../lib/workspace";
 import { playSound } from "../lib/sounds";
@@ -233,10 +233,17 @@ export default function ChatPage() {
   // read back and waits for a spoken yes/no. Any other speech (or 15s)
   // cancels — chatter can't leave stale traps.
   const pendingRef = useRef<{ act: VoiceAct; until: number } | null>(null);
+  // debug transcript mode (Settings › Voice): last few utterance audits
+  const [vdbg, setVdbg] = useState<string[]>([]);
+  const dbgPush = useCallback(
+    (s: string) => setVdbg((d) => [...d.slice(-4), s]),
+    [],
+  );
   const handleVoiceTranscript = useCallback(
     (text: string) => {
       const p = pendingRef.current;
       if (p && Date.now() < p.until) {
+        if (settings.voice.debug) dbgPush(`"${text}" → consumed by yes/no prompt`);
         const t0 = text.toLowerCase().replace(/[.,!?;:]+$/, "").trim();
         // yes/no in EN/FR/ES — "si" matches Spanish sí (whisper drops accents)
         if (/^(yes|yeah|yep|yup|sure|do it|confirm|go ahead|oui|ouais|ouep|vas-?y|si|sí|claro|dale|vale)\b/.test(t0)) {
@@ -258,6 +265,12 @@ export default function ChatPage() {
         themes: themes.map((t) => t.id),
         commands: oc.cmdList.map((c) => c.name),
       });
+      if (settings.voice.debug)
+        dbgPush(
+          `"${text}" → "${routerInput(text)}" → ${
+            act ? JSON.stringify(act) : "no match · dictation"
+          }`,
+        );
       if (!act) return;
       playSound("click");
       if (act.type === "embedded") {
@@ -274,7 +287,7 @@ export default function ChatPage() {
       execAct(act);
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [themes, oc.cmdList, execAct, describeAct],
+    [themes, oc.cmdList, execAct, describeAct, settings.voice.debug, dbgPush],
   );
 
   const voice = useVoice(
@@ -467,6 +480,13 @@ export default function ChatPage() {
                     onAnswer={oc.answerQuestion}
                     onReject={oc.rejectQuestion}
                   />
+                )}
+                {settings.voice.debug && vdbg.length > 0 && (
+                  <div className="voice-debug" role="log">
+                    {vdbg.map((l, i) => (
+                      <div key={i}>{l}</div>
+                    ))}
+                  </div>
                 )}
                 <Composer
                   busy={oc.busy}

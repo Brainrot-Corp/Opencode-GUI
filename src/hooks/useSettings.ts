@@ -52,6 +52,8 @@ export type AppSettings = {
     model: string;
     handsFree: boolean;
     sens: number;
+    // debug transcript mode — show raw → router input → matched act
+    debug: boolean;
   };
   speakReplies: boolean;
   // piper voice file ("<id>.onnx") for spoken replies — "" = none yet
@@ -90,7 +92,7 @@ const DEFAULTS: AppSettings = {
   colors: structuredClone(DEFAULT_COLOR_SETS),
   workspace: "",
   collapsed: true,
-  voice: { model: "ggml-base.en.bin", handsFree: false, sens: 0.7 },
+  voice: { model: "ggml-base.en.bin", handsFree: false, sens: 0.7, debug: false },
   speakReplies: false,
   ttsVoice: "",
   ttsVol: 1,
@@ -205,6 +207,7 @@ export function useSettings() {
               : "ggml-base.en.bin",
           handsFree: !!p.voice?.handsFree,
           sens: num(p.voice?.sens, DEFAULTS.voice.sens, 0, 1),
+          debug: !!p.voice?.debug,
         },
         ttsVoice:
           typeof p.ttsVoice === "string" && p.ttsVoice.endsWith(".onnx") ? p.ttsVoice : "",

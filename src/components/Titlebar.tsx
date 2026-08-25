@@ -1,4 +1,6 @@
+import { useEffect } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { invoke } from "@tauri-apps/api/core";
 import { playSound } from "../lib/sounds";
 import type { Mode } from "../hooks/useSettings";
 import type { ThemeMeta } from "../lib/themes";
@@ -31,6 +33,26 @@ export default function Titlebar({
   talking?: boolean;
   debriefing?: boolean;
 }) {
+  // Win10 acrylic: the OS blur is cleared for the duration of a drag
+  // (recomputed every frame otherwise — window trails the cursor), then
+  // reapplied. html.dragging paints an opaque base while it's off.
+  useEffect(() => {
+    const end = () => {
+      document.documentElement.classList.remove("dragging");
+      invoke("set_dragging", { dragging: false }).catch(() => {});
+    };
+    // tao synthesizes a mouseup after the native move loop ends; blur and
+    // pointercancel are safety nets so acrylic can't stay stuck off
+    window.addEventListener("mouseup", end);
+    window.addEventListener("pointercancel", end);
+    window.addEventListener("blur", end);
+    return () => {
+      window.removeEventListener("mouseup", end);
+      window.removeEventListener("pointercancel", end);
+      window.removeEventListener("blur", end);
+    };
+  }, []);
+
   return (
     <header
       className="titlebar"
@@ -40,7 +62,10 @@ export default function Titlebar({
         if (e.button !== 0) return;
         // buttons handle their own clicks; only bare titlebar drags the window
         if ((e.target as HTMLElement).closest("button")) return;
-        getCurrentWindow().startDragging();
+        document.documentElement.classList.add("dragging");
+        invoke("set_dragging", { dragging: true })
+          .catch(() => {})
+          .finally(() => getCurrentWindow().startDragging());
       }}
     >
       <div className="brand">

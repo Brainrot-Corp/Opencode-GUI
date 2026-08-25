@@ -359,6 +359,27 @@ export default function VoiceSettings({
 
       <div className="setting-row">
         <div className="setting-info">
+          <i className="fa-solid fa-bug setting-icon" />
+          <div>
+            <div className="setting-name">Debug transcript</div>
+            <div className="setting-desc">
+              Show every utterance as heard, the sanitized router input, and the
+              action it matched (or why it became dictation)
+            </div>
+          </div>
+        </div>
+        <button
+          type="button"
+          className={`toggle${settings.voice.debug ? " on" : ""}`}
+          aria-pressed={settings.voice.debug}
+          onClick={() => update({ voice: { ...settings.voice, debug: !settings.voice.debug } })}
+        >
+          <span className="knob" />
+        </button>
+      </div>
+
+      <div className="setting-row">
+        <div className="setting-info">
           <i className="fa-solid fa-volume-high setting-icon" />
           <div>
             <div className="setting-name">Speak replies</div>

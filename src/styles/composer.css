@@ -573,3 +573,16 @@
     inset 0 0 40px -18px var(--accent-glow),
     inset 0 1px 0 rgba(255, 255, 255, 0.05);
 }
+
+/* debug transcript mode (Settings › Voice) — utterance audit trail */
+.voice-debug {
+  margin: 0 0 6px;
+  padding: 8px 10px;
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--text-dim);
+  background: var(--inset-bg);
+  border: 1px solid var(--line);
+  overflow-wrap: anywhere;
+}

@@ -136,6 +136,13 @@ button:focus-visible,
   }
 }
 
+/* Win10 fallback / mid-drag: the OS acrylic is off (it lags drags), so the
+   painted base goes fully opaque */
+html.no-glass body,
+html.dragging body {
+  background-color: rgb(var(--base-rgb));
+}
+
 /* theme palettes moved to src/lib/themes.ts - loaded from
    ~/.config/.opencode-gui/themes.json (hot-reloaded; :root above is the fallback) */
 

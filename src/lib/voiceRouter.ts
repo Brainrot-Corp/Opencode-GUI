@@ -167,13 +167,20 @@ function matchChain(t: string, ctx: VoiceCtx): VoiceAct | null {
   return null;
 }
 
-export function routeVoice(text: string, ctx: VoiceCtx): VoiceAct | null {
+// the exact text the matcher chain sees — post punctuation-strip, number
+// fold and lexicon expansion. Exposed for the debug-transcript mode so the
+// UI can show why a phrase did or didn't become a command.
+export function routerInput(text: string): string {
   let t = normalize(text);
-  if (!t) return null;
   // "one hundred percent" → "hundred percent" so the word map hits
   t = t.replace(/\b(?:one|a)\s+hundred\b/g, "hundred");
   // lexicon pass — natural / FR / ES phrasing → canonical English words
-  t = expandVoice(t);
+  return expandVoice(t);
+}
+
+export function routeVoice(text: string, ctx: VoiceCtx): VoiceAct | null {
+  const t = routerInput(text);
+  if (!t) return null;
 
   const direct = matchChain(t, ctx);
   if (direct) return direct;
