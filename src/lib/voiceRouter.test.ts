@@ -143,6 +143,13 @@ eq(
   "comma after send still captures fill-and-send",
 );
 eq(routeVoice("send, hello there", ctx), { type: "dictateSend", arg: "hello there" }, "direct comma form");
+eq(routeVoice("theme strawberry", ctx), { type: "theme", arg: "strawberry" }, "theme by name");
+eq(routeVoice("team strawberry", ctx), { type: "theme", arg: "strawberry" }, "accent 'team' folds to theme");
+eq(routeVoice("switch to the team latte", ctx), { type: "theme", arg: "latte" }, "accent fold mid-phrase");
+eq(routeVoice("our team is great", ctx), null, "'team' outside a theme phrase stays dictation");
+eq(routeVoice("teme strawberry", ctx), { type: "theme", arg: "strawberry" }, "one-edit typo on any vocab word");
+eq(routeVoice("pusg it", ctx), { type: "git", act: "push" }, "typo-corrected trigger fires");
+eq(routeVoice("run compac", ctx), { type: "runCmd", arg: "compact", rest: "" }, "typo in command name");
 eq(
   routeVoice("and it should not break anything. Like, if right now I want to turn the lights off and then speak after", ctx),
   { type: "embedded", act: { type: "light", sw: "off", name: "" }, fuzzy: true },

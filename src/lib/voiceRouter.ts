@@ -60,6 +60,21 @@ const COLORS =
   "|crimson|salmon|coral|gold|lime|olive|brown|teal|turquoise|aqua|azure|indigo|navy|lavender|maroon";
 const TONES = "warm|cool|neutral|daylight";
 
+// everything a spoken word may be typo-corrected against — the router's own
+// vocabulary plus whatever is live at call time (theme names, slash commands)
+function vocabOf(ctx: VoiceCtx): string[] {
+  return [
+    ...TRIGGERS.split("|"),
+    "light", "lights", "lamp", "lamps", "bulb", "bulbs",
+    "on", "off", "white", "warm", "cool", "neutral", "daylight",
+    "dark", "light", "mode", "theme", "session", "chat",
+    "sidebar", "settings", "agent", "debrief", "percent",
+    ...COLORS.split("|"),
+    ...ctx.themes,
+    ...ctx.commands.flatMap((c) => c.split("-")),
+  ];
+}
+
 function normalize(t: string): string {
   return t
     .toLowerCase()
@@ -159,10 +174,12 @@ function matchChain(t: string, ctx: VoiceCtx): VoiceAct | null {
   const appM = /^(?:launch|open|start)(?: (?:the|my))? (.+)$/.exec(t);
   if (appM) return { type: "launchApp", arg: appM[1] };
 
-  // "theme latte" / "switch to the strawberry theme"
-  const themeM = /^(?:theme|switch to(?: the)? theme) (\w+)$/.exec(t) ?? /^switch to (?:the )?(\w+)(?: theme)?$/.exec(t);
+  // "theme latte" / "switch to the strawberry theme". Accents turn
+  // "theme" into "team" — folded locally so dictation never sees the rewrite
+  const tt = t.replace(/\bteams?\b/g, "theme");
+  const themeM = /^(?:theme|switch to(?: the)? theme) (\w+)$/.exec(tt) ?? /^switch to (?:the )?(\w+)(?: theme)?$/.exec(tt);
   if (themeM && ctx.themes.includes(themeM[1])) return { type: "theme", arg: themeM[1] };
-  if (/^(dark|light) theme$/.test(t)) return { type: "mode", arg: t.split(" ")[0] as "dark" | "light" };
+  if (/^(dark|light) theme$/.test(tt)) return { type: "mode", arg: t.split(" ")[0] as "dark" | "light" };
 
   // "run <command>" — resolve against the live command registry; multi-word
   // names are tried longest-first so "run fix all" finds "fix-all"
@@ -198,12 +215,9 @@ export function routeVoice(text: string, ctx: VoiceCtx): VoiceAct | null {
   const direct = matchChain(t, ctx);
   if (direct) return direct;
 
-  // gentle typo retry: content words one letter off get corrected ("lihgts")
-  const fixed = fixTypos(t);
-  if (fixed !== t) {
-    const retry = matchChain(fixed, ctx);
-    if (retry) return retry;
-  }
+  // gentle typo retry: any word within one edit of known vocabulary gets
+  // corrected ("lihgts", "teme", "pusg")
+  const fixed = fixTypos(t, vocabOf(ctx));
 
   // mid-sentence scan on the corrected text: a command buried in conversation
   // ("yeah anyway turn the lights off") is matched on the tail after each
@@ -211,23 +225,33 @@ export function routeVoice(text: string, ctx: VoiceCtx): VoiceAct | null {
   // match to the END of the fragment — trailing clauses never fire.
   const re = new RegExp(`\\b(?:${TRIGGERS})\\b`, "g");
   let m: RegExpExecArray | null;
-  while ((m = re.exec(fixed))) {
-    const act = matchChain(fixed.slice(m.index), ctx);
-    if (act) return { type: "embedded", act };
-  }
+  const scan = (src: string): VoiceAct | null => {
+    re.lastIndex = 0;
+    while ((m = re.exec(src))) {
+      const act = matchChain(src.slice(m.index), ctx);
+      // a command heading the whole utterance is a plain direct hit;
+      // anything buried after other words needs spoken confirmation
+      if (act) return m.index === 0 ? act : { type: "embedded", act };
+    }
 
-  // fuzzy pass: a trailing clause after the command ("turn the lights off
-  // and then speak after") is tolerated — the head up to the first clause
-  // boundary must match exactly. Still wrapped for confirmation, and the
-  // fuzzy flag stops the recent-command streak from skipping the read-back,
-  // so a probable false positive can only ever fire after a spoken yes.
-  const CUT = /,|\b(?:and|then|but|because|if|when|or|so|that|i)\b/;
-  while ((m = re.exec(fixed))) {
-    const frag = fixed.slice(m.index);
-    const cm = CUT.exec(frag);
-    if (!cm || cm.index === 0) continue;
-    const act = matchChain(frag.slice(0, cm.index).trim(), ctx);
-    if (act) return { type: "embedded", act, fuzzy: true };
-  }
-  return null;
+    // fuzzy pass: a trailing clause after the command ("turn the lights off
+    // and then speak after") is tolerated — the head up to the first clause
+    // boundary must match exactly. Still wrapped for confirmation, and the
+    // fuzzy flag stops the recent-command streak from skipping the read-back,
+    // so a probable false positive can only ever fire after a spoken yes.
+    const CUT = /,|\b(?:and|then|but|because|if|when|or|so|that|i)\b/;
+    while ((m = re.exec(src))) {
+      const frag = src.slice(m.index);
+      const cm = CUT.exec(frag);
+      if (!cm || cm.index === 0) continue;
+      const act = matchChain(frag.slice(0, cm.index).trim(), ctx);
+      if (act) return { type: "embedded", act, fuzzy: true };
+    }
+    return null;
+  };
+
+  // the untouched text is scanned FIRST — corrections are only a fallback,
+  // so they can never leak into dictated payloads ("prompt write tests"
+  // keeps "write"; only utterances the raw text can't match get repaired)
+  return scan(t) ?? (fixed !== t ? scan(fixed) : null);
 }

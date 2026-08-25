@@ -110,8 +110,9 @@ export function expandVoice(t: string): string {
   return prev.replace(/\s+/g, " ").trim();
 }
 
-// gentle typo tolerance for whisper noise ("lihgts"): content words only —
-// never action verbs, so a misheard verb can't fire anything. One edit =
+// gentle typo tolerance for whisper noise ("lihgts"): any word within one
+// edit of known vocabulary — the static lexicon below plus whatever the
+// caller passes (triggers, colors, live theme/command names). One edit =
 // substitution OR adjacent transposition (naive Hamming calls a swap 2).
 const LEX = [
   "light", "lights", "lamp", "lamps", "bulb", "bulbs",
@@ -121,6 +122,7 @@ const LEX = [
   "crimson", "salmon", "coral", "gold", "lime", "olive",
   "brown", "teal", "turquoise", "aqua", "azure", "indigo",
   "navy", "lavender", "maroon",
+  "dark", "light", "theme",
 ];
 
 function oneEdit(a: string, b: string): boolean {
@@ -153,12 +155,13 @@ function oneEdit(a: string, b: string): boolean {
   return true;
 }
 
-export function fixTypos(t: string): string {
+export function fixTypos(t: string, extra: string[] = []): string {
+  const V = extra.length ? [...LEX, ...extra] : LEX;
   return t
     .split(" ")
     .map((w) => {
-      if (w.length < 4 || LEX.includes(w)) return w;
-      const hit = LEX.find((k) => oneEdit(w, k));
+      if (w.length < 4 || V.includes(w)) return w;
+      const hit = V.find((k) => oneEdit(w, k));
       return hit ?? w;
     })
     .join(" ");
