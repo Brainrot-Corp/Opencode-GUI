@@ -42,11 +42,18 @@ function wrap(obj: any): any {
   });
 }
 
+// a rejected invoke must not stay cached, or silent-retry boot would spin
+// on the same failure forever
 export function opencode() {
-  cached ??= invoke<string>("server_url").then((base) => ({
-    base,
-    client: wrap(createOpencodeClient({ baseUrl: base })),
-  }));
+  cached ??= invoke<string>("server_url")
+    .then((base) => ({
+      base,
+      client: wrap(createOpencodeClient({ baseUrl: base })),
+    }))
+    .catch((e) => {
+      cached = null;
+      throw e;
+    });
   return cached;
 }
 
