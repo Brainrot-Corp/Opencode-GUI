@@ -54,6 +54,32 @@ eq(routeVoice("Prompt the quick brown fox.", ctx), { type: "dictate", arg: "the 
 eq(routeVoice("send hello world", ctx), { type: "dictateSend", arg: "hello world" }, "send prefix fills + sends");
 eq(routeVoice("send it", ctx), { type: "send" }, "bare send still wins over prefix");
 eq(routeVoice("send the prompt", ctx), { type: "send" }, "bare send-the-prompt form kept");
+
+// embedded scan — commands buried in conversation come back wrapped for
+// spoken confirmation; direct hits stay unwrapped
+eq(
+  routeVoice("yeah anyway turn the lights off", ctx),
+  { type: "embedded", act: { type: "light", sw: "off", name: "" } },
+  "embedded light command",
+);
+eq(
+  routeVoice("and then send hello world", ctx),
+  { type: "embedded", act: { type: "dictateSend", arg: "hello world" } },
+  "embedded send prefix",
+);
+eq(
+  routeVoice("oh and prompt write tests please", ctx),
+  { type: "embedded", act: { type: "dictate", arg: "write tests please" } },
+  "embedded prompt prefix",
+);
+eq(
+  routeVoice("stop the music and turn the lights off", ctx),
+  { type: "embedded", act: { type: "light", sw: "off", name: "" } },
+  "earliest trigger whose tail fails is skipped",
+);
+eq(routeVoice("turn the lights off when you leave", ctx), null, "conditional tail rejected");
+eq(routeVoice("we turned the lights off yesterday", ctx), null, "past tense is not a trigger");
+eq(routeVoice("turn the bedroom lamp off.", ctx), { type: "light", sw: "off", name: "bedroom" }, "direct hit stays unwrapped");
 eq(routeVoice("", ctx), null, "empty");
 eq(routeVoice("please refactor src/main.rs carefully", ctx), null, "prompt-looking text stays freeform");
 

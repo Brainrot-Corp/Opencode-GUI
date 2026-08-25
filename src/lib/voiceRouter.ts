@@ -24,7 +24,9 @@ export type VoiceAct =
   | { type: "lightTemp"; tone: string; name: string }
   | { type: "lightColor"; color: string; name: string }
   | { type: "dictate"; arg: string }
-  | { type: "dictateSend"; arg: string };
+  | { type: "dictateSend"; arg: string }
+  // command found buried mid-sentence — needs spoken confirmation before exec
+  | { type: "embedded"; act: VoiceAct };
 
 export type VoiceCtx = {
   themes: string[];
@@ -61,12 +63,15 @@ function normalize(t: string): string {
     .trim();
 }
 
-export function routeVoice(text: string, ctx: VoiceCtx): VoiceAct | null {
-  let t = normalize(text);
-  if (!t) return null;
-  // "one hundred percent" → "hundred percent" so the word map hits
-  t = t.replace(/\b(?:one|a)\s+hundred\b/g, "hundred");
+// verbs that can head a command — scanned for mid-sentence ("yeah anyway
+// turn the lights off"). Curated: every hit becomes a spoken confirmation,
+// but chatty verbs still waste a question, so nothing vague is listed.
+const TRIGGERS =
+  "turn|switch|shut|dim|brighten|set|make|change|color|launch|start|open|show|hide|close|quit|minimize|kill|run|execute|slash|theme|cycle|next|new|stop|abort|cancel|clear|erase|send|submit|prompt";
 
+// one full pass of the matcher chain — routeVoice runs this on the whole
+// transcript first, then on trigger-word tails when scanning
+function matchChain(t: string, ctx: VoiceCtx): VoiceAct | null {
   if (/^(new|start)( a)?( new)? (session|chat)$/.test(t)) return { type: "newSession" };
   if (/^(stop|abort|cancel)( that| it| generation| running)?$/.test(t)) return { type: "abort" };
   if (/^(dark|light)( mode)?$/.test(t)) return { type: "mode", arg: t.startsWith("dark") ? "dark" : "light" };
@@ -92,10 +97,11 @@ export function routeVoice(text: string, ctx: VoiceCtx): VoiceAct | null {
   if (/^(can|do)( you)? hear me$/.test(t)) return { type: "hearCheck" };
 
   // light intents — before the app-launcher catch-all so device names win.
-  // name group = words between the verb and the device word ("desk lamp")
-  const swA = new RegExp(`^(?:turn |switch |shut )?(?:the |my )?([a-z ]+ )?${DEV} (on|off)$`).exec(t);
+  // name group = up to 3 short words between the verb and the device word
+  // ("desk lamp") — capped so long chatter can't be swallowed as a name
+  const swA = new RegExp(`^(?:turn |switch |shut )?(?:the |my )?((?:[a-z]{1,12} ){0,3})?${DEV} (on|off)$`).exec(t);
   if (swA) return { type: "light", sw: swA[2] as "on" | "off", name: (swA[1] ?? "").trim() };
-  const swB = /^(?:turn|switch|shut) (on|off)(?: the| my)?(?: ([a-z ]+))? (?:lights?|lamps?|bulbs?)$/.exec(t);
+  const swB = /^(?:turn|switch|shut) (on|off)(?: the| my)?(?: ((?:[a-z]{1,12} ){0,3}[a-z]{1,12}))? (?:lights?|lamps?|bulbs?)$/.exec(t);
   if (swB) return { type: "light", sw: swB[1] as "on" | "off", name: (swB[2] ?? "").trim() };
 
   const num = "([\\w]+)";
@@ -149,6 +155,28 @@ export function routeVoice(text: string, ctx: VoiceCtx): VoiceAct | null {
           return { type: "runCmd", arg: cand, rest: words.slice(i).join(" ") };
       }
     }
+  }
+  return null;
+}
+
+export function routeVoice(text: string, ctx: VoiceCtx): VoiceAct | null {
+  let t = normalize(text);
+  if (!t) return null;
+  // "one hundred percent" → "hundred percent" so the word map hits
+  t = t.replace(/\b(?:one|a)\s+hundred\b/g, "hundred");
+
+  const direct = matchChain(t, ctx);
+  if (direct) return direct;
+
+  // mid-sentence scan: a command buried in conversation ("yeah anyway turn
+  // the lights off") is matched on the tail after each trigger word and comes
+  // back wrapped for spoken confirmation. Suffix must match to the END of the
+  // fragment — trailing clauses ("…off when you leave") never fire.
+  const re = new RegExp(`\\b(?:${TRIGGERS})\\b`, "g");
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(t))) {
+    const act = matchChain(t.slice(m.index), ctx);
+    if (act) return { type: "embedded", act };
   }
   return null;
 }

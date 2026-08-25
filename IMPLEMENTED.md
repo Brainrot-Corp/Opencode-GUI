@@ -369,6 +369,27 @@ User request: mic listens for commands; unprefixed dictation must not populate t
 
 Router checks now 61; build green.
 
+### Mid-sentence command scan + spoken confirmation ✅ (2026-08-25)
+
+User scenario: chatting with friends, then "turn the lights off" — never picked up, because every
+router pattern is full-string anchored and unprefixed speech is now discarded. Fix (user chose
+in-transcript scanning over a wake word, with spoken confirmation for safety):
+
+- **voiceRouter**: matcher chain extracted into `matchChain()`; `routeVoice` tries the whole
+  transcript first (direct hits stay instant), then scans trigger verbs (`TRIGGERS` list) and
+  re-runs the chain on each tail — first fully-matching suffix wins, returned as
+  `{type:"embedded", act}`. Sentence-final rule intact: trailing clauses never fire; past tense
+  ("turned") isn't a trigger.
+- Light-intent name groups capped at 3 words so chatter can't be swallowed as a device name
+  (this is what makes "stop the music **and turn the lights off**" resolve correctly instead of
+  matching garbage on the first trigger).
+- **ChatPage**: dispatch switch extracted to `execAct`; embedded acts are read back via
+  `describeAct()` ("Turn the lights off — say yes or no.") and held in a pending ref: yes-words
+  execute, no-words cancel, any other speech or 15s expiry cancels silently. Direct commands
+  bypass confirmation.
+
+Router checks 68; build green. Live GUI test pending.
+
 ## Notes / Decisions log
 
 - 2026-08-23: Project started. Plan finalized in PLAN.md (Windows only, Tauri v2, React+TS, fresh UI, minimal scope).

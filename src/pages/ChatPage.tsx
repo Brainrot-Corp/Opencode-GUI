@@ -16,7 +16,7 @@ import { useOpencode } from "../hooks/useOpencode";
 import { useSettings } from "../hooks/useSettings";
 import { useGlobalShortcuts } from "../hooks/useGlobalShortcuts";
 import { useVoice } from "../hooks/useVoice";
-import { routeVoice } from "../lib/voiceRouter";
+import { routeVoice, type VoiceAct } from "../lib/voiceRouter";
 import { runLightAct, type LightAct } from "../lib/tuya";
 import { pickWorkspace } from "../lib/workspace";
 import { playSound } from "../lib/sounds";
@@ -83,17 +83,65 @@ export default function ChatPage() {
     activeModes,
   });
 
-  // voice transcripts: recognized phrases drive the UI; everything else is
-  // ignored unless it starts with "prompt" (fill composer) or "send"
-  // (fill + submit)
-  const handleVoiceTranscript = useCallback(
-    (text: string) => {
-      const act = routeVoice(text, {
-        themes: themes.map((t) => t.id),
-        commands: oc.cmdList.map((c) => c.name),
-      });
-      if (!act) return;
-      playSound("click");
+  // spoken rendering of a voice act — used to read embedded commands back
+  // before they run
+  const describeAct = useCallback((a: VoiceAct): string => {
+    switch (a.type) {
+      case "light":
+        return `Turn ${a.name || "the lights"} ${a.sw}`;
+      case "lightBright":
+        return `Set ${a.name || "the lights"} to ${a.pct}% brightness`;
+      case "lightTemp":
+        return `Set ${a.name || "the lights"} to ${a.tone} white`;
+      case "lightColor":
+        return `Make ${a.name || "the lights"} ${a.color}`;
+      case "launchApp":
+        return `Open ${a.arg}`;
+      case "closeApp":
+        return `Close ${a.arg}`;
+      case "minimizeApp":
+        return `Minimize ${a.arg}`;
+      case "killApp":
+        return `Force-close ${a.arg}`;
+      case "newSession":
+        return "Start a new session";
+      case "abort":
+        return "Stop the current generation";
+      case "theme":
+        return `Switch to the ${a.arg} theme`;
+      case "mode":
+        return `${a.arg === "dark" ? "Dark" : "Light"} mode`;
+      case "settings":
+        return a.open ? "Open settings" : "Close settings";
+      case "sidebar":
+        return `${a.open === true ? "Show" : a.open === false ? "Hide" : "Toggle"} the sidebar`;
+      case "cycleAgent":
+        return "Cycle agent";
+      case "runCmd":
+        return `Run /${a.arg}`;
+      case "send":
+        return "Send the draft";
+      case "clear":
+        return "Clear the composer";
+      case "quiet":
+      case "shut":
+        return "Stop speaking";
+      case "debrief":
+        return "Run a debrief";
+      case "hearCheck":
+        return "Mic check";
+      case "dictate":
+        return `Add "${a.arg}" to the composer`;
+      case "dictateSend":
+        return `Send "${a.arg}"`;
+      default:
+        return "";
+    }
+  }, []);
+
+  // executes a fully-routed voice act (direct hits and confirmed embeddeds)
+  const execAct = useCallback(
+    (act: VoiceAct) => {
       switch (act.type) {
         case "newSession":
           void oc.newSession();
@@ -177,6 +225,47 @@ export default function ChatPage() {
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [themes, oc.cmdList, settings.tuya],
+  );
+
+  // embedded-command confirmation: a command found buried in conversation is
+  // read back and waits for a spoken yes/no. Any other speech (or 15s)
+  // cancels — chatter can't leave stale traps.
+  const pendingRef = useRef<{ act: VoiceAct; until: number } | null>(null);
+  const handleVoiceTranscript = useCallback(
+    (text: string) => {
+      const p = pendingRef.current;
+      if (p && Date.now() < p.until) {
+        const t0 = text.toLowerCase().replace(/[.,!?;:]+$/, "").trim();
+        if (/^(yes|yeah|yep|yup|sure|do it|confirm|go ahead)\b/.test(t0)) {
+          pendingRef.current = null;
+          playSound("click");
+          announce("On it.");
+          execAct(p.act);
+        } else if (/^(no|nope|nah|cancel|forget it)\b/.test(t0)) {
+          pendingRef.current = null;
+          announce("Cancelled.");
+        } else {
+          pendingRef.current = null; // unrelated chatter kills the question
+        }
+        return;
+      }
+      pendingRef.current = null;
+
+      const act = routeVoice(text, {
+        themes: themes.map((t) => t.id),
+        commands: oc.cmdList.map((c) => c.name),
+      });
+      if (!act) return;
+      playSound("click");
+      if (act.type === "embedded") {
+        pendingRef.current = { act: act.act, until: Date.now() + 15000 };
+        announce(`${describeAct(act.act)} — say yes or no.`);
+        return;
+      }
+      execAct(act);
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [themes, oc.cmdList, execAct, describeAct],
   );
 
   const voice = useVoice(
