@@ -61,7 +61,6 @@ export function useVoice(
   onResult: (text: string) => void,
   model: string,
   handsFree = false,
-  pauseMs = SILENCE_MS,
   sens = 0.7,
 ) {
   const [phase, setPhase] = useState<VoicePhase>("idle");
@@ -70,8 +69,8 @@ export function useVoice(
   const [error, setError] = useState("");
   // live VAD tuning — read per audio chunk so slider changes apply instantly
   // without restarting the stream
-  const vadRef = useRef({ pauseMs, thresh: THRESH_FOR(sens) });
-  vadRef.current = { pauseMs, thresh: THRESH_FOR(sens) };
+  const vadRef = useRef({ pauseMs: SILENCE_MS, thresh: THRESH_FOR(sens) });
+  vadRef.current = { pauseMs: SILENCE_MS, thresh: THRESH_FOR(sens) };
   // recording machinery lives in refs so start/stop closures stay stable
   const ctxRef = useRef<AudioContext | null>(null);
   const streamRef = useRef<MediaStream | null>(null);

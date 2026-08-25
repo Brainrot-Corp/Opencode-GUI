@@ -390,7 +390,8 @@ in-transcript scanning over a wake word, with spoken confirmation for safety):
   embeddeds within 25s of the last exec run instantly (no read-back), so an active voice session
   doesn't re-confirm every command.
 
-Router checks 68; build green. Live GUI test pending.
+Router checks 68; build green. Live GUI test pending. Pause-before-transcription slider removed
+afterwards (user call) — VAD utterance close is the fixed SILENCE_MS (1.5s) again.
 
 ## Notes / Decisions log
 

@@ -331,30 +331,6 @@ export default function VoiceSettings({
         <>
           <div className="setting-row">
             <div className="setting-info">
-              <i className="fa-solid fa-hourglass-half setting-icon" />
-              <div>
-                <div className="setting-name">Pause before transcription</div>
-                <div className="setting-desc">Silence length that ends a spoken phrase</div>
-              </div>
-            </div>
-            <div className="color-controls">
-              <input
-                type="range"
-                min={400}
-                max={4000}
-                step={100}
-                value={settings.voice.pauseMs}
-                aria-label="Pause before transcription"
-                onChange={(e) =>
-                  update({ voice: { ...settings.voice, pauseMs: Number(e.target.value) } })
-                }
-              />
-              <span className="alpha-num">{(settings.voice.pauseMs / 1000).toFixed(1)}s</span>
-            </div>
-          </div>
-
-          <div className="setting-row">
-            <div className="setting-info">
               <i className="fa-solid fa-wave-square setting-icon" />
               <div>
                 <div className="setting-name">Mic sensitivity</div>

@@ -280,7 +280,6 @@ export default function ChatPage() {
     handleVoiceTranscript,
     settings.voice.model,
     settings.voice.handsFree,
-    settings.voice.pauseMs,
     settings.voice.sens,
   );
 
