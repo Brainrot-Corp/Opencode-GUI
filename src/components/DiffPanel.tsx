@@ -49,7 +49,7 @@ export default function DiffPanel({
   }, [sessionId]);
 
   return (
-    <Dialog title="Changes in this session" onClose={onClose} wide>
+    <Dialog title="Changes in this session" onClose={onClose} stage>
       {error && <p className="empty">{error}</p>}
       {!error && diffs === null && <p className="empty">Loading…</p>}
       {diffs?.length === 0 && (

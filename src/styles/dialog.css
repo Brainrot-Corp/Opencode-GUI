@@ -54,6 +54,11 @@
 .dlg-panel.dlg-wide {
   width: min(720px, calc(100% - 48px));
 }
+/* large centered stage for content-heavy views (git diff viewer) */
+.dlg-panel.dlg-stage {
+  width: min(1080px, calc(100% - 96px));
+  height: min(85vh, 920px);
+}
 
 .dlg-head {
   display: flex;

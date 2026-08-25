@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { getDirectory, opencode, tempSession, dropSession, withDeadline } from "../api";
 import { splitModel } from "../lib/models";
@@ -505,15 +506,25 @@ export default function GitPanel() {
         </div>
       )}
 
-      {diff && (
-        <Dialog title={`${base(diff.path)} — ${diff.staged ? "staged" : "working tree"} diff`} onClose={() => setDiff(null)} wide>
-          {diff.patch.trim() ? (
-            <DiffLines patch={diff.patch} lang={extLang(diff.path)} />
-          ) : (
-            <p className="empty">No diff — new file or no unstaged edits.</p>
-          )}
-        </Dialog>
-      )}
+      {/* portal: the sidebar's backdrop-filter makes it the containing block
+          for position:fixed — without this the dialog centers inside the
+          sidebar instead of the window */}
+      {diff &&
+        createPortal(
+          <Dialog
+            title={`${base(diff.path)} — ${diff.staged ? "staged" : "working tree"} diff`}
+            onClose={() => setDiff(null)}
+            top
+            wide
+          >
+            {diff.patch.trim() ? (
+              <DiffLines patch={diff.patch} lang={extLang(diff.path)} />
+            ) : (
+              <p className="empty">No diff — new file or no unstaged edits.</p>
+            )}
+          </Dialog>,
+          document.body,
+        )}
     </div>
   );
 }

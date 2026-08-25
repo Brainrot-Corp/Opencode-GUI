@@ -7,13 +7,15 @@ export default function Dialog({
   onClose,
   wide,
   top,
+  stage,
   children,
 }: {
   title: string;
   onClose: () => void;
   wide?: boolean;
-  // layer above the settings drawer (drawer z-65, dialogs default z-30)
   top?: boolean;
+  // extra-large centered variant for content-heavy views
+  stage?: boolean;
   children: React.ReactNode;
 }) {
   useEffect(() => {
@@ -25,7 +27,7 @@ export default function Dialog({
   return (
     <div className={`dlg-scrim${top ? " dlg-top" : ""}`} onClick={onClose}>
       <div
-        className={`dlg-panel${wide ? " dlg-wide" : ""}`}
+        className={`dlg-panel${wide ? " dlg-wide" : ""}${stage ? " dlg-stage" : ""}`}
         onClick={(e) => e.stopPropagation()}
         role="dialog"
       >
