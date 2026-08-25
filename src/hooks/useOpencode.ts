@@ -288,57 +288,66 @@ export function useOpencode() {
     };
 
     (async () => {
-      // the UI renders immediately on skeletons; poll silently until the
-      // sidecar answers, then finish boot — never an error screen at startup
+      // the UI renders immediately on skeletons. Phase 1: poll silently
+      // until the sidecar actually answers a real request — ONLY connection
+      // failures retry here, nothing else can strand boot in skeletons.
+      let list: Session[] = [];
       while (!disposed) {
         try {
-          const { base, client } = await opencode();
-
-          const dir = getDirectory();
-          es = new EventSource(
-            dir ? `${base}/event?directory=${encodeURIComponent(dir)}` : `${base}/event`,
-          );
-          es.onopen = () => setLive(true);
-          es.onerror = () => setLive(false);
-          es.onmessage = (ev) => {
-            try {
-              onEvent(JSON.parse(ev.data));
-            } catch {
-              // malformed event — ignore
-            }
-          };
-          // onerror: EventSource reconnects automatically
-
-          const list: Session[] = await refreshSessions();
-          // reopen the last-used session if it still exists, else the newest
-          const lastId = localStorage.getItem(LAST_KEY);
-          const target = list.find((s) => s.id === lastId) ?? list[0];
-          if (target && !disposed) await openSession(target.id);
-
-          if (!disposed) await prov.loadProviders(client);
-
-          // command registry is optional chrome — never block boot on it
-          refreshCommands().catch(() => {});
-          refreshAgents().catch(() => {});
-
-          // asks that fired while disconnected (app start / reload) — surface
-          // any belonging to the reopened session instead of stranding the turn
-          serverFetch("/question")
-            .then((r) => r.json())
-            .then((list: QuestionAsk[]) => {
-              if (disposed) return;
-              for (const q of list ?? []) questionsRef.current.set(q.sessionID, q);
-              showQuestion(activeRef.current);
-            })
-            .catch(() => {});
-
-          if (!disposed) setBooting(false);
-          return;
+          list = await refreshSessions();
+          break;
         } catch {
-          es?.close();
-          es = null;
+          await new Promise((r) => setTimeout(r, 600));
         }
-        await new Promise((r) => setTimeout(r, 600));
+      }
+      if (disposed) return;
+
+      // phase 2: connected for good — finish boot best-effort. A flaky
+      // step (session reopen, provider list) degrades that piece of UI but
+      // must never wedge the whole app back into skeletons.
+      try {
+        const { base, client } = await opencode();
+
+        const dir = getDirectory();
+        es = new EventSource(
+          dir ? `${base}/event?directory=${encodeURIComponent(dir)}` : `${base}/event`,
+        );
+        es.onopen = () => setLive(true);
+        es.onerror = () => setLive(false);
+        es.onmessage = (ev) => {
+          try {
+            onEvent(JSON.parse(ev.data));
+          } catch {
+            // malformed event — ignore
+          }
+        };
+        // onerror: EventSource reconnects automatically
+
+        // reopen the last-used session if it still exists, else the newest
+        const lastId = localStorage.getItem(LAST_KEY);
+        const target = list.find((s) => s.id === lastId) ?? list[0];
+        if (target && !disposed) await openSession(target.id).catch(() => {});
+
+        if (!disposed) await prov.loadProviders(client).catch(() => {});
+      } catch (e) {
+        if (!disposed) setError(`Connection error: ${e}`);
+      } finally {
+        // command registry is optional chrome — never block boot on it
+        refreshCommands().catch(() => {});
+        refreshAgents().catch(() => {});
+
+        // asks that fired while disconnected (app start / reload) — surface
+        // any belonging to the reopened session instead of stranding the turn
+        serverFetch("/question")
+          .then((r) => r.json())
+          .then((list: QuestionAsk[]) => {
+            if (disposed) return;
+            for (const q of list ?? []) questionsRef.current.set(q.sessionID, q);
+            showQuestion(activeRef.current);
+          })
+          .catch(() => {});
+
+        if (!disposed) setBooting(false);
       }
     })();
 
