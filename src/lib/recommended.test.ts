@@ -1,5 +1,5 @@
 // runnable self-check: node src/lib/recommended.test.ts
-import { parseReco } from "./recommended.ts";
+import { parseReco, recoModelOk } from "./recommended.ts";
 
 let n = 0;
 function eq(actual: unknown, expected: unknown, label: string) {
@@ -60,3 +60,17 @@ eq(
 );
 
 console.log(`recommended: ${n} checks passed`);
+
+// suggested-model guard: must exist in the live provider list AND be free
+const PROVS = [
+  { id: "opencode", models: [{ id: "muse-spark-1.2-contributor-free" }, { id: "gpt-5" }] },
+  { id: "openrouter", models: [{ id: "some/model" }] },
+];
+eq(recoModelOk("opencode/muse-spark-1.2-contributor-free", PROVS), true, "free + listed → ok");
+eq(recoModelOk("opencode/muse-spark-1.2", PROVS), false, "no -free suffix → reject");
+eq(recoModelOk("opencode/gpt-5", PROVS), false, "listed but paid → reject");
+eq(recoModelOk("nope/muse-spark-1.2-contributor-free", PROVS), false, "unknown provider → reject");
+eq(recoModelOk(undefined, PROVS), false, "missing model → reject");
+eq(recoModelOk("opencode/muse-spark-1.2-contributor-free", []), false, "providers not loaded → reject");
+
+console.log(`recommended+guard: ${6} checks passed`);

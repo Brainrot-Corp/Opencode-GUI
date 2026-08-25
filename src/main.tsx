@@ -14,6 +14,19 @@ invoke<boolean>("os_glass")
   })
   .catch(() => {});
 
+// TEMP crash diagnostics — every JS error lands in %TEMP%\oc-gui-debug.log
+const logErr = (kind: string, e: unknown) => {
+  const msg = e instanceof Error ? `${e.stack ?? e.message}` : String(e);
+  invoke("debug_log", { msg: `[${kind}] ${msg}` }).catch(() => {});
+};
+window.addEventListener("error", (e) => logErr("error", e.error ?? e.message));
+window.addEventListener("unhandledrejection", (e) => logErr("promise", e.reason));
+const origErr = console.error;
+console.error = (...a) => {
+  logErr("console.error", a.map((x) => (x instanceof Error ? x.stack : String(x))).join(" | "));
+  origErr(...a);
+};
+
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
     <App />

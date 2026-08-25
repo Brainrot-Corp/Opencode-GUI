@@ -78,6 +78,21 @@ export function parseReco(body: string): Reco | null {
 const CACHE_KEY = "oc.reco";
 const CACHE_TTL = 7 * 24 * 3600 * 1000;
 
+// the suggested secondary model must exist in the live provider list AND be
+// on a free tier — zen's free models all carry a "-free" suffix, the only
+// pricing signal the client ever sees
+export function recoModelOk(
+  model: string | undefined,
+  providers: { id: string; models: { id: string }[] }[],
+): boolean {
+  if (!model || !model.includes("/")) return false;
+  const slash = model.indexOf("/");
+  const pid = model.slice(0, slash);
+  const mid = model.slice(slash + 1);
+  if (!pid || !mid.endsWith("-free")) return false;
+  return providers.some((g) => g.id === pid && g.models.some((m) => m.id === mid));
+}
+
 // cached spec; falls back to built-ins when offline or RECO_URL is unset
 export async function loadRecommended(force = false): Promise<Reco> {
   if (!force) {

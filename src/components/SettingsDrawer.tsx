@@ -67,6 +67,22 @@ export default function SettingsDrawer({
   const [voiceOpen, setVoiceOpen] = useState(false);
   // first-launch setup can be replayed from here any time
   const [wizOpen, setWizOpen] = useState(false);
+  // clean state: two-click confirm, then wipe voice installs + every oc.*
+  // preference and reload into the first-launch wizard
+  const [confirmClean, setConfirmClean] = useState(false);
+
+  async function cleanState() {
+    if (!confirmClean) {
+      setConfirmClean(true);
+      setTimeout(() => setConfirmClean(false), 4000);
+      return;
+    }
+    await invoke("voice_remove_all").catch(() => {});
+    for (const k of Object.keys(localStorage)) {
+      if (k.startsWith("oc.")) localStorage.removeItem(k);
+    }
+    window.location.reload();
+  }
 
   useEffect(() => {
     if (!open) return;
@@ -175,12 +191,15 @@ export default function SettingsDrawer({
           <div className="setting-row git-model-row secondary-model-row">
             <div className="setting-info">
               <i className="fa-solid fa-layer-group setting-icon" />
-              <div>
-                <div className="setting-name">Secondary model</div>
-                <div className="setting-desc">
-                  Cheap model for secondary tasks — commit messages, debriefs &amp; long-answer summaries (over 30 words)
+                <div>
+                  <div className="setting-name">Secondary model</div>
+                  <div className="setting-desc">
+                    Cheap model for secondary tasks — commit messages, debriefs &amp; long-answer summaries (over 30 words)
+                    {settings.secondaryModel && (
+                      <span className="mono-hint"> · {settings.secondaryModel}</span>
+                    )}
+                  </div>
                 </div>
-              </div>
             </div>
             <div className="color-controls">
               <ModelMenu
@@ -360,6 +379,27 @@ export default function SettingsDrawer({
           />
 
           <SoundsSettings sounds={settings.sounds} updateSounds={updateSounds} />
+          <div className="setting-row">
+            <div className="setting-info">
+              <i className="fa-solid fa-broom setting-icon" />
+              <div>
+                <div className="setting-name">Clean state</div>
+                <div className="setting-desc">
+                  Uninstall all voice engines &amp; models and reset every
+                  preference — next launch runs the setup again
+                </div>
+              </div>
+            </div>
+            <button
+              type="button"
+              className={`reset-btn danger-btn${confirmClean ? " armed" : ""}`}
+              onClick={() => void cleanState()}
+            >
+              <i className={`fa-solid ${confirmClean ? "fa-triangle-exclamation" : "fa-broom"}`} />
+              {confirmClean ? "Really? Click again" : "Reset"}
+            </button>
+          </div>
+
         </div>
 
         <div className="settings-foot">

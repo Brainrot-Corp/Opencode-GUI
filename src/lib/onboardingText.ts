@@ -34,6 +34,8 @@ export type ObCopy = {
   recoBusy: string;
   recoDone: string;
   recoNote: string;
+  recoModel: string;
+  badRecoModel: string;
   back: string;
   next: string;
   finish: string;
@@ -77,6 +79,9 @@ const en: ObCopy = {
   recoBusy: "Downloading… keep this window open",
   recoDone: "All set — try saying something!",
   recoNote: "Recommended by the developers",
+  recoModel: "Use recommended:",
+  badRecoModel:
+    "The recommended model isn't available — the setup recommendation hasn't been updated. Please pick a model manually.",
   back: "Back",
   next: "Next",
   finish: "Finish",
@@ -123,6 +128,9 @@ const de: ObCopy = {
   recoBusy: "Wird geladen… Fenster offen lassen",
   recoDone: "Alles bereit — sag einfach etwas!",
   recoNote: "Von den Entwicklern empfohlen",
+  recoModel: "Empfohlenes Modell verwenden:",
+  badRecoModel:
+    "Das empfohlene Modell ist nicht verfügbar — die Empfehlung wurde nicht aktualisiert. Bitte wähle manuell.",
   back: "Zurück",
   next: "Weiter",
   finish: "Fertig",
@@ -169,6 +177,9 @@ const fr: ObCopy = {
   recoBusy: "Téléchargement… laissez cette fenêtre ouverte",
   recoDone: "Tout est prêt — essayez de parler !",
   recoNote: "Recommandé par les développeurs",
+  recoModel: "Utiliser le modèle recommandé :",
+  badRecoModel:
+    "Le modèle recommandé n'est pas disponible — la recommandation n'a pas été mise à jour. Choisissez-en un manuellement.",
   back: "Retour",
   next: "Suivant",
   finish: "Terminer",
@@ -215,6 +226,9 @@ const es: ObCopy = {
   recoBusy: "Descargando… deja esta ventana abierta",
   recoDone: "¡Listo — prueba a decir algo!",
   recoNote: "Recomendado por los desarrolladores",
+  recoModel: "Usar el modelo recomendado:",
+  badRecoModel:
+    "El modelo recomendado no está disponible — la recomendación no se ha actualizado. Elige uno manualmente.",
   back: "Atrás",
   next: "Siguiente",
   finish: "Finalizar",
@@ -258,6 +272,8 @@ const zh: ObCopy = {
   recoBusy: "下载中… 请保持窗口打开",
   recoDone: "一切就绪 — 说句话试试！",
   recoNote: "开发者推荐",
+  recoModel: "使用推荐模型：",
+  badRecoModel: "推荐模型不可用——推荐尚未更新，请暂时手动选择。",
   back: "上一步",
   next: "下一步",
   finish: "完成",

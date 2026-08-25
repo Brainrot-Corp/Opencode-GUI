@@ -4,7 +4,7 @@ import type { AppSettings, Mode } from "../hooks/useSettings";
 import type { ThemeMeta } from "../lib/themes";
 import type { ProviderGroup } from "../types";
 import { useVoiceInstall } from "../hooks/useVoiceInstall";
-import { loadRecommended, DEFAULT_RECO, type Reco } from "../lib/recommended";
+import { loadRecommended, DEFAULT_RECO, recoModelOk, type Reco } from "../lib/recommended";
 import { obCopy } from "../lib/onboardingText";
 import { splitModel } from "../lib/models";
 import Dialog from "./Dialog";
@@ -41,15 +41,12 @@ export default function Onboarding({
   const [reco, setReco] = useState<Reco>(DEFAULT_RECO);
   const [recoState, setRecoState] = useState<"idle" | "busy" | "done">("idle");
   const [autoLaunch, setAutoLaunch] = useState<boolean | null>(null);
+  // set when the suggested secondary model fails the live availability check
+  const [recoModelErr, setRecoModelErr] = useState(false);
 
-  // remote recommendation spec — updates without shipping a build; a
-  // suggested secondary model only fills an empty slot
+  // remote recommendation spec — updates without shipping a build
   useEffect(() => {
-    loadRecommended().then((r) => {
-      setReco(r);
-      if (r.secondaryModel && !settings.secondaryModel)
-        update({ secondaryModel: r.secondaryModel });
-    });
+    loadRecommended().then(setReco);
     inst.refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -283,6 +280,27 @@ export default function Onboarding({
                 }}
               />
             </div>
+            {reco.secondaryModel && settings.secondaryModel !== reco.secondaryModel && (
+              <div className="ob-reco-hint">
+                <button
+                  type="button"
+                  className="linklike"
+                  disabled={!providers?.length}
+                  onClick={() => {
+                    if (!recoModelOk(reco.secondaryModel, providers ?? [])) {
+                      setRecoModelErr(true);
+                      return;
+                    }
+                    setRecoModelErr(false);
+                    update({ secondaryModel: reco.secondaryModel });
+                  }}
+                >
+                  <i className="fa-solid fa-wand-magic-sparkles" />
+                  {t.recoModel}: {gmPretty(reco.secondaryModel)}
+                </button>
+                {recoModelErr && <div className="voice-err">{t.badRecoModel}</div>}
+              </div>
+            )}
           </>
         )}
 

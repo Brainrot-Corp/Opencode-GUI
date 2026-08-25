@@ -10,7 +10,8 @@ use browser::{browser_back, browser_close, browser_forward, browser_navigate, br
     browser_reload, open_app, open_external, window_app};
 
 mod voice;
-use voice::{install_bin_finalize, install_model_finalize, install_piper_bin, install_tts_voice_part, tts_remove_voice, tts_speak, tts_status, voice_download, voice_remove_model,
+use voice::{install_bin_finalize, install_model_finalize, install_piper_bin, install_tts_voice_part, 
+tts_remove_voice, tts_speak, tts_status, voice_download, voice_remove_all, voice_remove_model,
     voice_status, voice_transcribe};
 
 mod git;
@@ -265,6 +266,17 @@ fn hide_main(app: &tauri::AppHandle) {
     let _ = app.emit("visibility://changed", false);
 }
 
+// TEMP diagnostics — appends frontend errors to %TEMP%\oc-gui-debug.log so
+// they survive a hard renderer crash (remove once the crash is fixed)
+#[tauri::command]
+fn debug_log(msg: String) {
+    use std::io::Write;
+    let path = std::env::temp_dir().join("oc-gui-debug.log");
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+        let _ = writeln!(f, "{}", msg);
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = tauri::Builder::default()
@@ -304,6 +316,7 @@ pub fn run() {
             install_piper_bin,
             install_tts_voice_part,
             tts_remove_voice,
+            voice_remove_all,
             git_status,
             git_stage,
             git_unstage,
@@ -313,6 +326,7 @@ pub fn run() {
             git_pull,
             git_diff,
             git_log,
+            debug_log,
         ]);
 
     // global hotkeys, work system-wide.

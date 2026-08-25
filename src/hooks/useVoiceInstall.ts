@@ -12,6 +12,13 @@ import {
 const SAMPLE_TEXT = "Hey, this is how I will read replies aloud.";
 
 type EngineState = { bin: boolean; items: string[] };
+// Rust returns {bin, models} from voice_status and {bin, voices} from
+// tts_status — normalize both into one shape here so callers never see it
+type RawStatus = { bin?: boolean; models?: string[]; voices?: string[] };
+
+function normStatus(s?: RawStatus | null): EngineState {
+  return { bin: !!s?.bin, items: [...(s?.models ?? s?.voices ?? [])] };
+}
 
 // shared download/install pipeline for whisper STT + piper TTS — used by both
 // the VoicesDialog and the first-launch Onboarding wizard. Public ops never
@@ -39,11 +46,11 @@ export function useVoiceInstall(
   }, []);
 
   async function refresh() {
-    invoke<EngineState>("voice_status")
-      .then(setVoice)
+    invoke<RawStatus>("voice_status")
+      .then((s) => setVoice(normStatus(s)))
       .catch(() => setVoice({ bin: false, items: [] }));
-    invoke<EngineState>("tts_status")
-      .then(setPiper)
+    invoke<RawStatus>("tts_status")
+      .then((s) => setPiper(normStatus(s)))
       .catch(() => setPiper({ bin: false, items: [] }));
   }
 

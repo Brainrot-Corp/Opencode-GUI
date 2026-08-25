@@ -57,7 +57,14 @@ pub fn voice_status() -> VoiceStatus {
     }
 }
 
-// downloads url to <downloads>/<key>.part using the OS curl.exe Ã¢â‚¬â€ the
+// wipes the entire voice store — whisper engine + models, downloads, piper
+// engine + voices. Used by the settings "Clean state" reset
+#[tauri::command]
+pub async fn voice_remove_all() -> Result<(), String> {
+    std::fs::remove_dir_all(whisper_dir()).map_err(|e| e.to_string())
+}
+
+// downloads url to <downloads>/<key>.part using the OS curl.exe — the
 // webview's fetch() can't follow GitHub/HF release redirects cross-origin
 // async so curl runs off the main thread Ã¢â‚¬â€ sync commands freeze the UI
 #[tauri::command]

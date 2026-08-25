@@ -157,6 +157,19 @@
   gap: 6px;
   padding: 6px;
 }
+
+/* "use recommended secondary model" line under the picker */
+.ob-reco-hint {
+  padding: 0 6px 4px;
+  text-align: center;
+}
+.ob-reco-hint .linklike {
+  font-size: 11.5px;
+}
+.ob-reco-hint i {
+  margin-right: 5px;
+  font-size: 9.5px;
+}
 .ob-reco-btn {
   color: var(--accent-bright);
   border-color: color-mix(in srgb, var(--accent) calc(0.45 * 100%), transparent);
