@@ -244,6 +244,20 @@ export default function ToolBlock({ part, collapsedDefault }: { part: Part; coll
   const todos = toolName === "todowrite" || toolName === "todo" ? todoSource(t) : [];
   const todoDone =
     todos.length > 0 ? todos.filter((td) => td.status === "completed").length : null;
+  // fast copy: output when there is one, otherwise the input (e.g. the bash
+  // command itself); falls back to nothing for empty blocks
+  const [copied, setCopied] = useState(false);
+  const copyText = out.trim() ? out : input.map(([k, v]) => `${k}: ${typeof v === "string" ? v : JSON.stringify(v)}`).join("\n");
+  const doCopy = () => {
+    if (!copyText) return;
+    navigator.clipboard.writeText(copyText).then(
+      () => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1200);
+      },
+      () => {},
+    );
+  };
 
   return (
     <div className={`tool-block ${status}${open ? " open" : ""}`}>
@@ -275,6 +289,20 @@ export default function ToolBlock({ part, collapsedDefault }: { part: Part; coll
           </span>
         )}
         {dur && <span className="tool-dur">{dur}</span>}
+        {copyText && (
+          <button
+            type="button"
+            className="tool-eye"
+            data-tip={copied ? "Copied" : "Copy"}
+            aria-label="Copy tool text"
+            onClick={(e) => {
+              e.stopPropagation();
+              doCopy();
+            }}
+          >
+            <i className={`fa-solid ${copied ? "fa-check" : "fa-copy"}`} />
+          </button>
+        )}
         {status === "running" || status === "pending" ? (
           <i className="fa-solid fa-circle-notch fa-spin-pulse tool-state" />
         ) : status === "error" ? (

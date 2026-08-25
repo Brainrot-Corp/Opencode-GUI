@@ -7,6 +7,41 @@ import type { Msg } from "../types";
 import ToolBlock from "./ToolBlock";
 import "../styles/chat.css";
 
+// fenced code block with a fast copy button — textContent is read at click
+// time so highlight spans / inline markup can never corrupt the copied source
+function CodePre(props: React.HTMLAttributes<HTMLPreElement> & { node?: unknown }) {
+  const { children, node, ...rest } = props;
+  const ref = useRef<HTMLPreElement>(null);
+  const [copied, setCopied] = useState(false);
+  const copy = () => {
+    navigator.clipboard.writeText(ref.current?.textContent ?? "").then(
+      () => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1200);
+      },
+      () => {},
+    );
+  };
+  return (
+    <div className="code-wrap">
+      <button
+        type="button"
+        className="copy-btn"
+        data-tip={copied ? "Copied" : "Copy"}
+        aria-label="Copy code"
+        onClick={copy}
+      >
+        <i className={`fa-solid ${copied ? "fa-check" : "fa-copy"}`} />
+      </button>
+      <pre ref={ref} {...rest}>
+        {children}
+      </pre>
+    </div>
+  );
+}
+
+const mdComponents = { pre: CodePre };
+
 // one reasoning block — per-message visibility: the brain icon toggles THIS
 // block only; /collapse flips the default for blocks not manually toggled
 function Reasoning({ part, defaultOpen }: { part: Part; defaultOpen: boolean }) {
@@ -29,7 +64,7 @@ function Reasoning({ part, defaultOpen }: { part: Part; defaultOpen: boolean }) 
           thinking stream gets colored instead of flat grey */}
       {open && (
         <div className="reasoning-body">
-          <Markdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
+          <Markdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]} components={mdComponents}>
             {t}
           </Markdown>
         </div>
@@ -47,7 +82,7 @@ function renderPart(part: Part, key: number, collapsedDefault?: boolean) {
     const t = (part as any).text ?? "";
     if (!t.trim()) return null;
     return (
-      <Markdown key={key} remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
+      <Markdown key={key} remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]} components={mdComponents}>
         {t}
       </Markdown>
     );

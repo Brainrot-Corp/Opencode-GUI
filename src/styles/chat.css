@@ -326,6 +326,39 @@
   color: inherit;
 }
 
+/* fast copy — shared look; fenced blocks reveal it on hover */
+.copy-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 22px;
+  font-size: 10.5px;
+  color: var(--text-faint);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: color 0.15s var(--ease), border-color 0.15s var(--ease), opacity 0.15s var(--ease);
+}
+.copy-btn:hover {
+  color: var(--accent-bright);
+  border-color: color-mix(in srgb, var(--accent) calc(0.4 * 100%), transparent);
+}
+.code-wrap {
+  position: relative;
+}
+.code-wrap .copy-btn {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  opacity: 0;
+}
+.code-wrap:hover .copy-btn,
+.code-wrap .copy-btn:focus-visible {
+  opacity: 1;
+}
+
 /* tool call blocks — collapsed header by default, mono body on expand */
 .msg .tool-block {
   border-left: 2px solid var(--line-strong);

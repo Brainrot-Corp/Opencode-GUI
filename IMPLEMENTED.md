@@ -393,6 +393,16 @@ in-transcript scanning over a wake word, with spoken confirmation for safety):
 Router checks 68; build green. Live GUI test pending. Pause-before-transcription slider removed
 afterwards (user call) — VAD utterance close is the fixed SILENCE_MS (1.5s) again.
 
+### Fast copy buttons ✅ (2026-08-25)
+
+- **Fenced code blocks** (replies + thinking streams): hover copy button top-right of every
+  ``` block — reads `textContent` at click time so syntax-highlight spans never corrupt the
+  copied source; icon flips to a check for ~1.2s.
+- **Tool blocks**: header copy button (next to the eye) copies the tool output, falling back to
+  the input (e.g. the bash command) when there's no output. Shared `.copy-btn` style in chat.css.
+
+`npm run build` green.
+
 ## Notes / Decisions log
 
 - 2026-08-23: Project started. Plan finalized in PLAN.md (Windows only, Tauri v2, React+TS, fresh UI, minimal scope).
