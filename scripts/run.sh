@@ -1,9 +1,19 @@
 #!/usr/bin/env bash
 # OpenCode GUI task runner (Linux/WSL/macOS)
-# usage:  ./scripts/run.sh <command>
-# commands: setup | dev | build | check | clean
+# usage:  ./scripts/run.sh <command> [win11|win10|both]
+# commands: setup | dev | build | check | clean   (build/portable take a target, default both)
+# win11 = glass build (Mica), win10 = no-glass build (--no-default-features)
 set -e
 cd "$(dirname "$0")/.."
+
+CMD="${1:-dev}"
+TARGET="${2:-both}"
+case "$TARGET" in
+    win11) TARGETS="win11" ;;
+    win10) TARGETS="win10" ;;
+    both)  TARGETS="win11 win10" ;;
+    *) echo "!! target must be win11, win10 or both"; exit 1 ;;
+esac
 
 SIDEcar="src-tauri/binaries/opencode-x86_64-pc-windows-msvc.exe"
 
@@ -24,7 +34,15 @@ fetch_sidecar() {
     "$SIDEcar" --version
 }
 
-case "${1:-dev}" in
+build_one() {
+    if [ "$1" = "win10" ]; then
+        npm run tauri build -- --no-default-features
+    else
+        npm run tauri build
+    fi
+}
+
+case "${CMD}" in
     setup)
         npm install
         fetch_sidecar
@@ -35,18 +53,29 @@ case "${1:-dev}" in
         npm run tauri dev
         ;;
     build)
-        npm run tauri build
-        echo ">> installers in src-tauri/target/release/bundle/"
+        for t in $TARGETS; do
+            build_one "$t"
+            # suffix installers so variants don't clobber each other
+            bundle="src-tauri/target/release/bundle"
+            find "$bundle/nsis" "$bundle/msi" -type f \( -name "*.exe" -o -name "*.msi" \) 2>/dev/null |
+                while read -r f; do
+                    base="${f%.*}"; ext="${f##*.}"
+                    cp "$f" "$bundle/$(basename "$base")-$t.$ext"
+                done
+            echo ">> [$t] installers in $bundle (*-$t.*)"
+        done
         ;;
     portable)
-        npm run tauri build
         rel="src-tauri/target/release"
         out="$rel/bundle/portable"
-        mkdir -p "$out/OpenCode"
-        cp "$rel/opencode-gui.exe" "$out/OpenCode/"
-        cp "$rel/opencode.exe" "$out/OpenCode/"
-        (cd "$out" && zip -qr OpenCode-portable-x64.zip OpenCode)
-        echo ">> portable: $out/OpenCode-portable-x64.zip"
+        for t in $TARGETS; do
+            build_one "$t"
+            mkdir -p "$out/OpenCode"
+            cp "$rel/opencode-gui.exe" "$out/OpenCode/"
+            cp "$rel/opencode.exe" "$out/OpenCode/"
+            (cd "$out" && zip -qr "OpenCode-portable-$t-x64.zip" OpenCode)
+            echo ">> portable [$t]: $out/OpenCode-portable-$t-x64.zip"
+        done
         ;;
     check)
         npm run build
@@ -58,7 +87,7 @@ case "${1:-dev}" in
         echo ">> cleaned"
         ;;
     *)
-        echo "usage: run.sh [setup|dev|build|portable|check|clean]"
+        echo "usage: run.sh [setup|dev|build|portable|check|clean] [win11|win10|both]"
         exit 1
         ;;
 esac

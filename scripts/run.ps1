@@ -1,12 +1,21 @@
 # OpenCode GUI task runner (Windows)
-# usage:  powershell -ExecutionPolicy Bypass -File scripts\run.ps1 <command>
-# commands: setup | dev | build | check | clean
-param([Parameter(Position = 0)][string]$Cmd = "dev")
+# usage:  powershell -ExecutionPolicy Bypass -File scripts\run.ps1 <command> [win11|win10|both]
+# commands: setup | dev | build | check | clean   (build/portable take a target, default both)
+# win11 = glass build (Mica), win10 = no-glass build (--no-default-features)
+param([Parameter(Position = 0)][string]$Cmd = "dev",
+      [Parameter(Position = 1)][string]$Target = "both")
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 $env:Path = "$env:USERPROFILE\.cargo\bin;$env:Path"
 $sidecar = Join-Path $root "src-tauri\binaries\opencode-x86_64-pc-windows-msvc.exe"
+
+switch ($Target) {
+    "win11" { $targets = @("win11") }
+    "win10" { $targets = @("win10") }
+    "both"  { $targets = @("win11", "win10") }
+    default { Write-Host "!! target must be win11, win10 or both" -ForegroundColor Red; exit 1 }
+}
 
 function Fetch-Sidecar {
     $dest = Join-Path $root "src-tauri\binaries"
@@ -26,6 +35,13 @@ function Fetch-Sidecar {
     & $sidecar --version
 }
 
+function Build-One([string]$T) {
+    Push-Location $root
+    if ($T -eq "win10") { npm run tauri build -- --no-default-features }
+    else { npm run tauri build }
+    Pop-Location
+}
+
 switch ($Cmd) {
     "setup" {
         Push-Location $root; npm install; Pop-Location
@@ -37,19 +53,31 @@ switch ($Cmd) {
         Push-Location $root; npm run tauri dev; Pop-Location
     }
     "build" {
-        Push-Location $root; npm run tauri build; Pop-Location
-        Write-Host ">> installers in src-tauri\target\release\bundle\"
+        foreach ($t in $targets) {
+            Build-One $t
+            # suffix installers so variants don't clobber each other
+            $bundle = Join-Path $root "src-tauri\target\release\bundle"
+            Get-ChildItem $bundle -Recurse -Include *.exe, *.msi |
+                Where-Object { $_.Directory.Name -in @("nsis", "msi") } |
+                ForEach-Object {
+                    Copy-Item $_.FullName (Join-Path $bundle "$($_.BaseName)-$t$($_.Extension)") -Force
+                }
+            Write-Host ">> [$t] installers in src-tauri\target\release\bundle\ (*-$t.*)"
+        }
     }
     "portable" {
-        Push-Location $root; npm run tauri build; Pop-Location
-        $rel = Join-Path $root "src-tauri\target\release"
-        $out = Join-Path $rel "bundle\portable"
-        $stage = Join-Path $out "OpenCode"
-        New-Item -ItemType Directory -Force $stage | Out-Null
-        Copy-Item (Join-Path $rel "opencode-gui.exe") $stage -Force
-        Copy-Item (Join-Path $rel "opencode.exe") $stage -Force
-        Compress-Archive -Path $stage -DestinationPath (Join-Path $out "OpenCode-portable-x64.zip") -Force
-        Write-Host ">> portable: $out\OpenCode-portable-x64.zip ($([math]::Round((Get-Item (Join-Path $out 'OpenCode-portable-x64.zip')).Length / 1MB, 1)) MB)"
+        foreach ($t in $targets) {
+            Build-One $t
+            $rel = Join-Path $root "src-tauri\target\release"
+            $out = Join-Path $rel "bundle\portable"
+            $stage = Join-Path $out "OpenCode"
+            New-Item -ItemType Directory -Force $stage | Out-Null
+            Copy-Item (Join-Path $rel "opencode-gui.exe") $stage -Force
+            Copy-Item (Join-Path $rel "opencode.exe") $stage -Force
+            $zip = Join-Path $out "OpenCode-portable-$t-x64.zip"
+            Compress-Archive -Path $stage -DestinationPath $zip -Force
+            Write-Host ">> portable [$t]: $zip ($([math]::Round((Get-Item $zip).Length / 1MB, 1)) MB)"
+        }
     }
     "check" {
         Push-Location $root; npm run build; Pop-Location
@@ -61,7 +89,7 @@ switch ($Cmd) {
         Write-Host ">> cleaned"
     }
     default {
-        Write-Host "usage: run.ps1 [setup|dev|build|portable|check|clean]"
+        Write-Host "usage: run.ps1 [setup|dev|build|portable|check|clean] [win11|win10|both]"
         exit 1
     }
 }

@@ -62,63 +62,31 @@ fn server_url(state: State<'_, ServerState>) -> Result<String, String> {
     }
 }
 
-// whether the OS glass layer (Mica or acrylic) was applied — false means the
-// frontend must paint an opaque base
+// whether the OS glass layer (Mica) was applied — false means the frontend
+// must paint an opaque base (no-glass build, or Mica unavailable)
 static GLASS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-
-// true when the glass layer is Win10 acrylic, which must be toggled off
-// around drags (see set_dragging)
-#[cfg(windows)]
-static ACRYLIC: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 #[tauri::command]
 fn os_glass() -> bool {
     GLASS.load(std::sync::atomic::Ordering::Relaxed)
 }
 
-// acrylic recomputes its blur against whatever sits behind the window every
-// frame — while dragging, that's constantly changing desktop pixels, so DWM
-// can't cache anything and the window trails the cursor. Clear it for the
-// duration of a drag (the webview paints an opaque base meanwhile), reapply
-// on release.
-#[tauri::command]
-fn set_dragging(app: tauri::AppHandle, dragging: bool) {
-    #[cfg(windows)]
-    {
-        if !ACRYLIC.load(std::sync::atomic::Ordering::Relaxed) {
-            return;
-        }
-        use tauri::Manager;
-        if let Some(w) = app.get_webview_window("main") {
-            let _ = if dragging {
-                window_vibrancy::clear_acrylic(&w)
-            } else {
-                window_vibrancy::apply_acrylic(&w, None)
-            };
-        }
-    }
-    #[cfg(not(windows))]
-    let _ = (app, dragging);
-}
-
-#[cfg(windows)]
+#[cfg(all(windows, feature = "glass"))]
 fn apply_glass(app: &tauri::AppHandle) {
     use tauri::Manager;
     let Some(w) = app.get_webview_window("main") else {
         return;
     };
-    // Mica is Win11-only and DWM-cached, so drags stay smooth
+    // Mica is DWM-cached so drags stay smooth. Windows 10 has no Mica and its
+    // acrylic recomputes every frame (window trails the cursor when dragged),
+    // which is why the Win10 build ships without this feature.
     if window_vibrancy::apply_mica(&w, None).is_ok() {
         GLASS.store(true, std::sync::atomic::Ordering::Relaxed);
-        return;
-    }
-    // Win10: acrylic gives the same glass look but lags while dragging —
-    // applied at rest, toggled off mid-drag via set_dragging
-    if window_vibrancy::apply_acrylic(&w, None).is_ok() {
-        GLASS.store(true, std::sync::atomic::Ordering::Relaxed);
-        ACRYLIC.store(true, std::sync::atomic::Ordering::Relaxed);
     }
 }
+
+#[cfg(not(all(windows, feature = "glass")))]
+fn apply_glass(_app: &tauri::AppHandle) {}
 
 // theme config: ~/.config/.opencode-gui/themes.json Ã¢â‚¬â€ read by the frontend,
 // seeded once by it, and watched here so edits hot-reload the UI
@@ -234,7 +202,6 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             server_url,
             os_glass,
-            set_dragging,
             theme_config_read,
             theme_config_write,
             reveal_config_dir,

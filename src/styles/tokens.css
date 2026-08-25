@@ -136,10 +136,9 @@ button:focus-visible,
   }
 }
 
-/* Win10 fallback / mid-drag: the OS acrylic is off (it lags drags), so the
+/* no-glass build (Win10): no OS acrylic/mica behind the window, so the
    painted base goes fully opaque */
-html.no-glass body,
-html.dragging body {
+html.no-glass body {
   background-color: rgb(var(--base-rgb));
 }
 
