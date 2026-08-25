@@ -1,9 +1,9 @@
 # OpenCode GUI task runner (Windows)
 # usage:  powershell -ExecutionPolicy Bypass -File scripts\run.ps1 <command> [win11|win10|both]
-# commands: setup | dev | build | check | clean   (build/portable take a target, default both)
-# win11 = glass build (Mica), win10 = no-glass build (--no-default-features)
+# commands: setup | dev | build | check | clean   (build/portable take a target, default win11)
+# win11 = glass build (acrylic), win10 = no-glass build (--features noglass)
 param([Parameter(Position = 0)][string]$Cmd = "dev",
-      [Parameter(Position = 1)][string]$Target = "both")
+      [Parameter(Position = 1)][string]$Target = "win11")
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
@@ -37,9 +37,12 @@ function Fetch-Sidecar {
 
 function Build-One([string]$T) {
     Push-Location $root
-    if ($T -eq "win10") { npm run tauri build -- --no-default-features }
+    if ($T -eq "win10") { npm run tauri build -- --features noglass }
     else { npm run tauri build }
     Pop-Location
+    # PS 5.1 doesn't abort on native nonzero exits — check or we'd zip the
+    # previous variant's exe under the wrong name
+    if ($LASTEXITCODE -ne 0) { Write-Host "!! [$T] build failed" -ForegroundColor Red; exit 1 }
 }
 
 switch ($Cmd) {

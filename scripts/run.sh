@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # OpenCode GUI task runner (Linux/WSL/macOS)
 # usage:  ./scripts/run.sh <command> [win11|win10|both]
-# commands: setup | dev | build | check | clean   (build/portable take a target, default both)
-# win11 = glass build (Mica), win10 = no-glass build (--no-default-features)
+# commands: setup | dev | build | check | clean   (build/portable take a target, default win11)
+# win11 = glass build (Mica), win10 = no-glass build (--features noglass)
 set -e
 cd "$(dirname "$0")/.."
 
 CMD="${1:-dev}"
-TARGET="${2:-both}"
+TARGET="${2:-win11}"
 case "$TARGET" in
     win11) TARGETS="win11" ;;
     win10) TARGETS="win10" ;;
@@ -36,7 +36,7 @@ fetch_sidecar() {
 
 build_one() {
     if [ "$1" = "win10" ]; then
-        npm run tauri build -- --no-default-features
+        npm run tauri build -- --features noglass
     else
         npm run tauri build
     fi

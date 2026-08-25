@@ -5,11 +5,11 @@ description = "Lightweight GUI client for opencode serve"
 authors = ["you"]
 edition = "2021"
 
-# OS glass (Mica) — disable for the Windows 10 build:
-#   cargo tauri build --no-default-features
+# OS glass (acrylic, matching the old config-level ["acrylic", "mica"]) is on
+# by default — the Windows 10 build opts out:
+#   cargo tauri build --features noglass
 [features]
-default = ["glass"]
-glass = []
+noglass = []
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

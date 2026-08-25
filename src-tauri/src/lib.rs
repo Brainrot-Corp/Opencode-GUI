@@ -71,21 +71,23 @@ fn os_glass() -> bool {
     GLASS.load(std::sync::atomic::Ordering::Relaxed)
 }
 
-#[cfg(all(windows, feature = "glass"))]
+#[cfg(all(windows, not(feature = "noglass")))]
 fn apply_glass(app: &tauri::AppHandle) {
     use tauri::Manager;
     let Some(w) = app.get_webview_window("main") else {
         return;
     };
-    // Mica is DWM-cached so drags stay smooth. Windows 10 has no Mica and its
-    // acrylic recomputes every frame (window trails the cursor when dragged),
-    // which is why the Win10 build ships without this feature.
-    if window_vibrancy::apply_mica(&w, None).is_ok() {
+    // replicate the pre-split look exactly: the old config-level
+    // ["acrylic", "mica"] resolved to Acrylic (first match wins in tauri's
+    // vibrancy code), applied with no tint. Acrylic drags badly only on
+    // Win10 v1903+ / early Win11 builds — that's what the noglass build
+    // avoids.
+    if window_vibrancy::apply_acrylic(&w, None).is_ok() {
         GLASS.store(true, std::sync::atomic::Ordering::Relaxed);
     }
 }
 
-#[cfg(not(all(windows, feature = "glass")))]
+#[cfg(any(not(windows), feature = "noglass"))]
 fn apply_glass(_app: &tauri::AppHandle) {}
 
 // theme config: ~/.config/.opencode-gui/themes.json Ã¢â‚¬â€ read by the frontend,
