@@ -407,13 +407,27 @@ fn sane_phrase(phrase: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, ' ' | '.' | '-' | '_'))
 }
 
+// escape a spoken word for use as a PowerShell -match regex literal
+fn regex_esc(w: &str) -> String {
+    w.chars()
+        .flat_map(|c| {
+            if "\\.^$|?*+()[]{}".contains(c) {
+                vec!['\\', c]
+            } else {
+                vec![c]
+            }
+        })
+        .collect()
+}
+
 // close ("quit"), minimize, or force-kill the app behind a spoken phrase:
-// match visible main-window titles word-by-word (same AND-of-words idea as
-// the launcher) and act on every hit. CloseMainWindow asks nicely
-// (WM_CLOSE); minimize is ShowWindow(SW_MINIMIZE); kill resolves the
-// process name then taskkill /F's every process under it (windows included).
-// Returns the matched process name for the UI to speak; errors when nothing
-// matched.
+// match PROCESS names (not window titles — those are locale/document
+// dependent), trying the longest prefix of the spoken words first so
+// "visual studio code" lands on the "Code" process via its last word.
+// Only processes that actually own a window are touched. CloseMainWindow
+// asks nicely (WM_CLOSE); minimize is ShowWindow(SW_MINIMIZE); kill
+// resolves the process name then taskkill /F's everything under it.
+// Returns the matched process name for the UI to speak.
 //
 // ponytail: shells PowerShell instead of a Win32 EnumWindows dependency —
 // a few hundred ms per call is fine for voice; swap for the windows crate
@@ -430,11 +444,23 @@ pub async fn window_app(name: String, action: String) -> Result<String, String> 
         "kill" => false,
         _ => return Err("bad action".into()),
     };
-    // -match is case-insensitive; lookaheads make every spoken word required
-    let rx: String = phrase
-        .split_whitespace()
-        .map(|w| format!("(?=.*{w})"))
+    // longest-prefix-first candidates: every word AND-ed into one lookahead
+    // regex ("-match" is case-insensitive); quotes stripped up front
+    let words: Vec<String> = phrase.split_whitespace().map(String::from).collect();
+    let pats: Vec<String> = (1..=words.len())
+        .rev()
+        .map(|n| {
+            words[..n]
+                .iter()
+                .map(|w| format!("(?=.*{})", regex_esc(w)))
+                .collect()
+        })
         .collect();
+    let ps_pats = pats
+        .iter()
+        .map(|p| format!("'{}'", p.replace('\'', "''")))
+        .collect::<Vec<_>>()
+        .join(",");
     let add_type = if minimize {
         "if(-not('U.W' -as [type])){Add-Type -MemberDefinition '[DllImport(\"user32.dll\")] public static extern bool ShowWindow(IntPtr h,int c);' -Name W -Namespace U};"
     } else {
@@ -450,7 +476,7 @@ pub async fn window_app(name: String, action: String) -> Result<String, String> 
         "foreach($p in $ps){[void]$p.CloseMainWindow()}".to_string()
     };
     let script = format!(
-        "$ErrorActionPreference='SilentlyContinue';{add_type}$ps=Get-Process|Where-Object{{$_.MainWindowHandle -ne 0 -and $_.MainWindowTitle -match '{rx}'}};{act};if($ps){{Write-Output $ps[0].ProcessName}}"
+        "$ErrorActionPreference='SilentlyContinue';{add_type}$ps=$null;foreach($pat in @({ps_pats})){{$ps=Get-Process|Where-Object{{$_.MainWindowHandle -ne 0 -and $_.ProcessName -match $pat}};if($ps){{break}}}};{act};if($ps){{Write-Output $ps[0].ProcessName}}"
     );
     let out = Command::new("powershell")
         .args(["-NoProfile", "-NonInteractive", "-Command", &script])
@@ -459,7 +485,7 @@ pub async fn window_app(name: String, action: String) -> Result<String, String> 
         .map_err(|e| format!("shell failed: {e}"))?;
     let proc_name = String::from_utf8_lossy(&out.stdout).trim().to_string();
     if proc_name.is_empty() {
-        Err(format!("no window found for '{phrase}'"))
+        Err(format!("no app found for '{phrase}'"))
     } else {
         Ok(proc_name)
     }

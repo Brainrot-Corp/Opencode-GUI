@@ -574,15 +574,38 @@
     inset 0 1px 0 rgba(255, 255, 255, 0.05);
 }
 
-/* debug transcript mode (Settings › Voice) — utterance audit trail */
-.voice-debug {
+/* voice feedback strip above the composer — audit trail (Settings › Voice)
+   and yes/no confirmations share one material: inset surface, hairline,
+   accent edge, same 4px radius as every other small element here */
+.voice-debug,
+.voice-note {
   margin: 0 0 6px;
-  padding: 8px 10px;
+  padding: 7px 10px;
+  border-radius: 4px;
+  background: var(--inset-bg);
+  border: 1px solid var(--line);
+  border-left: 2px solid color-mix(in srgb, var(--accent) calc(0.45 * 100%), transparent);
   font-family: var(--mono);
   font-size: 11px;
   line-height: 1.6;
   color: var(--text-dim);
-  background: var(--inset-bg);
-  border: 1px solid var(--line);
   overflow-wrap: anywhere;
+  animation: voice-in 0.22s var(--ease);
+}
+.voice-note {
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--accent) calc(0.2 * 100%), transparent);
+  box-shadow: 0 0 14px -8px var(--accent-glow);
+}
+.voice-note.reject {
+  border-color: color-mix(in srgb, var(--danger) calc(0.3 * 100%), transparent);
+  border-left-color: var(--danger);
+  color: var(--text-dim);
+  box-shadow: none;
+}
+@keyframes voice-in {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
 }

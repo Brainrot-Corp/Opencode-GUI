@@ -512,7 +512,11 @@ export default function ChatPage() {
                     onReject={oc.rejectQuestion}
                   />
                 )}
-                {vnote && <div className="voice-debug">{vnote}</div>}
+                {vnote && (
+                  <div className={`voice-note${vnote.startsWith("✗") ? " reject" : ""}`}>
+                    {vnote}
+                  </div>
+                )}
                 {settings.voice.debug && vdbg.length > 0 && (
                   <div className="voice-debug" role="log">
                     {vdbg.map((l, i) => (
