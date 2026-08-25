@@ -140,8 +140,10 @@ export default function ChatPage() {
   }, []);
 
   // executes a fully-routed voice act (direct hits and confirmed embeddeds)
+  const lastExecRef = useRef(0);
   const execAct = useCallback(
     (act: VoiceAct) => {
+      lastExecRef.current = Date.now();
       switch (act.type) {
         case "newSession":
           void oc.newSession();
@@ -258,6 +260,12 @@ export default function ChatPage() {
       if (!act) return;
       playSound("click");
       if (act.type === "embedded") {
+        // active session: a command ran recently → trust the streak, skip
+        // the read-back (25s window)
+        if (Date.now() - lastExecRef.current < 25000) {
+          execAct(act.act);
+          return;
+        }
         pendingRef.current = { act: act.act, until: Date.now() + 15000 };
         announce(`${describeAct(act.act)} — say yes or no.`);
         return;

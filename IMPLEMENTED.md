@@ -386,7 +386,9 @@ in-transcript scanning over a wake word, with spoken confirmation for safety):
 - **ChatPage**: dispatch switch extracted to `execAct`; embedded acts are read back via
   `describeAct()` ("Turn the lights off — say yes or no.") and held in a pending ref: yes-words
   execute, no-words cancel, any other speech or 15s expiry cancels silently. Direct commands
-  bypass confirmation.
+  bypass confirmation. **Confirmation streak**: any executed command stamps `lastExecRef`;
+  embeddeds within 25s of the last exec run instantly (no read-back), so an active voice session
+  doesn't re-confirm every command.
 
 Router checks 68; build green. Live GUI test pending.
 
