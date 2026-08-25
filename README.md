@@ -22,3 +22,16 @@ powershell -ExecutionPolicy Bypass -File scripts\run.ps1 clean   # cargo clean +
 ## Structure
 
 State/server logic lives in `src/hooks/`, presentational pieces in `src/components/`, screens in `src/pages/`. Full tree and conventions in [PLAN.md](./PLAN.md).
+
+## Plugins
+
+Optional features ship as runtime plugins instead of being built in. A plugin is a folder with `plugin.json` + `main.js` (+ optional `styles.css`), living under `%USERPROFILE%\.config\.opencode-gui\plugins\` next to `themes.json`. Plugins are plain browser ESM: `main.js` default-exports `activate(api)` and returns an object that can contribute voice intents (`parse`/`describe`/`exec`, plus trigger/vocab/lexicon merges), a Settings drawer section, documentation rows for the Info dialog's tabs (`info.voice` / `info.keys`), and spoken feedback. Files hot-reload on save; broken plugins surface as a banner and are skipped.
+
+Install the bundled example (voice control for Tuya Smart Life bulbs — on/off, brightness, white tone, color):
+
+```powershell
+New-Item -ItemType Directory -Force "$env:USERPROFILE\.config\.opencode-gui\plugins" | Out-Null
+Copy-Item -Recurse default_plugins\tuya-lights-control "$env:USERPROFILE\.config\.opencode-gui\plugins\"
+```
+
+Then set up credentials in Settings › Lights (free project at iot.tuya.com). See [default_plugins/tuya-lights-control](./default_plugins/tuya-lights-control) for the full API example; its `test.mjs` is a runnable self-check.

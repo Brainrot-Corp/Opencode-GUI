@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import Titlebar from "../components/Titlebar";
@@ -17,10 +17,10 @@ import { useSettings } from "../hooks/useSettings";
 import { useGlobalShortcuts } from "../hooks/useGlobalShortcuts";
 import { useVoice } from "../hooks/useVoice";
 import { routeVoice, routerInput, type VoiceAct } from "../lib/voiceRouter";
-import { runLightAct, type LightAct } from "../lib/tuya";
 import { pickWorkspace } from "../lib/workspace";
 import { playSound } from "../lib/sounds";
 import { useSpeech } from "../hooks/useSpeech";
+import { usePlugins } from "../hooks/usePlugins";
 
 const SB_W_KEY = "oc.sb.w";
 const SB_C_KEY = "oc.sb.c";
@@ -30,6 +30,7 @@ export default function ChatPage() {
   const {
     settings,
     update,
+    updatePlugin,
     updateSounds,
     updateColors,
     resetColors,
@@ -39,6 +40,8 @@ export default function ChatPage() {
     effectiveMode,
     colorsFor,
   } = useSettings();
+  // runtime plugins — voice intents, settings sections, error banner
+  const { plugins, exts, sections: pluginSections, error: pluginError } = usePlugins();
   // spoken replies / narration / debrief — the whole piper voice pipeline
   const { talking, debriefing, announce, pauseSpeech } = useSpeech(
     { msgs: oc.msgs, busy: oc.busy, permission: oc.permission, providers: oc.providers },
@@ -85,16 +88,17 @@ export default function ChatPage() {
 
   // spoken rendering of a voice act — used to read embedded commands back
   // before they run
+  const extById = useMemo(
+    () => Object.fromEntries(plugins.filter((p) => p.ext).map((p) => [p.id, p.ext!])),
+    [plugins],
+  );
+  // plugin documentation rows for the Info dialog
+  const pluginDocs = useMemo(
+    () => plugins.flatMap((p) => (p.ext?.info ? [{ name: p.name, info: p.ext.info }] : [])),
+    [plugins],
+  );
   const describeAct = useCallback((a: VoiceAct): string => {
     switch (a.type) {
-      case "light":
-        return `Turn ${a.name || "the lights"} ${a.sw}`;
-      case "lightBright":
-        return `Set ${a.name || "the lights"} to ${a.pct}% brightness`;
-      case "lightTemp":
-        return `Set ${a.name || "the lights"} to ${a.tone} white`;
-      case "lightColor":
-        return `Make ${a.name || "the lights"} ${a.color}`;
       case "launchApp":
         return `Open ${a.arg}`;
       case "closeApp":
@@ -144,10 +148,12 @@ export default function ChatPage() {
         return `Add "${a.arg}" to the composer`;
       case "dictateSend":
         return `Send "${a.arg}"`;
+      case "plugin":
+        return extById[a.plugin]?.describe?.(a.act) ?? "";
       default:
         return "";
     }
-  }, []);
+  }, [extById]);
 
   // executes a fully-routed voice act (direct hits and confirmed embeddeds)
   const lastExecRef = useRef(0);
@@ -228,18 +234,20 @@ export default function ChatPage() {
         case "git":
           window.dispatchEvent(new CustomEvent("oc:git", { detail: act.act }));
           break;
-        case "light":
-        case "lightBright":
-        case "lightTemp":
-        case "lightColor":
-          runLightAct(settings.tuya, act as LightAct)
-            .then((msg) => announce(msg))
-            .catch((e) => announce(`Lights: ${e instanceof Error ? e.message : e}`));
+        case "plugin": {
+          const ext = extById[act.plugin];
+          if (!ext?.exec) break;
+          Promise.resolve(ext.exec(act.act))
+            .then((msg) => {
+              if (msg) announce(msg);
+            })
+            .catch((e) => announce(e instanceof Error ? e.message : String(e)));
           break;
+        }
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [themes, oc.cmdList, settings.tuya],
+    [themes, oc.cmdList, extById],
   );
 
   // embedded-command confirmation: a command found buried in conversation is
@@ -292,6 +300,7 @@ export default function ChatPage() {
       const act = routeVoice(text, {
         themes: themes.map((t) => t.id),
         commands: oc.cmdList.map((c) => c.name),
+        exts,
       });
       if (settings.voice.debug)
         dbgPush(
@@ -318,7 +327,7 @@ export default function ChatPage() {
       execAct(act);
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [themes, oc.cmdList, execAct, describeAct, settings.voice.debug, dbgPush],
+    [themes, oc.cmdList, exts, execAct, describeAct, settings.voice.debug, dbgPush],
   );
 
   const voice = useVoice(
@@ -430,6 +439,7 @@ export default function ChatPage() {
           onClose={closeSettings}
           settings={settings}
           update={update}
+          updatePlugin={updatePlugin}
           updateSounds={updateSounds}
           updateColors={updateColors}
           resetColors={resetColors}
@@ -437,6 +447,8 @@ export default function ChatPage() {
           colorsFor={colorsFor}
           modes={activeModes}
           effectiveMode={effectiveMode}
+          pluginSections={pluginSections}
+          pluginDocs={pluginDocs}
         />
         <div
           className={`layout${resizing ? " no-anim" : ""}`}
@@ -467,6 +479,7 @@ export default function ChatPage() {
           <div className="main">
             {oc.error && <div className="banner">{oc.error}</div>}
             {themeError && <div className="banner">{themeError}</div>}
+            {pluginError && <div className="banner">{pluginError}</div>}
             {!oc.activeId && !oc.booting && (
               <div className="messages">
                 <p className="empty">

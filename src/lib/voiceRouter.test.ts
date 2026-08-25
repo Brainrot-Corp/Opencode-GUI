@@ -62,11 +62,6 @@ eq(routeVoice("send the prompt", ctx), { type: "send" }, "bare send-the-prompt f
 // embedded scan — commands buried in conversation come back wrapped for
 // spoken confirmation; direct hits stay unwrapped
 eq(
-  routeVoice("yeah anyway turn the lights off", ctx),
-  { type: "embedded", act: { type: "light", sw: "off", name: "" } },
-  "embedded light command",
-);
-eq(
   routeVoice("and then send hello world", ctx),
   { type: "embedded", act: { type: "dictateSend", arg: "hello world" } },
   "embedded send prefix",
@@ -76,64 +71,11 @@ eq(
   { type: "embedded", act: { type: "dictate", arg: "write tests" } },
   "embedded prompt prefix (politeness stripped)",
 );
-eq(
-  routeVoice("stop the music and turn the lights off", ctx),
-  { type: "embedded", act: { type: "light", sw: "off", name: "" } },
-  "earliest trigger whose tail fails is skipped",
-);
-eq(
-  routeVoice("turn the lights off when you leave", ctx),
-  { type: "embedded", act: { type: "light", sw: "off", name: "" }, fuzzy: true },
-  "conditional tail → fuzzy confirmed, not silent",
-);
-eq(routeVoice("we turned the lights off yesterday", ctx), null, "past tense is not a trigger");
-eq(routeVoice("turn the bedroom lamp off.", ctx), { type: "light", sw: "off", name: "bedroom" }, "direct hit stays unwrapped");
-
-// lexicon — French / Spanish rewrites land on the same canonical patterns
-eq(routeVoice("allume la lumière", ctx), { type: "light", sw: "on", name: "" }, "fr turn on the light");
-eq(routeVoice("éteins la lampe du bureau", ctx), { type: "light", sw: "off", name: "bureau" }, "fr possessive swap keeps device last");
-eq(routeVoice("enciende las luces", ctx), { type: "light", sw: "on", name: "" }, "es turn on the lights");
-eq(routeVoice("met la lumière rouge", ctx), { type: "lightColor", color: "red", name: "" }, "fr set the light red");
-eq(routeVoice("luz roja", ctx), { type: "lightColor", color: "red", name: "" }, "es bare device+color");
-eq(routeVoice("lumiere rouge", ctx), { type: "lightColor", color: "red", name: "" }, "fr bare device+color");
-
-// naturalness — fillers and whisper typos
-eq(
-  routeVoice("could you dim the lights to fifty percent please", ctx),
-  { type: "lightBright", pct: 50, name: "" },
-  "politeness stripped both ends",
-);
-eq(
-  routeVoice("turn on the lihgts", ctx),
-  { type: "light", sw: "on", name: "" },
-  "typo tolerance fixes content words",
-);
 eq(routeVoice("est-ce que tu m'entends", ctx), { type: "hearCheck" }, "fr mic check");
 eq(routeVoice("prompt write a haiku about rain", ctx), { type: "dictate", arg: "write a haiku about rain" }, "prefix unaffected by lexicon");
 eq(routeVoice("", ctx), null, "empty");
 eq(routeVoice("please refactor src/main.rs carefully", ctx), null, "prompt-looking text stays freeform");
 
-// light intents
-eq(routeVoice("lights on", ctx), { type: "light", sw: "on", name: "" }, "bare lights on");
-eq(routeVoice("lights off", ctx), { type: "light", sw: "off", name: "" }, "bare lights off");
-eq(routeVoice("turn the desk lamp off", ctx), { type: "light", sw: "off", name: "desk" }, "device then switch");
-eq(routeVoice("turn on the bedroom lights", ctx), { type: "light", sw: "on", name: "bedroom" }, "switch before device");
-eq(routeVoice("switch bedroom lights off", ctx), { type: "light", sw: "off", name: "bedroom" }, "switch mid phrase");
-eq(routeVoice("lamp on.", ctx), { type: "light", sw: "on", name: "" }, "punctuation stripped");
-
-eq(routeVoice("dim the desk lamp to 50 percent", ctx), { type: "lightBright", pct: 50, name: "desk" }, "dim named device");
-eq(routeVoice("dim the lights to fifty percent", ctx), { type: "lightBright", pct: 50, name: "" }, "word number");
-eq(routeVoice("brighten the light to 100", ctx), { type: "lightBright", pct: 100, name: "" }, "no unit word");
-eq(routeVoice("set the desk lamp to 75%", ctx), { type: "lightBright", pct: 75, name: "desk" }, "percent sign");
-eq(routeVoice("dim the lights to zero percent", ctx), null, "0% rejected — falls through");
-
-eq(routeVoice("make the desk lamp warm", ctx), { type: "lightTemp", tone: "warm", name: "desk" }, "warm tone");
-eq(routeVoice("make the light cool white", ctx), { type: "lightTemp", tone: "cool", name: "" }, "cool white");
-eq(routeVoice("turn the light red", ctx), { type: "lightColor", color: "red", name: "" }, "color");
-eq(routeVoice("change the bedroom lights to blue", ctx), { type: "lightColor", color: "blue", name: "bedroom" }, "change to color");
-eq(routeVoice("turn the lights teal", ctx), { type: "lightColor", color: "teal", name: "" }, "extended palette");
-eq(routeVoice("lights lavender", ctx), { type: "lightColor", color: "lavender", name: "" }, "bare extended color");
-eq(routeVoice("luz turquesa", ctx), { type: "lightColor", color: "turquoise", name: "" }, "es extended color");
 eq(
   routeVoice("makes no sense. Send, can you add more colors to the voice commands?", ctx),
   {
@@ -150,27 +92,60 @@ eq(routeVoice("our team is great", ctx), null, "'team' outside a theme phrase st
 eq(routeVoice("teme strawberry", ctx), { type: "theme", arg: "strawberry" }, "one-edit typo on any vocab word");
 eq(routeVoice("pusg it", ctx), { type: "git", act: "push" }, "typo-corrected trigger fires");
 eq(routeVoice("run compac", ctx), { type: "runCmd", arg: "compact", rest: "" }, "typo in command name");
-eq(routeVoice("lights purpul", ctx), { type: "lightColor", color: "purple", name: "" }, "phonetic: purpul → purple");
+
+// git stage all — whisper mishears ("hall") and spoken quotes must not kill it
+eq(routeVoice("git stage hall", ctx), { type: "git", act: "stageAll" }, "misheard 'all' repaired");
+eq(
+  routeVoice('and in the end, i can say "git stage hall"', ctx),
+  { type: "embedded", act: { type: "git", act: "stageAll" } },
+  "quoted mid-sentence stage-all; 'git' never mangles into 'quit'",
+);
+eq(routeVoice('"new session"', ctx), { type: "newSession" }, "spoken quotes stripped");
+eq(
+  routeVoice("there is a bit of a guide stage hall.", ctx),
+  { type: "embedded", act: { type: "git", act: "stageAll" } },
+  "'guide' mishears to 'quit' but the later specific intent wins over the catch-all",
+);
+eq(
+  routeVoice("yeah anyway close spotify", ctx),
+  { type: "embedded", act: { type: "closeApp", arg: "spotify" } },
+  "catch-all app verbs still work when nothing specific matches",
+);
 eq(routeVoice("comit it", ctx), { type: "git", act: "commit" }, "phonetic: comit → commit");
 eq(routeVoice("prompt comit this later", ctx), { type: "dictate", arg: "comit this later" }, "phonetics never touch dictated payloads");
 eq(routeVoice("Tim, Saiyan.", ctx), { type: "theme", arg: "cyan" }, "accented 'theme cyan' via phonetics");
 eq(routeVoice("tim sayen", ctx), { type: "theme", arg: "cyan" }, "same, no punctuation");
 eq(
-  routeVoice("and it should not break anything. Like, if right now I want to turn the lights off and then speak after", ctx),
-  { type: "embedded", act: { type: "light", sw: "off", name: "" }, fuzzy: true },
-  "trailing clause → fuzzy confirmed match",
-);
-eq(
   routeVoice("stop and think about it", ctx),
   { type: "embedded", act: { type: "abort" }, fuzzy: true },
   "bare trigger before conjunction still confirms, never silent-fires",
 );
+
+// plugin plumbing — extension acts wrap with their id; device verbs are inert
+// without a plugin providing them (light coverage lives next to the plugin)
+const pext = {
+  id: "fake",
+  parse: (t: string) => {
+    const m = /^(?:turn |switch |shut )?(?:the )?lights? (on|off)$/.exec(t);
+    return m ? { sw: m[1] } : null;
+  },
+  triggers: ["turn"],
+  vocab: ["lights"],
+};
+const ctxP = { ...ctx, exts: [pext] };
+eq(routeVoice("turn the lights off", ctxP), { type: "plugin", plugin: "fake", act: { sw: "off" } }, "plugin act wrapped");
+eq(routeVoice("lihgts on", ctxP), { type: "plugin", plugin: "fake", act: { sw: "on" } }, "ext vocab feeds typo correction");
 eq(
-  routeVoice("turn the lights on and off again", ctx),
-  { type: "embedded", act: { type: "light", sw: "on", name: "" }, fuzzy: true },
-  "ambiguous head still just asks — never silent-fires",
+  routeVoice("yeah anyway turn the lights off", ctxP),
+  { type: "embedded", act: { type: "plugin", plugin: "fake", act: { sw: "off" } } },
+  "embedded plugin command",
 );
-eq(routeVoice("make it warm in here", ctx), null, "sentence stays dictation");
-eq(routeVoice("open settings", ctx), { type: "settings", open: true }, "settings still beats light intents");
+eq(routeVoice("turn the lights off", ctx), null, "device verbs inert without a plugin");
+eq(routeVoice("lights on", ctx), null, "no plugin installed → dictation");
+eq(
+  routeVoice("and then switch to latte", ctx),
+  { type: "embedded", act: { type: "theme", arg: "latte" } },
+  "built-in verbs kept out of the plugin slice still scan",
+);
 
 console.log(`voiceRouter: ${n} checks passed`);

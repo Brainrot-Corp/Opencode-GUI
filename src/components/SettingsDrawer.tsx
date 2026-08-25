@@ -5,12 +5,12 @@ import type { AppSettings, ColorSet } from "../hooks/useSettings";
 import type { ThemeMeta } from "../lib/themes";
 import type { SoundPrefs } from "../lib/sounds";
 import type { CmdEntry } from "../hooks/useOpencode";
+import type { PluginExt } from "../lib/plugins";
 import { applyWorkspace, pickWorkspace } from "../lib/workspace";
 import { splitModel } from "../lib/models";
 import ThemeSelect from "./ThemeSelect";
 import ModelMenu, { type ModelEntry } from "./ModelMenu";
 import VoiceSettings from "./VoiceSettings";
-import TuyaSettings from "./TuyaSettings";
 import AppearanceSettings from "./AppearanceSettings";
 import SoundsSettings from "./SoundsSettings";
 import InfoDialog from "./InfoDialog";
@@ -22,6 +22,7 @@ export default function SettingsDrawer({
   onClose,
   settings,
   update,
+  updatePlugin,
   updateSounds,
   updateColors,
   resetColors,
@@ -31,11 +32,15 @@ export default function SettingsDrawer({
   effectiveMode,
   providers,
   commands,
+  pluginSections,
+  pluginDocs,
 }: {
   open: boolean;
   onClose: () => void;
   settings: AppSettings;
   update: (patch: Partial<AppSettings>) => void;
+  // patch the calling plugin's own config blob (curried per section below)
+  updatePlugin: (id: string, patch: Record<string, unknown>) => void;
   updateSounds: (patch: Partial<SoundPrefs>) => void;
   updateColors: (patch: Partial<ColorSet>) => void;
   resetColors: () => void;
@@ -48,6 +53,10 @@ export default function SettingsDrawer({
   providers?: ProviderGroup[];
   // live command registry — Info dialog's Commands tab
   commands?: CmdEntry[];
+  // plugin-provided setting sections, in load order
+  pluginSections?: PluginExt[];
+  // plugin documentation rows for the Info dialog
+  pluginDocs?: { name: string; info: NonNullable<PluginExt["info"]> }[];
 }) {
   // custom themes have no stored color entry yet — cyan's shared base is the
   // starting point until the user overrides it
@@ -304,7 +313,17 @@ export default function SettingsDrawer({
 
           <VoiceSettings open={open} settings={settings} update={update} />
 
-          <TuyaSettings open={open} settings={settings} update={update} />
+          {pluginSections?.map((p) => {
+            const Section = p.Settings;
+            return Section ? (
+              <Section
+                key={p.id}
+                open={open}
+                settings={settings}
+                updatePlugin={(patch: Record<string, unknown>) => updatePlugin(p.id, patch)}
+              />
+            ) : null;
+          })}
 
           <AppearanceSettings
             themes={themes}
@@ -321,7 +340,9 @@ export default function SettingsDrawer({
           <span className="mono-hint">Alt+Space toggles the window anywhere · Ctrl+P pins on top · Ctrl+M mic · Ctrl+Shift+M mic anywhere</span>
         </div>
       </aside>
-      {infoOpen && <InfoDialog commands={commands ?? []} onClose={() => setInfoOpen(false)} />}
+        {infoOpen && (
+          <InfoDialog commands={commands ?? []} pluginDocs={pluginDocs} onClose={() => setInfoOpen(false)} />
+        )}
     </>
   );
 }

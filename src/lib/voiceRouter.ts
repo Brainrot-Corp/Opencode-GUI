@@ -22,62 +22,51 @@ export type VoiceAct =
   | { type: "debrief" }
   | { type: "hearCheck" }
   | { type: "git"; act: "open" | "commit" | "push" | "pull" | "stageAll" }
-  | { type: "light"; sw: "on" | "off"; name: string }
-  | { type: "lightBright"; pct: number; name: string }
-  | { type: "lightTemp"; tone: string; name: string }
-  | { type: "lightColor"; color: string; name: string }
   | { type: "dictate"; arg: string }
   | { type: "dictateSend"; arg: string }
+  // matched by a plugin — dispatched through the plugin registry
+  | { type: "plugin"; plugin: string; act: unknown }
   // command found buried mid-sentence — needs spoken confirmation before exec
   | { type: "embedded"; act: VoiceAct; fuzzy?: boolean };
+
+// what a plugin contributes to the router (structural slice of PluginExt)
+export type RouterExt = {
+  id: string;
+  parse?: (t: string) => unknown | null;
+  triggers?: string[];
+  vocab?: string[];
+};
 
 export type VoiceCtx = {
   themes: string[];
   commands: string[];
+  exts?: RouterExt[];
 };
-
-// spoken numbers whisper sometimes writes out — digits stay the common case
-const WORD_NUM: Record<string, number> = {
-  one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9,
-  ten: 10, eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15,
-  sixteen: 16, seventeen: 17, eighteen: 18, nineteen: 19, twenty: 20,
-  thirty: 30, forty: 40, fifty: 50, sixty: 60, seventy: 70, eighty: 80,
-  ninety: 90, hundred: 100, half: 50, quarter: 25,
-};
-
-function pct(w: string): number | null {
-  if (/^\d+$/.test(w)) {
-    const n = parseInt(w, 10);
-    return n >= 1 && n <= 100 ? n : null;
-  }
-  return WORD_NUM[w.toLowerCase()] ?? null;
-}
-
-// device word shared by every light intent
-const DEV = "(?:lights?|lamps?|bulbs?)";
-const COLORS =
-  "red|orange|yellow|green|cyan|blue|purple|violet|magenta|pink" +
-  "|crimson|salmon|coral|gold|lime|olive|brown|teal|turquoise|aqua|azure|indigo|navy|lavender|maroon";
-const TONES = "warm|cool|neutral|daylight";
 
 // everything a spoken word may be typo-corrected against — the router's own
-// vocabulary plus whatever is live at call time (theme names, slash commands)
+// vocabulary plus whatever is live at call time (theme names, slash commands,
+// plugin vocab)
 function vocabOf(ctx: VoiceCtx): string[] {
   return [
     ...TRIGGERS.split("|"),
-    "light", "lights", "lamp", "lamps", "bulb", "bulbs",
-    "on", "off", "white", "warm", "cool", "neutral", "daylight",
     "dark", "light", "mode", "theme", "session", "chat",
     "sidebar", "settings", "agent", "debrief", "percent",
-    ...COLORS.split("|"),
+    // "git" must survive the phonetic pass (its secondary metaphone code
+    // collides with "quit") and "all" repairs whisper's "hall"/"tall" mishear
+    "git", "all",
     ...ctx.themes,
     ...ctx.commands.flatMap((c) => c.split("-")),
+    ...(ctx.exts ?? []).flatMap((e) => e.vocab ?? []),
   ];
 }
 
 function normalize(t: string): string {
   return t
     .toLowerCase()
+    // spoken quotes are never meaningful — whisper wraps phrases ("git stage
+    // all") in them and every pattern is $-anchored. Apostrophes stay: FR
+    // elision rules need them ("m'entends")
+    .replace(/["“”«»„]/g, "")
     .replace(/[.,!?;:]+$/, "")
     .replace(/\s+/g, " ")
     .trim();
@@ -86,12 +75,21 @@ function normalize(t: string): string {
 // verbs that can head a command — scanned for mid-sentence ("yeah anyway
 // turn the lights off"). Curated: every hit becomes a spoken confirmation,
 // but chatty verbs still waste a question, so nothing vague is listed.
+// Built-in verbs only — plugins add their own (device-control verbs like
+// "turn"/"dim" arrive via ext.triggers).
 const TRIGGERS =
-  "turn|switch|shut|dim|brighten|set|make|change|color|launch|start|open|show|hide|close|quit|minimize|kill|run|execute|slash|theme|cycle|next|new|stop|abort|cancel|clear|erase|send|submit|prompt|commit|push|pull|stage";
+  "switch|shut|launch|start|open|show|hide|close|quit|minimize|kill|run|execute|slash|theme|cycle|next|new|stop|abort|cancel|clear|erase|send|submit|prompt|commit|push|pull|stage";
+
+// trigger vocabulary live at call time: base + plugin-contributed verbs
+function triggersOf(ctx: VoiceCtx): string {
+  return [TRIGGERS, ...(ctx.exts ?? []).flatMap((e) => e.triggers ?? [])].join("|");
+}
 
 // one full pass of the matcher chain — routeVoice runs this on the whole
-// transcript first, then on trigger-word tails when scanning
-function matchChain(t: string, ctx: VoiceCtx): VoiceAct | null {
+// transcript first, then on trigger-word tails when scanning. With
+// catchAlls=false the two greedy app-verb patterns are skipped (used by the
+// mid-sentence scan's specific-first tier)
+function matchChain(t: string, ctx: VoiceCtx, catchAlls = true): VoiceAct | null {
   if (/^(new|start)( a)?( new)? (session|chat)$/.test(t)) return { type: "newSession" };
   if (/^(stop|abort|cancel)( that| it| generation| running)?$/.test(t)) return { type: "abort" };
   if (/^(dark|light)( mode)?$/.test(t)) return { type: "mode", arg: t.startsWith("dark") ? "dark" : "light" };
@@ -126,43 +124,20 @@ function matchChain(t: string, ctx: VoiceCtx): VoiceAct | null {
   if (/^(?:git )?pull(?: it| changes)?$/.test(t)) return { type: "git", act: "pull" };
   if (/^(?:git )?stage (?:all|everything)$/.test(t)) return { type: "git", act: "stageAll" };
 
-  // light intents — before the app-launcher catch-all so device names win.
-  // name group = up to 3 short words between the verb and the device word
-  // ("desk lamp") — capped so long chatter can't be swallowed as a name
-  const swA = new RegExp(`^(?:turn |switch |shut )?(?:the |my )?((?:[a-z]{1,12} ){0,3})?${DEV} (on|off)$`).exec(t);
-  if (swA) return { type: "light", sw: swA[2] as "on" | "off", name: (swA[1] ?? "").trim() };
-  const swB = /^(?:turn|switch|shut) (on|off)(?: the| my)?(?: ((?:[a-z]{1,12} ){0,3}[a-z]{1,12}))? (?:lights?|lamps?|bulbs?)$/.exec(t);
-  if (swB) return { type: "light", sw: swB[1] as "on" | "off", name: (swB[2] ?? "").trim() };
-
-  const num = "([\\w]+)";
-  const PCT_TAIL = "(?: percent|%)?$";
-  const brA = new RegExp(`^(?:dim|brighten)(?: the| my)? ?([a-z ]*?)?(?:${DEV}) to ${num}${PCT_TAIL}`).exec(t);
-  if (brA) {
-    const p = pct(brA[2]);
-    if (p !== null) return { type: "lightBright", pct: p, name: (brA[1] ?? "").trim() };
+  // plugin intents — same slot device integrations used: after specific UI/git
+  // matches, before the app-launcher catch-all so plugin device names win
+  for (const e of ctx.exts ?? []) {
+    const a = e.parse?.(t);
+    if (a) return { type: "plugin", plugin: e.id, act: a };
   }
-  const brB = new RegExp(`^set (?:the |my )?([a-z ]*?)?(?:${DEV}) to ${num}${PCT_TAIL}`).exec(t);
-  if (brB) {
-    const p = pct(brB[2]);
-    if (p !== null) return { type: "lightBright", pct: p, name: (brB[1] ?? "").trim() };
-  }
-
-  const toneM = new RegExp(`^(?:make|set)(?: the| my)? ?([a-z ]*?)?(${DEV})(?: to)? (${TONES})(?: white)?$`).exec(t);
-  if (toneM) return { type: "lightTemp", tone: toneM[3], name: (toneM[1] ?? "").trim() };
-  const colM = new RegExp(`^(?:turn|make|set|change|color)(?: the| my)? ?([a-z ]*?)?(${DEV})(?: to)? (${COLORS})$`).exec(t);
-  if (colM) return { type: "lightColor", color: colM[3], name: (colM[1] ?? "").trim() };
-
-  // natural bare forms — "lights red", "light warm", "luz roja" (post-lexicon)
-  const bareTone = new RegExp(`^(?:the )?(?:${DEV}) (${TONES})(?: white)?$`).exec(t);
-  if (bareTone) return { type: "lightTemp", tone: bareTone[1], name: "" };
-  const bareCol = new RegExp(`^(?:the )?(?:${DEV}) (${COLORS})$`).exec(t);
-  if (bareCol) return { type: "lightColor", color: bareCol[1], name: "" };
 
   // "close google chrome" / "minimize the calculator" / "quit spotify" /
   // "kill chrome" — placed before the launcher catch-all; "close settings"
-  // already matched above as a settings action
+  // already matched above as a settings action. Catch-all: any tail after
+  // the verb matches, so chatter misheard into one of these verbs must
+  // never outrank a specific intent found later (scan's tier order)
   const appAct = /^(close|quit|minimize|kill)(?: (?:the|my))? (.+)$/.exec(t);
-  if (appAct) {
+  if (catchAlls && appAct) {
     const verb = appAct[1];
     if (verb === "minimize") return { type: "minimizeApp", arg: appAct[2] };
     if (verb === "kill") return { type: "killApp", arg: appAct[2] };
@@ -172,7 +147,7 @@ function matchChain(t: string, ctx: VoiceCtx): VoiceAct | null {
   // "launch google chrome" / "open the spotify" — app finder; placed last so
   // the specific intents above ("open settings", "start a new session") win
   const appM = /^(?:launch|open|start)(?: (?:the|my))? (.+)$/.exec(t);
-  if (appM) return { type: "launchApp", arg: appM[1] };
+  if (catchAlls && appM) return { type: "launchApp", arg: appM[1] };
 
   // "theme latte" / "switch to the strawberry theme". Accents turn
   // "theme" into "team"/"tim" (folded locally, and the typo/phonetic pass
@@ -226,12 +201,13 @@ export function routeVoice(text: string, ctx: VoiceCtx): VoiceAct | null {
   // ("yeah anyway turn the lights off") is matched on the tail after each
   // trigger word and comes back wrapped for spoken confirmation. Suffix must
   // match to the END of the fragment — trailing clauses never fire.
-  const re = new RegExp(`\\b(?:${TRIGGERS})\\b`, "g");
+  const TRIG = triggersOf(ctx);
+  const re = new RegExp(`\\b(?:${TRIG})\\b`, "g");
   let m: RegExpExecArray | null;
-  const scan = (src: string): VoiceAct | null => {
+  const scan = (src: string, catchAlls: boolean): VoiceAct | null => {
     re.lastIndex = 0;
     while ((m = re.exec(src))) {
-      const act = matchChain(src.slice(m.index), ctx);
+      const act = matchChain(src.slice(m.index), ctx, catchAlls);
       // a command heading the whole utterance is a plain direct hit;
       // anything buried after other words needs spoken confirmation
       if (act) return m.index === 0 ? act : { type: "embedded", act };
@@ -247,7 +223,7 @@ export function routeVoice(text: string, ctx: VoiceCtx): VoiceAct | null {
       const frag = src.slice(m.index);
       const cm = CUT.exec(frag);
       if (!cm || cm.index === 0) continue;
-      const act = matchChain(frag.slice(0, cm.index).trim(), ctx);
+      const act = matchChain(frag.slice(0, cm.index).trim(), ctx, catchAlls);
       if (act) return { type: "embedded", act, fuzzy: true };
     }
     return null;
@@ -256,12 +232,15 @@ export function routeVoice(text: string, ctx: VoiceCtx): VoiceAct | null {
   // the untouched text is scanned FIRST — corrections are only a fallback,
   // so they can never leak into dictated payloads ("prompt write tests"
   // keeps "write"; only utterances the raw text can't match get repaired)
-  const hit = scan(t);
+  //
+  // specific intents win over catch-all app verbs regardless of position:
+  // chatter misheard into "quit"/"close" ("a bit of a guide stage hall")
+  // must not hijack the fragment before the real command later in the
+  // sentence — tier 1 ignores the app-verb catch-alls, tier 2 allows them
+  const hit =
+    scan(t, false) ??
+    (fixed !== t ? matchChain(fixed, ctx, false) ?? scan(fixed, false) : null);
   if (hit) return hit;
-  if (fixed !== t) {
-    const retry = matchChain(fixed, ctx);
-    if (retry) return retry;
-    return scan(fixed);
-  }
-  return null;
+  return scan(t, true) ??
+    (fixed !== t ? matchChain(fixed, ctx) ?? scan(fixed, true) : null);
 }

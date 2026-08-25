@@ -63,8 +63,8 @@ export type AppSettings = {
   ttsSpeed: number;
   // secondary model for commit messages, debriefs & long-answer summaries ("provider/model", "" = off)
   secondaryModel: string;
-  // Tuya cloud project credentials for voice light control
-  tuya: { clientId: string; secret: string; region: string; uid: string };
+  // opaque per-plugin config blobs — each plugin validates its own shape
+  plugins: Record<string, Record<string, unknown>>;
 };
 
 const KEY = "oc.settings";
@@ -98,7 +98,7 @@ const DEFAULTS: AppSettings = {
   ttsVol: 1,
   ttsSpeed: 1,
   secondaryModel: "",
-  tuya: { clientId: "", secret: "", region: "eu", uid: "" },
+  plugins: {},
 };
 
 function num(v: unknown, def: number, min: number, max: number) {
@@ -214,12 +214,10 @@ export function useSettings() {
         ttsVol: num(p.ttsVol, DEFAULTS.ttsVol, 0, 1),
         ttsSpeed: num(p.ttsSpeed, DEFAULTS.ttsSpeed, 0.5, 2),
         secondaryModel: typeof p.secondaryModel === "string" ? p.secondaryModel : "",
-        tuya: {
-          clientId: typeof p.tuya?.clientId === "string" ? p.tuya.clientId : "",
-          secret: typeof p.tuya?.secret === "string" ? p.tuya.secret : "",
-          region: ["us", "eu", "cn", "in"].includes(p.tuya?.region) ? p.tuya.region : "eu",
-          uid: typeof p.tuya?.uid === "string" ? p.tuya.uid : "",
-        },
+        plugins:
+          p.plugins && typeof p.plugins === "object" && !Array.isArray(p.plugins)
+            ? p.plugins
+            : {},
         speakReplies: !!p.speakReplies && typeof p.secondaryModel === "string" && !!p.secondaryModel && typeof p.ttsVoice === "string" && p.ttsVoice.endsWith(".onnx"),
         // legacy showThinking (true = thinking expanded) inverts into the new
         // collapsed flag so existing users keep their default; fresh installs
@@ -309,6 +307,14 @@ export function useSettings() {
     [],
   );
 
+  // patch one plugin's config blob (plugins read live values via api.settings())
+  const updatePlugin = useCallback((id: string, patch: Record<string, unknown>) => {
+    setSettings((s) => ({
+      ...s,
+      plugins: { ...s.plugins, [id]: { ...s.plugins[id], ...patch } },
+    }));
+  }, []);
+
   // secondary + voice required for speech — auto-off if either cleared
   useEffect(() => {
     if (settings.speakReplies && (!settings.secondaryModel || !settings.ttsVoice)) {
@@ -362,6 +368,7 @@ export function useSettings() {
   return {
     settings,
     update,
+    updatePlugin,
     updateSounds,
     updateColors,
     resetColors,

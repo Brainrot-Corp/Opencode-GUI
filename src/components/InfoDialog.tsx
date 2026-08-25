@@ -7,6 +7,15 @@ import "../styles/dialog.css";
 type Row = [string, string]; // [mono left, dim right]
 type Group = [string, Row[]];
 
+// documentation rows contributed by plugins, grouped under their name
+export type PluginDocs = { name: string; info: { voice?: Row[]; keys?: Row[] } }[];
+
+const docGroups = (docs: PluginDocs | undefined, tab: "voice" | "keys"): Group[] =>
+  (docs ?? []).flatMap(({ name, info }) => {
+    const rows = info[tab];
+    return rows?.length ? [[`${name} — plugin`, rows] as Group] : [];
+  });
+
 const VOICE: Group[] = [
   [
     "Sessions & UI",
@@ -49,17 +58,6 @@ const VOICE: Group[] = [
       ["commit", "commit staged — generates a message if none typed"],
       ["push / pull", ""],
       ["stage all", ""],
-    ],
-  ],
-  [
-    "Lights — set up in Settings › Lights",
-    [
-      ["lights on / lights off", ""],
-      ["turn the desk lamp off", ""],
-      ["dim the lights to fifty percent", ""],
-      ["set it to 75 percent", ""],
-      ["make it warm white / cool white", ""],
-      ["turn it red / blue / green…", ""],
     ],
   ],
 ];
@@ -110,9 +108,11 @@ const Groups = ({ data }: { data: Group[] }) => (
 // opened from Settings › (i) — voice phrases, slash commands, hotkeys
 export default function InfoDialog({
   commands,
+  pluginDocs,
   onClose,
 }: {
   commands: CmdEntry[];
+  pluginDocs?: PluginDocs;
   onClose: () => void;
 }) {
   const [tab, setTab] = useState<"voice" | "cmds" | "keys">("voice");
@@ -133,7 +133,7 @@ export default function InfoDialog({
       </div>
       {tab === "voice" && (
         <>
-          <Groups data={VOICE} />
+          <Groups data={[...VOICE, ...docGroups(pluginDocs, "voice")]} />
           <p className="cmd-note">
             English, French &amp; Spanish phrasing all work, politeness words are ignored, and
             one-letter typos in device/color words are forgiven. Start with "prompt" to fill the
@@ -145,7 +145,7 @@ export default function InfoDialog({
       {tab === "cmds" && <CommandRows commands={commands} />}
       {tab === "keys" && (
         <>
-          <Groups data={KEYS} />
+          <Groups data={[...KEYS, ...docGroups(pluginDocs, "keys")]} />
           <p className="cmd-note">Ctrl+=/-/0 and Ctrl+wheel are blocked — UI scale lives in Settings.</p>
         </>
       )}

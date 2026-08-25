@@ -16,9 +16,6 @@ use voice::{install_bin_finalize, install_model_finalize, install_piper_bin, ins
 mod git;
 use git::{git_commit, git_diff, git_discard, git_log, git_pull, git_push, git_stage, git_status, git_unstage};
 
-mod tuya;
-use tuya::{tuya_lights, tuya_send};
-
 struct ServerState {
     port: u16,
     child: Mutex<Option<Child>>,
@@ -97,6 +94,71 @@ fn themes_dir() -> PathBuf {
     PathBuf::from(home).join(".config").join(".opencode-gui")
 }
 
+fn plugins_dir() -> PathBuf {
+    themes_dir().join("plugins")
+}
+
+// one folder per plugin under plugins/: plugin.json + main.js (+ styles.css).
+// Raw file contents only — validation and manifest parsing live frontend-side
+#[derive(serde::Serialize)]
+struct PluginDir {
+    dir: String,
+    manifest: String,
+    main: String,
+    css: String,
+}
+
+#[tauri::command]
+fn plugins_scan() -> Vec<PluginDir> {
+    let mut out = Vec::new();
+    let Ok(entries) = std::fs::read_dir(plugins_dir()) else {
+        return out;
+    };
+    for e in entries.flatten() {
+        if !e.path().is_dir() {
+            continue;
+        }
+        let read = |name: &str| std::fs::read_to_string(e.path().join(name)).unwrap_or_default();
+        out.push(PluginDir {
+            dir: e.file_name().to_string_lossy().into_owned(),
+            manifest: read("plugin.json"),
+            main: read("main.js"),
+            css: read("styles.css"),
+        });
+    }
+    out
+}
+
+// generic https fetch for plugins (signing etc. happens JS-side) — plain
+// request/response envelope, no cookies, 10s timeout
+#[tauri::command]
+async fn http_json(
+    method: String,
+    url: String,
+    headers: std::collections::HashMap<String, String>,
+    body: Option<String>,
+) -> Result<serde_json::Value, String> {
+    if !url.starts_with("https://") {
+        return Err("only https:// urls are allowed".into());
+    }
+    let m = reqwest::Method::from_bytes(method.as_bytes()).map_err(|e| e.to_string())?;
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let mut req = client.request(m, &url);
+    for (k, v) in &headers {
+        req = req.header(k.as_str(), v.as_str());
+    }
+    if let Some(b) = body {
+        req = req.header("Content-Type", "application/json").body(b);
+    }
+    let resp = req.send().await.map_err(|e| format!("unreachable: {e}"))?;
+    let status = resp.status().as_u16();
+    let text = resp.text().await.map_err(|e| e.to_string())?;
+    Ok(serde_json::json!({ "status": status, "body": text }))
+}
+
 #[tauri::command]
 fn theme_config_read() -> Result<String, String> {
     let p = themes_dir().join("themes.json");
@@ -137,20 +199,25 @@ fn reveal_config_dir() -> Result<(), String> {
     Ok(())
 }
 
-// watch the theme config dir; coalesce bursts of events into one emit
-fn watch_themes(handle: tauri::AppHandle) {
+// watch a config dir; coalesce bursts of events into one emit
+fn watch_dir(handle: tauri::AppHandle, path: PathBuf, event: &'static str, recursive: bool) {
     use notify::Watcher as _;
-    let _ = std::fs::create_dir_all(themes_dir());
+    let _ = std::fs::create_dir_all(&path);
     let (tx, rx) = std::sync::mpsc::channel();
     let mut watcher = match notify::recommended_watcher(tx) {
         Ok(w) => w,
         Err(e) => {
-            eprintln!("theme watcher unavailable: {e}");
+            eprintln!("{event} watcher unavailable: {e}");
             return;
         }
     };
-    if let Err(e) = watcher.watch(&themes_dir(), notify::RecursiveMode::NonRecursive) {
-        eprintln!("theme watch failed: {e}");
+    let mode = if recursive {
+        notify::RecursiveMode::Recursive
+    } else {
+        notify::RecursiveMode::NonRecursive
+    };
+    if let Err(e) = watcher.watch(&path, mode) {
+        eprintln!("{event} watch failed: {e}");
         return;
     }
     // keep the watcher alive for the process lifetime
@@ -167,7 +234,7 @@ fn watch_themes(handle: tauri::AppHandle) {
                 let _ = rx.try_recv();
             }
             use tauri::Emitter;
-            let _ = handle.emit("themes://changed", ());
+            let _ = handle.emit(event, ());
         }
     });
 }
@@ -207,6 +274,8 @@ pub fn run() {
             theme_config_read,
             theme_config_write,
             reveal_config_dir,
+            plugins_scan,
+            http_json,
             browser_open,
             browser_back,
             browser_forward,
@@ -236,8 +305,6 @@ pub fn run() {
             git_pull,
             git_diff,
             git_log,
-            tuya_lights,
-            tuya_send
         ]);
 
     // global hotkeys, work system-wide.
@@ -353,8 +420,9 @@ pub fn run() {
             };
             app.manage(state);
             app.manage(browser::BrowserState::default());
-            app.manage(tuya::TuyaState(Mutex::new(None)));
-            watch_themes(app.handle().clone());
+            let h = app.handle().clone();
+            watch_dir(h.clone(), themes_dir(), "themes://changed", false);
+            watch_dir(h, plugins_dir(), "plugins://changed", true);
             apply_glass(app.handle());
             // make sure the window actually owns keyboard focus on launch Ã¢â‚¬â€
             // otherwise the first Alt+Space sees "visible but unfocused" and
