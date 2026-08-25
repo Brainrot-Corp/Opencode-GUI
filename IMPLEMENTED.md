@@ -400,6 +400,9 @@ afterwards (user call) — VAD utterance close is the fixed SILENCE_MS (1.5s) ag
   copied source; icon flips to a check for ~1.2s.
 - **Tool blocks**: header copy button (next to the eye) copies the tool output, falling back to
   the input (e.g. the bash command) when there's no output. Shared `.copy-btn` style in chat.css.
+  Copy targets the paste-ready payload: `read` output has its line-number gutter stripped (only
+  when ~every line carries one), and the no-output fallback takes the primary string input value
+  instead of a key:value dump.
 
 `npm run build` green.
 

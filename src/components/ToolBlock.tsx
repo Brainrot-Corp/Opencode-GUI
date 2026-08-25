@@ -82,6 +82,19 @@ function prettyJson(out: string): string | null {
   }
 }
 
+// strips render-only gutters so copied text is paste-ready: file-read output
+// carries line-number prefixes ("  12→code") that shouldn't survive a copy —
+// only stripped when ~every line has one, so numbered prose stays intact
+function cleanForCopy(tool: string, out: string): string {
+  if (tool !== "read") return out;
+  const lines = out.split("\n");
+  const nonEmpty = lines.filter((l) => l.trim());
+  if (!nonEmpty.length) return out;
+  const guttered = nonEmpty.filter((l) => /^\s*\d+\s?[→:|]\s?/.test(l)).length;
+  if (guttered / nonEmpty.length < 0.8) return out;
+  return lines.map((l) => l.replace(/^\s*\d+\s?[→:|]\s?/, "")).join("\n");
+}
+
 // answered question block — questions as cards, chosen answers as chips.
 // any shape mismatch falls back to the raw <pre> rendering
 function QuestionView({ t }: { t: any }) {
@@ -244,10 +257,16 @@ export default function ToolBlock({ part, collapsedDefault }: { part: Part; coll
   const todos = toolName === "todowrite" || toolName === "todo" ? todoSource(t) : [];
   const todoDone =
     todos.length > 0 ? todos.filter((td) => td.status === "completed").length : null;
-  // fast copy: output when there is one, otherwise the input (e.g. the bash
-  // command itself); falls back to nothing for empty blocks
+  // fast copy targets the payload you'd actually paste: cleaned tool output
+  // when there is one, otherwise the primary input value (the bash command,
+  // the file path…) instead of a key:value dump
   const [copied, setCopied] = useState(false);
-  const copyText = out.trim() ? out : input.map(([k, v]) => `${k}: ${typeof v === "string" ? v : JSON.stringify(v)}`).join("\n");
+  const primaryInput = input.find(([, v]) => typeof v === "string" && (v as string).trim());
+  const copyText = out.trim()
+    ? cleanForCopy(toolName, out)
+    : typeof primaryInput?.[1] === "string"
+      ? primaryInput[1]
+      : "";
   const doCopy = () => {
     if (!copyText) return;
     navigator.clipboard.writeText(copyText).then(
