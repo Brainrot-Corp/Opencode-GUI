@@ -29,7 +29,7 @@ export type VoiceAct =
   | { type: "dictate"; arg: string }
   | { type: "dictateSend"; arg: string }
   // command found buried mid-sentence — needs spoken confirmation before exec
-  | { type: "embedded"; act: VoiceAct };
+  | { type: "embedded"; act: VoiceAct; fuzzy?: boolean };
 
 export type VoiceCtx = {
   themes: string[];
@@ -55,7 +55,9 @@ function pct(w: string): number | null {
 
 // device word shared by every light intent
 const DEV = "(?:lights?|lamps?|bulbs?)";
-const COLORS = "red|orange|yellow|green|cyan|blue|purple|violet|magenta|pink";
+const COLORS =
+  "red|orange|yellow|green|cyan|blue|purple|violet|magenta|pink" +
+  "|crimson|salmon|coral|gold|lime|olive|brown|teal|turquoise|aqua|azure|indigo|navy|lavender|maroon";
 const TONES = "warm|cool|neutral|daylight";
 
 function normalize(t: string): string {
@@ -86,10 +88,11 @@ function matchChain(t: string, ctx: VoiceCtx): VoiceAct | null {
   if (/^(cycle|next) agent$/.test(t)) return { type: "cycleAgent" };
   if (/^(send|submit)( it| that| this| the prompt| message)?$/.test(t)) return { type: "send" };
   // capture prefixes — everything after the word is dictation for the
-  // composer ("prompt …") or fill-and-send ("send …"); bare forms above win
-  const dm = /^prompt (.+)$/.exec(t);
+  // composer ("prompt …") or fill-and-send ("send …"); bare forms above win.
+  // Punctuation right after the verb is tolerated ("send, can you …")
+  const dm = /^prompt[,.!?;:]* (.+)$/.exec(t);
   if (dm) return { type: "dictate", arg: dm[1] };
-  const dsm = /^send (.+)$/.exec(t);
+  const dsm = /^send[,.!?;:]* (.+)$/.exec(t);
   if (dsm) return { type: "dictateSend", arg: dsm[1] };
   if (/^(envoi|envoie|envoyer|envoyez|envoyé|envoye)$/.test(t)) return { type: "send" };
   if (/^(be quiet|stop speaking|stop talking)$/.test(t)) return { type: "quiet" };
@@ -211,6 +214,20 @@ export function routeVoice(text: string, ctx: VoiceCtx): VoiceAct | null {
   while ((m = re.exec(fixed))) {
     const act = matchChain(fixed.slice(m.index), ctx);
     if (act) return { type: "embedded", act };
+  }
+
+  // fuzzy pass: a trailing clause after the command ("turn the lights off
+  // and then speak after") is tolerated — the head up to the first clause
+  // boundary must match exactly. Still wrapped for confirmation, and the
+  // fuzzy flag stops the recent-command streak from skipping the read-back,
+  // so a probable false positive can only ever fire after a spoken yes.
+  const CUT = /,|\b(?:and|then|but|because|if|when|or|so|that|i)\b/;
+  while ((m = re.exec(fixed))) {
+    const frag = fixed.slice(m.index);
+    const cm = CUT.exec(frag);
+    if (!cm || cm.index === 0) continue;
+    const act = matchChain(frag.slice(0, cm.index).trim(), ctx);
+    if (act) return { type: "embedded", act, fuzzy: true };
   }
   return null;
 }

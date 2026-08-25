@@ -59,6 +59,13 @@ const RULES: [RegExp, string][] = [
   [/\bviolettes?\b|\bmorad[oa]s?\b/g, "violet"],
   [/\bpourpres?\b/g, "purple"],
   [/\broses?\b|\brosas?\b/g, "pink"],
+  [/\bmarrones?\b/g, "brown"],
+  [/\bturquesas?\b/g, "turquoise"],
+  [/\baguamarinas?\b/g, "aqua"],
+  [/\blilas?\b/g, "lavender"],
+  [/\bcitron vert\b|\blima\b/g, "lime"],
+  [/\bbleu marine\b|\bazul marino\b/g, "navy"],
+  [/\bdorees?\b|\bdores\b/g, "gold"],
 
   // white-balance tones
   [/\bchaudes?\b|\bchauds?\b/g, "warm"],
@@ -111,6 +118,9 @@ const LEX = [
   "warm", "cool", "neutral", "daylight",
   "red", "orange", "yellow", "green", "cyan", "blue",
   "violet", "purple", "magenta", "pink",
+  "crimson", "salmon", "coral", "gold", "lime", "olive",
+  "brown", "teal", "turquoise", "aqua", "azure", "indigo",
+  "navy", "lavender", "maroon",
 ];
 
 function oneEdit(a: string, b: string): boolean {

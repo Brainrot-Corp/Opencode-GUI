@@ -21,15 +21,30 @@ type Dev = {
 // spoken color words → hue (degrees)
 const HUE: Record<string, number> = {
   red: 0,
+  salmon: 6,
+  coral: 16,
+  brown: 20,
   orange: 30,
+  gold: 45,
   yellow: 60,
+  olive: 80,
+  lime: 90,
   green: 120,
+  turquoise: 174,
+  teal: 175,
   cyan: 180,
+  aqua: 180,
+  azure: 210,
   blue: 240,
+  navy: 240,
+  indigo: 255,
+  lavender: 270,
   purple: 280,
   violet: 280,
   magenta: 320,
   pink: 330,
+  crimson: 348,
+  maroon: 350,
 };
 
 // warmth presets on the v2 temp scale (0 = coldest … 1000 = warmest)

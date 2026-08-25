@@ -81,7 +81,11 @@ eq(
   { type: "embedded", act: { type: "light", sw: "off", name: "" } },
   "earliest trigger whose tail fails is skipped",
 );
-eq(routeVoice("turn the lights off when you leave", ctx), null, "conditional tail rejected");
+eq(
+  routeVoice("turn the lights off when you leave", ctx),
+  { type: "embedded", act: { type: "light", sw: "off", name: "" }, fuzzy: true },
+  "conditional tail → fuzzy confirmed, not silent",
+);
 eq(routeVoice("we turned the lights off yesterday", ctx), null, "past tense is not a trigger");
 eq(routeVoice("turn the bedroom lamp off.", ctx), { type: "light", sw: "off", name: "bedroom" }, "direct hit stays unwrapped");
 
@@ -127,6 +131,33 @@ eq(routeVoice("make the desk lamp warm", ctx), { type: "lightTemp", tone: "warm"
 eq(routeVoice("make the light cool white", ctx), { type: "lightTemp", tone: "cool", name: "" }, "cool white");
 eq(routeVoice("turn the light red", ctx), { type: "lightColor", color: "red", name: "" }, "color");
 eq(routeVoice("change the bedroom lights to blue", ctx), { type: "lightColor", color: "blue", name: "bedroom" }, "change to color");
+eq(routeVoice("turn the lights teal", ctx), { type: "lightColor", color: "teal", name: "" }, "extended palette");
+eq(routeVoice("lights lavender", ctx), { type: "lightColor", color: "lavender", name: "" }, "bare extended color");
+eq(routeVoice("luz turquesa", ctx), { type: "lightColor", color: "turquoise", name: "" }, "es extended color");
+eq(
+  routeVoice("makes no sense. Send, can you add more colors to the voice commands?", ctx),
+  {
+    type: "embedded",
+    act: { type: "dictateSend", arg: "can you add more colors to the voice commands" },
+  },
+  "comma after send still captures fill-and-send",
+);
+eq(routeVoice("send, hello there", ctx), { type: "dictateSend", arg: "hello there" }, "direct comma form");
+eq(
+  routeVoice("and it should not break anything. Like, if right now I want to turn the lights off and then speak after", ctx),
+  { type: "embedded", act: { type: "light", sw: "off", name: "" }, fuzzy: true },
+  "trailing clause → fuzzy confirmed match",
+);
+eq(
+  routeVoice("stop and think about it", ctx),
+  { type: "embedded", act: { type: "abort" }, fuzzy: true },
+  "bare trigger before conjunction still confirms, never silent-fires",
+);
+eq(
+  routeVoice("turn the lights on and off again", ctx),
+  { type: "embedded", act: { type: "light", sw: "on", name: "" }, fuzzy: true },
+  "ambiguous head still just asks — never silent-fires",
+);
 eq(routeVoice("make it warm in here", ctx), null, "sentence stays dictation");
 eq(routeVoice("open settings", ctx), { type: "settings", open: true }, "settings still beats light intents");
 

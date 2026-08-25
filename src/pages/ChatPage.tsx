@@ -288,8 +288,9 @@ export default function ChatPage() {
       playSound("click");
       if (act.type === "embedded") {
         // active session: a command ran recently → trust the streak, skip
-        // the read-back (25s window)
-        if (Date.now() - lastExecRef.current < 25000) {
+        // the read-back (25s window). Fuzzy matches (command + trailing
+        // clause) always read back — they're only probable.
+        if (!act.fuzzy && Date.now() - lastExecRef.current < 25000) {
           execAct(act.act);
           return;
         }
