@@ -83,9 +83,12 @@ export function useVoice(
   const preRef = useRef<Float32Array[]>([]);
   const speechMsRef = useRef(0);
   const silenceMsRef = useRef(0);
-  // TTS echo gate: hands-free must not transcribe our own spoken replies
+  // TTS echo gate state: hands-free must not transcribe our own spoken
+  // replies — AEC subtracts most of it, the raised barge threshold mops up
   const ttsSpeakingRef = useRef(false);
   const ttsUntilRef = useRef(0);
+  // sustained-loud time while a reply is playing (barge-in detector)
+  const bargeMsRef = useRef(0);
 
   // true while speech synthesis is audible (+ grace tail for speaker reverb)
   const ttsActive = useCallback(() => {
@@ -128,6 +131,7 @@ export function useVoice(
     preRef.current = [];
     speechMsRef.current = 0;
     silenceMsRef.current = 0;
+    bargeMsRef.current = 0;
   }, []);
 
   useEffect(() => () => teardown(), [teardown]);
@@ -196,7 +200,12 @@ export function useVoice(
           setError(`model ${model} isn't downloaded — pick or fetch one in Settings › Voice`);
           return;
         }
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const stream = await navigator.mediaDevices.getUserMedia({
+          // explicit AEC — Chromium subtracts the page's own audio output
+          // (piper playback) from the mic, so talking during a reply is
+          // captured instead of gated away
+          audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+        });
         const ctx = new AudioContext({ sampleRate: RATE });
         const src = ctx.createMediaStreamSource(stream);
         const node = ctx.createScriptProcessor(4096, 1, 1);
@@ -207,19 +216,40 @@ export function useVoice(
             chunksRef.current.push(ch);
             return;
           }
-          // our own spoken replies are in the air — drop everything absorbed
-          // so the app can't transcribe itself (feedback loop)
-          if (ttsActive()) {
-            uttRef.current = [];
-            preRef.current = [];
-            speechMsRef.current = 0;
-            silenceMsRef.current = 0;
-            return;
-          }
-          // VAD: quiet before speech fills the pre-roll ring; speech opens an
-          // utterance; pauseMs of trailing quiet closes and transcribes it
           const level = rms(ch);
           const chunkMs = (ch.length / RATE) * 1000;
+          // a reply is playing: AEC removes most of our own voice, so quiet
+          // residue is discarded — but sustained loud input is a real person
+          // talking over the reply → barge in (stop playback, keep listening)
+          // ponytail: threshold = 2× VAD + floor, retune the constants if it
+          // ever self-interrupts on loud speakers or needs shouting over
+          if (ttsActive()) {
+            const bargeThresh = Math.max(vadRef.current.thresh * 2, 0.05);
+            if (level >= bargeThresh) {
+              bargeMsRef.current += chunkMs;
+              if (bargeMsRef.current >= 250) {
+                bargeMsRef.current = 0;
+                ttsUntilRef.current = Date.now(); // kill our grace window too
+                ttsSpeakingRef.current = false;
+                window.speechSynthesis?.cancel();
+                window.dispatchEvent(new Event("oc:tts-stop"));
+                // seed the utterance from the pre-roll ring so word onsets
+                // recorded before the interrupt survive
+                if (!uttRef.current.length && preRef.current.length) {
+                  uttRef.current = preRef.current;
+                  preRef.current = [];
+                }
+              }
+            } else {
+              bargeMsRef.current = Math.max(0, bargeMsRef.current - chunkMs / 2);
+            }
+            preRef.current.push(ch);
+            if (preRef.current.length > PRE_CHUNKS) preRef.current.shift();
+            return;
+          }
+          bargeMsRef.current = 0;
+          // VAD: quiet before speech fills the pre-roll ring; speech opens an
+          // utterance; pauseMs of trailing quiet closes and transcribes it
           if (!uttRef.current.length && level < vadRef.current.thresh) {
             preRef.current.push(ch);
             if (preRef.current.length > PRE_CHUNKS) preRef.current.shift();

@@ -321,6 +321,22 @@ status read confirmed each hop. Real-world quirks handled: offline devices repor
 the device currently reports (hex fallback for older bulbs). Gotcha: the platform shows both a
 device ID and the account UID (`eu…`-prefixed); only the UID works in `/users/{uid}/devices`.
 
+### Mic no longer mutes during TTS — AEC + barge-in ✅ (2026-08-25)
+
+User complaint: hands-free dropped everything said while a reply was playing. Replaced the hard
+echo gate in `useVoice.ts` with:
+
+- **Explicit AEC**: `getUserMedia({echoCancellation/noiseSuppression/autoGainControl: true})` —
+  Chromium subtracts the page's own piper playback from the mic signal (root fix).
+- **Barge-in**: while TTS is active, chunks are watched instead of discarded; ≥250 ms sustained
+  above 2× VAD threshold fires `oc:tts-stop` (pauses reply + hushes its queue), kills the local
+  grace window so capture resumes instantly, and seeds the live utterance from the pre-roll ring
+  so word onsets survive. Quiet residue still discarded → no self-transcription loop.
+- Tuning knobs flagged with a ponytail comment (barge threshold/duration); manual push-to-talk
+  mode untouched.
+
+`npm run build` green; all router/tuya checks pass. Live hands-free behavior needs a GUI test.
+
 ## Notes / Decisions log
 
 - 2026-08-23: Project started. Plan finalized in PLAN.md (Windows only, Tauri v2, React+TS, fresh UI, minimal scope).
