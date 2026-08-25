@@ -175,9 +175,12 @@ function matchChain(t: string, ctx: VoiceCtx): VoiceAct | null {
   if (appM) return { type: "launchApp", arg: appM[1] };
 
   // "theme latte" / "switch to the strawberry theme". Accents turn
-  // "theme" into "team" — folded locally so dictation never sees the rewrite
+  // "theme" into "team"/"tim" (folded locally, and the typo/phonetic pass
+  // may hand us "theme," with glued punctuation) — dictation never sees it
   const tt = t.replace(/\bteams?\b/g, "theme");
-  const themeM = /^(?:theme|switch to(?: the)? theme) (\w+)$/.exec(tt) ?? /^switch to (?:the )?(\w+)(?: theme)?$/.exec(tt);
+  const themeM =
+    /^(?:theme|switch to(?: the)? theme)[,.!?;:]* (\w+)$/.exec(tt) ??
+    /^switch to (?:the )?(\w+)(?: theme)?$/.exec(tt);
   if (themeM && ctx.themes.includes(themeM[1])) return { type: "theme", arg: themeM[1] };
   if (/^(dark|light) theme$/.test(tt)) return { type: "mode", arg: t.split(" ")[0] as "dark" | "light" };
 
@@ -253,5 +256,12 @@ export function routeVoice(text: string, ctx: VoiceCtx): VoiceAct | null {
   // the untouched text is scanned FIRST — corrections are only a fallback,
   // so they can never leak into dictated payloads ("prompt write tests"
   // keeps "write"; only utterances the raw text can't match get repaired)
-  return scan(t) ?? (fixed !== t ? scan(fixed) : null);
+  const hit = scan(t);
+  if (hit) return hit;
+  if (fixed !== t) {
+    const retry = matchChain(fixed, ctx);
+    if (retry) return retry;
+    return scan(fixed);
+  }
+  return null;
 }

@@ -150,6 +150,11 @@ eq(routeVoice("our team is great", ctx), null, "'team' outside a theme phrase st
 eq(routeVoice("teme strawberry", ctx), { type: "theme", arg: "strawberry" }, "one-edit typo on any vocab word");
 eq(routeVoice("pusg it", ctx), { type: "git", act: "push" }, "typo-corrected trigger fires");
 eq(routeVoice("run compac", ctx), { type: "runCmd", arg: "compact", rest: "" }, "typo in command name");
+eq(routeVoice("lights purpul", ctx), { type: "lightColor", color: "purple", name: "" }, "phonetic: purpul → purple");
+eq(routeVoice("comit it", ctx), { type: "git", act: "commit" }, "phonetic: comit → commit");
+eq(routeVoice("prompt comit this later", ctx), { type: "dictate", arg: "comit this later" }, "phonetics never touch dictated payloads");
+eq(routeVoice("Tim, Saiyan.", ctx), { type: "theme", arg: "cyan" }, "accented 'theme cyan' via phonetics");
+eq(routeVoice("tim sayen", ctx), { type: "theme", arg: "cyan" }, "same, no punctuation");
 eq(
   routeVoice("and it should not break anything. Like, if right now I want to turn the lights off and then speak after", ctx),
   { type: "embedded", act: { type: "light", sw: "off", name: "" }, fuzzy: true },

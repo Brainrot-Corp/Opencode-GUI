@@ -103,6 +103,8 @@ const LEAD =
 const TAIL =
   /\s+(?:please|thanks|thank you|merci|gracias|s'il te plait|s'il vous plait|stp)+$/;
 
+import { doubleMetaphone } from "double-metaphone";
+
 export function expandVoice(t: string): string {
   let prev = deaccent(t).replace(LEAD, "");
   while (TAIL.test(prev)) prev = prev.replace(TAIL, "");
@@ -155,14 +157,38 @@ function oneEdit(a: string, b: string): boolean {
   return true;
 }
 
+// pronunciation fallback: ASR mishearings ("comit", "purpul", "liets") can be
+// far from the target spelling yet share a double-metaphone key with it
+function phonHit(w: string, V: string[]): string | undefined {
+  const codes = new Set(doubleMetaphone(w));
+  return V.find((k) => {
+    const [a, b] = doubleMetaphone(k);
+    return codes.has(a) || codes.has(b);
+  });
+}
+
 export function fixTypos(t: string, extra: string[] = []): string {
   const V = extra.length ? [...LEX, ...extra] : LEX;
   return t
     .split(" ")
-    .map((w) => {
-      if (w.length < 4 || V.includes(w)) return w;
-      const hit = V.find((k) => oneEdit(w, k));
-      return hit ?? w;
+    .map((tok) => {
+      // strip surrounding punctuation before matching — metaphone would
+      // otherwise read "tim," as /timk/-ish garbage and collide with "theme"
+      const m = /^([^a-z]*)([a-z]+)([^a-z]*)$/.exec(tok);
+      if (!m) return tok;
+      const [, pre, w, post] = m;
+      // spelling fixes need 4+ chars; the pronunciation pass may go lower —
+      // accents compress words ("tim" for "theme") without adding letters
+      if (!w || V.includes(w)) return tok;
+      if (w.length >= 4) {
+        const hit = V.find((k) => oneEdit(w, k));
+        if (hit) return pre + hit + post;
+      }
+      if (w.length >= 3) {
+        const phit = phonHit(w, V);
+        if (phit) return pre + phit + post;
+      }
+      return tok;
     })
     .join(" ");
 }

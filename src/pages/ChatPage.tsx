@@ -106,17 +106,17 @@ export default function ChatPage() {
       case "newSession":
         return "Start a new session";
       case "abort":
-        return "Stop the current generation";
+        return "Stop generating";
       case "theme":
         return `Switch to the ${a.arg} theme`;
       case "mode":
-        return `${a.arg === "dark" ? "Dark" : "Light"} mode`;
+        return `Switch to ${a.arg} mode`;
       case "settings":
         return a.open ? "Open settings" : "Close settings";
       case "sidebar":
         return `${a.open === true ? "Show" : a.open === false ? "Hide" : "Toggle"} the sidebar`;
       case "cycleAgent":
-        return "Cycle agent";
+        return "Switch agents";
       case "runCmd":
         return `Run /${a.arg}`;
       case "send":
@@ -129,7 +129,7 @@ export default function ChatPage() {
       case "debrief":
         return "Run a debrief";
       case "hearCheck":
-        return "Mic check";
+        return "Check the mic";
       case "git":
         return a.act === "open"
           ? "Show the git panel"
@@ -223,7 +223,7 @@ export default function ChatPage() {
           window.dispatchEvent(new Event("oc:debrief"));
           break;
         case "hearCheck":
-          announce("Yes, I can hear you.");
+          announce("Loud and clear.");
           break;
         case "git":
           window.dispatchEvent(new CustomEvent("oc:git", { detail: act.act }));
@@ -252,6 +252,15 @@ export default function ChatPage() {
     (s: string) => setVdbg((d) => [...d.slice(-4), s]),
     [],
   );
+  // visible confirmation for voice yes/no outcomes — works even when TTS is
+  // off (announce() is speech-gated); reuses the voice-debug box styling
+  const [vnote, setVnote] = useState("");
+  const vnoteTimer = useRef(0);
+  const confirmNote = useCallback((s: string) => {
+    setVnote(s);
+    clearTimeout(vnoteTimer.current);
+    vnoteTimer.current = window.setTimeout(() => setVnote(""), 2600);
+  }, []);
   const handleVoiceTranscript = useCallback(
     (text: string) => {
       const p = pendingRef.current;
@@ -262,11 +271,17 @@ export default function ChatPage() {
         if (/^(yes|yeah|yep|yup|sure|do it|confirm|go ahead|oui|ouais|ouep|vas-?y|si|sí|claro|dale|vale)\b/.test(t0)) {
           pendingRef.current = null;
           playSound("click");
-          announce("On it.");
+          const d = describeAct(p.act);
+          const acks = ["Done.", "You got it.", "On it.", "Sure thing."];
+          const ack = acks[Math.floor(Math.random() * acks.length)];
+          announce(ack);
+          confirmNote(`✓ ${d || ack}`);
           execAct(p.act);
         } else if (/^(no|nope|nah|cancel|forget it|non|annule|annuler|anula|cancela)\b/.test(t0)) {
           pendingRef.current = null;
-          announce("Cancelled.");
+          const nos = ["No problem.", "Okay, skipping that.", "Cancelled."];
+          announce(nos[Math.floor(Math.random() * nos.length)]);
+          confirmNote("✗ Cancelled");
         } else {
           pendingRef.current = null; // unrelated chatter kills the question
         }
@@ -295,7 +310,9 @@ export default function ChatPage() {
           return;
         }
         pendingRef.current = { act: act.act, until: Date.now() + 15000 };
-        announce(`${describeAct(act.act)} — say yes or no.`);
+        // natural read-back: "Okay — turn the lights off?"
+        const d = describeAct(act.act);
+        announce(`Okay — ${d.charAt(0).toLowerCase()}${d.slice(1)}?`);
         return;
       }
       execAct(act);
@@ -495,6 +512,7 @@ export default function ChatPage() {
                     onReject={oc.rejectQuestion}
                   />
                 )}
+                {vnote && <div className="voice-debug">{vnote}</div>}
                 {settings.voice.debug && vdbg.length > 0 && (
                   <div className="voice-debug" role="log">
                     {vdbg.map((l, i) => (

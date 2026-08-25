@@ -106,7 +106,7 @@ export function useSpeech(oc: SpeechOc, settings: AppSettings) {
         return;
       }
       // announce waiting for answer — queued, never cuts
-      queueSpeech("Summarizing...");
+      queueSpeech("One sec — summarizing.");
       const rawVoice = st.ttsVoice.replace(/\.onnx$/, "");
       const locale = rawVoice.split("-")[0] || "en_US";
       const langHint =
