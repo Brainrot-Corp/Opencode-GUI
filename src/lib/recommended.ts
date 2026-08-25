@@ -9,7 +9,8 @@ import { invoke } from "@tauri-apps/api/core";
 
 // paste your raw.githubusercontent.com URL here, e.g.
 // "https://raw.githubusercontent.com/<user>/<repo>/main/recommended.json"
-export const RECO_URL = "";
+export const RECO_URL =
+  "https://raw.githubusercontent.com/NoxLoveYa/-Vibecoded-Agent/refs/heads/main/recommended/recommended.json";
 
 export const DEFAULT_RECO: Reco = {
   version: 1,
