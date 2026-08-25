@@ -9,6 +9,7 @@ import { splitModel } from "../lib/models";
 import ThemeSelect from "./ThemeSelect";
 import ModelMenu, { type ModelEntry } from "./ModelMenu";
 import VoiceSettings from "./VoiceSettings";
+import TuyaSettings from "./TuyaSettings";
 import AppearanceSettings from "./AppearanceSettings";
 import SoundsSettings from "./SoundsSettings";
 import type { ProviderGroup } from "../types";
@@ -291,6 +292,8 @@ export default function SettingsDrawer({
           </div>
 
           <VoiceSettings open={open} settings={settings} update={update} />
+
+          <TuyaSettings open={open} settings={settings} update={update} />
 
           <AppearanceSettings
             themes={themes}

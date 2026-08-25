@@ -293,6 +293,34 @@ Fixed "stream disappears when switching sessions mid-reply" and added per-sessio
 - **Sidebar indicator**: pulsing glowing accent dot (`.row-busy`, reduced-motion aware) on each busy session row, independent of which session is open.
 - Returning to a still-streaming session now shows its live partial output immediately (cached store + continued deltas).
 
+### Tuya voice light control ✅ (2026-08-25)
+
+Voice-only integration (user choice; no GUI panel, no MCP/agent path) using the **Tuya Cloud API**
+(free tier) — signed HTTPS calls from Rust, DP-code mapping in TS:
+
+- **`src-tauri/src/tuya.rs`** — HMAC-SHA256 request signing (token + general schemes from
+  developer.tuya.com), ~24h access-token cache (`TuyaState`), region endpoints
+  (us/eu/cn/in → `openapi.tuyaxx…`). Two commands: `tuya_lights` (GET `/v1.0/users/{uid}/devices`,
+  filtered to light-ish categories / names) and `tuya_send` (POST `/v1.0/iot-03/devices/{id}/commands`).
+  New deps: reqwest (rustls), hmac, sha2, hex. Creds passed per-call from the frontend.
+- **`src/lib/tuya.ts`** — executor `runLightAct()`: resolves spoken name fragment against device
+  names, auto-detects v1/v2 DP codes from each device's status list (`bright_value[_v2]`,
+  `temp_value[_v2]`, `colour_data[_v2]`, `work_mode`), maps % → dp ranges, warmth words → temp scale,
+  color words → packed HSV `hhhhssssvvvv`; 60s device-list cache; returns a spoken summary.
+- **voiceRouter** — new acts `light/lightBright/lightTemp/lightColor` placed before the app-launcher
+  catch-all: "lights on/off", "turn the desk lamp off", "dim the lights to fifty percent",
+  "make the light warm/cool/daylight", "turn it red/blue…" (+ word numbers, % forms).
+- **Settings › Lights** (`TuyaSettings.tsx`) — Access ID / Secret / account UID fields, region
+  segmented control, "Find bulbs" test button; persisted in `oc.settings.tuya`.
+- ChatPage dispatcher cases announce results/errors through the existing Piper TTS pipeline.
+
+Verified: cargo check, `npm run build`, router 56 checks, tuya mappers 13 checks. **Live bulb test
+passed (2026-08-25)**: real "Shelf" bulb (dj, v2 dp codes) pulsed off→on through the signed chain;
+status read confirmed each hop. Real-world quirks handled: offline devices report no status array
+(guarded), this firmware reports colour_data_v2 as a JSON string — encoder mirrors whatever shape
+the device currently reports (hex fallback for older bulbs). Gotcha: the platform shows both a
+device ID and the account UID (`eu…`-prefixed); only the UID works in `/users/{uid}/devices`.
+
 ## Notes / Decisions log
 
 - 2026-08-23: Project started. Plan finalized in PLAN.md (Windows only, Tauri v2, React+TS, fresh UI, minimal scope).
@@ -312,3 +340,4 @@ Fixed "stream disappears when switching sessions mid-reply" and added per-sessio
 - 2026-08-23: **Fix: duplicated streaming text** — deltas that arrive before both their part and message are stashed; when the message was created from queued orphan parts, the stale stash survived and `flushDeltas` re-appended it (duplicate prefix until the next authoritative `part.updated` cleaned it up). Orphan-flush now drops stashes for materialized parts, same authority rule as `upsertPart`. Verified via SSE-order probe: assistant text parts start empty and grow by deltas only, snapshots carry full text.
 - 2026-08-23: **Fix: working state dropped mid-turn + tool-call rendering overhaul** — SSE trace proved heavy turns span MULTIPLE assistant messages (created=4 in one turn) with mid-turn `message.completed` and a `session.idle` while 2/4 still ran; old code cleared busy on each. New per-session inflight-message set: busy clears only when the last live message drains, early idles are ignored, and queue flush waits for true settle (idle + empty set). Tool parts now render as collapsible blocks (per-tool icon, streamed title, duration on completion, mono input/output body, auto-expand on error/short output) replacing the bare status line; retry / compaction / patch-chips / agent-subtask part types render as notice lines; step-finish shows tokens+cost; session-wide totals (cost+tokens from the authoritative store) display as a composer chip.
 - 2026-08-23: **Fix: Send/Stop flapping at step boundaries** — draining one assistant message dropped the indicators during the inference gap before the next message of the same turn started (Stop vanished mid-work, sometimes until the next tool call). Settles now go through a 1.5s grace timer (`settleSession`): canceled when the next assistant message starts, otherwise it drops the indicators, plays the reply bell, and drains the queued prompt. Queue-flush guard switched to the inflight set (busyRef lags a render behind post-settle).
+- 2026-08-25: **Tuya voice light control added** — cloud API path chosen over local LAN control (local keys would still require one-time cloud access; LAN protocol 3.4/3.5 in Rust is real work) and over MCP/agent control (token cost + seconds of latency vs sub-second direct calls). Voice-only scope per user: no panel, no agent tool. Discovery uses `/v1.0/users/{uid}/devices` — requires the user to paste their Smart Life account UID once (visible on the platform's Linked Accounts / device list UI); confirmed pattern via community Tauri+Tuya projects.

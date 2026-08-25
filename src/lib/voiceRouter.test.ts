@@ -50,4 +50,25 @@ eq(routeVoice("hello world this is dictation", ctx), null, "freeform dictation")
 eq(routeVoice("", ctx), null, "empty");
 eq(routeVoice("please refactor src/main.rs carefully", ctx), null, "prompt-looking text stays freeform");
 
+// light intents
+eq(routeVoice("lights on", ctx), { type: "light", sw: "on", name: "" }, "bare lights on");
+eq(routeVoice("lights off", ctx), { type: "light", sw: "off", name: "" }, "bare lights off");
+eq(routeVoice("turn the desk lamp off", ctx), { type: "light", sw: "off", name: "desk" }, "device then switch");
+eq(routeVoice("turn on the bedroom lights", ctx), { type: "light", sw: "on", name: "bedroom" }, "switch before device");
+eq(routeVoice("switch bedroom lights off", ctx), { type: "light", sw: "off", name: "bedroom" }, "switch mid phrase");
+eq(routeVoice("lamp on.", ctx), { type: "light", sw: "on", name: "" }, "punctuation stripped");
+
+eq(routeVoice("dim the desk lamp to 50 percent", ctx), { type: "lightBright", pct: 50, name: "desk" }, "dim named device");
+eq(routeVoice("dim the lights to fifty percent", ctx), { type: "lightBright", pct: 50, name: "" }, "word number");
+eq(routeVoice("brighten the light to 100", ctx), { type: "lightBright", pct: 100, name: "" }, "no unit word");
+eq(routeVoice("set the desk lamp to 75%", ctx), { type: "lightBright", pct: 75, name: "desk" }, "percent sign");
+eq(routeVoice("dim the lights to zero percent", ctx), null, "0% rejected — falls through");
+
+eq(routeVoice("make the desk lamp warm", ctx), { type: "lightTemp", tone: "warm", name: "desk" }, "warm tone");
+eq(routeVoice("make the light cool white", ctx), { type: "lightTemp", tone: "cool", name: "" }, "cool white");
+eq(routeVoice("turn the light red", ctx), { type: "lightColor", color: "red", name: "" }, "color");
+eq(routeVoice("change the bedroom lights to blue", ctx), { type: "lightColor", color: "blue", name: "bedroom" }, "change to color");
+eq(routeVoice("make it warm in here", ctx), null, "sentence stays dictation");
+eq(routeVoice("open settings", ctx), { type: "settings", open: true }, "settings still beats light intents");
+
 console.log(`voiceRouter: ${n} checks passed`);

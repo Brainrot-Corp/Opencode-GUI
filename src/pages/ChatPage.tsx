@@ -17,6 +17,7 @@ import { useSettings } from "../hooks/useSettings";
 import { useGlobalShortcuts } from "../hooks/useGlobalShortcuts";
 import { useVoice } from "../hooks/useVoice";
 import { routeVoice } from "../lib/voiceRouter";
+import { runLightAct, type LightAct } from "../lib/tuya";
 import { pickWorkspace } from "../lib/workspace";
 import { playSound } from "../lib/sounds";
 import { useSpeech } from "../hooks/useSpeech";
@@ -161,10 +162,18 @@ export default function ChatPage() {
         case "hearCheck":
           announce("Yes, I can hear you.");
           break;
+        case "light":
+        case "lightBright":
+        case "lightTemp":
+        case "lightColor":
+          runLightAct(settings.tuya, act as LightAct)
+            .then((msg) => announce(msg))
+            .catch((e) => announce(`Lights: ${e instanceof Error ? e.message : e}`));
+          break;
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [themes, oc.cmdList, settings.voice.autoSend],
+    [themes, oc.cmdList, settings.voice.autoSend, settings.tuya],
   );
 
   const voice = useVoice(

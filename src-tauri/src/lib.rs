@@ -16,6 +16,9 @@ use voice::{install_bin_finalize, install_model_finalize, install_piper_bin, ins
 mod git;
 use git::{git_commit, git_diff, git_discard, git_log, git_pull, git_push, git_stage, git_status, git_unstage};
 
+mod tuya;
+use tuya::{tuya_lights, tuya_send};
+
 struct ServerState {
     port: u16,
     child: Mutex<Option<Child>>,
@@ -220,7 +223,9 @@ pub fn run() {
             git_push,
             git_pull,
             git_diff,
-            git_log
+            git_log,
+            tuya_lights,
+            tuya_send
         ]);
 
     // global hotkeys, work system-wide.
@@ -343,6 +348,7 @@ pub fn run() {
             };
             app.manage(state);
             app.manage(browser::BrowserState::default());
+            app.manage(tuya::TuyaState(Mutex::new(None)));
             watch_themes(app.handle().clone());
             // make sure the window actually owns keyboard focus on launch Ã¢â‚¬â€
             // otherwise the first Alt+Space sees "visible but unfocused" and

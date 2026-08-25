@@ -18,12 +18,38 @@ export type VoiceAct =
   | { type: "quiet" }
   | { type: "shut" }
   | { type: "debrief" }
-  | { type: "hearCheck" };
+  | { type: "hearCheck" }
+  | { type: "light"; sw: "on" | "off"; name: string }
+  | { type: "lightBright"; pct: number; name: string }
+  | { type: "lightTemp"; tone: string; name: string }
+  | { type: "lightColor"; color: string; name: string };
 
 export type VoiceCtx = {
   themes: string[];
   commands: string[];
 };
+
+// spoken numbers whisper sometimes writes out — digits stay the common case
+const WORD_NUM: Record<string, number> = {
+  one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9,
+  ten: 10, eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15,
+  sixteen: 16, seventeen: 17, eighteen: 18, nineteen: 19, twenty: 20,
+  thirty: 30, forty: 40, fifty: 50, sixty: 60, seventy: 70, eighty: 80,
+  ninety: 90, hundred: 100, half: 50, quarter: 25,
+};
+
+function pct(w: string): number | null {
+  if (/^\d+$/.test(w)) {
+    const n = parseInt(w, 10);
+    return n >= 1 && n <= 100 ? n : null;
+  }
+  return WORD_NUM[w.toLowerCase()] ?? null;
+}
+
+// device word shared by every light intent
+const DEV = "(?:lights?|lamps?|bulbs?)";
+const COLORS = "red|orange|yellow|green|cyan|blue|purple|violet|magenta|pink";
+const TONES = "warm|cool|neutral|daylight";
 
 function normalize(t: string): string {
   return t
@@ -34,8 +60,10 @@ function normalize(t: string): string {
 }
 
 export function routeVoice(text: string, ctx: VoiceCtx): VoiceAct | null {
-  const t = normalize(text);
+  let t = normalize(text);
   if (!t) return null;
+  // "one hundred percent" → "hundred percent" so the word map hits
+  t = t.replace(/\b(?:one|a)\s+hundred\b/g, "hundred");
 
   if (/^(new|start)( a)?( new)? (session|chat)$/.test(t)) return { type: "newSession" };
   if (/^(stop|abort|cancel)( that| it| generation| running)?$/.test(t)) return { type: "abort" };
@@ -54,6 +82,31 @@ export function routeVoice(text: string, ctx: VoiceCtx): VoiceAct | null {
     return { type: "debrief" };
   if (/^(erase|clear)( the | )?(input|composer|text|prompt)$/.test(t)) return { type: "clear" };
   if (/^(can|do)( you)? hear me$/.test(t)) return { type: "hearCheck" };
+
+  // light intents — before the app-launcher catch-all so device names win.
+  // name group = words between the verb and the device word ("desk lamp")
+  const swA = new RegExp(`^(?:turn |switch |shut )?(?:the |my )?([a-z ]+ )?${DEV} (on|off)$`).exec(t);
+  if (swA) return { type: "light", sw: swA[2] as "on" | "off", name: (swA[1] ?? "").trim() };
+  const swB = /^(?:turn|switch|shut) (on|off)(?: the| my)?(?: ([a-z ]+))? (?:lights?|lamps?|bulbs?)$/.exec(t);
+  if (swB) return { type: "light", sw: swB[1] as "on" | "off", name: (swB[2] ?? "").trim() };
+
+  const num = "([\\w]+)";
+  const PCT_TAIL = "(?: percent|%)?$";
+  const brA = new RegExp(`^(?:dim|brighten)(?: the| my)? ?([a-z ]*?)?(?:${DEV}) to ${num}${PCT_TAIL}`).exec(t);
+  if (brA) {
+    const p = pct(brA[2]);
+    if (p !== null) return { type: "lightBright", pct: p, name: (brA[1] ?? "").trim() };
+  }
+  const brB = new RegExp(`^set (?:the |my )?([a-z ]*?)?(?:${DEV}) to ${num}${PCT_TAIL}`).exec(t);
+  if (brB) {
+    const p = pct(brB[2]);
+    if (p !== null) return { type: "lightBright", pct: p, name: (brB[1] ?? "").trim() };
+  }
+
+  const toneM = new RegExp(`^(?:make|set)(?: the| my)? ?([a-z ]*?)?(${DEV})(?: to)? (${TONES})(?: white)?$`).exec(t);
+  if (toneM) return { type: "lightTemp", tone: toneM[3], name: (toneM[1] ?? "").trim() };
+  const colM = new RegExp(`^(?:turn|make|set|change|color)(?: the| my)? ?([a-z ]*?)?(${DEV})(?: to)? (${COLORS})$`).exec(t);
+  if (colM) return { type: "lightColor", color: colM[3], name: (colM[1] ?? "").trim() };
 
   // "close google chrome" / "minimize the calculator" / "quit spotify" /
   // "kill chrome" — placed before the launcher catch-all; "close settings"

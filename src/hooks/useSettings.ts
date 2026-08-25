@@ -63,6 +63,8 @@ export type AppSettings = {
   ttsSpeed: number;
   // secondary model for commit messages, debriefs & long-answer summaries ("provider/model", "" = off)
   secondaryModel: string;
+  // Tuya cloud project credentials for voice light control
+  tuya: { clientId: string; secret: string; region: string; uid: string };
 };
 
 const KEY = "oc.settings";
@@ -96,6 +98,7 @@ const DEFAULTS: AppSettings = {
   ttsVol: 1,
   ttsSpeed: 1,
   secondaryModel: "",
+  tuya: { clientId: "", secret: "", region: "eu", uid: "" },
 };
 
 function num(v: unknown, def: number, min: number, max: number) {
@@ -212,6 +215,12 @@ export function useSettings() {
         ttsVol: num(p.ttsVol, DEFAULTS.ttsVol, 0, 1),
         ttsSpeed: num(p.ttsSpeed, DEFAULTS.ttsSpeed, 0.5, 2),
         secondaryModel: typeof p.secondaryModel === "string" ? p.secondaryModel : "",
+        tuya: {
+          clientId: typeof p.tuya?.clientId === "string" ? p.tuya.clientId : "",
+          secret: typeof p.tuya?.secret === "string" ? p.tuya.secret : "",
+          region: ["us", "eu", "cn", "in"].includes(p.tuya?.region) ? p.tuya.region : "eu",
+          uid: typeof p.tuya?.uid === "string" ? p.tuya.uid : "",
+        },
         speakReplies: !!p.speakReplies && typeof p.secondaryModel === "string" && !!p.secondaryModel && typeof p.ttsVoice === "string" && p.ttsVoice.endsWith(".onnx"),
         // legacy showThinking (true = thinking expanded) inverts into the new
         // collapsed flag so existing users keep their default; fresh installs
