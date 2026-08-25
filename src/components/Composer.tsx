@@ -70,6 +70,42 @@ export default function Composer({
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // y-resize: explicit composer height in px, 0 = auto. Dragging the top edge
+  // grows the input and shrinks the chat history (flex sibling). Persisted
+  // under oc.comp.h; double-click the handle to return to auto.
+  const [h, setH] = useState(() => {
+    const v = Number(localStorage.getItem("oc.comp.h"));
+    return v >= 112 && v <= 3000 ? v : 0;
+  });
+  const compRef = useRef<HTMLDivElement>(null);
+  const dragRef = useRef<{ y: number; h: number } | null>(null);
+
+  useEffect(() => {
+    if (h) localStorage.setItem("oc.comp.h", String(h));
+    else localStorage.removeItem("oc.comp.h");
+  }, [h]);
+
+  const startResize = (e: React.MouseEvent) => {
+    e.preventDefault();
+    dragRef.current = { y: e.clientY, h: h || compRef.current?.offsetHeight || 200 };
+    document.body.style.cursor = "row-resize";
+    document.body.style.userSelect = "none";
+    const move = (ev: MouseEvent) => {
+      if (!dragRef.current) return;
+      const max = Math.round(window.innerHeight * 0.72);
+      setH(Math.min(Math.max(dragRef.current.h - (ev.clientY - dragRef.current.y), 112), max));
+    };
+    const up = () => {
+      dragRef.current = null;
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      window.removeEventListener("mousemove", move);
+      window.removeEventListener("mouseup", up);
+    };
+    window.addEventListener("mousemove", move);
+    window.addEventListener("mouseup", up);
+  };
+
   const attach = useAttachments();
 
   // no selection and the server default is still unknown → require a pick
@@ -315,7 +351,9 @@ export default function Composer({
 
   return (
     <div
-      className={`composer${attach.dragOver ? " dragover" : ""}`}
+      ref={compRef}
+      className={`composer${attach.dragOver ? " dragover" : ""}${h ? " resized" : ""}`}
+      style={h ? { height: h } : undefined}
       onDragOver={(e) => {
         if (!Array.from(e.dataTransfer.types).includes("Files")) return;
         e.preventDefault();
@@ -331,6 +369,12 @@ export default function Composer({
         attach.addFiles(e.dataTransfer.files);
       }}
     >
+      <div
+        className="comp-resize"
+        data-tip="Drag to resize · double-click to reset"
+        onMouseDown={startResize}
+        onDoubleClick={() => setH(0)}
+      />
       <div className="model-row">
         <span>{currentLabel()}</span>
         {onCycleAgent && agents && (

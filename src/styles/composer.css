@@ -25,6 +25,37 @@
   border-color: color-mix(in srgb, var(--accent) calc(0.16 * 100%), transparent);
 }
 
+/* y-resize: drag strip on the top edge; explicit height turns the card into
+   a column so the input row stretches and chat history shrinks (flex sib) */
+.comp-resize {
+  position: absolute;
+  top: -3px;
+  left: 0;
+  right: 0;
+  height: 7px;
+  cursor: row-resize;
+  z-index: 5;
+}
+.comp-resize:hover {
+  background: var(--accent-dim);
+}
+.composer.resized {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.composer.resized .model-row {
+  flex-shrink: 0;
+}
+.composer.resized .composer-row {
+  flex: 1;
+  min-height: 0;
+  align-items: stretch;
+}
+.composer.resized textarea {
+  max-height: none;
+}
+
 .model-row {
   display: flex;
   align-items: center;
