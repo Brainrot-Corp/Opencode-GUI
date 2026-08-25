@@ -11,6 +11,7 @@ import { splitModel } from "../lib/models";
 import ThemeSelect from "./ThemeSelect";
 import ModelMenu, { type ModelEntry } from "./ModelMenu";
 import VoicesDialog from "./VoicesDialog";
+import Onboarding from "./Onboarding";
 import AppearanceSettings from "./AppearanceSettings";
 import SoundsSettings from "./SoundsSettings";
 import InfoDialog from "./InfoDialog";
@@ -64,6 +65,8 @@ export default function SettingsDrawer({
   const [autoLaunch, setAutoLaunch] = useState<boolean | null>(null);
   const [infoOpen, setInfoOpen] = useState(false);
   const [voiceOpen, setVoiceOpen] = useState(false);
+  // first-launch setup can be replayed from here any time
+  const [wizOpen, setWizOpen] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -128,6 +131,9 @@ export default function SettingsDrawer({
         <div className="settings-head">
           <h2>Settings</h2>
           <div className="color-controls">
+            <button className="icon-btn" data-tip="Run setup again" onClick={() => setWizOpen(true)}>
+              <i className="fa-solid fa-wand-magic-sparkles" />
+            </button>
             <button className="icon-btn" data-tip="Voice, commands & hotkeys" onClick={() => setInfoOpen(true)}>
               <i className="fa-solid fa-circle-info" />
             </button>
@@ -362,6 +368,19 @@ export default function SettingsDrawer({
       </aside>
         {infoOpen && (
           <InfoDialog commands={commands ?? []} pluginDocs={pluginDocs} onClose={() => setInfoOpen(false)} />
+        )}
+        {wizOpen && (
+          <Onboarding
+            onClose={() => {
+              localStorage.setItem("oc.onboarded", "1");
+              setWizOpen(false);
+            }}
+            settings={settings}
+            update={update}
+            themes={themes ?? []}
+            activeModes={modes ?? (["dark", "light"] as ("dark" | "light")[])}
+            providers={providers}
+          />
         )}
         <VoicesDialog
           open={voiceOpen}

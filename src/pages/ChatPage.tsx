@@ -9,6 +9,7 @@ import PermissionBar from "../components/PermissionBar";
 import QuestionPopup from "../components/QuestionPopup";
 import BrowserBar, { BROWSER_BAR_H } from "../components/BrowserBar";
 import SettingsDrawer from "../components/SettingsDrawer";
+import Onboarding from "../components/Onboarding";
 import DiffPanel from "../components/DiffPanel";
 import TooltipLayer from "../components/TooltipLayer";
 import { HelpDialog, ShareDialog, VariantsDialog } from "../components/CommandDialog";
@@ -50,6 +51,10 @@ export default function ChatPage() {
   );
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [diffOpen, setDiffOpen] = useState(false);
+  // first-launch setup wizard — any close records the flag so it shows once
+  const [onboardOpen, setOnboardOpen] = useState(
+    () => localStorage.getItem("oc.onboarded") !== "1",
+  );
 
   const [sbW, setSbW] = useState(() => {
     const w = Number(localStorage.getItem(SB_W_KEY)) || 248;
@@ -466,6 +471,19 @@ export default function ChatPage() {
           talking={talking}
           debriefing={debriefing}
         />
+        {onboardOpen && (
+          <Onboarding
+            onClose={() => {
+              localStorage.setItem("oc.onboarded", "1");
+              setOnboardOpen(false);
+            }}
+            settings={settings}
+            update={update}
+            themes={themes}
+            activeModes={activeModes}
+            providers={oc.providers}
+          />
+        )}
         <SettingsDrawer
           open={settingsOpen}
           providers={oc.providers}

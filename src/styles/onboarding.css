@@ -1,0 +1,194 @@
+/* first-launch onboarding wizard — layered on the shared dialog shell */
+
+/* step pills */
+.ob-steps {
+  display: flex;
+  gap: 6px;
+  padding: 2px 6px 6px;
+}
+.ob-step-pill {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  font-family: var(--sans);
+  font-size: 11.5px;
+  color: var(--text-dim);
+  background: var(--inset-bg);
+  border: 1px solid transparent;
+  border-radius: 4px;
+  cursor: pointer;
+  transition:
+    color 0.15s var(--ease),
+    border-color 0.15s var(--ease),
+    background 0.15s var(--ease);
+}
+.ob-step-pill i {
+  font-size: 9.5px;
+  color: var(--text-faint);
+}
+.ob-step-pill:hover {
+  color: var(--text);
+}
+.ob-step-pill.on {
+  color: var(--accent-bright);
+  background: color-mix(in srgb, var(--accent) calc(0.09 * 100%), transparent);
+  border-color: color-mix(in srgb, var(--accent) calc(0.4 * 100%), transparent);
+}
+.ob-step-pill.on i {
+  color: var(--accent);
+}
+.ob-step-pill.done:not(.on) {
+  color: var(--text-dim);
+}
+.ob-step-pill.done:not(.on) i {
+  color: var(--accent);
+}
+
+/* slide transition between steps */
+.ob-step {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ob-step.fwd {
+  animation: ob-slide-fwd 0.22s var(--ease);
+}
+.ob-step.back {
+  animation: ob-slide-back 0.22s var(--ease);
+}
+@keyframes ob-slide-fwd {
+  from {
+    opacity: 0;
+    transform: translateX(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+@keyframes ob-slide-back {
+  from {
+    opacity: 0;
+    transform: translateX(-16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ob-step.fwd,
+  .ob-step.back {
+    animation: none;
+  }
+}
+
+/* intro hero */
+.ob-hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 30px 24px 18px;
+  text-align: center;
+}
+.ob-hero-icon {
+  display: grid;
+  place-items: center;
+  width: 54px;
+  height: 54px;
+  font-size: 24px;
+  color: var(--accent-bright);
+  background: var(--accent-dim);
+  border: 1px solid color-mix(in srgb, var(--accent) calc(0.4 * 100%), transparent);
+  border-radius: 50%;
+  box-shadow: 0 0 24px -6px var(--accent-glow);
+}
+.ob-hero h2 {
+  margin: 0;
+  font-family: var(--sans);
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--text);
+}
+.ob-hero p {
+  margin: 0;
+  max-width: 380px;
+  font-family: var(--sans);
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-dim);
+}
+
+.ob-step-head {
+  padding: 6px 6px 0;
+}
+.ob-step-head h3 {
+  margin: 0 0 3px;
+  font-family: var(--sans);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+.ob-step-head p {
+  margin: 0;
+  max-width: 520px;
+  font-family: var(--sans);
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--text-dim);
+}
+
+.ob-hint {
+  padding: 4px 8px;
+  text-align: center;
+}
+
+.ob-hint-warn {
+  color: var(--accent);
+}
+
+/* recommended setup block */
+.ob-reco {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px;
+}
+.ob-reco-btn {
+  color: var(--accent-bright);
+  border-color: color-mix(in srgb, var(--accent) calc(0.45 * 100%), transparent);
+  box-shadow:
+    inset 0 0 8px -2px var(--accent-glow),
+    0 0 14px -6px var(--accent-glow);
+}
+.ob-reco-btn:hover:not(:disabled) {
+  box-shadow:
+    inset 0 0 8px -2px var(--accent-glow),
+    0 0 20px -4px var(--accent-glow);
+}
+.ob-reco-btn:disabled {
+  opacity: 0.7;
+}
+
+/* footer nav */
+.ob-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 6px;
+  border-top: 1px solid var(--line);
+}
+.ob-foot-nav {
+  display: flex;
+  gap: 6px;
+}
+.ob-next {
+  color: var(--accent-bright);
+  background: color-mix(in srgb, var(--accent) calc(0.09 * 100%), transparent);
+  border-color: color-mix(in srgb, var(--accent) calc(0.45 * 100%), transparent);
+  box-shadow: inset 0 0 8px -2px var(--accent-glow);
+}

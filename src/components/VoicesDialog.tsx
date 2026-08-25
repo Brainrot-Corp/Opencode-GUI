@@ -1,20 +1,9 @@
-﻿import { useEffect, useRef, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+﻿import { useEffect, useState } from "react";
 import type { AppSettings } from "../hooks/useSettings";
+import { useVoiceInstall } from "../hooks/useVoiceInstall";
 import PickerMenu from "./PickerMenu";
 import Dialog from "./Dialog";
-import {
-  WHISPER_BIN_URL,
-  MODEL_BASE,
-  VOICE_MODELS,
-  PIPER_BIN_URL,
-  PIPER_LANGS,
-  piperLabel,
-  piperUrl,
-  loadPiperCatalog,
-} from "../lib/piper";
-
-const SAMPLE_TEXT = "Hey, this is how I will read replies aloud.";
+import { VOICE_MODELS, PIPER_LANGS, piperLabel, loadPiperCatalog } from "../lib/piper";
 
 // centered glass dialog hosting everything speech-related: tab "Options"
 // carries the whole former Settings Voice box (whisper engine, hands-free,
@@ -32,12 +21,12 @@ export default function VoicesDialog({
   update: (patch: Partial<AppSettings>) => void;
 }) {
   const [tab, setTab] = useState<"options" | "voices">("options");
-  const [voice, setVoice] = useState<{ bin: boolean; models: string[] } | null>(null);
-  const [dl, setDl] = useState<{ label: string; pct: number } | null>(null);
-  const [voiceErr, setVoiceErr] = useState("");
-  // piper neural TTS: engine + downloaded voices (id list without .onnx)
-  const [piper, setPiper] = useState<{ bin: boolean; voices: string[] } | null>(null);
-  const previewRef = useRef<HTMLAudioElement | null>(null);
+  // download/install pipeline lives in the shared hook (also feeds the
+  // onboarding wizard)
+  const inst = useVoiceInstall(settings, update);
+  const { voice, piper } = inst;
+  const dl = inst.dl;
+  const voiceErr = inst.err;
 
   // full-catalog browser state
   const [catalog, setCatalog] = useState<string[]>([]);
@@ -46,12 +35,8 @@ export default function VoicesDialog({
 
   useEffect(() => {
     if (!open) return;
-    invoke<{ bin: boolean; models: string[] }>("voice_status")
-      .then(setVoice)
-      .catch(() => setVoice({ bin: false, models: [] }));
-    invoke<{ bin: boolean; voices: string[] }>("tts_status")
-      .then(setPiper)
-      .catch(() => setPiper({ bin: false, voices: [] }));
+    inst.refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
   // catalog loads once per dialog session, lazily on first browse
@@ -62,121 +47,6 @@ export default function VoicesDialog({
       .then(setCatalog)
       .finally(() => setCatLoading(false));
   }, [open, tab, catLoading, catalog.length]);
-
-  // live volume: the slider retunes a running preview via oc:tts-vol
-  useEffect(() => {
-    const set = (e: Event) => {
-      if (previewRef.current) previewRef.current.volume = (e as CustomEvent<number>).detail;
-    };
-    window.addEventListener("oc:tts-vol", set);
-    return () => window.removeEventListener("oc:tts-vol", set);
-  }, []);
-
-  // curl.exe does the fetching Rust-side (webview fetch dies on signed-CDN
-  // CORS redirects); progress is indeterminate until curl reports
-  async function downloadTo(key: string, url: string, label: string) {
-    setVoiceErr("");
-    setDl({ label, pct: -1 });
-    try {
-      await invoke("voice_download", { key, url });
-    } finally {
-      setDl(null);
-    }
-  }
-
-  async function installVoice() {
-    const model =
-      VOICE_MODELS.find((m) => m.id === settings.voice.model) ?? VOICE_MODELS[1];
-    try {
-      if (!voice?.bin) {
-        await downloadTo("whisper-bin", WHISPER_BIN_URL, "voice engine");
-        await invoke("install_bin_finalize", { key: "whisper-bin" });
-        setVoice((v) => ({ bin: true, models: v?.models ?? [] }));
-      }
-      if (!voice?.models.includes(model.id)) {
-        await downloadTo(model.id, MODEL_BASE + model.id, model.label);
-        await invoke("install_model_finalize", { key: model.id, name: model.id });
-        setVoice((v) => ({ bin: v?.bin ?? false, models: [...(v?.models ?? []), model.id] }));
-      }
-    } catch (e) {
-      setVoiceErr(String(e));
-    }
-  }
-
-  // removes a model file; if it was the active pick, fall back to another
-  async function removeModel(name: string) {
-    setVoiceErr("");
-    try {
-      await invoke("voice_remove_model", { name });
-      const left = (voice?.models ?? []).filter((m) => m !== name);
-      setVoice((v) => ({ bin: v?.bin ?? false, models: left }));
-      if (settings.voice.model === name) {
-        update({ voice: { ...settings.voice, model: left[0] ?? VOICE_MODELS[1].id } });
-      }
-    } catch (e) {
-      setVoiceErr(String(e));
-    }
-  }
-
-  // plays a short sample through the given piper voice — used by the picker,
-  // the preview button and browser rows; value is "<id>.onnx".
-  // falls back to the first downloaded voice so the button never dead-ends
-  function previewVoice(value: string) {
-    const v = value || (piper?.voices.length ? `${piper.voices[0]}.onnx` : "");
-    if (!v) {
-      setVoiceErr("no neural voice yet — install Piper and download one in the Voices tab");
-      return;
-    }
-    previewRef.current?.pause();
-    invoke<number[]>("tts_speak", { text: SAMPLE_TEXT, voice: v, speed: settings.ttsSpeed })
-      .then((bytes) => {
-        const url = URL.createObjectURL(
-          new Blob([new Uint8Array(bytes)], { type: "audio/wav" }),
-        );
-        const a = new Audio(url);
-        a.volume = settings.ttsVol;
-        previewRef.current = a;
-        a.onended = () => URL.revokeObjectURL(url);
-        a.play().catch((e) => setVoiceErr(`audio playback failed: ${e}`));
-      })
-      .catch((e) => setVoiceErr(String(e)));
-  }
-
-  // voice flow: picking an unavailable voice fetches whatever is missing
-  // (engine first, then the onnx + json sidecar pair), then selects and
-  // previews it
-  async function ensureVoice(id: string) {
-    if (dl) return;
-    try {
-      if (!piper?.bin) {
-        await downloadTo("piper-bin", PIPER_BIN_URL, "piper engine");
-        await invoke("install_piper_bin", { key: "piper-bin" });
-        setPiper((t) => ({ bin: true, voices: t?.voices ?? [] }));
-      }
-      if (!(piper?.voices ?? []).includes(id)) {
-        await downloadTo(`tts-${id}`, piperUrl(id), `${id} · voice`);
-        await downloadTo(`tts-${id}-cfg`, piperUrl(id, ".onnx.json"), `${id} · config`);
-        await invoke("install_tts_voice_part", { key: `tts-${id}`, name: `${id}.onnx` });
-        await invoke("install_tts_voice_part", { key: `tts-${id}-cfg`, name: `${id}.onnx.json` });
-        setPiper((t) => ({ bin: true, voices: [...(t?.voices ?? []), id].sort() }));
-      }
-      update({ ttsVoice: `${id}.onnx` });
-      previewVoice(`${id}.onnx`);
-    } catch (e) {
-      setVoiceErr(String(e));
-    }
-  }
-
-  async function removePiperVoice(id: string) {
-    try {
-      await invoke("tts_remove_voice", { name: `${id}.onnx` });
-      const left = (piper?.voices ?? []).filter((v) => v !== id);
-      setPiper((t) => ({ bin: t?.bin ?? false, voices: left }));
-      if (settings.ttsVoice === `${id}.onnx`) update({ ttsVoice: "" });
-    } catch (e) {
-      setVoiceErr(String(e));
-    }
-  }
 
   // the voice currently streaming in — derived from the shared download
   // indicator label ("<id> · voice" / "<id> · config") so lists can mark it
@@ -251,7 +121,7 @@ export default function VoicesDialog({
             {filtered.map((id, i) => {
               const family = id.split("-")[0];
               const showGroup = i === 0 || filtered[i - 1].split("-")[0] !== family;
-              const downloaded = (piper?.voices ?? []).includes(id);
+              const downloaded = (piper?.items ?? []).includes(id);
               const active = settings.ttsVoice === `${id}.onnx`;
               const downloading = dlVoiceId === id;
               const suffix = active
@@ -277,9 +147,9 @@ export default function VoicesDialog({
                       onClick={() => {
                         if (downloaded) {
                           update({ ttsVoice: `${id}.onnx` });
-                          previewVoice(`${id}.onnx`);
+                          inst.previewVoice(`${id}.onnx`);
                         } else {
-                          void ensureVoice(id);
+                          void inst.ensurePiper(id);
                         }
                       }}
                     >
@@ -296,7 +166,7 @@ export default function VoicesDialog({
                         data-tip="Preview"
                         aria-label={`Preview ${id}`}
                         disabled={!!dl}
-                        onClick={() => previewVoice(`${id}.onnx`)}
+                        onClick={() => inst.previewVoice(`${id}.onnx`)}
                       >
                         <i className="fa-solid fa-play" />
                       </button>
@@ -316,18 +186,18 @@ export default function VoicesDialog({
                 <div className="setting-name">Speech engine</div>
                 <div className="setting-desc">
                   {voice?.bin
-                    ? `whisper.cpp ready · ${voice.models.length} model${voice.models.length === 1 ? "" : "s"} downloaded`
+                    ? `whisper.cpp ready · ${voice.items.length} model${voice.items.length === 1 ? "" : "s"} downloaded`
                     : "Local whisper.cpp — downloads once, runs offline"}
                 </div>
               </div>
             </div>
             <div className="color-controls">
-              {(!voice?.bin || !voice.models.includes(settings.voice.model)) && (
+              {(!voice?.bin || !voice.items.includes(settings.voice.model)) && (
                 <button
                   type="button"
                   className="reset-btn"
                   disabled={!!dl}
-                  onClick={() => void installVoice()}
+                  onClick={() => void inst.installWhisper()}
                 >
                   <i className="fa-solid fa-download" />
                   {!voice?.bin ? "Install (~10 MB)" : "Download model"}
@@ -342,14 +212,14 @@ export default function VoicesDialog({
                 }
                 entries={VOICE_MODELS.map((m) => ({
                   value: m.id,
-                  label: m.label + (voice?.models.includes(m.id) ? "" : " — not downloaded"),
+                  label: m.label + (voice?.items.includes(m.id) ? "" : " — not downloaded"),
                 }))}
                 onPick={(v) => update({ voice: { ...settings.voice, model: v } })}
               />
             </div>
           </div>
 
-          {!!voice?.models.length && (
+          {!!voice?.items.length && (
             <div className="setting-row">
               <div className="setting-info">
                 <i className="fa-solid fa-database setting-icon" />
@@ -359,14 +229,14 @@ export default function VoicesDialog({
                 </div>
               </div>
               <div className="model-chips">
-                {voice.models.map((m) => (
+                {voice.items.map((m) => (
                   <span key={m} className={`model-chip${settings.voice.model === m ? " active" : ""}`}>
                     {m.replace("ggml-", "").replace(".bin", "")}
                     <button
                       type="button"
                       aria-label={`Remove ${m}`}
                       disabled={!!dl}
-                      onClick={() => void removeModel(m)}
+                      onClick={() => void inst.removeModel(m)}
                     >
                       <i className="fa-solid fa-xmark" />
                     </button>
@@ -492,13 +362,13 @@ export default function VoicesDialog({
                     ? piperLabel(settings.ttsVoice.replace(/\.onnx$/, ""))
                     : "Pick a voice…"
                 }
-                entries={(piper?.voices ?? []).map((id) => ({
+                entries={(piper?.items ?? []).map((id) => ({
                   value: `${id}.onnx`,
                   label: piperLabel(id),
                 }))}
                 onPick={(file) => {
                   update({ ttsVoice: file });
-                  previewVoice(file);
+                  inst.previewVoice(file);
                 }}
               />
               <button
@@ -506,8 +376,8 @@ export default function VoicesDialog({
                 className="reset-btn"
                 data-tip="Preview voice"
                 aria-label="Preview voice"
-                disabled={!(settings.ttsVoice || piper?.voices.length)}
-                onClick={() => previewVoice(settings.ttsVoice)}
+                disabled={!(settings.ttsVoice || piper?.items.length)}
+                onClick={() => inst.previewVoice(settings.ttsVoice)}
               >
                 <i className="fa-solid fa-play" />
               </button>
@@ -577,7 +447,7 @@ export default function VoicesDialog({
           </div>
 
           {/* piper engine management — installs itself on demand */}
-          {!!piper?.voices.length && (
+          {!!piper?.items.length && (
             <div className="setting-row">
               <div className="setting-info">
                 <i className="fa-solid fa-wand-magic-sparkles setting-icon" />
@@ -600,7 +470,7 @@ export default function VoicesDialog({
             </div>
           )}
 
-          {!!piper?.voices.length && (
+          {!!piper?.items.length && (
             <div className="setting-row">
               <div className="setting-info">
                 <i className="fa-solid fa-database setting-icon" />
@@ -610,7 +480,7 @@ export default function VoicesDialog({
                 </div>
               </div>
               <div className="model-chips">
-                {piper.voices.map((id) => (
+                {piper.items.map((id) => (
                   <span
                     key={id}
                     className={`model-chip${settings.ttsVoice === `${id}.onnx` ? " active" : ""}`}
@@ -620,7 +490,7 @@ export default function VoicesDialog({
                       type="button"
                       aria-label={`Remove ${id}`}
                       disabled={!!dl}
-                      onClick={() => void removePiperVoice(id)}
+                      onClick={() => void inst.removePiperVoice(id)}
                     >
                       <i className="fa-solid fa-xmark" />
                     </button>

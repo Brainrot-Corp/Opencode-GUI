@@ -95,7 +95,7 @@ const DEFAULTS: AppSettings = {
   colors: structuredClone(DEFAULT_COLOR_SETS),
   workspace: "",
   collapsed: true,
-  voice: { model: "ggml-base.bin", handsFree: false, sens: 0.7, debug: false, multilingual: true },
+  voice: { model: "ggml-base.bin", handsFree: false, sens: 0.7, debug: false, multilingual: false },
   speakReplies: false,
   ttsVoice: "",
   ttsVol: 1,
@@ -211,7 +211,7 @@ export function useSettings() {
           handsFree: !!p.voice?.handsFree,
           sens: num(p.voice?.sens, DEFAULTS.voice.sens, 0, 1),
           debug: !!p.voice?.debug,
-          multilingual: p.voice?.multilingual === undefined ? true : !!p.voice.multilingual,
+          multilingual: p.voice?.multilingual === undefined ? false : !!p.voice.multilingual,
         },
         ttsVoice:
           typeof p.ttsVoice === "string" && p.ttsVoice.endsWith(".onnx") ? p.ttsVoice : "",
