@@ -1,15 +1,14 @@
-// English wordlist backing the typo-corrector's "real word" veto — bundled
-// data (~3 MB), parsed into a Set once. Until init runs, isRealWord answers
-// "no" so corrections keep working (legacy behavior) during warmup.
-import words from "an-array-of-english-words" with { type: "json" };
-
+// English wordlist backing the typo-corrector's "real word" veto — ~3 MB of
+// data, so it's code-split into its own chunk and parsed once, lazily. Until
+// init runs, isRealWord answers "no" so corrections keep working (legacy
+// behavior) during warmup.
 let set: Set<string> | null = null;
 let ready: Promise<void> | null = null;
 
 export function ensureDict(): Promise<void> {
   if (!ready) {
-    ready = Promise.resolve().then(() => {
-      set = new Set(words as string[]);
+    ready = import("an-array-of-english-words", { with: { type: "json" } }).then((m) => {
+      set = new Set(m.default as string[]);
     });
   }
   return ready;

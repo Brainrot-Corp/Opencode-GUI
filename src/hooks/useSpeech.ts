@@ -276,10 +276,14 @@ export function useSpeech(oc: SpeechOc, settings: AppSettings) {
     else queueSpeech(raw);
   }, [settings.speakReplies, settings.ttsVoice, oc.msgs, debriefing, queueSpeech, summarizeWithCommitModel]);
 
-  // status cues: turn start is spoken via same queued FIFO — never cuts
+  // status cues: turn start is spoken via same queued FIFO — never cuts.
+  // An explicit announcement REVIVES speech after stop-speech: the stop
+  // button only mutes the in-flight drain (queue + current reply), never
+  // future requests
   const announce = useCallback(
     (phrase: string) => {
-      if (!settings.speakReplies || !settings.ttsVoice || ttsHushed.current) return;
+      if (!settings.speakReplies || !settings.ttsVoice) return;
+      ttsHushed.current = false;
       queueSpeech(phrase);
     },
     [settings.speakReplies, settings.ttsVoice, queueSpeech],

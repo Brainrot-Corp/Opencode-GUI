@@ -330,6 +330,13 @@
   min-width: min(280px, calc(100vw - 40px));
   max-width: 320px;
 }
+/* inside centered dialogs the picker sits at the row's right edge — anchor
+   there and open leftward so the menu can't cross the panel border */
+.dlg-body .picker-menu .picker-drop {
+  left: auto;
+  right: 0;
+  max-width: min(320px, calc(100vw - 80px));
+}
 
 /* commit-model picker: the squeezed controls can wrap to a line at the
    drawer's left, dragging an absolutely-positioned menu out of bounds.

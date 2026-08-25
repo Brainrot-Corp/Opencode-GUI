@@ -155,8 +155,16 @@ async fn http_json(
     }
     let resp = req.send().await.map_err(|e| format!("unreachable: {e}"))?;
     let status = resp.status().as_u16();
+    // pagination links (HuggingFace tree API et al.) travel in Link headers —
+    // must be read before .text() consumes the response
+    let link = resp
+        .headers()
+        .get("link")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default()
+        .to_string();
     let text = resp.text().await.map_err(|e| e.to_string())?;
-    Ok(serde_json::json!({ "status": status, "body": text }))
+    Ok(serde_json::json!({ "status": status, "body": text, "link": link }))
 }
 
 #[tauri::command]

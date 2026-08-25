@@ -10,7 +10,7 @@ import { applyWorkspace, pickWorkspace } from "../lib/workspace";
 import { splitModel } from "../lib/models";
 import ThemeSelect from "./ThemeSelect";
 import ModelMenu, { type ModelEntry } from "./ModelMenu";
-import VoiceSettings from "./VoiceSettings";
+import VoicesDialog from "./VoicesDialog";
 import AppearanceSettings from "./AppearanceSettings";
 import SoundsSettings from "./SoundsSettings";
 import InfoDialog from "./InfoDialog";
@@ -63,6 +63,7 @@ export default function SettingsDrawer({
   const cs = (colorsFor?.(settings.theme) ?? settings.colors.cyan)[settings.mode];
   const [autoLaunch, setAutoLaunch] = useState<boolean | null>(null);
   const [infoOpen, setInfoOpen] = useState(false);
+  const [voiceOpen, setVoiceOpen] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -311,7 +312,26 @@ export default function SettingsDrawer({
             ))}
           </div>
 
-          <VoiceSettings open={open} settings={settings} update={update} />
+          <div className="setting-row">
+            <div className="setting-info">
+              <i className="fa-solid fa-headset setting-icon" />
+              <div>
+                <div className="setting-name">Voice &amp; speech</div>
+                <div className="setting-desc">
+                  Speech engine, hands-free dictation, neural voices &amp; spoken replies
+                </div>
+              </div>
+            </div>
+            <button
+              type="button"
+              className="reset-btn"
+              data-tip="Open voice settings"
+              onClick={() => setVoiceOpen(true)}
+            >
+              <i className="fa-solid fa-sliders" />
+              Open
+            </button>
+          </div>
 
           {pluginSections?.map((p) => {
             const Section = p.Settings;
@@ -343,6 +363,12 @@ export default function SettingsDrawer({
         {infoOpen && (
           <InfoDialog commands={commands ?? []} pluginDocs={pluginDocs} onClose={() => setInfoOpen(false)} />
         )}
+        <VoicesDialog
+          open={voiceOpen}
+          onClose={() => setVoiceOpen(false)}
+          settings={settings}
+          update={update}
+        />
     </>
   );
 }
