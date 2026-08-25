@@ -43,6 +43,15 @@ const VOICE: Group[] = [
     ],
   ],
   [
+    "Git",
+    [
+      ["git status", "show the git panel"],
+      ["commit", "commit staged — generates a message if none typed"],
+      ["push / pull", ""],
+      ["stage all", ""],
+    ],
+  ],
+  [
     "Lights — set up in Settings › Lights",
     [
       ["lights on / lights off", ""],

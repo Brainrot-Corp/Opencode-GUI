@@ -130,6 +130,16 @@ export default function ChatPage() {
         return "Run a debrief";
       case "hearCheck":
         return "Mic check";
+      case "git":
+        return a.act === "open"
+          ? "Show the git panel"
+          : a.act === "commit"
+            ? "Commit the staged changes"
+            : a.act === "push"
+              ? "Push to the remote"
+              : a.act === "pull"
+                ? "Pull from the remote"
+                : "Stage all changes";
       case "dictate":
         return `Add "${a.arg}" to the composer`;
       case "dictateSend":
@@ -214,6 +224,9 @@ export default function ChatPage() {
           break;
         case "hearCheck":
           announce("Yes, I can hear you.");
+          break;
+        case "git":
+          window.dispatchEvent(new CustomEvent("oc:git", { detail: act.act }));
           break;
         case "light":
         case "lightBright":

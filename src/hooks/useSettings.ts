@@ -92,7 +92,7 @@ const DEFAULTS: AppSettings = {
   colors: structuredClone(DEFAULT_COLOR_SETS),
   workspace: "",
   collapsed: true,
-  voice: { model: "ggml-base.en.bin", handsFree: false, sens: 0.7, debug: false },
+  voice: { model: "ggml-base.bin", handsFree: false, sens: 0.7, debug: false },
   speakReplies: false,
   ttsVoice: "",
   ttsVol: 1,
@@ -204,7 +204,7 @@ export function useSettings() {
           model:
             typeof p.voice?.model === "string" && p.voice.model
               ? p.voice.model
-              : "ggml-base.en.bin",
+              : "ggml-base.bin",
           handsFree: !!p.voice?.handsFree,
           sens: num(p.voice?.sens, DEFAULTS.voice.sens, 0, 1),
           debug: !!p.voice?.debug,

@@ -21,6 +21,7 @@ export type VoiceAct =
   | { type: "shut" }
   | { type: "debrief" }
   | { type: "hearCheck" }
+  | { type: "git"; act: "open" | "commit" | "push" | "pull" | "stageAll" }
   | { type: "light"; sw: "on" | "off"; name: string }
   | { type: "lightBright"; pct: number; name: string }
   | { type: "lightTemp"; tone: string; name: string }
@@ -69,7 +70,7 @@ function normalize(t: string): string {
 // turn the lights off"). Curated: every hit becomes a spoken confirmation,
 // but chatty verbs still waste a question, so nothing vague is listed.
 const TRIGGERS =
-  "turn|switch|shut|dim|brighten|set|make|change|color|launch|start|open|show|hide|close|quit|minimize|kill|run|execute|slash|theme|cycle|next|new|stop|abort|cancel|clear|erase|send|submit|prompt";
+  "turn|switch|shut|dim|brighten|set|make|change|color|launch|start|open|show|hide|close|quit|minimize|kill|run|execute|slash|theme|cycle|next|new|stop|abort|cancel|clear|erase|send|submit|prompt|commit|push|pull|stage";
 
 // one full pass of the matcher chain — routeVoice runs this on the whole
 // transcript first, then on trigger-word tails when scanning
@@ -97,6 +98,15 @@ function matchChain(t: string, ctx: VoiceCtx): VoiceAct | null {
     return { type: "debrief" };
   if (/^(erase|clear)( the | )?(input|composer|text|prompt)$/.test(t)) return { type: "clear" };
   if (/^(?:(?:can|do)(?: you)? )?hear me$/.test(t)) return { type: "hearCheck" };
+
+  // git actions — before the app-launcher catch-all so bare "push"/"open git"
+  // never become app lookups. Commit/push/pull are destructive enough that
+  // mid-sentence hits already go through spoken confirmation.
+  if (/^(?:git status|show(?: the)? git|open(?: the)? git)$/.test(t)) return { type: "git", act: "open" };
+  if (/^(?:git )?commit(?: it| now)?$/.test(t)) return { type: "git", act: "commit" };
+  if (/^(?:git )?push(?: it)?$/.test(t)) return { type: "git", act: "push" };
+  if (/^(?:git )?pull(?: it| changes)?$/.test(t)) return { type: "git", act: "pull" };
+  if (/^(?:git )?stage (?:all|everything)$/.test(t)) return { type: "git", act: "stageAll" };
 
   // light intents — before the app-launcher catch-all so device names win.
   // name group = up to 3 short words between the verb and the device word

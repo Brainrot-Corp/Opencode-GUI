@@ -6,7 +6,7 @@ export type VoicePhase = "idle" | "recording" | "transcribing";
 const RATE = 16000; // whisper's required sample rate — AudioContext resamples
 
 // hands-free VAD defaults
-const SILENCE_MS = 1500; // pause length that ends an utterance
+const SILENCE_MS = 900; // pause length that ends an utterance
 const MIN_SPEECH_MS = 350; // shorter voiced blips are ignored
 const PRE_CHUNKS = 5; // ~320ms pre-roll ring so word onsets don't clip
 // sensitivity slider (0..1) maps to an rms threshold: lenient → strict

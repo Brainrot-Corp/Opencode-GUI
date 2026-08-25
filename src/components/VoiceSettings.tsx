@@ -8,9 +8,9 @@ const WHISPER_BIN_URL =
 const MODEL_BASE = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/";
 const VOICE_MODELS = [
   { id: "ggml-tiny.en.bin", label: "tiny.en · 78 MB · fastest, rougher" },
-  { id: "ggml-base.en.bin", label: "base.en · 148 MB · recommended" },
-  { id: "ggml-small.en.bin", label: "small.en · 488 MB · best accuracy" },
-  { id: "ggml-base.bin", label: "base multilingual · 148 MB" },
+  { id: "ggml-base.en.bin", label: "base.en · 148 MB · English-only" },
+  { id: "ggml-small.en.bin", label: "small.en · 488 MB · best accuracy, English-only" },
+  { id: "ggml-base.bin", label: "base multilingual · 148 MB · recommended" },
 ];
 
 // Piper neural TTS — exe release + curated single-speaker voices from

@@ -92,9 +92,9 @@ export default function GitPanel() {
     [busy, refresh],
   );
 
-  const commit = (thenPush = false) =>
+  const commit = (thenPush = false, override?: string) =>
     act(async () => {
-      await invoke("git_commit", { dir: dir.current, message: msg.trim() });
+      await invoke("git_commit", { dir: dir.current, message: (override ?? msg).trim() });
       // committed entries leave the lists immediately — don't wait for the
       // status roundtrip (a chained push failing must not resurrect them)
       setSt((s) => ({
@@ -121,23 +121,25 @@ export default function GitPanel() {
   }, [pushed]);
 
   // AI commit message: hidden temp session on the configured model —
-  // created, prompted (sync), deleted; never touches the sidebar list
-  const genMsg = async () => {
+  // created, prompted (sync), deleted; never touches the sidebar list.
+  // Resolves to the message (also placed in the input) or "" on failure —
+  // voice "commit" chains it straight into git_commit
+  const genMessage = async (): Promise<string> => {
     const model = secondaryModel();
     if (!model) {
       // nothing configured — jump straight to the settings drawer
       window.dispatchEvent(new Event("oc:settings"));
       setErr("Pick a Secondary model in Settings.");
-      return;
+      return "";
     }
-    if (gen || busy || !staged.length) return;
+    if (gen || busy || !staged.length) return "";
     setGen(true);
     setErr("");
     try {
       const diff = await invoke<string>("git_diff", { dir: dir.current, path: "", staged: true });
       if (!diff.trim()) {
         setErr("Staged diff is empty.");
-        return;
+        return "";
       }
       const { client } = await opencode();
       const sid = await tempSession();
@@ -188,16 +190,23 @@ export default function GitPanel() {
           .map((p) => p.text ?? "")
           .join("")
           .trim();
-        if (text) setMsg(text);
-        else setErr("Model returned no message.");
+        if (text) {
+          setMsg(text);
+          return text;
+        }
+        setErr("Model returned no message.");
+        return "";
       } finally {
         await dropSession(sid);
       }
     } catch (e) {
       setErr(String(e).replace(/^Error:\s*/, ""));
+      return "";
+    } finally {
+      setGen(false);
     }
-    setGen(false);
   };
+  const genMsg = () => void genMessage();
 
   const rowAct = (cmd: string, path: string) => {
     setConfirmPath("");
@@ -226,8 +235,7 @@ export default function GitPanel() {
   // initial status + poll while expanded + refresh on window focus
   useEffect(() => {
     refresh();
-  }, [refresh]);
-  useEffect(() => {
+  }, [refresh]);  useEffect(() => {
     if (!open || !st.repo) return;
     refresh();
     const t = setInterval(refresh, 4000);
@@ -238,6 +246,16 @@ export default function GitPanel() {
       window.removeEventListener("focus", onVis);
     };
   }, [open, st.repo, refresh]);
+
+  // voice commands ("push", "commit", "stage all"…) — dispatched by
+  // ChatPage's voice router; the ref keeps the latest closures reachable
+  // without re-registering the listener on every render
+  const gitCmdRef = useRef<(cmd: string) => void>(() => {});
+  useEffect(() => {
+    const h = (e: Event) => gitCmdRef.current((e as CustomEvent<string>).detail);
+    window.addEventListener("oc:git", h);
+    return () => window.removeEventListener("oc:git", h);
+  }, []);
 
   if (!st.repo)
     return (
@@ -252,6 +270,31 @@ export default function GitPanel() {
   const staged = stagedOf(st.files);
   const changes = changedOf(st.files);
   const canCommit = !!msg.trim() && staged.length > 0 && !busy;
+
+  gitCmdRef.current = (cmd: string) => {
+    setOpen(true);
+    if (cmd === "open") return;
+    if (cmd === "push") {
+      void doPush();
+      return;
+    }
+    if (cmd === "pull") {
+      void act(() => invoke("git_pull", { dir: dir.current }));
+      return;
+    }
+    if (cmd === "stageAll") {
+      void act(() => invoke("git_stage", { dir: dir.current, paths: changes.map((f) => f.path) }));
+      return;
+    }
+    // commit — typed message wins; otherwise generate one and commit it
+    if (busy || gen) return;
+    if (!staged.length) {
+      setErr("Nothing staged to commit.");
+      return;
+    }
+    if (msg.trim()) void commit(false);
+    else void genMessage().then((m) => { if (m) void commit(false, m); });
+  };
 
   const toggleOpen = () => {
     setOpen((o) => {
