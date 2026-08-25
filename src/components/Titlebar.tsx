@@ -68,21 +68,20 @@ export default function Titlebar({
             <i className={`fa-solid ${mode === "light" ? "fa-moon" : "fa-regular fa-sun"}`} />
           </button>
         )}
-        {talking && (
-          <button
-            className="debrief-indicator speech-indicator"
-            data-tip="Stop speech"
-            aria-label="Stop speech"
-            onClick={() => {
-              playSound("click");
-              window.dispatchEvent(new Event("oc:tts-stop"));
-            }}
-          >
-            <i className="fa-solid fa-volume-high" aria-hidden="true" />
-            <em>Speaking</em>
-            <i className="debrief-dot" aria-hidden="true" />
-          </button>
-        )}
+        <button
+          className={`debrief-indicator speech-indicator${talking ? "" : " idle"}`}
+          data-tip={talking ? "Stop speech" : "Not speaking"}
+          aria-label={talking ? "Stop speech" : "Not speaking"}
+          onClick={() => {
+            if (!talking) return;
+            playSound("click");
+            window.dispatchEvent(new Event("oc:tts-stop"));
+          }}
+        >
+          <i className="fa-solid fa-volume-high" aria-hidden="true" />
+          <em>Speaking</em>
+          <i className="debrief-dot" aria-hidden="true" />
+        </button>
         <span className="ctrl-sep" />
         <button className="icon-btn" data-tip="Settings" onClick={() => onOpenSettings?.()}>
           <i className="fa-solid fa-gear" />

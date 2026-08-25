@@ -35,9 +35,20 @@ function secondaryModel(): string {
 const stagedOf = (files: GitFile[]) => files.filter((f) => f.x !== " " && f.x !== "?");
 const changedOf = (files: GitFile[]) => files.filter((f) => f.y !== " ");
 
-// status letter → css tint class (M/A/D colored like VS Code, rest dim)
+// status letter → css tint class (VS Code-style: M/T amber, A green,
+// D red, untracked green-U, conflicts purple, renames blue, rest dim)
 const xcls = (l: string) =>
-  l === "M" ? "mod" : l === "A" ? "add" : l === "D" ? "del" : l === "U" ? "conf" : "oth";
+  l === "M" || l === "T"
+    ? "mod"
+    : l === "A" || l === "?"
+      ? "add"
+      : l === "D"
+        ? "del"
+        : l === "U"
+          ? "conf"
+          : l === "R" || l === "C"
+            ? "ren"
+            : "oth";
 
 export default function GitPanel() {
   const [st, setSt] = useState<GitStatus>(CLEAN);
@@ -250,7 +261,9 @@ export default function GitPanel() {
   };
 
   const row = (f: GitFile, isStaged: boolean) => {
-    const letter = isStaged ? f.x : f.y;
+    const raw = isStaged ? f.x : f.y;
+    // porcelain marks untracked as "?" — show VS Code's "U" instead
+    const letter = raw === "?" ? "U" : raw;
     const untracked = f.x === "?" && f.y === "?";
     const confirming = confirmPath === f.path;
     return (

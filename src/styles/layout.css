@@ -212,6 +212,26 @@ button.debrief-indicator:hover {
   color: var(--danger);
 }
 
+/* speech idle — same slot so nothing shifts, greyed out and inert */
+button.debrief-indicator.idle {
+  cursor: default;
+  background: rgba(255, 255, 255, 0.04);
+  border-color: var(--line);
+  box-shadow: none;
+  color: var(--text-faint);
+}
+button.debrief-indicator.idle:hover {
+  background: rgba(255, 255, 255, 0.04);
+  border-color: var(--line);
+  color: var(--text-faint);
+}
+button.debrief-indicator.idle .debrief-dot {
+  background: var(--text-faint);
+  box-shadow: none;
+  animation: none;
+  opacity: 0.55;
+}
+
 .layout {
   display: grid;
   grid-template-columns: 248px 1fr;
