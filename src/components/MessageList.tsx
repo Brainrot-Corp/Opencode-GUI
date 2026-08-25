@@ -237,11 +237,16 @@ export default function MessageList({
 }) {
   const listRef = useRef<HTMLDivElement>(null);
   const raf = useRef(0);
+  // last scrollTop we set ourselves — lets the scroll listener tell our own
+  // programmatic scrolls (snap / eased chase) apart from the user's
+  const expected = useRef(0);
   // "session:head-message" signature of the last render — a change means
   // content was replaced (switch/fill), not streamed onto
   const lastSig = useRef<string | undefined>(undefined);
   // while streaming, follow the tail — until the user scrolls away from it
   const stick = useRef(true);
+  // tail message id at the previous render — detects an outgoing message
+  const lastTail = useRef<string | undefined>(undefined);
 
   useEffect(() => {
     const el = listRef.current;
@@ -250,6 +255,7 @@ export default function MessageList({
 
     const snap = () => {
       cancelAnimationFrame(raf.current);
+      expected.current = el.scrollHeight;
       el.scrollTop = el.scrollHeight;
     };
     // eased chase toward the tail — text grows in place instead of snapping
@@ -261,9 +267,11 @@ export default function MessageList({
         const target = el.scrollHeight - el.clientHeight;
         const d = target - el.scrollTop;
         if (Math.abs(d) < 2) {
+          expected.current = target;
           el.scrollTop = target;
           return;
         }
+        expected.current = el.scrollTop + d * 0.22;
         el.scrollTop += d * 0.22;
         raf.current = requestAnimationFrame(step);
       };
@@ -274,7 +282,11 @@ export default function MessageList({
     // detected via the head message id so stream-end and trailing updates
     // on the SAME session never move the viewport
     const sig = `${sessionId}:${msgs[0]?.info.id ?? ""}`;
-    if (sig !== lastSig.current) {
+    // outgoing message: always jump to the tail, wherever the reader was
+    const tail = msgs[msgs.length - 1];
+    const sent = tail?.info.role === "user" && tail.info.id !== lastTail.current;
+    lastTail.current = tail?.info.id;
+    if (sig !== lastSig.current || sent) {
       lastSig.current = sig;
       stick.current = true;
       snap();
@@ -296,18 +308,17 @@ export default function MessageList({
     else follow();
   }, [msgs, busy, sessionId]);
 
-  // stick/unstick: ANY scroll that increases the gap to the tail detaches
-  // the follower (wheel-up, scrollbar drag, PageUp…), returning near the
-  // tail re-attaches
+  // stick/unstick: only real user input moves the pin. Our eased chase and
+  // snaps record their scrollTop in `expected` first, so their scroll events
+  // are recognized and ignored — content growth alone can never unpin.
+  // A genuine user scroll near the tail re-sticks; further up unpins.
   useEffect(() => {
     const el = listRef.current;
     if (!el) return;
-    let lastDist = 0;
     const scroll = () => {
+      if (Math.abs(el.scrollTop - expected.current) <= 2) return;
       const dist = el.scrollHeight - el.clientHeight - el.scrollTop;
-      if (dist < 48) stick.current = true;
-      else if (dist > lastDist + 2) stick.current = false;
-      lastDist = dist;
+      stick.current = dist < 48;
     };
     el.addEventListener("scroll", scroll, { passive: true });
     return () => {
