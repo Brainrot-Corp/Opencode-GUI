@@ -14,12 +14,25 @@ const GOOD = JSON.stringify({
   whisperModel: "ggml-small.bin",
   ttsVoice: "de_DE-thorsten-high",
   note: "hello",
+  secondaryModel: "opencode/muse-spark-1.2",
   whisperBinUrl: "https://example.com/bin.zip",
   junkField: true,
 });
 eq(parseReco(GOOD)?.whisperModel, "ggml-small.bin", "valid model kept");
 eq(parseReco(GOOD)?.ttsVoice, "de_DE-thorsten-high", "valid voice kept");
 eq(parseReco(GOOD)?.note, "hello", "note kept");
+eq(parseReco(GOOD)?.secondaryModel, "opencode/muse-spark-1.2", "secondary model kept");
+eq(
+  parseReco(
+    JSON.stringify({
+      whisperModel: "ggml-base.bin",
+      ttsVoice: "en_US-amy-medium",
+      secondaryModel: "no-slash",
+    }),
+  )?.secondaryModel,
+  undefined,
+  "bad secondary model dropped",
+);
 eq(parseReco(GOOD)?.whisperBinUrl, "https://example.com/bin.zip", "url override kept");
 eq("junkField" in parseReco(GOOD)!, false, "unknown fields dropped");
 eq(parseReco('{"whisperModel":"nope"}'), null, "missing voice → null");

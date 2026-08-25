@@ -42,9 +42,14 @@ export default function Onboarding({
   const [recoState, setRecoState] = useState<"idle" | "busy" | "done">("idle");
   const [autoLaunch, setAutoLaunch] = useState<boolean | null>(null);
 
-  // remote recommendation spec — updates without shipping a build
+  // remote recommendation spec — updates without shipping a build; a
+  // suggested secondary model only fills an empty slot
   useEffect(() => {
-    loadRecommended().then(setReco);
+    loadRecommended().then((r) => {
+      setReco(r);
+      if (r.secondaryModel && !settings.secondaryModel)
+        update({ secondaryModel: r.secondaryModel });
+    });
     inst.refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

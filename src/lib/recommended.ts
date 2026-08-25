@@ -24,6 +24,9 @@ export type Reco = {
   ttsVoice: string;
   // optional human line shown under the wizard's setup button
   note?: string;
+  // suggested secondary model ("provider/model") — applied only when the
+  // user hasn't picked one yet, never overrides an existing choice
+  secondaryModel?: string;
   // full-URL overrides — replace the built-in engine/model sources entirely
   whisperBinUrl?: string;
   whisperModelUrl?: string;
@@ -57,6 +60,8 @@ export function parseReco(body: string): Reco | null {
     ttsVoice: j.ttsVoice,
   };
   if (typeof j.note === "string" && j.note.trim()) out.note = j.note.slice(0, 200);
+  if (typeof j.secondaryModel === "string" && /^[\w.-]+\/[\w.:-]+$/.test(j.secondaryModel))
+    out.secondaryModel = j.secondaryModel;
   for (const k of [
     "whisperBinUrl",
     "whisperModelUrl",
