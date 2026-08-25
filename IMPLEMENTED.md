@@ -293,6 +293,25 @@ Fixed "stream disappears when switching sessions mid-reply" and added per-sessio
 - **Sidebar indicator**: pulsing glowing accent dot (`.row-busy`, reduced-motion aware) on each busy session row, independent of which session is open.
 - Returning to a still-streaming session now shows its live partial output immediately (cached store + continued deltas).
 
+### Data-driven voice lexicon ✅ (2026-08-25)
+
+Replaced the hand-maintained multilingual word tables with two mechanisms:
+
+- **Whisper translate fallback**: `voice_transcribe` gains `translate: Option<bool>` → whisper-cli
+  `--translate` (source language auto-detected, decoded straight to English). `useVoice` keeps the
+  last utterance's wav and exposes `retranslate()`; ChatPage re-routes through it when the native
+  transcript matches nothing (seq-token guarded against newer speech). Toggle: Settings › Voice ›
+  "Multilingual commands" (`oc.settings.voice.multilingual`, default on). Dictation payloads stay
+  native — translation only feeds the router.
+- **Dictionary veto**: `an-array-of-english-words` (~3 MB bundled JSON) parsed once into a Set
+  (`src/lib/dictWords.ts`, warmed on mount). `fixTypos` now vetoes *phonetic* repair for real
+  dictionary words — the low-precision metaphone path can no longer mangle legit speech
+  ("guide"/"git" → "quit" hijacks); one-edit spelling repairs toward domain vocabulary stay
+  allowed ("hall" → "all"). Removed the `"git"` whack-a-mole vocab entry.
+- **Lexicon shrink**: core FR/ES rewrite rules + FR politeness wrappers deleted (~40 lines);
+  plugin LEXICON reduced to 5 English idiom lines. Non-English phrasings are live-verified via the
+  translate pass instead of node tests.
+
 ### Tuya voice light control ✅ (2026-08-25)
 
 Voice-only integration (user choice; no GUI panel, no MCP/agent path) using the **Tuya Cloud API**

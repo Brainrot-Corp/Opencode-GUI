@@ -25,7 +25,7 @@ State/server logic lives in `src/hooks/`, presentational pieces in `src/componen
 
 ## Plugins
 
-Optional features ship as runtime plugins instead of being built in. A plugin is a folder with `plugin.json` + `main.js` (+ optional `styles.css`), living under `%USERPROFILE%\.config\.opencode-gui\plugins\` next to `themes.json`. Plugins are plain browser ESM: `main.js` default-exports `activate(api)` and returns an object that can contribute voice intents (`parse`/`describe`/`exec`, plus trigger/vocab/lexicon merges), a Settings drawer section, documentation rows for the Info dialog's tabs (`info.voice` / `info.keys`), and spoken feedback. Files hot-reload on save; broken plugins surface as a banner and are skipped.
+Optional features ship as runtime plugins instead of being built in. A plugin is a folder with `plugin.json` + `main.js` (+ optional `styles.css`), living under `%USERPROFILE%\.config\.opencode-gui\plugins\` next to `themes.json`. Plugins are plain browser ESM: `main.js` default-exports `activate(api)` and returns an object that can contribute voice intents (`parse`/`describe`/`exec`, plus trigger/vocab merges and optional English idiom rewrites via `lexicon`), a Settings drawer section, documentation rows for the Info dialog's tabs (`info.voice` / `info.keys`), and spoken feedback. Files hot-reload on save; broken plugins surface as a banner and are skipped.
 
 Install the bundled example (voice control for Tuya Smart Life bulbs — on/off, brightness, white tone, color):
 

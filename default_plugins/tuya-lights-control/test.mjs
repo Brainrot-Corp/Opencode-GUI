@@ -3,6 +3,7 @@
 // lexicon registered) plus the DP-code value mappers.
 import { routeVoice, routerInput } from "../../src/lib/voiceRouter.ts";
 import { setPluginLexicon } from "../../src/lib/voiceLexicon.ts";
+import { ensureDict } from "../../src/lib/dictWords.ts";
 import {
   parseVoice, describeLight, brightVal, tempVal, colorData,
   TRIGGERS, VOCAB, LEXICON,
@@ -11,6 +12,8 @@ import { createElement as h } from "react";
 import { renderToString } from "react-dom/server";
 
 setPluginLexicon(LEXICON);
+// warm the dictionary so the phonetic-repair veto is active for these checks
+await ensureDict();
 
 const ext = { id: "tuya-lights-control", parse: parseVoice, triggers: TRIGGERS, vocab: VOCAB };
 const ctx = {
@@ -58,13 +61,10 @@ eq(
   "ambiguous head still just asks — never silent-fires",
 );
 
-// lexicon — French / Spanish rewrites land on the same canonical patterns
-eq(routeVoice("allume la lumière", ctx), P({ type: "light", sw: "on", name: "" }), "fr turn on the light");
-eq(routeVoice("éteins la lampe du bureau", ctx), P({ type: "light", sw: "off", name: "bureau" }), "fr possessive swap keeps device last");
-eq(routeVoice("enciende las luces", ctx), P({ type: "light", sw: "on", name: "" }), "es turn on the lights");
-eq(routeVoice("met la lumière rouge", ctx), P({ type: "lightColor", color: "red", name: "" }), "fr set the light red");
-eq(routeVoice("luz roja", ctx), P({ type: "lightColor", color: "red", name: "" }), "es bare device+color");
-eq(routeVoice("lumiere rouge", ctx), P({ type: "lightColor", color: "red", name: "" }), "fr bare device+color");
+// Non-English phrasing (allume la lumière, luz roja, éteins la lampe du
+// bureau…) is covered live: unmatched transcripts get a second whisper pass
+// with --translate and re-route on the English output — not reproducible in
+// node without the whisper engine.
 
 // naturalness — fillers and whisper typos
 eq(
@@ -100,7 +100,6 @@ eq(routeVoice("turn the light red", ctx), P({ type: "lightColor", color: "red", 
 eq(routeVoice("change the bedroom lights to blue", ctx), P({ type: "lightColor", color: "blue", name: "bedroom" }), "change to color");
 eq(routeVoice("turn the lights teal", ctx), P({ type: "lightColor", color: "teal", name: "" }), "extended palette");
 eq(routeVoice("lights lavender", ctx), P({ type: "lightColor", color: "lavender", name: "" }), "bare extended color");
-eq(routeVoice("luz turquesa", ctx), P({ type: "lightColor", color: "turquoise", name: "" }), "es extended color");
 eq(routeVoice("lights purpul", ctx), P({ type: "lightColor", color: "purple", name: "" }), "phonetic: purpul → purple");
 
 // precedence & near-misses
@@ -113,9 +112,6 @@ eq(describeLight({ type: "lightBright", pct: 40, name: "desk" }), "Set desk to 4
 eq(describeLight({ type: "lightTemp", tone: "warm", name: "" }), "Set the lights to warm white", "describe tone");
 eq(describeLight({ type: "lightColor", color: "red", name: "" }), "Make the lights red", "describe color");
 eq(describeLight({ type: "mystery" }), "", "unknown act describes empty");
-
-// router input sanity for a lexicon-heavy phrase
-eq(routerInput("allume la lumière"), "turn on the light", "routerInput applies plugin lexicon");
 
 // brightness: % → dp range (v2: 10..1000, v1: 25..255), clamped at both ends
 eq(brightVal(50, true), 500, "v2 mid");

@@ -54,6 +54,9 @@ export type AppSettings = {
     sens: number;
     // debug transcript mode — show raw → router input → matched act
     debug: boolean;
+    // no English match → re-run the utterance through whisper's
+    // --translate task and retry routing
+    multilingual: boolean;
   };
   speakReplies: boolean;
   // piper voice file ("<id>.onnx") for spoken replies — "" = none yet
@@ -92,7 +95,7 @@ const DEFAULTS: AppSettings = {
   colors: structuredClone(DEFAULT_COLOR_SETS),
   workspace: "",
   collapsed: true,
-  voice: { model: "ggml-base.bin", handsFree: false, sens: 0.7, debug: false },
+  voice: { model: "ggml-base.bin", handsFree: false, sens: 0.7, debug: false, multilingual: true },
   speakReplies: false,
   ttsVoice: "",
   ttsVol: 1,
@@ -208,6 +211,7 @@ export function useSettings() {
           handsFree: !!p.voice?.handsFree,
           sens: num(p.voice?.sens, DEFAULTS.voice.sens, 0, 1),
           debug: !!p.voice?.debug,
+          multilingual: p.voice?.multilingual === undefined ? true : !!p.voice.multilingual,
         },
         ttsVoice:
           typeof p.ttsVoice === "string" && p.ttsVoice.endsWith(".onnx") ? p.ttsVoice : "",

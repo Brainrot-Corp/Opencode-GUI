@@ -51,9 +51,10 @@ function vocabOf(ctx: VoiceCtx): string[] {
     ...TRIGGERS.split("|"),
     "dark", "light", "mode", "theme", "session", "chat",
     "sidebar", "settings", "agent", "debrief", "percent",
-    // "git" must survive the phonetic pass (its secondary metaphone code
-    // collides with "quit") and "all" repairs whisper's "hall"/"tall" mishear
-    "git", "all",
+    // "all" repairs whisper's "hall"/"tall" mishear of "stage all"; "git"
+    // needs no protection anymore — real dictionary words are never
+    // phonetic-repaired (see voiceLexicon)
+    "all",
     ...ctx.themes,
     ...ctx.commands.flatMap((c) => c.split("-")),
     ...(ctx.exts ?? []).flatMap((e) => e.vocab ?? []),

@@ -88,6 +88,9 @@ export function useVoice(
   const ttsUntilRef = useRef(0);
   // sustained-loud time while a reply is playing (barge-in detector)
   const bargeMsRef = useRef(0);
+  // last utterance's encoded wav — kept so a routing miss can re-run it
+  // through whisper's translate task without re-recording
+  const lastWavRef = useRef<Uint8Array | null>(null);
 
   // true while speech synthesis is audible (+ grace tail for speaker reverb)
   const ttsActive = useCallback(() => {
@@ -120,6 +123,7 @@ export function useVoice(
     // back to manual so an in-flight stream utterance's finally can't flip
     // phase back to "recording" after the user switched the mic off
     modeRef.current = "manual";
+    lastWavRef.current = null;
     nodeRef.current?.disconnect();
     nodeRef.current = null;
     streamRef.current?.getTracks().forEach((t) => t.stop());
@@ -139,8 +143,9 @@ export function useVoice(
     async (all: Float32Array) => {
       if (all.length < RATE / 2) return; // sub-half-second click — ignore
       setPhase("transcribing");
+      const wav = f32ToWav(all);
+      lastWavRef.current = wav;
       try {
-        const wav = f32ToWav(all);
         const text = await invoke<string>("voice_transcribe", {
           audio: Array.from(wav),
           model,
@@ -154,6 +159,23 @@ export function useVoice(
     },
     [onResult, model],
   );
+
+  // re-run the last utterance through whisper's translate task (any detected
+  // language → English) for the router's multilingual fallback
+  const retranslate = useCallback(async (): Promise<string | null> => {
+    const wav = lastWavRef.current;
+    if (!wav) return null;
+    try {
+      const text = await invoke<string>("voice_transcribe", {
+        audio: Array.from(wav),
+        model,
+        translate: true,
+      });
+      return text.trim() || null;
+    } catch {
+      return null;
+    }
+  }, [model]);
 
   const stop = useCallback(async () => {
     teardown();
@@ -280,5 +302,5 @@ export function useVoice(
     })();
   }, [phase, streaming, stop, handsFree, model, closeUtterance, ttsActive]);
 
-  return { phase, streaming, error, toggle };
+  return { phase, streaming, error, toggle, retranslate };
 }

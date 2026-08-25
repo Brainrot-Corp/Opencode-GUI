@@ -152,11 +152,17 @@ pub fn voice_remove_model(name: String) -> Result<(), String> {
 }
 
 // runs whisper-cli over a 16 kHz mono s16 WAV produced by the webview;
-// returns the plain-text transcription (-nt strips timestamps)
+// returns the plain-text transcription (-nt strips timestamps). With
+// translate=true, whisper decodes any detected language straight into
+// English (used as the voice router's multilingual fallback pass)
 #[tauri::command]
-pub async fn voice_transcribe(audio: Vec<u8>, model: String) -> Result<String, String> {
+pub async fn voice_transcribe(
+    audio: Vec<u8>,
+    model: String,
+    translate: Option<bool>,
+) -> Result<String, String> {
     let cli = find_cli()
-        .ok_or_else(|| "voice engine not installed Ã¢â‚¬â€ set it up in Settings > Voice".to_string())?;
+        .ok_or_else(|| "voice engine not installed Ã¢â‚¬â€ set it up in Settings > Voice".to_string())?;
     if !model.ends_with(".bin") || model.contains("..") {
         return Err("bad model name".into());
     }
@@ -175,6 +181,10 @@ pub async fn voice_transcribe(audio: Vec<u8>, model: String) -> Result<String, S
     let mut cmd = Command::new(&cli);
     cmd.arg("-m").arg(&mp).arg("-f").arg(&tmp);
     cmd.args(["-nt", "-np"]);
+    if translate.unwrap_or(false) {
+        // source language is auto-detected; the decode task becomes translate
+        cmd.arg("--translate");
+    }
     // release: CREATE_NO_WINDOW keeps a console from flashing next to the GUI;
     // dev builds inherit stderr so whisper errors show in the terminal
     #[cfg(all(windows, not(debug_assertions)))]

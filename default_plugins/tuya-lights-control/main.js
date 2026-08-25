@@ -125,10 +125,9 @@ export const VOCAB = [
   ...COLORS.split("|"),
 ];
 
-// phrasing rewrites into canonical English — the light-domain slice of the
-// old built-in lexicon (idioms, EN verb pairs, FR/ES verbs/devices/colors/
-// tones/numbers, possessive swap before articles so "lampe du bureau" lands
-// where the pattern expects its device word)
+// phrasing rewrites — English idioms only. Non-English utterances are
+// handled by the app: an unmatched transcript gets a second whisper pass
+// with --translate before routing gives up, so no FR/ES tables are needed.
 export const LEXICON = [
   // idiom: "lights out" means off
   [/\blights? out\b/g, "lights off"],
@@ -138,59 +137,6 @@ export const LEXICON = [
   [/\bswitch on\b/g, "turn on"],
   [/\bfire up\b/g, "turn on"],
   [/\bpower up\b/g, "turn on"],
-
-  // French / Spanish light verbs
-  [/\ballum(?:e|er|ez|es)\b/g, "turn on"],
-  [/\benciend(?:e|er|o)\b|\bprends?\b/g, "turn on"],
-  [/\b(?:eteins|eteindre|apaga|apagar)\b/g, "turn off"],
-  [/\bmet(?:s|tre)?\b|\bpon\b|\bponer\b/g, "set"],
-
-  // devices (singular/plural kept distinct)
-  [/\blumieres\b|\bluces\b/g, "lights"],
-  [/\blumiere\b|\bluz\b/g, "light"],
-  [/\blampes\b/g, "lamps"],
-  [/\blampe\b/g, "lamp"],
-  [/\bbombillas?\b/g, "bulbs"],
-
-  // colors → canonical English
-  [/\brouges?\b|\brojas?\b|\brojos?\b/g, "red"],
-  [/\bjaunes?\b|\bamarill[oa]s?\b/g, "yellow"],
-  [/\bvertes?\b|\bverdes?\b/g, "green"],
-  [/\bbleues?\b|\bbleus?\b|\bazules?\b/g, "blue"],
-  [/\bviolettes?\b|\bmorad[oa]s?\b/g, "violet"],
-  [/\bpourpres?\b/g, "purple"],
-  [/\broses?\b|\brosas?\b/g, "pink"],
-  [/\bmarrones?\b/g, "brown"],
-  [/\bturquesas?\b/g, "turquoise"],
-  [/\baguamarinas?\b/g, "aqua"],
-  [/\blilas?\b/g, "lavender"],
-  [/\bcitron vert\b|\blima\b/g, "lime"],
-  [/\bbleu marine\b|\bazul marino\b/g, "navy"],
-  [/\bdorees?\b|\bdores\b/g, "gold"],
-
-  // white-balance tones
-  [/\bchaudes?\b|\bchauds?\b/g, "warm"],
-  [/\bfraiches?\b|\bfroids?\b|\bfrias?\b|\bfrios?\b|\bfrescas?\b/g, "cool"],
-  [/\bneutres?\b|\bneutros?\b/g, "neutral"],
-  [/\blumiere du jour\b|\bluz del dia\b/g, "daylight"],
-
-  // spoken numbers for brightness (host word map is EN-only)
-  [/\bvingt\b|\bveinte\b/g, "twenty"],
-  [/\btrente\b|\btreinta\b/g, "thirty"],
-  [/\bquarante\b|\bcuarenta\b/g, "forty"],
-  [/\bcinquante\b|\bcincuenta\b/g, "fifty"],
-  [/\bsoixante\b|\bsesenta\b/g, "sixty"],
-  [/\bseptante\b|\bsetenta\b/g, "seventy"],
-  [/\bochenta\b/g, "eighty"],
-  [/\bnoventa\b/g, "ninety"],
-  [/\bcent\b|\bcien\b/g, "hundred"],
-  [/\bdemi\b|\bmitad\b/g, "half"],
-
-  // possessive noun phrase swap, then articles — order matters
-  [/\b([a-z]+) (?:du|des|de la|de los|de las|del) ([a-z]+)\b/g, "$2 $1"],
-  [/\b(?:la|les|el|los|las)\b/g, "the"],
-  [/\ble\b(?= )/g, "the"],
-  [/\b(?:ma|mon|mes|mi|mis)\b/g, "my"],
 ];
 
 // ---------------------------------------------------------------------------

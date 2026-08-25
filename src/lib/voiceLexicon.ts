@@ -1,43 +1,17 @@
-// voice lexicon — rewrites natural / multilingual phrasing into the canonical
-// English vocabulary the router matches against ("envoie le rapport" →
-// "send …"). Adding a synonym forever is one array line here; plugins add
-// their own domain vocabulary via ext.lexicon (applied after these rules).
-// InfoDialog documents the surface phrasings.
+// voice lexicon — normalizes transcripts into the canonical English the
+// router matches against. Multilingual phrasing needs no tables here: an
+// unmatched utterance gets a second whisper pass with --translate before
+// routing gives up (see ChatPage), so this module only handles English
+// politeness wrappers and typo repair. Plugins add domain idioms via
+// ext.lexicon (applied after nothing else — they're the only rewrite table).
 //
 // Accents are stripped BEFORE matching (JS \b treats "é" as a non-word char,
-// which silently kills accented patterns) — so every rule below is written
-// unaccented.
+// which silently kills accented patterns).
 
 const deaccent = (s: string) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 
-// ordered rewrites: multi-word and specific phrases first, single words after
-const RULES: [RegExp, string][] = [
-  // French / Spanish action verbs
-  [/\barrete(r)?\b|\bdetene(r)?\b/g, "stop"],
-  [/\bannul(?:e|er)\b|\bcancela(r)?\b/g, "cancel"],
-  [/\bouvre\b|\bouvrir\b|\babre(r)?\b/g, "open"],
-  [/\bferme\b|\bfermer\b|\bcierra(r)?\b/g, "close"],
-  [/\bquitte\b|\bquitter\b/g, "quit"],
-  [/\bretrécis\b|\bretrécir\b|\bminimiza(r)?\b/g, "minimize"],
-  [/\bmata\b/g, "kill"],
-  [/\bexécute\b|\bexécuter\b|\bejecuta(r)?\b/g, "run"],
-  [/\befface\b|\beffacer\b/g, "clear"],
-  [/\bborra(r)?\b/g, "erase"],
-
-  // dictation prefixes
-  [/\bécris\b|\becris\b|\bdicte\b/g, "prompt"],
-  [/\benvoie\b|\benvoyer\b/g, "send"],
-
-  // settings / session helpers
-  [/\bparamètres\b|\bréglages\b|\breglages\b/g, "settings"],
-  [/\bnouvelle\b|\bnueva\b/g, "new"],
-
-  // mic check as a whole phrase
-  [/\btu m'entends\b|\bm'entends-tu\b|\bme escuchas\b/g, "can you hear me"],
-];
-
-// plugin-contributed rewrites (ext.lexicon), applied after RULES — replaceable
-// wholesale so hot-reloading a plugin swaps its vocabulary cleanly
+// plugin-contributed rewrites (ext.lexicon) — replaceable wholesale so
+// hot-reloading a plugin swaps its vocabulary cleanly
 let EXTRA: [RegExp, string][] = [];
 
 export function setPluginLexicon(rules: [RegExp, string][]) {
@@ -45,17 +19,15 @@ export function setPluginLexicon(rules: [RegExp, string][]) {
 }
 
 // polite wrappers stripped before matching
-const LEAD =
-  /^(?:est-ce que |peux-tu |pourrais-tu |pouvons-nous |can you |could you |would you |podrias |puedes )+/;
-const TAIL =
-  /\s+(?:please|thanks|thank you|merci|gracias|s'il te plait|s'il vous plait|stp)+$/;
+const LEAD = /^(?:can you |could you |would you )+/;
+const TAIL = /\s+(?:please|thanks|thank you)+$/;
 
 import { doubleMetaphone } from "double-metaphone";
+import { isRealWord } from "./dictWords.ts";
 
 export function expandVoice(t: string): string {
   let prev = deaccent(t).replace(LEAD, "");
   while (TAIL.test(prev)) prev = prev.replace(TAIL, "");
-  for (const [re, to] of RULES) prev = prev.replace(re, to);
   for (const [re, to] of EXTRA) prev = prev.replace(re, to);
   return prev.replace(/\s+/g, " ").trim();
 }
@@ -117,13 +89,16 @@ export function fixTypos(t: string, extra: string[] = []): string {
       if (!m) return tok;
       const [, pre, w, post] = m;
       // spelling fixes need 4+ chars; the pronunciation pass may go lower —
-      // accents compress words ("tim" for "theme") without adding letters
+      // accents compress words ("tim" for "theme") without adding letters.
+      // Phonetic repair is vetoed for real dictionary words — that path is
+      // low-precision and would mangle legit speech ("guide"/"git" → "quit");
+      // spelling repairs toward known vocabulary stay allowed for any word
       if (!w || V.includes(w)) return tok;
       if (w.length >= 4) {
         const hit = V.find((k) => oneEdit(w, k));
         if (hit) return pre + hit + post;
       }
-      if (w.length >= 3) {
+      if (w.length >= 3 && !isRealWord(w)) {
         const phit = phonHit(w, V);
         if (phit) return pre + phit + post;
       }

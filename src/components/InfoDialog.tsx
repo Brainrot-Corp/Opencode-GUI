@@ -135,10 +135,12 @@ export default function InfoDialog({
         <>
           <Groups data={[...VOICE, ...docGroups(pluginDocs, "voice")]} />
           <p className="cmd-note">
-            English, French &amp; Spanish phrasing all work, politeness words are ignored, and
-            one-letter typos in device/color words are forgiven. Start with "prompt" to fill the
-            composer or "send" to fill and send; a command buried mid-sentence is read back and
-            waits for a yes.
+            Phrasing works in any language whisper understands — an unmatched
+            utterance gets a second, translating pass (Settings › Voice).
+            Politeness words are ignored and one-letter typos in command words
+            are forgiven. Start with "prompt" to fill the composer or "send" to
+            fill and send; a command buried mid-sentence is read back and waits
+            for a yes.
           </p>
         </>
       )}

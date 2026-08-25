@@ -62,9 +62,17 @@ export default function Sidebar({
         }
       >
         {collapsed ? (
-          <button className="icon-btn sb-expand">
-            <i className="fa-solid fa-angles-right" />
-          </button>
+          <>
+            <button className="icon-btn sb-expand">
+              <i className="fa-solid fa-angles-right" />
+            </button>
+            {/* GitPanel owns the oc:git listener that executes voice git
+                commands ("stage all", "commit"…) — it must stay mounted even
+                while the rail is collapsed or those events vanish silently */}
+            <div style={{ display: "none" }}>
+              <GitPanel />
+            </div>
+          </>
         ) : (
           <>
             <div className="sb-scroll">

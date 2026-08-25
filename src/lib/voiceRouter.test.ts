@@ -1,5 +1,9 @@
 // runnable self-check: node src/lib/voiceRouter.test.ts
 import { routeVoice } from "./voiceRouter.ts";
+import { ensureDict } from "./dictWords.ts";
+
+// warm the dictionary so the phonetic-repair veto is active for these checks
+await ensureDict();
 
 const ctx = { themes: ["cyan", "latte", "matcha", "strawberry"], commands: ["help", "init", "compact", "fix-all"] };
 let n = 0;
@@ -23,14 +27,6 @@ eq(routeVoice("open settings", ctx), { type: "settings", open: true }, "open set
 eq(routeVoice("hide the sidebar", ctx), { type: "sidebar", open: false }, "hide sidebar");
 eq(routeVoice("cycle agent", ctx), { type: "cycleAgent" }, "cycle agent");
 eq(routeVoice("send it", ctx), { type: "send" }, "send it");
-eq(routeVoice("Envoyé.", ctx), { type: "send" }, "envoyé");
-eq(routeVoice("envoie", ctx), { type: "send" }, "envoie");
-eq(routeVoice("envoyez", ctx), { type: "send" }, "envoyez");
-eq(
-  routeVoice("je vais l'envoyer demain", ctx),
-  { type: "embedded", act: { type: "dictateSend", arg: "demain" } },
-  "fr send inside a sentence → embedded (confirmation gates it)",
-);
 eq(routeVoice("clear composer", ctx), { type: "clear" }, "clear");
 eq(routeVoice("clear prompt", ctx), { type: "clear" }, "clear prompt");
 eq(routeVoice("erase the prompt", ctx), { type: "clear" }, "erase the prompt");
@@ -71,7 +67,6 @@ eq(
   { type: "embedded", act: { type: "dictate", arg: "write tests" } },
   "embedded prompt prefix (politeness stripped)",
 );
-eq(routeVoice("est-ce que tu m'entends", ctx), { type: "hearCheck" }, "fr mic check");
 eq(routeVoice("prompt write a haiku about rain", ctx), { type: "dictate", arg: "write a haiku about rain" }, "prefix unaffected by lexicon");
 eq(routeVoice("", ctx), null, "empty");
 eq(routeVoice("please refactor src/main.rs carefully", ctx), null, "prompt-looking text stays freeform");
@@ -106,12 +101,13 @@ eq(
   { type: "embedded", act: { type: "git", act: "stageAll" } },
   "'guide' mishears to 'quit' but the later specific intent wins over the catch-all",
 );
+eq(routeVoice("let me guide you home", ctx), null, "real words are vetoed from phonetic repair — stays dictation");
 eq(
   routeVoice("yeah anyway close spotify", ctx),
   { type: "embedded", act: { type: "closeApp", arg: "spotify" } },
   "catch-all app verbs still work when nothing specific matches",
 );
-eq(routeVoice("comit it", ctx), { type: "git", act: "commit" }, "phonetic: comit → commit");
+eq(routeVoice("comit it", ctx), { type: "git", act: "commit" }, "phonetic: comit → commit (non-word)");
 eq(routeVoice("prompt comit this later", ctx), { type: "dictate", arg: "comit this later" }, "phonetics never touch dictated payloads");
 eq(routeVoice("Tim, Saiyan.", ctx), { type: "theme", arg: "cyan" }, "accented 'theme cyan' via phonetics");
 eq(routeVoice("tim sayen", ctx), { type: "theme", arg: "cyan" }, "same, no punctuation");

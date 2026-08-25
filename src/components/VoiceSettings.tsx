@@ -359,6 +359,29 @@ export default function VoiceSettings({
 
       <div className="setting-row">
         <div className="setting-info">
+          <i className="fa-solid fa-language setting-icon" />
+          <div>
+            <div className="setting-name">Multilingual commands</div>
+            <div className="setting-desc">
+              No English match? Re-runs the utterance through whisper's
+              translate task before giving up to dictation
+            </div>
+          </div>
+        </div>
+        <button
+          type="button"
+          className={`toggle${settings.voice.multilingual ? " on" : ""}`}
+          aria-pressed={settings.voice.multilingual}
+          onClick={() =>
+            update({ voice: { ...settings.voice, multilingual: !settings.voice.multilingual } })
+          }
+        >
+          <span className="knob" />
+        </button>
+      </div>
+
+      <div className="setting-row">
+        <div className="setting-info">
           <i className="fa-solid fa-bug setting-icon" />
           <div>
             <div className="setting-name">Debug transcript</div>

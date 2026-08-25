@@ -17,6 +17,7 @@ import { useSettings } from "../hooks/useSettings";
 import { useGlobalShortcuts } from "../hooks/useGlobalShortcuts";
 import { useVoice } from "../hooks/useVoice";
 import { routeVoice, routerInput, type VoiceAct } from "../lib/voiceRouter";
+import { ensureDict } from "../lib/dictWords";
 import { pickWorkspace } from "../lib/workspace";
 import { playSound } from "../lib/sounds";
 import { useSpeech } from "../hooks/useSpeech";
@@ -254,6 +255,13 @@ export default function ChatPage() {
   // read back and waits for a spoken yes/no. Any other speech (or 15s)
   // cancels — chatter can't leave stale traps.
   const pendingRef = useRef<{ act: VoiceAct; until: number } | null>(null);
+  // guards the async translate fallback: newer speech invalidates an
+  // in-flight re-route
+  const seqRef = useRef(0);
+  // warm the typo-corrector's dictionary veto once per launch
+  useEffect(() => {
+    void ensureDict();
+  }, []);
   // debug transcript mode (Settings › Voice): last few utterance audits
   const [vdbg, setVdbg] = useState<string[]>([]);
   const dbgPush = useCallback(
@@ -297,37 +305,60 @@ export default function ChatPage() {
       }
       pendingRef.current = null;
 
-      const act = routeVoice(text, {
+      const routeCtx = () => ({
         themes: themes.map((t) => t.id),
         commands: oc.cmdList.map((c) => c.name),
         exts,
       });
+      // executes a routed act — shared by the native and translated paths
+      const dispatch = (act: VoiceAct) => {
+        playSound("click");
+        if (act.type === "embedded") {
+          // active session: a command ran recently → trust the streak, skip
+          // the read-back (25s window). Fuzzy matches (command + trailing
+          // clause) always read back — they're only probable.
+          if (!act.fuzzy && Date.now() - lastExecRef.current < 25000) {
+            execAct(act.act);
+            return;
+          }
+          pendingRef.current = { act: act.act, until: Date.now() + 15000 };
+          // natural read-back: "Okay — turn the lights off?"
+          const d = describeAct(act.act);
+          announce(`Okay — ${d.charAt(0).toLowerCase()}${d.slice(1)}?`);
+          return;
+        }
+        execAct(act);
+      };
+
+      const act = routeVoice(text, routeCtx());
       if (settings.voice.debug)
         dbgPush(
           `"${text}" → "${routerInput(text)}" → ${
             act ? JSON.stringify(act) : "no match · dictation"
           }`,
         );
-      if (!act) return;
-      playSound("click");
-      if (act.type === "embedded") {
-        // active session: a command ran recently → trust the streak, skip
-        // the read-back (25s window). Fuzzy matches (command + trailing
-        // clause) always read back — they're only probable.
-        if (!act.fuzzy && Date.now() - lastExecRef.current < 25000) {
-          execAct(act.act);
-          return;
-        }
-        pendingRef.current = { act: act.act, until: Date.now() + 15000 };
-        // natural read-back: "Okay — turn the lights off?"
-        const d = describeAct(act.act);
-        announce(`Okay — ${d.charAt(0).toLowerCase()}${d.slice(1)}?`);
+      if (act) {
+        dispatch(act);
         return;
       }
-      execAct(act);
+      // no match — the utterance may be in another language: one retry
+      // through whisper's translate task before giving up to dictation.
+      // Sequence token discards the result if newer speech arrived meanwhile
+      if (settings.voice.multilingual) {
+        const seq = ++seqRef.current;
+        void retranslateRef.current?.().then((en) => {
+          if (!en || seq !== seqRef.current) return;
+          const act2 = routeVoice(en, routeCtx());
+          if (settings.voice.debug)
+            dbgPush(
+              `[en] "${en}" → ${act2 ? JSON.stringify(act2) : "no match · dictation"}`,
+            );
+          if (act2) dispatch(act2);
+        });
+      }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [themes, oc.cmdList, exts, execAct, describeAct, settings.voice.debug, dbgPush],
+    [themes, oc.cmdList, exts, execAct, describeAct, settings.voice.debug, settings.voice.multilingual, dbgPush],
   );
 
   const voice = useVoice(
@@ -336,6 +367,9 @@ export default function ChatPage() {
     settings.voice.handsFree,
     settings.voice.sens,
   );
+  // handler runs before useVoice returns — reach retranslate through a ref
+  const retranslateRef = useRef<(() => Promise<string | null>) | null>(null);
+  retranslateRef.current = voice.retranslate;
 
   // Ctrl+M toggles the mic — same path as clicking the composer button
   useEffect(() => {
