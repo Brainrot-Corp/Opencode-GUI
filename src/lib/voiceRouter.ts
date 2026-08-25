@@ -22,7 +22,9 @@ export type VoiceAct =
   | { type: "light"; sw: "on" | "off"; name: string }
   | { type: "lightBright"; pct: number; name: string }
   | { type: "lightTemp"; tone: string; name: string }
-  | { type: "lightColor"; color: string; name: string };
+  | { type: "lightColor"; color: string; name: string }
+  | { type: "dictate"; arg: string }
+  | { type: "dictateSend"; arg: string };
 
 export type VoiceCtx = {
   themes: string[];
@@ -75,6 +77,12 @@ export function routeVoice(text: string, ctx: VoiceCtx): VoiceAct | null {
   if (/^hide( the)? sidebar$/.test(t)) return { type: "sidebar", open: false };
   if (/^(cycle|next) agent$/.test(t)) return { type: "cycleAgent" };
   if (/^(send|submit)( it| that| this| the prompt| message)?$/.test(t)) return { type: "send" };
+  // capture prefixes — everything after the word is dictation for the
+  // composer ("prompt …") or fill-and-send ("send …"); bare forms above win
+  const dm = /^prompt (.+)$/.exec(t);
+  if (dm) return { type: "dictate", arg: dm[1] };
+  const dsm = /^send (.+)$/.exec(t);
+  if (dsm) return { type: "dictateSend", arg: dsm[1] };
   if (/^(envoi|envoie|envoyer|envoyez|envoyé)$/.test(t)) return { type: "send" };
   if (/^(be quiet|stop speaking|stop talking)$/.test(t)) return { type: "quiet" };
   if (/^(shut|shut up|tais-toi|chut)$/.test(t)) return { type: "shut" };

@@ -47,6 +47,13 @@ eq(routeVoice("start visual studio code", ctx), { type: "launchApp", arg: "visua
 eq(routeVoice("open settings", ctx), { type: "settings", open: true }, "open settings beats app launch");
 eq(routeVoice("run compact", ctx), { type: "runCmd", arg: "compact", rest: "" }, "run cmd beats app launch");
 eq(routeVoice("hello world this is dictation", ctx), null, "freeform dictation");
+
+// capture prefixes — command-first voice: unprefixed speech routes nowhere
+eq(routeVoice("prompt hello world", ctx), { type: "dictate", arg: "hello world" }, "prompt prefix fills composer");
+eq(routeVoice("Prompt the quick brown fox.", ctx), { type: "dictate", arg: "the quick brown fox" }, "prompt prefix strips punctuation");
+eq(routeVoice("send hello world", ctx), { type: "dictateSend", arg: "hello world" }, "send prefix fills + sends");
+eq(routeVoice("send it", ctx), { type: "send" }, "bare send still wins over prefix");
+eq(routeVoice("send the prompt", ctx), { type: "send" }, "bare send-the-prompt form kept");
 eq(routeVoice("", ctx), null, "empty");
 eq(routeVoice("please refactor src/main.rs carefully", ctx), null, "prompt-looking text stays freeform");
 

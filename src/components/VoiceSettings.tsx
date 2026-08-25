@@ -306,32 +306,12 @@ export default function VoiceSettings({
 
       <div className="setting-row">
         <div className="setting-info">
-          <i className="fa-solid fa-paper-plane setting-icon" />
-          <div>
-            <div className="setting-name">Auto-send dictation</div>
-            <div className="setting-desc">Send spoken prompts without review</div>
-          </div>
-        </div>
-        <button
-          type="button"
-          className={`toggle${settings.voice.autoSend ? " on" : ""}`}
-          aria-pressed={settings.voice.autoSend}
-          onClick={() =>
-            update({ voice: { ...settings.voice, autoSend: !settings.voice.autoSend } })
-          }
-        >
-          <span className="knob" />
-        </button>
-      </div>
-
-      <div className="setting-row">
-        <div className="setting-info">
           <i className="fa-solid fa-headset setting-icon" />
           <div>
             <div className="setting-name">Hands-free dictation</div>
             <div className="setting-desc">
-              Mic stays live; each pause becomes text for review — say
-              "envoyé" / "send it" to send
+              Mic stays live and listens for commands — say "prompt …" to fill
+              the composer, "send …" to fill and send at once
             </div>
           </div>
         </div>

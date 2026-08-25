@@ -83,19 +83,16 @@ export default function ChatPage() {
     activeModes,
   });
 
-  // voice transcripts: recognized phrases drive the UI, everything else is
-  // dictation — dropped into the composer for review (or sent on autoSend)
+  // voice transcripts: recognized phrases drive the UI; everything else is
+  // ignored unless it starts with "prompt" (fill composer) or "send"
+  // (fill + submit)
   const handleVoiceTranscript = useCallback(
     (text: string) => {
       const act = routeVoice(text, {
         themes: themes.map((t) => t.id),
         commands: oc.cmdList.map((c) => c.name),
       });
-      if (!act) {
-        if (settings.voice.autoSend) void oc.submit(text);
-        else window.dispatchEvent(new CustomEvent("oc:voice-text", { detail: text }));
-        return;
-      }
+      if (!act) return;
       playSound("click");
       switch (act.type) {
         case "newSession":
@@ -147,6 +144,12 @@ export default function ChatPage() {
         case "send":
           window.dispatchEvent(new Event("oc:voice-send"));
           break;
+        case "dictate":
+          window.dispatchEvent(new CustomEvent("oc:voice-text", { detail: act.arg }));
+          break;
+        case "dictateSend":
+          window.dispatchEvent(new CustomEvent("oc:voice-send-text", { detail: act.arg }));
+          break;
         case "clear":
           window.dispatchEvent(new Event("oc:voice-clear"));
           break;
@@ -173,7 +176,7 @@ export default function ChatPage() {
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [themes, oc.cmdList, settings.voice.autoSend, settings.tuya],
+    [themes, oc.cmdList, settings.tuya],
   );
 
   const voice = useVoice(

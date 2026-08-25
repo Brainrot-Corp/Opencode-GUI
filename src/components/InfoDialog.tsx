@@ -34,6 +34,8 @@ const VOICE: Group[] = [
   [
     "Dictation & speech",
     [
+      ["prompt …", "fill the composer with the rest"],
+      ["send …", "fill and send at once"],
       ["debrief", "summarize recent changes aloud"],
       ["be quiet / tais-toi", "stop speaking"],
       ["can you hear me", "mic check"],
@@ -123,7 +125,9 @@ export default function InfoDialog({
       {tab === "voice" && (
         <>
           <Groups data={VOICE} />
-          <p className="cmd-note">Dictation that matches no phrase lands in the composer for review.</p>
+          <p className="cmd-note">
+            Unrecognized speech is ignored — start with "prompt" to fill the composer or "send" to fill and send.
+          </p>
         </>
       )}
       {tab === "cmds" && <CommandRows commands={commands} />}

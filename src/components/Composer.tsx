@@ -112,7 +112,9 @@ export default function Composer({
   });
 
   // voice dictation events (dispatched by useVoice routing in ChatPage):
-  // text lands in the textarea for review, "send it" fires the real send
+  // "prompt …" text lands in the textarea for review, "send …" fills and
+  // submits at once (single event so the draft can't be stale), bare
+  // "send it" fires the real send on whatever is staged
   useEffect(() => {
     const onText = (e: Event) => {
       const text = (e as CustomEvent<string>).detail;
@@ -121,16 +123,23 @@ export default function Composer({
       inputRef.current?.focus();
     };
     const onSend = () => send();
+    const onSendText = (e: Event) => {
+      const add = ((e as CustomEvent<string>).detail ?? "").trim();
+      if (!add) return;
+      sendWith(input ? `${input} ${add}` : add);
+    };
     const onClear = () => {
       setInput("");
       inputRef.current?.focus();
     };
     window.addEventListener("oc:voice-text", onText);
     window.addEventListener("oc:voice-send", onSend);
+    window.addEventListener("oc:voice-send-text", onSendText);
     window.addEventListener("oc:voice-clear", onClear);
     return () => {
       window.removeEventListener("oc:voice-text", onText);
       window.removeEventListener("oc:voice-send", onSend);
+      window.removeEventListener("oc:voice-send-text", onSendText);
       window.removeEventListener("oc:voice-clear", onClear);
     };
   });
@@ -282,8 +291,10 @@ export default function Composer({
     return `${pretty(defaultModel ?? "")} (server default)`;
   };
 
-  const send = () => {
-    const text = input.trim();
+  const send = () => sendWith(input);
+
+  const sendWith = (t: string) => {
+    const text = t.trim();
     const ready = attach.readyFiles();
     if ((!text && !ready.length) || needsModel) return;
     setInput("");

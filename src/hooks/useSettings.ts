@@ -50,7 +50,6 @@ export type AppSettings = {
   collapsed: boolean;
   voice: {
     model: string;
-    autoSend: boolean;
     handsFree: boolean;
     pauseMs: number;
     sens: number;
@@ -92,7 +91,7 @@ const DEFAULTS: AppSettings = {
   colors: structuredClone(DEFAULT_COLOR_SETS),
   workspace: "",
   collapsed: true,
-  voice: { model: "ggml-base.en.bin", autoSend: false, handsFree: false, pauseMs: 1500, sens: 0.7 },
+  voice: { model: "ggml-base.en.bin", handsFree: false, pauseMs: 1500, sens: 0.7 },
   speakReplies: false,
   ttsVoice: "",
   ttsVol: 1,
@@ -205,7 +204,6 @@ export function useSettings() {
             typeof p.voice?.model === "string" && p.voice.model
               ? p.voice.model
               : "ggml-base.en.bin",
-          autoSend: !!p.voice?.autoSend,
           handsFree: !!p.voice?.handsFree,
           pauseMs: num(p.voice?.pauseMs, DEFAULTS.voice.pauseMs, 400, 4000),
           sens: num(p.voice?.sens, DEFAULTS.voice.sens, 0, 1),

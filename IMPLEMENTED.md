@@ -352,6 +352,23 @@ extensible via its data arrays:
 
 Wiring: ChatPage passes `oc.cmdList` into SettingsDrawer as a prop. `npm run build` green.
 
+### Command-first voice ✅ (2026-08-25)
+
+User request: mic listens for commands; unprefixed dictation must not populate the composer.
+
+- Unrecognized speech → silently ignored (was: fill composer / autoSend).
+- New capture prefixes in voiceRouter: **"prompt …"** → `{dictate}` fills the composer (appends
+  to any staged draft), **"send …"** → `{dictateSend}` fills and submits at once. Bare
+  "send / send it / envoyé" keep sending the staged draft (matchers ordered so short forms win).
+- Composer: `send()` split into parameterized `sendWith(text)` + new `oc:voice-send-text` event —
+  one event carries the full text because firing voice-text then voice-send back-to-back would
+  read a stale draft closure.
+- **Auto-send setting removed** (superseded by prefixes): toggle row gone from VoiceSettings,
+  field dropped from AppSettings/loader; hands-free description updated.
+- InfoDialog voice tab lists the two prefixes with the new ignore-note.
+
+Router checks now 61; build green.
+
 ## Notes / Decisions log
 
 - 2026-08-23: Project started. Plan finalized in PLAN.md (Windows only, Tauri v2, React+TS, fresh UI, minimal scope).
