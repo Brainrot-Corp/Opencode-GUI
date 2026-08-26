@@ -1,5 +1,6 @@
 import type { ColorSet } from "../hooks/useSettings";
 import type { ThemeMeta } from "../lib/themes";
+import InlineNumberInput from "./InlineNumberInput";
 
 // Appearance settings — per-theme surface color + transparency overrides
 export default function AppearanceSettings({
@@ -51,7 +52,15 @@ export default function AppearanceSettings({
             onChange={(e) => updateColors({ baseA: Number(e.target.value) })}
             aria-label="Main background transparency"
           />
-          <span className="alpha-num">{Math.round(cs.baseA * 100)}%</span>
+          <InlineNumberInput
+            value={cs.baseA}
+            min={0}
+            max={1}
+            step={0.02}
+            suffix="%"
+            ariaLabel="Main background transparency percent"
+            onChange={(v) => updateColors({ baseA: v })}
+          />
         </div>
       </div>
 
@@ -79,7 +88,15 @@ export default function AppearanceSettings({
             onChange={(e) => updateColors({ surfaceA: Number(e.target.value) })}
             aria-label="Panel surface transparency"
           />
-          <span className="alpha-num">{Math.round(cs.surfaceA * 100)}%</span>
+          <InlineNumberInput
+            value={cs.surfaceA}
+            min={0}
+            max={1}
+            step={0.02}
+            suffix="%"
+            ariaLabel="Panel surface transparency percent"
+            onChange={(v) => updateColors({ surfaceA: v })}
+          />
         </div>
       </div>
     </div>

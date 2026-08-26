@@ -397,6 +397,28 @@
   width: 32px;
   text-align: right;
 }
+input.alpha-num {
+  width: 52px;
+  background: var(--inset-bg);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 2px 4px;
+  outline: none;
+  cursor: text;
+  transition: border-color 0.2s var(--ease), box-shadow 0.2s var(--ease), color 0.2s var(--ease);
+}
+input.alpha-num.speed {
+  width: 56px;
+}
+input.alpha-num:hover {
+  border-color: var(--line-strong);
+  color: var(--text-dim);
+}
+input.alpha-num:focus {
+  border-color: color-mix(in srgb, var(--accent) calc(0.4 * 100%), transparent);
+  box-shadow: 0 0 8px -4px var(--accent-glow);
+  color: var(--text);
+}
 
 /* live whisper download indicator — pulsing icon + sweeping blocky bar */
 .dl-live {
