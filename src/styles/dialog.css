@@ -89,6 +89,13 @@
   color: var(--danger);
   background: rgba(224, 143, 143, 0.1);
 }
+/* two-step close armed state */
+.dlg-close.arm,
+.dlg-close.arm:hover {
+  color: var(--danger);
+  background: rgba(224, 143, 143, 0.12);
+  box-shadow: 0 0 10px -4px rgba(224, 143, 143, 0.6);
+}
 
 .dlg-body {
   flex: 1;

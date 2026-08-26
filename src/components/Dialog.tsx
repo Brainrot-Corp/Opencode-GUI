@@ -8,6 +8,7 @@ export default function Dialog({
   wide,
   top,
   stage,
+  confirm,
   actions,
   children,
 }: {
@@ -17,6 +18,8 @@ export default function Dialog({
   top?: boolean;
   // extra-large centered variant for content-heavy views
   stage?: boolean;
+  // two-step close: tints the X red and asks for a second click
+  confirm?: boolean;
   // optional controls rendered in the header before the close button
   actions?: React.ReactNode;
   children: React.ReactNode;
@@ -38,7 +41,11 @@ export default function Dialog({
           <span>{title}</span>
           <div className="dlg-head-end">
             {actions}
-            <button className="icon-btn dlg-close" data-tip="Close" onClick={onClose}>
+            <button
+              className={`icon-btn dlg-close${confirm ? " arm" : ""}`}
+              data-tip={confirm ? "Click again to discard changes" : "Close"}
+              onClick={onClose}
+            >
               <i className="fa-solid fa-xmark" />
             </button>
           </div>

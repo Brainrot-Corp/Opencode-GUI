@@ -64,6 +64,9 @@
   color: var(--accent);
   white-space: nowrap;
 }
+.fe-status.warn {
+  color: var(--danger);
+}
 
 /* blocky dirty-state dot */
 .fe-dot {

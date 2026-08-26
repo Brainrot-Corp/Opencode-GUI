@@ -41,6 +41,8 @@ export default function FileEditor({
   const [repl, setRepl] = useState("");
   const [matchCase, setMatchCase] = useState(false);
   const [cur, setCur] = useState(0);
+  // two-step close: first attempt with unsaved edits arms, second commits
+  const [closeArmed, setCloseArmed] = useState(false);
 
   const taRef = useRef<HTMLTextAreaElement>(null);
   const hlRef = useRef<HTMLPreElement>(null);
@@ -115,10 +117,25 @@ export default function FileEditor({
   }
 
   const requestClose = () => {
-    if (dirty && !autosave && !window.confirm(`${path}\n\nDiscard unsaved changes?`))
-      return;
+    if (dirty && !autosave) {
+      if (!closeArmed) {
+        setCloseArmed(true);
+        return;
+      }
+      setCloseArmed(false);
+    }
     onClose();
   };
+
+  // armed state expires like the sidebar clear-all, and saving disarms
+  useEffect(() => {
+    if (!closeArmed) return;
+    const t = setTimeout(() => setCloseArmed(false), 3000);
+    return () => clearTimeout(t);
+  }, [closeArmed]);
+  useEffect(() => {
+    if (!dirty) setCloseArmed(false);
+  }, [dirty]);
 
   // Ctrl+S save, Ctrl+F find — undo/redo (Ctrl+Z/Y) stays native to the textarea
   useEffect(() => {
@@ -293,7 +310,9 @@ export default function FileEditor({
       stage
       actions={
         <>
-          <span className="fe-status mono">{status}</span>
+          <span className={"fe-status mono" + (closeArmed ? " warn" : "")}>
+            {closeArmed ? "Click again to discard" : status}
+          </span>
           <span
             className={"fe-dot" + (dirty ? " on" : "")}
             data-tip={dirty ? "Unsaved changes" : "Saved"}
@@ -323,6 +342,7 @@ export default function FileEditor({
           </button>
         </>
       }
+      confirm={closeArmed}
     >
       {staleDisk !== null && (
         <div className="fe-stale">
