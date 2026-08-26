@@ -79,7 +79,6 @@ const KEYS: Group[] = [
       ["Ctrl+= · Ctrl+-", "zoom in · out"],
       ["Ctrl+0", "reset zoom"],
       ["Tab", "cycle agent"],
-      ["Enter · Shift+Enter", "send · newline"],
       ["Esc ×2 (within 4s)", "stop generation — a first Esc arms it, menus eat theirs"],
       ["Escape", "close menus and dialogs"],
     ],

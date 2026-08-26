@@ -104,7 +104,7 @@ export function useGlobalShortcuts({
       if (["=", "+", "-"].includes(e.key)) {
         e.preventDefault();
         stepZoom(e.key === "-" ? -1 : 1);
-      } else if (e.key === "0") {
+      } else if (e.key === "0" || e.code === "Digit0" || e.code === "Numpad0") {
         e.preventDefault();
         update({ uiScale: 1 });
       }
