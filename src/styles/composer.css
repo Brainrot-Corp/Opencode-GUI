@@ -485,15 +485,22 @@
   color: var(--text-faint);
   opacity: 0.75;
 }
-/* fenced region incl. its ``` markers — darker well + accent rail left,
-   hairline right; echo of the chat .msg pre treatment */
+/* fenced region incl. its ``` markers — inline-block shrink-wraps to the
+   widest line, so the well fills past every shorter line's last glyph and
+   reads as one solid slab; hairline ring is fully connected (single box).
+   rail + one mono-space gap sit left of the first glyph via a cancelling
+   margin/padding pair (-10px + 10px = zero net advance, so overlay glyphs
+   stay glued to the textarea's columns; the extra -10px of available width
+   is eaten back by the padding, keeping soft-wrap breaks identical) */
 .comp-codeblock {
-  background: color-mix(in srgb, black 14%, transparent);
+  display: inline-block;
+  vertical-align: top;
+  margin-left: -10px;
+  padding-left: 10px;
+  background: color-mix(in srgb, black 24%, transparent);
   box-shadow:
     inset 2px 0 0 color-mix(in srgb, var(--accent) calc(0.4 * 100%), transparent),
-    inset -1px 0 0 var(--line);
-  -webkit-box-decoration-break: clone;
-  box-decoration-break: clone;
+    inset 0 0 0 1px var(--line);
 }
 .composer textarea::placeholder {
   color: var(--text-faint);

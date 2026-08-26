@@ -18,9 +18,22 @@ function draftHtml(src: string): string {
   const out: string[] = [];
   const lines = src.split("\n");
   let i = 0;
+  // index of a blank line already swallowed by a block's trailing side, so
+  // the NEXT block doesn't claim the same line as its leading gap
+  let consumedBlankAt = -1;
   while (i < lines.length) {
     const open = /^```(.*)$/.exec(lines[i]);
     if (!open) {
+      // blank line sitting right above a fence belongs to the block's slab:
+      // skip emitting it here — the block span owns this newline instead
+      if (
+        lines[i] === "" &&
+        i + 1 < lines.length &&
+        /^```/.test(lines[i + 1])
+      ) {
+        i++;
+        continue;
+      }
       out.push(escPlain(lines[i]));
       if (i < lines.length - 1) out.push("\n");
       i++;
@@ -31,22 +44,35 @@ function draftHtml(src: string): string {
     const closed = j < lines.length;
     const body = lines.slice(i + 1, closed ? j : lines.length).join("\n");
     const lang = open[1].trim();
-    // one wrapper span around markers + body so the whole fenced region
-    // paints as a single delimited block
+    // blank line directly above the fence joins the slab so the background
+    // runs continuously through the paragraph gap (insertFenced adds one)
+    const leadBlank =
+      i > 0 && lines[i - 1] === "" && i - 1 !== consumedBlankAt;
+    // one wrapper span around markers + body (+ adjacent blank lines) so the
+    // whole fenced region paints as a single delimited block
     out.push(
-      `<span class="comp-codeblock"><span class="comp-fence">${escPlain(lines[i])}${
-        i < lines.length - 1 ? "\n" : ""
-      }</span>${hlHtml(body, lang || undefined)}${closed ? "\n" : ""}`,
+      `<span class="comp-codeblock">${leadBlank ? "\n" : ""}<span class="comp-fence">${escPlain(
+        lines[i],
+      )}${i < lines.length - 1 ? "\n" : ""}</span>${hlHtml(body, lang || undefined)}${
+        closed ? "\n" : ""
+      }`,
     );
     if (closed) {
       out.push(`<span class="comp-fence">${escPlain(lines[j])}`);
       if (j < lines.length - 1) out.push("\n");
+      // same for the blank line below — but never the phantom trailing
+      // element of a source ending in "\n"
+      if (j + 1 < lines.length - 1 && lines[j + 1] === "") {
+        out.push("\n");
+        consumedBlankAt = j + 1;
+        i = j + 2;
+      } else {
+        i = j + 1;
+      }
       out.push("</span>");
-      i = j + 1;
     } else {
       i = lines.length;
     }
-    out.push("</span>");
   }
   return out.join("");
 }
