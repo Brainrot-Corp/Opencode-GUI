@@ -151,7 +151,8 @@
 
 /* tools rail left of the input: clip + mic sit side by side normally; once
    the composer is dragged tall enough (.tall) they stack into the freed-up
-   space — attach becomes a rectangle filling the top, mic a bottom square */
+   space wearing the New-chat look (dashed accent frame): mic becomes the
+   top rectangle, clip the bottom square */
 .comp-tools {
   display: flex;
   align-items: flex-end;
@@ -165,15 +166,33 @@
   width: 44px;
   gap: 6px;
 }
-.composer.tall .comp-tools .attach-btn {
+.composer.tall .comp-tools .mic-btn {
   flex: 1 1 18px;
   min-height: 18px;
   width: 100%;
   height: auto;
 }
-.composer.tall .comp-tools .mic-btn {
+.composer.tall .comp-tools .attach-btn {
   width: 100%;
   height: 44px;
+}
+.composer.tall .comp-tools .attach-btn,
+.composer.tall .comp-tools .mic-btn {
+  background: color-mix(in srgb, var(--accent) calc(0.06 * 100%), transparent);
+  border: 1px dashed color-mix(in srgb, var(--accent) calc(0.25 * 100%), transparent);
+  color: var(--text-faint);
+}
+.composer.tall .comp-tools .attach-btn:hover:not(:disabled),
+.composer.tall .comp-tools .mic-btn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) calc(0.11 * 100%), transparent);
+  border-color: color-mix(in srgb, var(--accent) calc(0.45 * 100%), transparent);
+  box-shadow: 0 0 24px -8px var(--accent-glow);
+}
+/* recording pulse must survive the restyle */
+.composer.tall .comp-tools .mic-btn.recording {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  border-color: color-mix(in srgb, var(--danger) calc(0.35 * 100%), transparent);
 }
 
 /* voice input — pulsing danger tint while recording */
@@ -460,11 +479,20 @@
   align-items: flex-end;
 }
 
+/* rest at exactly the single-line textarea's height so their edges align
+   on the y axis regardless of font metrics */
+.composer-row .send-btn,
+.composer-row .stop-btn {
+  height: 46px;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
 .composer textarea {
   flex: 1;
   resize: none;
   min-height: 46px;
-  max-height: 160px;
+  max-height: 50vh; /* auto-grow cap — matches the JS in Composer */
   padding: 11px 13px;
   border-radius: 0;
   border: 1px solid transparent;
@@ -472,7 +500,10 @@
   color: var(--text);
   font-family: var(--mono);
   font-size: 13.5px;
-  line-height: 1.6;
+  /* integer line-height: fractional (e.g. 1.6 → 21.6px) makes scrollHeight
+     round up and the box grow 1px past the send button, breaking the
+     single-line y-alignment */
+  line-height: 21px;
   caret-color: var(--accent);
   transition: border-color 0.3s;
 }

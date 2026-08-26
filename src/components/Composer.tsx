@@ -78,22 +78,53 @@ export default function Composer({
     return v >= 112 && v <= 3000 ? v : 0;
   });
   const compRef = useRef<HTMLDivElement>(null);
-  const dragRef = useRef<{ y: number; h: number } | null>(null);
+  const dragRef = useRef<{ y: number; h: number; min: number } | null>(null);
 
   useEffect(() => {
     if (h) localStorage.setItem("oc.comp.h", String(h));
     else localStorage.removeItem("oc.comp.h");
   }, [h]);
 
+  // auto-grow: the whole input follows its line count — the textarea (and
+  // with it the entire composer card) expands until half the window, then
+  // scrolls internally. Skipped in manual-height mode — there the row
+  // stretch owns the textarea's size, so a stale inline height would fight it
+  useEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    if (h) {
+      el.style.height = "";
+      return;
+    }
+    const max = Math.round(window.innerHeight * 0.5);
+    el.style.height = "auto";
+    // floor at the single-line rest height so the box never sits below it
+    el.style.height = `${Math.max(46, Math.min(el.scrollHeight, max))}px`;
+  }, [input, h]);
+
   const startResize = (e: React.MouseEvent) => {
     e.preventDefault();
-    dragRef.current = { y: e.clientY, h: h || compRef.current?.offsetHeight || 200 };
+    const el = compRef.current;
+    // natural auto-flow height = the perfect minimum: at it the textarea
+    // rests at one line, its top/bottom edges flush with the send button.
+    // Measured once per drag with the explicit height cleared (synchronous,
+    // so no flicker)
+    const saved = el?.style.height ?? "";
+    if (el) el.style.height = "";
+    const min = el?.offsetHeight || 200;
+    if (el) el.style.height = saved;
+    dragRef.current = { y: e.clientY, h: h || min, min };
     document.body.style.cursor = "row-resize";
     document.body.style.userSelect = "none";
     const move = (ev: MouseEvent) => {
       if (!dragRef.current) return;
       const max = Math.round(window.innerHeight * 0.72);
-      setH(Math.min(Math.max(dragRef.current.h - (ev.clientY - dragRef.current.y), 112), max));
+      setH(
+        Math.min(
+          Math.max(dragRef.current.h - (ev.clientY - dragRef.current.y), dragRef.current.min),
+          max,
+        ),
+      );
     };
     const up = () => {
       dragRef.current = null;
