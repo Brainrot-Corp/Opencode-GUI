@@ -30,6 +30,7 @@ export function useGlobalShortcuts({
   onCycleSessions,
   onCloseSession,
   onToggleTerm,
+  onToggleSidebar,
 }: {
   settings: AppSettings;
   update: (patch: Partial<AppSettings>) => void;
@@ -49,6 +50,8 @@ export function useGlobalShortcuts({
   onCloseSession?: () => void;
   // Ctrl+` toggles the terminal dock
   onToggleTerm?: () => void;
+  // Ctrl+B toggles the session sidebar (VS Code parity, global)
+  onToggleSidebar?: () => void;
 }) {
   // double-Escape stop gesture — armed by the first free Escape (the stop
   // button surfaces the window as a draining countdown ring), landed by the
@@ -228,6 +231,20 @@ export function useGlobalShortcuts({
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
   }, [onToggleTerm]);
+
+  // Ctrl+B toggles the session sidebar — VS Code parity, global (no terminal
+  // guard, works even when an editor/terminal has focus)
+  useEffect(() => {
+    if (!onToggleSidebar) return;
+    const key = (e: KeyboardEvent) => {
+      if (!e.ctrlKey || e.shiftKey || e.altKey || e.repeat) return;
+      if (e.key.toLowerCase() !== "b") return;
+      e.preventDefault();
+      onToggleSidebar();
+    };
+    window.addEventListener("keydown", key);
+    return () => window.removeEventListener("keydown", key);
+  }, [onToggleSidebar]);
 
   // Rust emits visibility://changed on tray click / Alt+Space / tray menu
   useEffect(() => {

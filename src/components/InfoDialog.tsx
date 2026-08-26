@@ -73,6 +73,7 @@ const KEYS: Group[] = [
   [
     "In the app",
     [
+      ["Ctrl+B", "toggle sidebar"],
       ["Ctrl+M", "mic on/off"],
       ["Ctrl+P", "pin window on top"],
       ["Ctrl+wheel", "zoom the UI in / out"],
