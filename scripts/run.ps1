@@ -1,11 +1,13 @@
 # OpenCode GUI task runner (Windows)
-# usage:  powershell -ExecutionPolicy Bypass -File scripts\run.ps1 <command> [win11|win10|both] [bundles]
+# usage:  powershell -ExecutionPolicy Bypass -File scripts\run.ps1 <command> [win11|win10|both] [bundles] [-Version X.Y.Z]
 # commands: setup | dev | build | check | clean   (build/portable take a target, default win11)
 # win11 = glass build (acrylic), win10 = no-glass build (--features noglass)
 # build only: 3rd arg picks bundle types (default msi; e.g. "nsis", "msi nsis")
+# -Version X.Y.Z bumps the version in tauri.conf.json / Cargo.toml / package.json / package-lock.json first
 param([Parameter(Position = 0)][string]$Cmd = "dev",
       [Parameter(Position = 1)][string]$Target = "win11",
-      [Parameter(Position = 2)][string]$Bundles = "")
+      [Parameter(Position = 2)][string]$Bundles = "",
+      [string]$Version = "")
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
@@ -18,6 +20,40 @@ switch ($Target) {
     "both"  { $targets = @("win10", "win11") } # win11 last → it stays staged in OpenCode\
     default { Write-Host "!! target must be win11, win10 or both" -ForegroundColor Red; exit 1 }
 }
+
+# bumps the app version in the four files that carry it, before a build
+function Set-Version([string]$V) {
+    if ($V -notmatch '^\d+(\.\d+){1,2}$') {
+        Write-Host "!! invalid version '$V' - use e.g. 1.5.2" -ForegroundColor Red; exit 1
+    }
+    $enc = New-Object System.Text.UTF8Encoding($false)
+    # package-lock.json holds the app version twice, but every dependency has
+    # its own "version" too — scope the replace to the pair right after the
+    # app's own "name" and leave dependencies untouched
+    $lockPath = Join-Path $root "package-lock.json"
+    $lock = [System.IO.File]::ReadAllText($lockPath)
+    $repl = '"name": "opencode-gui",$1"version": "' + $V + '"'
+    $lock = $lock -replace '"name": "opencode-gui",([\s\S]*?)"version":\s*"[^"]*"', $repl
+    [System.IO.File]::WriteAllText($lockPath, $lock, $enc)
+
+    foreach ($f in @(
+        (Join-Path $root "src-tauri\tauri.conf.json"),
+        (Join-Path $root "src-tauri\Cargo.toml"),
+        (Join-Path $root "package.json")
+    )) {
+        $text = [System.IO.File]::ReadAllText($f)
+        if ($f -like "*Cargo.toml") {
+            # anchored to a line start so `tauri = { version = "2" }` is untouched
+            $text = $text -replace '(?m)^version = ".*"', "version = `"$V`""
+        } else {
+            $text = $text -replace '"version":\s*"[^"]*"', "`"version`": `"$V`""
+        }
+        [System.IO.File]::WriteAllText($f, $text, $enc)
+    }
+    Write-Host ">> version set to $V in tauri.conf.json, Cargo.toml, package.json, package-lock.json"
+}
+
+if ($Version) { Set-Version $Version }
 
 function Fetch-Sidecar {
     $dest = Join-Path $root "src-tauri\binaries"
@@ -99,7 +135,7 @@ switch ($Cmd) {
         Write-Host ">> cleaned"
     }
     default {
-        Write-Host "usage: run.ps1 [setup|dev|build|portable|check|clean] [win11|win10|both] [bundles]"
+        Write-Host "usage: run.ps1 [setup|dev|build|portable|check|clean] [win11|win10|both] [bundles] [-Version X.Y.Z]"
         exit 1
     }
 }

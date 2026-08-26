@@ -1,21 +1,42 @@
 #!/usr/bin/env bash
 # OpenCode GUI task runner (Linux/WSL/macOS)
-# usage:  ./scripts/run.sh <command> [win11|win10|both] [bundles]
+# usage:  ./scripts/run.sh <command> [win11|win10|both] [bundles] [--version X.Y.Z]
 # commands: setup | dev | build | check | clean   (build/portable take a target, default win11)
 # win11 = glass build (acrylic), win10 = no-glass build (--features noglass)
 # build only: 3rd arg picks bundle types (default msi per tauri.conf.json; e.g. "nsis")
+# --version X.Y.Z bumps the version in tauri.conf.json / Cargo.toml / package.json / package-lock.json first
 set -e
 cd "$(dirname "$0")/.."
 
-CMD="${1:-dev}"
-TARGET="${2:-win11}"
-BUNDLES="${3:-}"
+# parse --version out of the args so the rest stay positional
+VERSION=""
+POS=()
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --version) VERSION="${2:-}"; shift 2 ;;
+        *) POS+=("$1"); shift ;;
+    esac
+done
+CMD="${POS[0]:-dev}"
+TARGET="${POS[1]:-win11}"
+BUNDLES="${POS[2]:-}"
 case "$TARGET" in
     win11) TARGETS="win11" ;;
     win10) TARGETS="win10" ;;
     both)  TARGETS="win10 win11" ;; # win11 last → it stays staged in OpenCode/
     *) echo "!! target must be win11, win10 or both"; exit 1 ;;
 esac
+
+set_version() {
+    if ! printf '%s' "$1" | grep -Eq '^[0-9]+(\.[0-9]+){1,2}$'; then
+        echo "!! invalid version '$1' - use e.g. 1.5.2"; exit 1
+    fi
+    echo ">> bumping version to $1"
+    sed -i -E 's/"version": "[^"]*"/"version": "'"$1"'"/' src-tauri/tauri.conf.json package.json package-lock.json
+    sed -i -E 's/^version = ".*"/version = "'"$1"'"/' src-tauri/Cargo.toml
+    echo ">> version set to $1 in tauri.conf.json, Cargo.toml, package.json, package-lock.json"
+}
+[ -n "$VERSION" ] && set_version "$VERSION"
 
 SIDEcar="src-tauri/binaries/opencode-x86_64-pc-windows-msvc.exe"
 
@@ -94,7 +115,7 @@ case "${CMD}" in
         echo ">> cleaned"
         ;;
     *)
-        echo "usage: run.sh [setup|dev|build|portable|check|clean] [win11|win10|both] [bundles]"
+        echo "usage: run.sh [setup|dev|build|portable|check|clean] [win11|win10|both] [bundles] [--version X.Y.Z]"
         exit 1
         ;;
 esac
