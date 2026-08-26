@@ -11,6 +11,7 @@ import BrowserBar, { BROWSER_BAR_H } from "../components/BrowserBar";
 import SettingsDrawer from "../components/SettingsDrawer";
 import Onboarding from "../components/Onboarding";
 import DiffPanel from "../components/DiffPanel";
+import FileEditorHost from "../components/FileEditorHost";
 import TerminalPanel from "../components/Terminal";
 import TooltipLayer from "../components/TooltipLayer";
 import { HelpDialog, ShareDialog, VariantsDialog } from "../components/CommandDialog";
@@ -710,6 +711,7 @@ export default function ChatPage() {
         {diffOpen && oc.activeId && (
           <DiffPanel sessionId={oc.activeId} onClose={() => setDiffOpen(false)} />
         )}
+        <FileEditorHost />
       </div>
     </>
   );

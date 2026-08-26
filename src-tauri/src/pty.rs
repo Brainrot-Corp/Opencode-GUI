@@ -38,12 +38,16 @@ impl PtySession {
     }
 }
 
-// replaces any live session (kill first) with a fresh shell at cwd
+// replaces any live session (kill first) with a fresh shell at cwd. `gen`
+// tags every byte this session will ever emit — the frontend drops frames
+// from superseded generations, so a slow-dying shell can't bleed its output
+// (banners included) into the current session's view
 #[tauri::command]
 pub fn pty_spawn(
     app: AppHandle,
     state: State<'_, PtyState>,
     cwd: String,
+    gen: u64,
 ) -> Result<(), String> {
     let mut slot = state.inner().0.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(old) = slot.take() {
@@ -60,9 +64,20 @@ pub fn pty_spawn(
     drop(pair.slave);
 
     let mut reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
+    let writer = pair.master.take_writer().map_err(|e| e.to_string())?;
 
-    // coalesce reads into ≥8ms frames (or 64KB) so fast output doesn't flood IPC
+    let session = std::sync::Arc::new(PtySession {
+        writer: Mutex::new(writer),
+        master: Mutex::new(pair.master),
+        child: Mutex::new(child),
+    });
+
+    // coalesce reads into ≥8ms frames (or 64KB) so fast output doesn't flood
+    // IPC. A read error is NOT death: ConPTY aborts outstanding reads on
+    // resize, so retry until the child process is really gone — otherwise
+    // every drag of the size handle would "exit" the shell
     let emitter = app.clone();
+    let reader_session = session.clone();
     std::thread::spawn(move || {
         let mut buf = [0u8; 8192];
         let mut pending: Vec<u8> = Vec::new();
@@ -74,25 +89,45 @@ pub fn pty_spawn(
                 Ok(n) => {
                     pending.extend_from_slice(&buf[..n]);
                     if pending.len() >= 64 * 1024 || last.elapsed() >= Duration::from_millis(8) {
-                        let _ = emitter.emit("pty://out", base64::engine::general_purpose::STANDARD.encode(&pending));
+                        let _ = emitter.emit(
+                            "pty://frame",
+                            serde_json::json!({
+                                "g": gen,
+                                "d": base64::engine::general_purpose::STANDARD.encode(&pending)
+                            }),
+                        );
                         pending.clear();
                         last = Instant::now();
                     }
                 }
-                Err(_) => break,
+                Err(_) => {
+                    let dead = reader_session
+                        .child
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .try_wait()
+                        .map(|o| o.is_some())
+                        .unwrap_or(true);
+                    if dead {
+                        break;
+                    }
+                    std::thread::sleep(Duration::from_millis(20));
+                }
             }
         }
         if !pending.is_empty() {
-            let _ = emitter.emit("pty://out", base64::engine::general_purpose::STANDARD.encode(&pending));
+            let _ = emitter.emit(
+                "pty://frame",
+                serde_json::json!({
+                    "g": gen,
+                    "d": base64::engine::general_purpose::STANDARD.encode(&pending)
+                }),
+            );
         }
-        let _ = emitter.emit("pty://exit", ());
+        let _ = emitter.emit("pty://exit", serde_json::json!({ "g": gen }));
     });
 
-    *slot = Some(std::sync::Arc::new(PtySession {
-        writer: Mutex::new(pair.master.take_writer().map_err(|e| e.to_string())?),
-        master: Mutex::new(pair.master),
-        child: Mutex::new(child),
-    }));
+    *slot = Some(session);
     Ok(())
 }
 

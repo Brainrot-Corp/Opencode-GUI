@@ -470,6 +470,13 @@
   white-space: nowrap;
   opacity: 0.75;
 }
+/* file-ref titles open the built-in editor — accent underline on hover */
+.msg .tool-title.link:hover,
+.msg .tool-title.link:focus-visible {
+  color: var(--accent-bright);
+  text-decoration: underline;
+  opacity: 1;
+}
 .msg .tool-dur {
   flex-shrink: 0;
   opacity: 0.6;

@@ -81,9 +81,13 @@ export default function TerminalPanel({
   // intentional kills (respawn/workspace switch/restart) emit pty://exit too —
   // suppressed so they don't flip the header into "exited" state
   const suppressExitRef = useRef(false);
-  const unsubsRef = useRef<Promise<() => void>[]>([]);
   const wsRef = useRef(workspace);
   const hlRef = useRef<TermHighlighter | null>(null);
+  const openRef = useRef(open);
+  const roRafRef = useRef(0);
+  // session generation — every spawn bumps it; frames tagged with older
+  // generations are dropped so dead shells can't bleed into this view
+  const genRef = useRef(0);
 
   const [h, setH] = useState(() => clampH(Number(localStorage.getItem(H_KEY)) || 240));
   const [dead, setDead] = useState(false);
@@ -93,8 +97,12 @@ export default function TerminalPanel({
   const spawn = useCallback(async () => {
     setErr("");
     setDead(false);
+    // fresh shell → fresh screen; without this a respawn appends its banner
+    // onto whatever the previous session left in the buffer
+    termRef.current?.reset();
+    const gen = ++genRef.current;
     try {
-      await invoke("pty_spawn", { cwd: wsRef.current ?? "" });
+      await invoke("pty_spawn", { cwd: wsRef.current ?? "", gen });
       aliveRef.current = true;
     } catch (e) {
       aliveRef.current = false;
@@ -102,24 +110,26 @@ export default function TerminalPanel({
     }
   }, []);
 
-  const restart = useCallback(() => {
-    playSound("click");
+  // kill the current session without respawning — used on panel close (the
+  // app deliberately keeps no background shells) and as half of respawn flows
+  const killSession = useCallback(async () => {
+    suppressExitRef.current = true;
+    ++genRef.current; // any frames the dying shell still emits get dropped
+    await invoke("pty_kill").catch(() => {});
     termRef.current?.reset();
-    void spawn();
-  }, [spawn]);
+    aliveRef.current = false;
+    setTimeout(() => {
+      suppressExitRef.current = false;
+    }, 600);
+  }, []);
 
   // intentional kills emit pty://exit too (kill→respawn races the EOF);
   // suppression stays armed briefly past the respawn so the dead session's
   // exit can't flip the header into "exited" state
   const killAndRespawn = useCallback(async () => {
-    suppressExitRef.current = true;
-    await invoke("pty_kill").catch(() => {});
-    termRef.current?.reset();
+    await killSession();
     await spawn();
-    setTimeout(() => {
-      suppressExitRef.current = false;
-    }, 600);
-  }, [spawn]);
+  }, [killSession, spawn]);
 
   // one-time boot on first open. NO cleanup on close — the whole point is
   // that hide/show leaves the shell running; teardown lives in the
@@ -162,27 +172,94 @@ export default function TerminalPanel({
       void invoke("pty_write", { data: d }).catch(() => {});
     });
 
-    // output passes through the syntax-highlighting filter before render:
-    // plain-text code lines get colored, ANSI/control data passes raw
-    const highlighter = new TermHighlighter((s) => term.write(s));
-    hlRef.current = highlighter;
+    // output filter: plain-text code lines get colored, ANSI/control data
+    // passes raw. Frames arrive via the mount-once transport below and land
+    // here through hlRef, so reloads swap the filter without rewiring
+    hlRef.current = new TermHighlighter((s) => term.write(s));
+    // the shell itself is spawned by the open/close effect — boot only
+    // builds the renderer
+  }, []);
 
-    unsubsRef.current = [
-      listen<string>("pty://out", (e) => {
-        const bin = atob(e.payload);
+  // transport wiring — mount-once, survives reloads/workspace switches.
+  // Generation-tagged frames from superseded shells are dropped here, which
+  // is what keeps a slow-dying PowerShell's banner out of the current view
+  useEffect(() => {
+    const unsubs = [
+      listen<{ g: number; d: string }>("pty://frame", (e) => {
+        if (e.payload.g !== genRef.current || !hlRef.current) return;
+        const bin = atob(e.payload.d);
         const bytes = new Uint8Array(bin.length);
         for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-        highlighter.write(bytes);
+        hlRef.current.write(bytes);
       }),
-      listen("pty://exit", () => {
-        if (suppressExitRef.current) return;
+      listen<{ g: number }>("pty://exit", (e) => {
+        if (e.payload.g !== genRef.current || suppressExitRef.current) return;
         aliveRef.current = false;
         setDead(true);
       }),
     ];
+    return () => {
+      for (const u of unsubs) u.then((f) => f()).catch(() => {});
+    };
+  }, []);
 
-    void spawn();
-  }, [spawn]);
+  // single resize entry point: RO-debounced via rAF, gated on visibility,
+  // rejecting degenerate measurements BEFORE they reach xterm/ConPTY — once
+  // applied, bad dims corrupt the renderer grid until a full reload
+  const fitNow = useCallback(() => {
+    const el = bodyRef.current;
+    const fit = fitRef.current;
+    const term = termRef.current;
+    if (!el || !fit || !term || !openRef.current) return;
+    if (el.clientHeight < 60 || el.clientWidth < 80) return;
+    let next: { cols: number; rows: number } | undefined;
+    try {
+      next = fit.proposeDimensions();
+    } catch {
+      return;
+    }
+    if (
+      !next ||
+      !Number.isFinite(next.cols) ||
+      !Number.isFinite(next.rows) ||
+      next.cols < 2 ||
+      next.rows < 2 ||
+      next.cols > 1000 ||
+      next.rows > 1000
+    )
+      return;
+    try {
+      fit.fit();
+    } catch {
+      return;
+    }
+    if (aliveRef.current)
+      invoke("pty_resize", { cols: next.cols, rows: next.rows }).catch(() => {});
+  }, []);
+
+  // full rebuild — disposes xterm and the highlight filter, then spawns a
+  // fresh shell (new generation). The guaranteed escape hatch when renderer
+  // state corrupts in any way; transport wiring persists untouched
+  const reloadTerm = useCallback(() => {
+    playSound("click");
+    hlRef.current?.dispose();
+    hlRef.current = null;
+    termRef.current?.dispose();
+    termRef.current = null;
+    fitRef.current = null;
+    bootedRef.current = false;
+    suppressExitRef.current = true;
+    void invoke("pty_kill")
+      .catch(() => {})
+      .then(() => {
+        boot();
+        void spawn();
+        setTimeout(() => {
+          suppressExitRef.current = false;
+          if (openRef.current) termRef.current?.focus();
+        }, 80);
+      });
+  }, [boot, spawn]);
 
   // theme applications write the palette as inline CSS vars / data attrs on
   // <html> — watch instead of guessing when. This covers every path: the
@@ -209,14 +286,23 @@ export default function TerminalPanel({
   }, []);
 
   useEffect(() => {
-    if (open) boot();
-  }, [open, boot]);
+    openRef.current = open;
+    if (!open) {
+      // policy: no background shells — hiding the panel kills the session;
+      // reopening spawns a fresh one at the same cwd
+      if (bootedRef.current && aliveRef.current) void killSession();
+      return;
+    }
+    boot();
+    // spawn when the renderer is new or the shell died (closed, exited, error)
+    if (!aliveRef.current) void spawn();
+    // one final fit after the open transition settles
+    setTimeout(() => fitNow(), 300);
+  }, [open, boot, killSession, spawn]);
 
   // full teardown only when the app/page itself goes away
   useEffect(
     () => () => {
-      for (const u of unsubsRef.current) u.then((f) => f()).catch(() => {});
-      unsubsRef.current = [];
       hlRef.current?.dispose();
       termRef.current?.dispose();
       void invoke("pty_kill").catch(() => {});
@@ -225,25 +311,23 @@ export default function TerminalPanel({
   );
 
   // container resizes (panel drag, window resize, open/close collapse) drive
-  // both the renderer grid and the PTY size
+  // both the renderer grid and the PTY size — coalesced to one fit per frame
   useEffect(() => {
     const el = bodyRef.current;
     if (!el) return;
     const ro = new ResizeObserver(() => {
-      const fit = fitRef.current;
-      const term = termRef.current;
-      if (!fit || !term || el.clientHeight < 40) return;
-      try {
-        fit.fit();
-      } catch {
-        return;
-      }
-      if (aliveRef.current)
-        invoke("pty_resize", { cols: term.cols, rows: term.rows }).catch(() => {});
+      if (roRafRef.current) return;
+      roRafRef.current = requestAnimationFrame(() => {
+        roRafRef.current = 0;
+        fitNow();
+      });
     });
     ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
+    return () => {
+      ro.disconnect();
+      cancelAnimationFrame(roRafRef.current);
+    };
+  }, [fitNow]);
 
   // workspace switch: cwd is baked into the ConPTY at spawn → fresh shell.
   // Scrollback dies with it (reset), which matches the mental model of
@@ -327,12 +411,11 @@ export default function TerminalPanel({
         <i className="fa-solid fa-terminal" />
         <span>terminal</span>
         {err && <span className="term-err">{err}</span>}
+        {dead && !err && <span className="term-dead">exited</span>}
         <span className="term-spacer" />
-        {(dead || err) && (
-          <button className="icon-btn term-btn" data-tip="Restart shell" onClick={restart}>
-            <i className="fa-solid fa-rotate-right" />
-          </button>
-        )}
+        <button className="icon-btn term-btn" data-tip="Reload terminal" onClick={reloadTerm}>
+          <i className="fa-solid fa-sync" />
+        </button>
         <button className="icon-btn close term-btn" data-tip="Hide panel" onClick={onClose}>
           <i className="fa-solid fa-chevron-down" />
         </button>

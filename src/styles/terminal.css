@@ -75,6 +75,12 @@
   text-transform: none;
   letter-spacing: 0.02em;
 }
+.term-dead {
+  color: var(--text-faint);
+  font-style: italic;
+  text-transform: none;
+  letter-spacing: 0.02em;
+}
 /* compact icon buttons inside the strip */
 .term-head .icon-btn {
   width: 26px;

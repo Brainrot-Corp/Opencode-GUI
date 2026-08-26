@@ -253,6 +253,33 @@ export default function ToolBlock({ part, collapsedDefault }: { part: Part; coll
   const patch = isEditTool ? toolDiff(t) : null;
   const stats = patch ? diffStats(patch) : null;
   const filePath = st.input?.filePath ?? st.input?.path ?? "";
+
+  // read/edit/write titles carry a workspace-relative file ref — clicking it
+  // opens the built-in editor via the always-mounted FileEditorHost
+  const openFile = () =>
+    window.dispatchEvent(new CustomEvent("oc:open-file", { detail: { path: String(filePath) } }));
+  const titleEl = filePath ? (
+    <span
+      role="button"
+      tabIndex={0}
+      className="tool-title link"
+      data-tip={`Open ${filePath}`}
+      onClick={(e) => {
+        e.stopPropagation();
+        openFile();
+      }}
+      onKeyDown={(e) => {
+        if (e.key !== "Enter") return;
+        e.preventDefault();
+        e.stopPropagation();
+        openFile();
+      }}
+    >
+      {title}
+    </span>
+  ) : (
+    <span className="tool-title">{title}</span>
+  );
   const pretty = status === "completed" ? prettyJson(out) : null;
   const todos = toolName === "todowrite" || toolName === "todo" ? todoSource(t) : [];
   const todoDone =
@@ -294,7 +321,7 @@ export default function ToolBlock({ part, collapsedDefault }: { part: Part; coll
       >
         <i className={`fa-solid ${TOOL_ICONS[(t.tool as string)?.toLowerCase()] ?? "fa-gear"} tool-ico`} />
         <span className="tool-name">{t.tool}</span>
-        <span className="tool-title">{title}</span>
+        {titleEl}
         {stats && (
           <span className="tool-stat mono">
             <em>+{stats.add}</em> <em className="del">−{stats.del}</em>

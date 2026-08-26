@@ -1,7 +1,5 @@
-import { useEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
+import { useEffect, useState } from "react";
 import { opencode } from "../api";
-import FileEditor from "./FileEditor";
 import "../styles/files.css";
 
 type Node = {
@@ -38,9 +36,7 @@ export default function FileTree() {
   const [kids, setKids] = useState<Map<string, Node[]>>(new Map());
   const [openDirs, setOpenDirs] = useState<Set<string>>(new Set());
   const [loadingDir, setLoadingDir] = useState("");
-  const [openPath, setOpenPath] = useState<{ path: string; absolute: string } | null>(null);
   const [error, setError] = useState("");
-  const dirtyRef = useRef(false);
 
   async function load(path: string) {
     setLoadingDir(path);
@@ -76,10 +72,9 @@ export default function FileTree() {
   }
 
   function openFile(n: Node) {
-    if (openPath?.path === n.path) return;
-    if (dirtyRef.current && !window.confirm(`${openPath!.path}\n\nDiscard unsaved changes?`))
-      return;
-    setOpenPath({ path: n.path, absolute: n.absolute });
+    window.dispatchEvent(
+      new CustomEvent("oc:open-file", { detail: { path: n.path, absolute: n.absolute } }),
+    );
   }
 
   function renderNodes(nodes: Node[], depth: number): React.ReactNode {
@@ -123,21 +118,6 @@ export default function FileTree() {
         </>
       )}
       {kids.get("") && renderNodes(kids.get("")!, 0)}
-
-      {openPath &&
-        createPortal(
-          <FileEditor
-            key={openPath.path}
-            path={openPath.path}
-            absolute={openPath.absolute}
-            onDirty={(d) => (dirtyRef.current = d)}
-            onClose={() => {
-              dirtyRef.current = false;
-              setOpenPath(null);
-            }}
-          />,
-          document.body,
-        )}
     </div>
   );
 }
