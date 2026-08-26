@@ -285,6 +285,8 @@ export function useOpencode() {
           // app restart per server behavior, edits/deletes of loaded ones show up)
           {
             const path = `${p.file ?? p.path ?? ""}`;
+            // relay for the file viewer's external-change detection
+            window.dispatchEvent(new CustomEvent("oc:file-changed", { detail: path }));
             if (path.includes(".opencode") && Date.now() - cmdFetchAt.current > 1000) {
               cmdFetchAt.current = Date.now();
               refreshCommands().catch(() => {});

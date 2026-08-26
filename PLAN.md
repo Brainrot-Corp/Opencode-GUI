@@ -68,7 +68,10 @@ src/
 ├── components/
 │   ├── Titlebar.tsx      frameless chrome: drag, pin (always-on-top), theme/mode selects, settings
 │   ├── Sidebar.tsx       Chats/Files tabs, collapse toggle + width resize (persisted)
-│   ├── FileTree.tsx      lazy directory browser + file preview overlay
+│   ├── FileTree.tsx      lazy directory browser; opens FileEditor for files
+│   ├── FileEditor.tsx    centered editable file viewer (portal modal, highlight
+│   │                     overlay, auto-save toggle, Ctrl+S/Z/Y, find+replace,
+│   │                     file.watcher.updated external-change reload)
 │   ├── MessageList.tsx   markdown rendering, tool lines, autoscroll follower, hover rewind
 │   ├── Composer.tsx      input, model picker, workspace + diff toggles, send/stop
 │   ├── PermissionBar.tsx approve/deny floating dialog
@@ -79,7 +82,7 @@ src/
 ├── pages/
 │   └── ChatPage.tsx      composes hook + components into the main screen
 └── styles/               tokens, layout, sidebar, chat, composer, permission,
-                          diff, files, settings, tooltip — imported by owning components
+                          diff, files, file-editor, settings, tooltip — imported by owning components
 ```
 
 Rule of thumb: state and server talk live in `hooks/`; anything visual is a `component/` that takes props; a screen is a `page/` that wires them together. New screens go in `pages/` and get wired to their own hook.

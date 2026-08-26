@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import type { ThemeMeta } from "../lib/themes";
+import DropdownPortal from "./DropdownPortal";
 
 // theme picker fed the live config-driven list — additions/deletions in
-// themes.json show up here without a restart
+// themes.json show up here without a restart. Menu is portaled via
+// DropdownPortal so it paints above every panel and clamps into view.
 export default function ThemeSelect({
   themes,
   value,
@@ -15,13 +17,17 @@ export default function ThemeSelect({
   variant?: "bar" | "drawer";
 }) {
   const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
+  const boxRef = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!open) return;
-    // capture-phase pointerdown: clicking anywhere outside closes
+    // capture-phase pointerdown: clicking anywhere outside closes — both the
+    // trigger box and the portaled menu count as inside
     const onDoc = (e: Event) => {
-      if (!ref.current?.contains(e.target as Node)) setOpen(false);
+      const t = e.target as Node;
+      if (!boxRef.current?.contains(t) && !menuRef.current?.contains(t))
+        setOpen(false);
     };
     document.addEventListener("pointerdown", onDoc, true);
     return () => document.removeEventListener("pointerdown", onDoc, true);
@@ -41,7 +47,7 @@ export default function ThemeSelect({
   }
 
   return (
-    <div className={`theme-select${open ? " open" : ""}`} ref={ref} onKeyDown={onKeyDown}>
+    <div className={`theme-select${open ? " open" : ""}`} ref={boxRef} onKeyDown={onKeyDown}>
       <button
         type="button"
         className="theme-select-btn"
@@ -53,8 +59,8 @@ export default function ThemeSelect({
         <i className={`fa-solid ${current.icon}`} />
         {variant === "drawer" && <span>{current.name}</span>}
       </button>
-      {open && (
-        <div className="model-menu theme-menu" role="listbox">
+      <DropdownPortal anchor={boxRef} open={open} align="right" prefer="down">
+        <div className="model-menu" role="listbox" ref={menuRef}>
           {themes.map((t) => (
             <button
               key={t.id}
@@ -73,7 +79,7 @@ export default function ThemeSelect({
             </button>
           ))}
         </div>
-      )}
+      </DropdownPortal>
     </div>
   );
 }

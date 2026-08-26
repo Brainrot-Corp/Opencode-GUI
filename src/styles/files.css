@@ -1,12 +1,12 @@
-/* file tree browser (sidebar "Files" tab) + in-panel file preview */
+/* file tree browser (sidebar "Files" tab) — opening a file mounts the
+   centered FileEditor modal (file-editor.css) */
 
 .filetree {
   position: relative;
-  /* fill the tab column so the absolute-positioned preview spans full height */
-  flex: 1;
+  /* natural height: the sidebar scroll layer owns overflow (a flex-fill
+     height here would cap the tree and its rows would spill unscrollably) */
   display: flex;
   flex-direction: column;
-  min-height: 0;
 }
 
 .ft-row {
@@ -44,6 +44,10 @@
   font-size: 9px;
   color: var(--text-faint);
 }
+/* icons keep their glyph box when narrow sidebars squeeze the row */
+.ft-row i {
+  flex: none;
+}
 .ft-row .fa-folder,
 .ft-row .fa-folder-open {
   color: var(--accent);
@@ -53,55 +57,4 @@
   margin-left: auto;
   font-size: 10px;
   color: var(--accent);
-}
-
-/* preview overlays the tree area inside the sidebar */
-.ft-preview {
-  position: absolute;
-  inset: 0;
-  z-index: 6;
-  display: flex;
-  flex-direction: column;
-  background: var(--drawer-bg);
-  border: 1px solid var(--line-strong);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
-}
-.ft-preview-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 8px 6px 8px 10px;
-  border-bottom: 1px solid var(--line);
-}
-.ft-preview-head span {
-  font-size: 11px;
-  color: var(--accent);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.ft-preview-head .icon-btn {
-  width: 26px;
-  height: 26px;
-  margin-right: 0;
-}
-.ft-preview-head .icon-btn:hover {
-  color: var(--danger);
-  background: rgba(224, 143, 143, 0.1);
-}
-.ft-preview-body {
-  flex: 1;
-  min-height: 0;
-  overflow: auto;
-  margin: 0;
-  padding: 10px;
-  font-family: var(--mono);
-  font-size: 11px;
-  line-height: 1.55;
-  color: var(--text-dim);
-  user-select: text;
-  cursor: text;
-  white-space: pre;
 }

@@ -8,6 +8,8 @@ export default function Dialog({
   wide,
   top,
   stage,
+  confirm,
+  actions,
   children,
 }: {
   title: string;
@@ -16,6 +18,10 @@ export default function Dialog({
   top?: boolean;
   // extra-large centered variant for content-heavy views
   stage?: boolean;
+  // two-step close: tints the X red and asks for a second click
+  confirm?: boolean;
+  // optional controls rendered in the header before the close button
+  actions?: React.ReactNode;
   children: React.ReactNode;
 }) {
   useEffect(() => {
@@ -33,9 +39,16 @@ export default function Dialog({
       >
         <div className="dlg-head">
           <span>{title}</span>
-          <button className="icon-btn dlg-close" data-tip="Close" onClick={onClose}>
-            <i className="fa-solid fa-xmark" />
-          </button>
+          <div className="dlg-head-end">
+            {actions}
+            <button
+              className={`icon-btn dlg-close${confirm ? " arm" : ""}`}
+              data-tip={confirm ? "Click again to discard changes" : "Close"}
+              onClick={onClose}
+            >
+              <i className="fa-solid fa-xmark" />
+            </button>
+          </div>
         </div>
         <div className="dlg-body">{children}</div>
       </div>

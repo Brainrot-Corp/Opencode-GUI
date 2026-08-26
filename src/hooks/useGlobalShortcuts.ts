@@ -27,6 +27,8 @@ export function useGlobalShortcuts({
   busy,
   themeIds,
   activeModes,
+  onCycleSessions,
+  onCloseSession,
 }: {
   settings: AppSettings;
   update: (patch: Partial<AppSettings>) => void;
@@ -40,6 +42,10 @@ export function useGlobalShortcuts({
   themeIds?: string[];
   // variations the active theme provides — /scheme no-ops when locked to one
   activeModes?: ("dark" | "light")[];
+  // Ctrl(+Shift+)Tab session cycling — dir follows sidebar recency order
+  onCycleSessions?: (dir: 1 | -1) => void;
+  // Ctrl+W close active session — ChatPage owns empty-vs-confirm logic
+  onCloseSession?: () => void;
 }) {
   // double-Escape stop gesture — armed by the first free Escape (the stop
   // button surfaces the window as a draining countdown ring), landed by the
@@ -171,6 +177,38 @@ export function useGlobalShortcuts({
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
   }, [settings.alwaysOnTop, update]);
+
+  // Ctrl+Tab next chat, Ctrl+Shift+Tab previous — full loop at both ends.
+  // preventDefault keeps WebView2 from treating Tab as focus traversal
+  useEffect(() => {
+    if (!onCycleSessions) return;
+    const key = (e: KeyboardEvent) => {
+      if (!e.ctrlKey || e.altKey || e.key !== "Tab") return;
+      e.preventDefault();
+      playSound("click");
+      onCycleSessions(e.shiftKey ? -1 : 1);
+    };
+    window.addEventListener("keydown", key);
+    return () => window.removeEventListener("keydown", key);
+  }, [onCycleSessions]);
+
+  // Ctrl+W closes the active session
+  useEffect(() => {
+    if (!onCloseSession) return;
+    const key = (e: KeyboardEvent) => {
+      if (
+        e.ctrlKey &&
+        !e.shiftKey &&
+        !e.altKey &&
+        e.key.toLowerCase() === "w"
+      ) {
+        e.preventDefault();
+        onCloseSession();
+      }
+    };
+    window.addEventListener("keydown", key);
+    return () => window.removeEventListener("keydown", key);
+  }, [onCloseSession]);
 
   // Rust emits visibility://changed on tray click / Alt+Space / tray menu
   useEffect(() => {

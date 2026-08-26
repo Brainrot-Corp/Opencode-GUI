@@ -289,6 +289,24 @@
   box-shadow: 0 0 14px -4px var(--accent-glow);
 }
 
+/* Ctrl+W close confirmation — revert-banner shape, chat-surface glass under
+   a danger tint so it stays readable over the bare main column */
+.revert-banner.close-confirm {
+  background:
+    color-mix(in srgb, var(--danger) calc(0.08 * 100%), transparent),
+    linear-gradient(
+      180deg,
+      rgba(var(--surf-rgb), min(1, calc(var(--surf-a) * 1.15))),
+      rgba(var(--surf-rgb), var(--surf-a))
+    );
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border-color: color-mix(in srgb, var(--danger) calc(0.28 * 100%), transparent);
+}
+.revert-banner.close-confirm > i {
+  color: var(--danger);
+}
+
 /* markdown inside messages */
 .msg p {
   margin: 0.45em 0;
