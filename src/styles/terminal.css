@@ -12,27 +12,37 @@
     rgba(var(--surf-rgb), min(1, calc(var(--surf-a) * 1.15))),
     rgba(var(--surf-rgb), var(--surf-a))
   );
-  border-top: 1px solid var(--line);
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.045);
-  transition: height 0.25s var(--ease), border-color 0.4s;
-}
-.term-dock.closed {
-  border-top-color: transparent;
+  transition: height 0.25s var(--ease);
 }
 .term-dock.dragging {
   transition: none;
 }
 
-/* drag handle — vertical twin of .sb-resize */
+/* drag handle — horizontal twin of .sb-resize: invisible hit zone with a
+   transparent-at-rest 2px sash that lights up on hover/drag */
 .term-resize {
-  height: 5px;
+  position: relative;
+  height: 6px;
   flex-shrink: 0;
   cursor: row-resize;
 }
-.term-resize:hover {
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
+.term-resize::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 2px;
+  height: 2px;
+  background: transparent;
+  transition: background 0.25s var(--ease), box-shadow 0.3s var(--ease);
+}
+.term-resize:hover::before,
+.term-dock.dragging .term-resize::before {
+  background: color-mix(in srgb, var(--accent) calc(0.45 * 100%), transparent);
+  box-shadow: 0 0 10px var(--accent-glow);
 }
 
 .term-head {
@@ -97,4 +107,10 @@
 .term-mount .xterm .xterm-viewport,
 .term-mount .xterm .xterm-screen {
   background: transparent !important;
+}
+/* selection rects use the exact ::selection recipe from tokens.css. The
+   renderer normally pre-blends them against the background color, which
+   goes muddy over our transparent glass */
+.term-mount .xterm .xterm-selection div {
+  background-color: color-mix(in srgb, var(--accent) calc(0.22 * 100%), transparent) !important;
 }

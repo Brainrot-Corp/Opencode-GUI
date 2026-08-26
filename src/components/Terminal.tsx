@@ -11,6 +11,7 @@ import type { ITheme } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 import { playSound } from "../lib/sounds";
+import { TermHighlighter } from "../lib/termHighlight";
 import "../styles/terminal.css";
 
 const H_KEY = "oc.term.h";
@@ -39,7 +40,10 @@ function termTheme(): ITheme {
     foreground: text,
     cursor: accent,
     cursorAccent: v("--bg-0", "#090d11"),
-    selectionBackground: hexA(accent, 0.24),
+    // same 22% accent wash as ::selection in tokens.css (the CSS layer above
+    // enforces it for the DOM renderer; these feed any other path)
+    selectionBackground: hexA(accent, 0.22),
+    selectionInactiveBackground: hexA(accent, 0.22),
     black: v("--bg-1", "#0d1218"),
     red: v("--danger", "#e08f8f"),
     green: v("--syn-string", "#9fce8f"),
@@ -79,6 +83,7 @@ export default function TerminalPanel({
   const suppressExitRef = useRef(false);
   const unsubsRef = useRef<Promise<() => void>[]>([]);
   const wsRef = useRef(workspace);
+  const hlRef = useRef<TermHighlighter | null>(null);
 
   const [h, setH] = useState(() => clampH(Number(localStorage.getItem(H_KEY)) || 240));
   const [dead, setDead] = useState(false);
@@ -157,12 +162,17 @@ export default function TerminalPanel({
       void invoke("pty_write", { data: d }).catch(() => {});
     });
 
+    // output passes through the syntax-highlighting filter before render:
+    // plain-text code lines get colored, ANSI/control data passes raw
+    const highlighter = new TermHighlighter((s) => term.write(s));
+    hlRef.current = highlighter;
+
     unsubsRef.current = [
       listen<string>("pty://out", (e) => {
         const bin = atob(e.payload);
         const bytes = new Uint8Array(bin.length);
         for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-        term.write(bytes);
+        highlighter.write(bytes);
       }),
       listen("pty://exit", () => {
         if (suppressExitRef.current) return;
@@ -207,6 +217,7 @@ export default function TerminalPanel({
     () => () => {
       for (const u of unsubsRef.current) u.then((f) => f()).catch(() => {});
       unsubsRef.current = [];
+      hlRef.current?.dispose();
       termRef.current?.dispose();
       void invoke("pty_kill").catch(() => {});
     },
