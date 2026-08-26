@@ -619,6 +619,7 @@ export default function Composer({
           )}
           <textarea
                   ref={inputRef}
+                  rows={1}
                   value={input}
                   disabled={needsModel}
                   onChange={(e) => setInput(e.target.value)}

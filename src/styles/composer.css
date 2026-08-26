@@ -390,14 +390,16 @@
   position: relative;
 }
 
-/* attach + mic live INSIDE the input, pinned to the first line (fixed top
-   offset — never recenters when the textarea grows) */
+/* attach + mic live INSIDE the input, anchored to first line and
+   vertically centered to it (same as send button) */
 .comp-tools {
   position: absolute;
   left: 10px;
-  top: 11px;
+  top: 10px;
+  height: 28px;
   z-index: 1;
   display: flex;
+  align-items: center;
   gap: 6px;
 }
 
@@ -520,6 +522,9 @@
 .composer textarea::placeholder {
   color: var(--text-faint);
   opacity: 0.7;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .composer textarea:focus {
   outline: none;
