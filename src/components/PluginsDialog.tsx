@@ -104,7 +104,7 @@ export default function PluginsDialog({
       // use shared fetch helper for consistency (handles css optional)
       const { manifest, main, css } = await fetchPluginFiles(base);
       const dir = entry.id;
-      await invoke("plugin_install_files", { dir, manifest, main_js: main, css });
+      await invoke("plugin_install_files", { dir, manifest, main, css });
       // watcher will reload; no need to manually refresh plugins prop
     } catch (e) {
       setCatErr(e instanceof Error ? e.message : String(e));
@@ -141,7 +141,7 @@ export default function PluginsDialog({
       if (!dir || dir.includes("/") || dir.includes("\\") || dir.includes("..") || dir.includes(":")) {
         throw new Error("Invalid plugin id from URL");
       }
-      await invoke("plugin_install_files", { dir, manifest, main_js: main, css });
+      await invoke("plugin_install_files", { dir, manifest, main, css });
       setUrl("");
     } catch (e) {
       setUrlErr(e instanceof Error ? e.message : String(e));

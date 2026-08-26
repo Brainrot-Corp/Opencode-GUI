@@ -276,7 +276,7 @@ fn plugin_remove(dir: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn plugin_install_files(dir: String, manifest: String, main_js: String, css: String) -> Result<(), String> {
+fn plugin_install_files(dir: String, manifest: String, main: String, css: String) -> Result<(), String> {
     let name = dir.trim().to_string();
     if name.is_empty() {
         return Err("empty plugin name".into());
@@ -287,7 +287,7 @@ fn plugin_install_files(dir: String, manifest: String, main_js: String, css: Str
     if manifest.trim().is_empty() {
         return Err("missing plugin.json".into());
     }
-    if main_js.trim().is_empty() {
+    if main.trim().is_empty() {
         return Err("missing main.js".into());
     }
     // validate manifest is JSON with fallback handling done frontend-side
@@ -301,7 +301,7 @@ fn plugin_install_files(dir: String, manifest: String, main_js: String, css: Str
         return Err("invalid plugin path".into());
     }
     std::fs::write(canon_target.join("plugin.json"), manifest).map_err(|e| e.to_string())?;
-    std::fs::write(canon_target.join("main.js"), main_js).map_err(|e| e.to_string())?;
+    std::fs::write(canon_target.join("main.js"), main).map_err(|e| e.to_string())?;
     if css.trim().is_empty() {
         let _ = std::fs::remove_file(canon_target.join("styles.css"));
     } else {
