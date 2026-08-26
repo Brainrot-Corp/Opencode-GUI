@@ -486,7 +486,7 @@ export default function Composer({
           <button
             type="button"
             className="icon-btn diff-btn"
-            data-tip={`Workspace: ${workspace || "home folder"} — click to change`}
+            data-tip={`Workspace: ${workspace || "home folder"} — click to change (Ctrl+O)`}
             onClick={onPickWorkspace}
           >
             <i className="fa-solid fa-folder-open" />

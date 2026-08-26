@@ -75,6 +75,7 @@ const KEYS: Group[] = [
     [
       ["Ctrl+B", "toggle sidebar"],
       ["Ctrl+M", "mic on/off"],
+      ["Ctrl+O", "open workspace"],
       ["Ctrl+P", "pin window on top"],
       ["Ctrl+wheel", "zoom the UI in / out"],
       ["Ctrl+= · Ctrl+-", "zoom in · out"],

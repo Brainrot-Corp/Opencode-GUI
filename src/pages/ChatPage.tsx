@@ -151,6 +151,7 @@ export default function ChatPage() {
     onCloseSession: closeActiveSession,
     onToggleTerm: () => setTermOpen((v) => !v),
     onToggleSidebar: toggleSidebar,
+    onOpenWorkspace: () => void pickWorkspace(),
   });
 
   // spoken rendering of a voice act — used to read embedded commands back
