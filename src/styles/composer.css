@@ -439,6 +439,13 @@
   line-height: 21px;
   caret-color: var(--accent);
   transition: border-color 0.3s;
+  /* must mirror .comp-hl exactly or glyphs drift (wrap ±1 char, trailing
+     spaces, blank-line height). textarea defaults differ from div pre-wrap */
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  word-break: break-word;
+  tab-size: 4;
+  scrollbar-gutter: stable;
 }
 
 /* live highlight overlay — a synced copy of the draft painted BEHIND the
@@ -456,9 +463,12 @@
   position: relative;
   z-index: 1;
   background: transparent;
+  color: var(--text);
 }
-/* placeholder keeps its own color; typed text hides while the overlay shows */
-.comp-input textarea:not(:placeholder-shown) {
+/* typed text hides only when the highlight overlay is active (has a
+   fenced code block) — plain newlines/text then use the native textarea
+   rendering, which never drifts (no extra "\n" sentinel, no gutter delta) */
+.comp-input.has-code textarea:not(:placeholder-shown) {
   color: transparent;
 }
 .composer textarea::selection {
@@ -480,6 +490,8 @@
   /* ponytail: long unbroken tokens can wrap ±1 char vs the textarea's own
      soft-wrap; tune only if real drafts ever visibly misalign */
   overflow-wrap: break-word;
+  word-break: break-word;
+  tab-size: 4;
   color: var(--text);
 }
 /* decoration here must stay paint-only (no margins/padding/borders that take
