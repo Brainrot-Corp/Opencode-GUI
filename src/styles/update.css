@@ -1,0 +1,97 @@
+/* update prompt — centered dialog, same glass as onboarding */
+
+.upd-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px;
+}
+
+.upd-hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 18px 18px 12px;
+  text-align: center;
+}
+
+.upd-hero-icon {
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  font-size: 20px;
+  color: var(--accent-bright);
+  background: var(--accent-dim);
+  border: 1px solid color-mix(in srgb, var(--accent) calc(0.4 * 100%), transparent);
+  border-radius: 50%;
+  box-shadow: 0 0 20px -6px var(--accent-glow);
+}
+
+.upd-hero p {
+  margin: 0;
+  max-width: 420px;
+  font-family: var(--sans);
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-dim);
+}
+
+.upd-notes {
+  padding: 8px 12px;
+  background: var(--inset-bg);
+  border: 1px solid var(--line);
+  font-family: var(--sans);
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--text-dim);
+  white-space: pre-wrap;
+  text-align: left;
+  width: 100%;
+  box-sizing: border-box;
+  max-height: 140px;
+  overflow-y: auto;
+}
+
+.upd-disable-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 2px;
+  font-family: var(--sans);
+  font-size: 11.5px;
+  color: var(--text-dim);
+  cursor: pointer;
+  user-select: none;
+}
+
+.upd-disable-row input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.upd-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--line);
+}
+
+.upd-primary {
+  color: var(--accent-bright);
+  border-color: color-mix(in srgb, var(--accent) calc(0.45 * 100%), transparent);
+  box-shadow: inset 0 0 8px -2px var(--accent-glow);
+}
+
+.upd-primary:hover:not(:disabled) {
+  box-shadow: inset 0 0 8px -2px var(--accent-glow), 0 0 14px -4px var(--accent-glow);
+}
+
+.upd-hint {
+  text-align: center;
+  padding: 2px 0;
+}

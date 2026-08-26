@@ -10,6 +10,8 @@ import QuestionPopup from "../components/QuestionPopup";
 import BrowserBar, { BROWSER_BAR_H } from "../components/BrowserBar";
 import SettingsDrawer from "../components/SettingsDrawer";
 import Onboarding from "../components/Onboarding";
+import UpdatePrompt from "../components/UpdatePrompt";
+import { useUpdater } from "../hooks/useUpdater";
 import DiffPanel from "../components/DiffPanel";
 import FileEditorHost from "../components/FileEditorHost";
 import TerminalPanel from "../components/Terminal";
@@ -76,6 +78,11 @@ export default function ChatPage() {
   // first-launch setup wizard — any close records the flag so it shows once
   const [onboardOpen, setOnboardOpen] = useState(
     () => localStorage.getItem("oc.onboarded") !== "1",
+  );
+  // auto-update prompt — single shared updater for the whole app
+  const upd = useUpdater();
+  const [updDismissed, setUpdDismissed] = useState(
+    () => localStorage.getItem("oc.update.dismissed") || "",
   );
 
   const [sbW, setSbW] = useState(() => {
@@ -536,6 +543,25 @@ export default function ChatPage() {
     setSettingsOpen(false);
   }
 
+  const showUpdatePrompt =
+    !onboardOpen &&
+    settings.updateNotifications &&
+    !!upd.latest &&
+    upd.latest.version !== updDismissed;
+
+  function handleUpdateDismiss(disable: boolean) {
+    if (disable) {
+      update({ updateNotifications: false });
+    } else if (upd.latest) {
+      localStorage.setItem("oc.update.dismissed", upd.latest.version);
+      setUpdDismissed(upd.latest.version);
+    } else {
+      setUpdDismissed("1");
+    }
+  }
+
+
+
   return (
     <>
       <div className="noise" aria-hidden="true" />
@@ -570,7 +596,19 @@ export default function ChatPage() {
             providers={oc.providers}
           />
         )}
+        {showUpdatePrompt && upd.latest && (
+          <UpdatePrompt
+            info={upd.latest}
+            curVer={upd.ver}
+            busy={upd.busy}
+            downloading={upd.downloading}
+            err={upd.err}
+            onUpdate={() => void upd.install()}
+            onDismiss={handleUpdateDismiss}
+          />
+        )}
         <SettingsDrawer
+          upd={upd}
           open={settingsOpen}
           providers={oc.providers}
           commands={oc.cmdList}

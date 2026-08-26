@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { enable, isEnabled, disable } from "@tauri-apps/plugin-autostart";
 import type { AppSettings, ColorSet } from "../hooks/useSettings";
-import { useUpdater } from "../hooks/useUpdater";
+import { useUpdater as useUpdaterInternal } from "../hooks/useUpdater";
 import type { ThemeMeta } from "../lib/themes";
 import type { SoundPrefs } from "../lib/sounds";
 import type { CmdEntry } from "../hooks/useOpencode";
@@ -42,6 +42,7 @@ export default function SettingsDrawer({
   plugins,
   onTogglePlugin,
   onRemoveDisabled,
+  upd: updProp,
 }: {
   open: boolean;
   onClose: () => void;
@@ -68,6 +69,7 @@ export default function SettingsDrawer({
   plugins?: LoadedPlugin[];
   onTogglePlugin?: (id: string, enabled: boolean) => void;
   onRemoveDisabled?: (id: string) => void;
+  upd?: ReturnType<typeof useUpdaterInternal>;
 }) {
   // custom themes have no stored color entry yet — cyan's shared base is the
   // starting point until the user overrides it
@@ -81,7 +83,7 @@ export default function SettingsDrawer({
   // clean state: two-click confirm, then wipe voice installs + every oc.*
   // preference and reload into the first-launch wizard
   const [confirmClean, setConfirmClean] = useState(false);
-  const upd = useUpdater();
+  const upd = updProp ?? useUpdaterInternal();
 
   async function cleanState() {
     if (!confirmClean) {
@@ -493,6 +495,28 @@ export default function SettingsDrawer({
                 </button>
               )}
             </div>
+          </div>
+
+          <div className="setting-row">
+            <div className="setting-info">
+              <i className="fa-solid fa-bell setting-icon" />
+              <div>
+                <div className="setting-name">Update notifications</div>
+                <div className="setting-desc">Show a prompt on launch when a new version is available</div>
+              </div>
+            </div>
+            <button
+              type="button"
+              className={`toggle${settings.updateNotifications ? " on" : ""}`}
+              aria-pressed={settings.updateNotifications}
+              onClick={() => {
+                const next = !settings.updateNotifications;
+                update({ updateNotifications: next });
+                if (next) localStorage.removeItem("oc.update.dismissed");
+              }}
+            >
+              <span className="knob" />
+            </button>
           </div>
 
           <div className="setting-row">
