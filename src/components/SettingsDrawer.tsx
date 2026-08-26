@@ -337,7 +337,7 @@ export default function SettingsDrawer({
               <i className="fa-solid fa-power-off setting-icon" />
               <div>
                 <div className="setting-name">Close button quits</div>
-                <div className="setting-desc">Clicking X exits the app instead of hiding to tray</div>
+                <div className="setting-desc">Clicking X exits the app instead of hiding to tray (hold Ctrl to invert)</div>
               </div>
             </div>
             <button

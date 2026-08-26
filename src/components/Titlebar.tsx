@@ -130,10 +130,12 @@ export default function Titlebar({
         </button>
         <button
           className="icon-btn close"
-          data-tip={closeOnX ? "Quit OpenCode" : "Hide to tray"}
-          onClick={() => {
+          data-tip={closeOnX ? "Quit OpenCode (Ctrl: hide to tray)" : "Hide to tray (Ctrl: quit)"}
+          onClick={(e) => {
             playSound("close");
-            if (closeOnX) {
+            // holding Ctrl inverts the configured behavior
+            const quit = e.ctrlKey ? !closeOnX : closeOnX;
+            if (quit) {
               window.setTimeout(() => getCurrentWindow().close(), 130);
             } else {
               // Rust-side hide: applies the pre-hide size reset like every
