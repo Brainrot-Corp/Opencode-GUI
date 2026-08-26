@@ -36,7 +36,10 @@ export function useUpdater() {
       .catch(() => setFlavor("win11"));
   }, []);
 
-  const check = useCallback(async (): Promise<void> => {
+  // force=true (the manual Check button) always hits the network — the
+  // 1h cooldown cache is only for the silent launch check, so a just-fixed
+  // release can't be hidden by a stale cached "no update"
+  const check = useCallback(async (force = false): Promise<void> => {
     setBusy(true);
     setErr("");
     try {
@@ -44,7 +47,7 @@ export function useUpdater() {
       if (cur) setVer(cur);
       const cached = localStorage.getItem("oc.upd");
       const now = Date.now();
-      if (cached) {
+      if (!force && cached) {
         try {
           const c = JSON.parse(cached) as { at: number; info: UpdateInfo | null };
           if (now - c.at < CHECK_COOLDOWN) {

@@ -486,7 +486,7 @@ export default function SettingsDrawer({
                   type="button"
                   className="reset-btn"
                   disabled={upd.busy}
-                  onClick={() => void upd.check()}
+                  onClick={() => void upd.check(true)}
                 >
                   <i className="fa-solid fa-magnifying-glass" />
                   Check
