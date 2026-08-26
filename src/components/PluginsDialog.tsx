@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import Dialog from "./Dialog";
 import type { LoadedPlugin } from "../lib/plugins";
+import { isNewer } from "../lib/plugins";
 import {
   loadPluginsCatalog,
   fetchPluginFiles,
@@ -154,7 +155,24 @@ export default function PluginsDialog({
   const filtered = (catalog ?? []).filter(
     (e) => !q || e.id.toLowerCase().includes(q) || e.name.toLowerCase().includes(q) || (e.description ?? "").toLowerCase().includes(q),
   );
-  const isInstalled = (id: string) => plugins.some((p) => p.id === id || p.dir === id);
+  const getInstalled = (id: string) => plugins.find((p) => p.id === id || p.dir === id) ?? null;
+  // version-aware update check — catalog version newer than installed
+  const hasUpdate = (id: string) => {
+    const inst = getInstalled(id);
+    const cat = catalog?.find((c) => c.id === id);
+    if (!inst || !cat?.version) return false;
+    return isNewer(inst.version, cat.version);
+  };
+  const updateCount = catalog ? plugins.filter((p) => hasUpdate(p.id)).length : 0;
+
+  async function handleUpdate(p: LoadedPlugin) {
+    const entry = catalog?.find((c) => c.id === p.id || c.id === p.dir);
+    if (!entry) {
+      setErr(`No catalog entry for ${p.id} — try Refresh or Install from URL`);
+      return;
+    }
+    await handleInstall(entry);
+  }
 
   if (!open) return null;
 
@@ -216,51 +234,90 @@ export default function PluginsDialog({
               </div>
             </div>
           ) : (
-            <div className="plugins-list">
-              {plugins.map((p) => {
-                const enabled = !p.disabled;
-                const isConfirm = confirmId === p.dir;
-                const isRemoving = removing === p.dir;
-                return (
-                  <div key={p.dir} className={`plugin-row${p.disabled ? " disabled" : ""}`}>
-                    <div className="plugin-info">
-                      <div className="plugin-name">
-                        <i className={`fa-solid fa-puzzle-piece plugin-icon${p.disabled ? " dim" : ""}`} />
-                        <span>{p.name}</span>
-                        {p.disabled && <span className="plugin-badge">disabled</span>}
-                      </div>
-                      <div className="mono-hint plugin-id">
-                        {p.id}
-                        {p.id !== p.dir ? ` · ${p.dir}` : ""}
-                      </div>
-                      {p.error && <div className="voice-err plugin-err">{p.error}</div>}
-                    </div>
-                    <div className="plugin-actions">
-                      <button
-                        type="button"
-                        className={`toggle${enabled ? " on" : ""}`}
-                        aria-pressed={enabled}
-                        data-tip={enabled ? "Disable plugin" : "Enable plugin"}
-                        disabled={isRemoving}
-                        onClick={() => onToggle(p.id, !enabled)}
-                      >
-                        <span className="knob" />
-                      </button>
-                      <button
-                        type="button"
-                        className={`reset-btn danger-btn${isConfirm ? " armed" : ""}`}
-                        data-tip={isConfirm ? "Click again to confirm delete" : "Delete plugin folder"}
-                        disabled={isRemoving}
-                        onClick={() => void handleDelete(p)}
-                      >
-                        <i className={`fa-solid ${isConfirm ? "fa-triangle-exclamation" : "fa-trash-can"}`} />
-                        {isConfirm ? "Confirm" : "Delete"}
-                      </button>
-                    </div>
+            <>
+              {updateCount > 0 && (
+                <div className="browse-search" style={{ padding: "2px 0 0" }}>
+                  <div className="model-search-wrap" style={{ background: "color-mix(in srgb, var(--accent) 8%, var(--inset-bg))", borderColor: "color-mix(in srgb, var(--accent) 22%, var(--line))" }}>
+                    <i className="fa-solid fa-arrows-rotate" style={{ color: "var(--accent)" }} />
+                    <span className="mono-hint" style={{ flex: 1 }}>{updateCount} update{updateCount === 1 ? "" : "s"} available</span>
+                    <button
+                      type="button"
+                      className="reset-btn"
+                      disabled={!!installing}
+                      onClick={async () => {
+                        for (const p of plugins.filter((x) => hasUpdate(x.id))) await handleUpdate(p);
+                      }}
+                    >
+                      <i className="fa-solid fa-download" /> Update all
+                    </button>
                   </div>
-                );
-              })}
-            </div>
+                </div>
+              )}
+              <div className="plugins-list">
+                {plugins.map((p) => {
+                  const enabled = !p.disabled;
+                  const isConfirm = confirmId === p.dir;
+                  const isRemoving = removing === p.dir;
+                  const needsUpdate = hasUpdate(p.id);
+                  const catEntry = catalog?.find((c) => c.id === p.id || c.id === p.dir);
+                  const busy = installing === p.id || installing === p.dir;
+                  return (
+                    <div key={p.dir} className={`plugin-row${p.disabled ? " disabled" : ""}`}>
+                      <div className="plugin-info">
+                        <div className="plugin-name">
+                          <i className={`fa-solid fa-puzzle-piece plugin-icon${p.disabled ? " dim" : ""}`} />
+                          <span>{p.name}</span>
+                          {p.version && <span className="plugin-badge">{p.version}</span>}
+                          {needsUpdate && catEntry?.version && <span className="plugin-badge" style={{ borderColor: "color-mix(in srgb, var(--accent) 45%, var(--line))", color: "var(--accent-bright)" }}>→ {catEntry.version}</span>}
+                          {p.disabled && <span className="plugin-badge">disabled</span>}
+                          {needsUpdate && <span className="plugin-badge" style={{ background: "color-mix(in srgb, var(--accent) 14%, transparent)", borderColor: "color-mix(in srgb, var(--accent) 40%, transparent)", color: "var(--accent-bright)" }}>update</span>}
+                        </div>
+                        <div className="mono-hint plugin-id">
+                          {p.id}
+                          {p.id !== p.dir ? ` · ${p.dir}` : ""}
+                          {p.description ? ` · ${p.description.slice(0, 80)}` : ""}
+                        </div>
+                        {p.error && <div className="voice-err plugin-err">{p.error}</div>}
+                      </div>
+                      <div className="plugin-actions">
+                        {needsUpdate && (
+                          <button
+                            type="button"
+                            className="reset-btn"
+                            disabled={busy || isRemoving}
+                            data-tip={`Update ${p.id} ${p.version ?? ""} → ${catEntry?.version ?? ""}`}
+                            onClick={() => void handleUpdate(p)}
+                          >
+                            <i className={`fa-solid ${busy ? "fa-spinner fa-spin" : "fa-arrows-rotate"}`} />
+                            {busy ? "Updating…" : "Update"}
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          className={`toggle${enabled ? " on" : ""}`}
+                          aria-pressed={enabled}
+                          data-tip={enabled ? "Disable plugin" : "Enable plugin"}
+                          disabled={isRemoving || busy}
+                          onClick={() => onToggle(p.id, !enabled)}
+                        >
+                          <span className="knob" />
+                        </button>
+                        <button
+                          type="button"
+                          className={`reset-btn danger-btn${isConfirm ? " armed" : ""}`}
+                          data-tip={isConfirm ? "Click again to confirm delete" : "Delete plugin folder"}
+                          disabled={isRemoving || busy}
+                          onClick={() => void handleDelete(p)}
+                        >
+                          <i className={`fa-solid ${isConfirm ? "fa-triangle-exclamation" : "fa-trash-can"}`} />
+                          {isConfirm ? "Confirm" : "Delete"}
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </>
           )}
         </>
       ) : (
@@ -334,16 +391,19 @@ export default function PluginsDialog({
               <div className="model-empty">{catalog?.length === 0 ? "No plugins in catalog" : "No plugins match"}</div>
             ) : (
               filtered.map((e) => {
-                const installed = isInstalled(e.id);
+                const inst = getInstalled(e.id);
+                const installed = !!inst;
                 const busy = installing === e.id;
+                const needsUpdate = installed && isNewer(inst?.version, e.version);
                 return (
-                  <div key={e.id} className={`plugin-row${installed ? " disabled" : ""}`} style={{ opacity: installed ? 0.9 : 1, borderStyle: installed ? "solid" : undefined }}>
+                  <div key={e.id} className={`plugin-row${installed && !needsUpdate ? " disabled" : ""}`} style={{ opacity: installed && !needsUpdate ? 0.9 : 1, borderStyle: installed && !needsUpdate ? "solid" : needsUpdate ? "solid" : undefined, borderColor: needsUpdate ? "color-mix(in srgb, var(--accent) 22%, var(--line))" : undefined }}>
                     <div className="plugin-info">
                       <div className="plugin-name">
                         <i className="fa-solid fa-puzzle-piece plugin-icon" />
                         <span>{e.name}</span>
                         {e.version && <span className="plugin-badge">{e.version}</span>}
-                        {installed && <span className="plugin-badge">installed</span>}
+                        {inst?.version && e.version && inst.version !== e.version && <span className="mono-hint" style={{ fontSize: 10 }}>{inst.version} → {e.version}</span>}
+                        {needsUpdate ? <span className="plugin-badge" style={{ background: "color-mix(in srgb, var(--accent) 14%, transparent)", borderColor: "color-mix(in srgb, var(--accent) 40%, transparent)", color: "var(--accent-bright)" }}>update</span> : installed ? <span className="plugin-badge">installed</span> : null}
                       </div>
                       <div className="mono-hint plugin-id">{e.id}</div>
                       {e.description && <div className="mono-hint" style={{ fontSize: 11, lineHeight: 1.4 }}>{e.description}</div>}
@@ -353,11 +413,11 @@ export default function PluginsDialog({
                         type="button"
                         className="reset-btn"
                         disabled={busy}
-                        data-tip={installed ? "Reinstall / update from catalog" : "Install from catalog"}
+                        data-tip={needsUpdate ? `Update ${inst?.version ?? ""} → ${e.version}` : installed ? "Reinstall / update from catalog" : "Install from catalog"}
                         onClick={() => void handleInstall(e)}
                       >
-                        <i className={`fa-solid ${busy ? "fa-spinner fa-spin" : installed ? "fa-arrows-rotate" : "fa-download"}`} />
-                        {busy ? "Installing…" : installed ? "Reinstall" : "Install"}
+                        <i className={`fa-solid ${busy ? "fa-spinner fa-spin" : needsUpdate ? "fa-arrows-rotate" : installed ? "fa-arrows-rotate" : "fa-download"}`} />
+                        {busy ? "Installing…" : needsUpdate ? "Update" : installed ? "Reinstall" : "Install"}
                       </button>
                     </div>
                   </div>

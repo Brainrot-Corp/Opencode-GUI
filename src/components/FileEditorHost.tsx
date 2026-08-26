@@ -35,6 +35,11 @@ export default function FileEditorHost() {
     return () => window.removeEventListener("oc:open-file", onOpen);
   }, []);
 
+  // expose to ChatPage/__presence for discord status (file > diff > busy > idle)
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent("oc:file-editor", { detail: { path: openPath?.path ?? "" } }));
+  }, [openPath?.path]);
+
   if (!openPath) return null;
   return (
     <FileEditor

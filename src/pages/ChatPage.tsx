@@ -27,6 +27,7 @@ import { pickWorkspace } from "../lib/workspace";
 import { playSound } from "../lib/sounds";
 import { useSpeech } from "../hooks/useSpeech";
 import { usePlugins } from "../hooks/usePlugins";
+import { loadPluginsCatalog } from "../lib/pluginsCatalog";
 
 const SB_W_KEY = "oc.sb.w";
 const SB_C_KEY = "oc.sb.c";
@@ -48,6 +49,20 @@ export default function ChatPage() {
   } = useSettings();
   // runtime plugins — voice intents, settings sections, error banner
   const { plugins, exts, sections: pluginSections, error: pluginError, toggleEnabled, removeDisabled } = usePlugins();
+  // spoken replies / narration / debrief — the whole piper voice pipeline
+  const { talking, debriefing, announce, pauseSpeech } = useSpeech(
+    { msgs: oc.msgs, busy: oc.busy, permission: oc.permission, providers: oc.providers },
+    settings,
+  );
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [diffOpen, setDiffOpen] = useState(false);
+  // file > diff > busy > idle — discord plugin reads editingFile/diffOpen for {status}
+  const [editingFile, setEditingFile] = useState("");
+  useEffect(() => {
+    const onFileEdit = (ev: Event) => setEditingFile((ev as CustomEvent<{ path?: string }>).detail?.path || "");
+    window.addEventListener("oc:file-editor", onFileEdit);
+    return () => window.removeEventListener("oc:file-editor", onFileEdit);
+  }, []);
   // presence live snapshot for plugins (discord etc.) — always mirrored to window
   useEffect(() => {
     const ws = settings.workspace;
@@ -59,15 +74,10 @@ export default function ChatPage() {
       busy: oc.busy,
       sessionId: oc.activeId || "",
       sessionTitle: oc.sessions.find((s) => s.id === oc.activeId)?.title || "",
+      editingFile,
+      diffOpen,
     };
-  }, [settings.workspace, oc.modelSel, oc.defaultModel, oc.busy, oc.activeId, oc.sessions]);
-  // spoken replies / narration / debrief — the whole piper voice pipeline
-  const { talking, debriefing, announce, pauseSpeech } = useSpeech(
-    { msgs: oc.msgs, busy: oc.busy, permission: oc.permission, providers: oc.providers },
-    settings,
-  );
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [diffOpen, setDiffOpen] = useState(false);
+  }, [settings.workspace, oc.modelSel, oc.defaultModel, oc.busy, oc.activeId, oc.sessions, editingFile, diffOpen]);
   // terminal dock visibility (height lives inside TerminalPanel)
   const [termOpen, setTermOpen] = useState(
     () => localStorage.getItem("oc.term.open") === "1",
@@ -352,6 +362,10 @@ export default function ChatPage() {
   // warm the typo-corrector's dictionary veto once per launch
   useEffect(() => {
     void ensureDict();
+  }, []);
+  // prefetch plugin catalog on launch — warms 12h cache so Browse opens instantly (force refresh still bypasses)
+  useEffect(() => {
+    void loadPluginsCatalog().catch(() => {});
   }, []);
   // debug transcript mode (Settings › Voice): last few utterance audits
   const [vdbg, setVdbg] = useState<string[]>([]);

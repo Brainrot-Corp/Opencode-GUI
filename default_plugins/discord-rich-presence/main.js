@@ -13,7 +13,8 @@
 // }
 //
 // Live snapshot lu depuis window.__presence (mis à jour par ChatPage) :
-//   {workspace, workspaceName, model, busy, sessionId, sessionTitle}
+//   {workspace, workspaceName, model, busy, sessionId, sessionTitle, editingFile, diffOpen}
+//   {status} priority: file > diff > busy > idle
 
 const ID = "discord-rich-presence";
 const DEFAULT_ID = "1542215270972784804";
@@ -63,6 +64,8 @@ function readPresence() {
     busy: !!p.busy,
     sessionId: p.sessionId || "",
     sessionTitle: p.sessionTitle || "",
+    editingFile: p.editingFile || "",
+    diffOpen: !!p.diffOpen,
   };
 }
 
@@ -223,7 +226,11 @@ export default function activate(api) {
       const wsName = live.workspaceName;
       const workspaceDisp = wsName || "No workspace";
       const modelDisp = live.model || "—";
-      const statusDisp = live.busy ? "Editing" : "Idle";
+      // file > diff > busy > idle
+      let statusDisp = "Idle";
+      if (live.editingFile) statusDisp = `Editing: ${basename(live.editingFile)}`;
+      else if (live.diffOpen) statusDisp = "Reviewing diff";
+      else if (live.busy) statusDisp = "Generating…";
 
       const details = renderTpl(conf.detailsTpl, { workspace: workspaceDisp, model: modelDisp, status: statusDisp });
       const state = renderTpl(conf.stateTpl, { workspace: workspaceDisp, model: modelDisp, status: statusDisp });

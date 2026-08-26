@@ -9,7 +9,7 @@ export const PLUGINS_RAW_BASE =
   "https://raw.githubusercontent.com/Brainrot-Corp/Opencode-GUI/main/default_plugins/";
 
 const CACHE_KEY = "oc.plugins.catalog";
-const CACHE_TTL = 24 * 3600 * 1000; // 1 day
+const CACHE_TTL = 12 * 3600 * 1000; // 12 hours
 
 export type PluginCatalogEntry = {
   id: string;
@@ -63,7 +63,7 @@ async function fetchManifest(id: string): Promise<PluginCatalogEntry | null> {
   }
 }
 
-// load catalog with 1-day cache; falls back to cached or empty on error
+// load catalog with 12h cache; falls back to cached or empty on error
 export async function loadPluginsCatalog(force = false): Promise<PluginCatalogEntry[]> {
   if (!force) {
     try {

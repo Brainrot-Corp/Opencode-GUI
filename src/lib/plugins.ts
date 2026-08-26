@@ -50,23 +50,50 @@ export type LoadedPlugin = {
   id: string;
   name: string;
   dir: string;
+  version?: string;
+  description?: string;
   ext: PluginExt | null;
   error: string;
   disabled: boolean;
 };
 
 // pure manifest reader — node tests exercise this directly
-export function parseManifest(dir: string, raw: string): { id: string; name: string } | null {
+export function parseManifest(
+  dir: string,
+  raw: string,
+): { id: string; name: string; version?: string; description?: string } | null {
   try {
     const m = JSON.parse(stripComments(raw));
     if (!m || typeof m !== "object" || Array.isArray(m)) return null;
     return {
       id: typeof m.id === "string" && m.id ? m.id : dir,
       name: typeof m.name === "string" && m.name ? m.name : dir,
+      version: typeof (m as Record<string, unknown>).version === "string" ? ((m as Record<string, unknown>).version as string) : undefined,
+      description: typeof (m as Record<string, unknown>).description === "string" ? ((m as Record<string, unknown>).description as string) : undefined,
     };
   } catch {
     return null;
   }
+}
+
+// semver-ish compare: "1.2.3" vs "1.10.0" → -1/0/1. Non-numeric parts treated as 0.
+export function compareVersion(a: string, b: string): number {
+  const pa = a.split(".").map((n) => parseInt(n, 10) || 0);
+  const pb = b.split(".").map((n) => parseInt(n, 10) || 0);
+  const len = Math.max(pa.length, pb.length);
+  for (let i = 0; i < len; i++) {
+    const da = pa[i] ?? 0;
+    const db = pb[i] ?? 0;
+    if (da < db) return -1;
+    if (da > db) return 1;
+  }
+  return 0;
+}
+
+export function isNewer(installed: string | undefined, catalog: string | undefined): boolean {
+  if (!catalog) return false;
+  if (!installed) return true;
+  return compareVersion(installed, catalog) < 0;
 }
 
 // disabled persistence — localStorage `oc.plugins.disabled` (string[] of ids)
@@ -123,12 +150,12 @@ export async function loadPlugins(): Promise<LoadedPlugin[]> {
       if (!man) continue;
       const disabled = disabledIds.has(man.id) || disabledIds.has(d.dir);
       if (disabled) {
-        out.push({ id: man.id, name: man.name, dir: d.dir, ext: null, error: "", disabled: true });
+        out.push({ id: man.id, name: man.name, dir: d.dir, version: man.version, description: man.description, ext: null, error: "", disabled: true });
         continue;
       }
       if (!d.main.trim()) {
         // empty or half-written folder — surface as error, not disabled
-        out.push({ id: man.id, name: man.name, dir: d.dir, ext: null, error: "missing main.js", disabled: false });
+        out.push({ id: man.id, name: man.name, dir: d.dir, version: man.version, description: man.description, ext: null, error: "missing main.js", disabled: false });
         continue;
       }
       const url = URL.createObjectURL(new Blob([d.main], { type: "text/javascript" }));
@@ -151,7 +178,7 @@ export async function loadPlugins(): Promise<LoadedPlugin[]> {
       };
       const raw = typeof mod.default === "function" ? await mod.default(api) : null;
       if (!raw) {
-        out.push({ id: man.id, name: man.name, dir: d.dir, ext: null, error: "", disabled: false });
+        out.push({ id: man.id, name: man.name, dir: d.dir, version: man.version, description: man.description, ext: null, error: "", disabled: false });
         continue;
       }
       if (typeof d.css === "string" && d.css.trim()) {
@@ -161,7 +188,7 @@ export async function loadPlugins(): Promise<LoadedPlugin[]> {
         document.head.appendChild(style);
         mine.push({ style });
       }
-      out.push({ id: man.id, name: man.name, dir: d.dir, ext: { ...raw, id: man.id, name: man.name }, error: "", disabled: false });
+      out.push({ id: man.id, name: man.name, dir: d.dir, version: man.version, description: man.description, ext: { ...raw, id: man.id, name: man.name }, error: "", disabled: false });
     } catch (e) {
       out.push({ id: d.dir, name: d.dir, dir: d.dir, ext: null, error: e instanceof Error ? e.message : String(e), disabled: false });
     }
