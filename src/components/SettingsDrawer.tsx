@@ -92,6 +92,23 @@ export default function SettingsDrawer({
       .catch(() => setAutoLaunch(false));
   }, [open]);
 
+  // Escape closes the drawer — the global shortcuts hook stands its double-
+  // Escape stop gesture down while .drawer-scrim.open matches, so this
+  // surface is expected to own the key. Nested overlays (shared Dialog shell,
+  // portaled menus, permission bar) keep their own Escape, so yield whenever
+  // one of those is mounted
+  useEffect(() => {
+    if (!open) return;
+    const key = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || e.repeat) return;
+      if (document.querySelector(".dlg-scrim, .cmd-menu, .model-menu, .permission-bar"))
+        return;
+      onClose();
+    };
+    window.addEventListener("keydown", key);
+    return () => window.removeEventListener("keydown", key);
+  }, [open, onClose]);
+
   async function toggleAutoLaunch() {
     try {
       if (autoLaunch) {
