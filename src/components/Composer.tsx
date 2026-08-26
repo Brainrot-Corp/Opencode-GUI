@@ -1,13 +1,55 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import type { Attachment, ProviderGroup } from "../types";
 import { prettySize, iconFor } from "../lib/attachments";
 import type { CmdEntry } from "../hooks/useOpencode";
 import { splitModel } from "../lib/models";
 import { useAttachments } from "../hooks/useAttachments";
+import { detectLang, escPlain, hlHtml, insertFenced, looksLikeCode } from "../lib/syntax";
 import ModelMenu, { type ModelEntry } from "./ModelMenu";
 import SlashMenu from "./SlashMenu";
 import { playSound } from "../lib/sounds";
 import "../styles/composer.css";
+
+// rebuild the draft as HTML for the highlight layer behind the textarea:
+// fenced blocks get hljs coloring, fence markers dim, prose escapes plain.
+// Output preserves every character (incl. newlines) so glyphs align with
+// the textarea exactly.
+function draftHtml(src: string): string {
+  const out: string[] = [];
+  const lines = src.split("\n");
+  let i = 0;
+  while (i < lines.length) {
+    const open = /^```(.*)$/.exec(lines[i]);
+    if (!open) {
+      out.push(escPlain(lines[i]));
+      if (i < lines.length - 1) out.push("\n");
+      i++;
+      continue;
+    }
+    let j = i + 1;
+    while (j < lines.length && !/^```/.test(lines[j])) j++;
+    const closed = j < lines.length;
+    const body = lines.slice(i + 1, closed ? j : lines.length).join("\n");
+    const lang = open[1].trim();
+    // one wrapper span around markers + body so the whole fenced region
+    // paints as a single delimited block
+    out.push(
+      `<span class="comp-codeblock"><span class="comp-fence">${escPlain(lines[i])}${
+        i < lines.length - 1 ? "\n" : ""
+      }</span>${hlHtml(body, lang || undefined)}${closed ? "\n" : ""}`,
+    );
+    if (closed) {
+      out.push(`<span class="comp-fence">${escPlain(lines[j])}`);
+      if (j < lines.length - 1) out.push("\n");
+      out.push("</span>");
+      i = j + 1;
+    } else {
+      i = lines.length;
+    }
+    out.push("</span>");
+  }
+  return out.join("");
+}
 
 export default function Composer({
   busy,
@@ -74,6 +116,16 @@ export default function Composer({
   const [cmdClosed, setCmdClosed] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const hlRef = useRef<HTMLDivElement>(null);
+
+  // live highlight layer: rebuilt from a deferred copy of the draft so
+  // typing never waits on highlighting; empty draft → no overlay at all
+  const deferred = useDeferredValue(input);
+  const markup = useMemo(
+    () =>
+      deferred ? draftHtml(deferred) + (/\n$/.test(deferred) ? "\n" : "") : "",
+    [deferred],
+  );
 
   // the composer used to be drag-resizable (oc.comp.h) — clear any stale
   // stored height so old installs fall back to auto sizing
@@ -505,7 +557,16 @@ export default function Composer({
             </button>
           )}
         </div>
-        <textarea
+        <div className="comp-input">
+          {markup && (
+            <div
+              ref={hlRef}
+              className="comp-hl"
+              aria-hidden
+              dangerouslySetInnerHTML={{ __html: markup }}
+            />
+          )}
+          <textarea
                   ref={inputRef}
                   value={input}
                   disabled={needsModel}
@@ -515,7 +576,29 @@ export default function Composer({
                     if (fs?.length) {
                       e.preventDefault();
                       attach.addFiles(fs);
+                      return;
                     }
+                    // code-shaped pastes land as fenced, highlighted blocks
+                    const text = e.clipboardData?.getData("text/plain");
+                    const el = e.currentTarget;
+                    if (text && looksLikeCode(text)) {
+                      e.preventDefault();
+                      const { text: next, caret } = insertFenced(
+                        el.value,
+                        el.selectionStart ?? el.value.length,
+                        el.selectionEnd ?? el.value.length,
+                        text,
+                        detectLang(text),
+                      );
+                      setInput(next);
+                      playSound("type");
+                      requestAnimationFrame(() => {
+                        el.selectionStart = el.selectionEnd = caret;
+                      });
+                    }
+                  }}
+                  onScroll={(e) => {
+                    if (hlRef.current) hlRef.current.scrollTop = e.currentTarget.scrollTop;
                   }}
                   onKeyDown={(e) => {
                     // typing sounds only — all key ROUTING (menus, send,
@@ -534,6 +617,7 @@ export default function Composer({
                         : "Ask anything (Enter to send, Shift+Enter for newline)"
                   }
                 />
+          </div>
                 {busy ? (
                   <button
                     className={`stop-btn${escHint ? " armed" : ""}`}

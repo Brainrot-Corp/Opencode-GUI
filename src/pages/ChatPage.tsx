@@ -462,8 +462,10 @@ export default function ChatPage() {
       const startW = sbW;
       let lastTick = 0;
       setResizing(true);
-      // keep the native Windows col-resize cursor locked during the whole drag
-      document.body.style.cursor = "col-resize";
+      // body.resizing lets CSS force col-resize over every descendant cursor
+      // rule; host-side override re-asserts it when WebView2 drops WM_SETCURSOR
+      document.body.classList.add("resizing");
+      invoke("set_cursor", { shape: "col-resize" }).catch(() => {});
       document.body.style.userSelect = "none";
       const move = (ev: MouseEvent) => {
         setSbW(Math.min(Math.max(170, startW + (ev.clientX - startX)), 440));
@@ -475,7 +477,8 @@ export default function ChatPage() {
       };
       const up = () => {
         setResizing(false);
-        document.body.style.cursor = "";
+        document.body.classList.remove("resizing");
+        invoke("set_cursor").catch(() => {});
         document.body.style.userSelect = "";
         window.removeEventListener("mousemove", move);
         window.removeEventListener("mouseup", up);

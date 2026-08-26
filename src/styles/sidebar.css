@@ -143,6 +143,12 @@
   cursor: col-resize;
   z-index: 5;
 }
+/* during the drag, beat every descendant cursor rule (panels/buttons/editors
+   all declare their own) — inherited body style alone loses to them */
+body.resizing,
+body.resizing * {
+  cursor: col-resize !important;
+}
 .sb-resize::before {
   content: "";
   position: absolute;

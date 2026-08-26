@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import type { Session } from "@opencode-ai/sdk/client";
 import { playSound } from "../lib/sounds";
 import FileTree from "./FileTree";
@@ -149,11 +150,21 @@ export default function Sidebar({
                 <FileTree />
               ) : (
                 sessions.map((s) => (
-                  <div key={s.id} className={`session-row ${s.id === activeId ? "active" : ""}`}>
+                  <div
+                    key={s.id}
+                    className={`session-row ${s.id === activeId ? "active" : ""}`}
+                    // middle-click anywhere on the row deletes instantly,
+                    // no confirmation — preventDefault kills autoscroll
+                    onMouseDown={(e) => {
+                      if (e.button !== 1) return;
+                      e.preventDefault();
+                      onDelete(s.id);
+                    }}
+                  >
                     <button
                       className="session-item"
                       onClick={() => onOpen(s.id)}
-                      data-tip={s.title || s.id}
+                      data-tip={`${s.title || s.id} — middle-click to close`}
                     >
                       {s.title || "New session"}
                     </button>
@@ -171,7 +182,19 @@ export default function Sidebar({
               )}
             </div>
             <GitPanel />
-            <div className="sb-resize" data-tip="Drag to resize" onMouseDown={onStartResize} />
+            <div
+              className="sb-resize"
+              data-tip="Drag to resize"
+              onMouseDown={onStartResize}
+              onMouseEnter={() =>
+                invoke("set_cursor", { shape: "col-resize" }).catch(() => {})
+              }
+              onMouseLeave={() => {
+                // mid-drag the ChatPage drag handlers own the cursor
+                if (!document.body.classList.contains("resizing"))
+                  invoke("set_cursor").catch(() => {});
+              }}
+            />
           </>
         )}
       </aside>

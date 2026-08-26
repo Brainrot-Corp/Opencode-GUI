@@ -430,7 +430,6 @@
   padding: 11px 60px 13px 116px;
   border-radius: 0;
   border: 1px solid transparent;
-  background: var(--inset-bg);
   color: var(--text);
   font-family: var(--mono);
   font-size: 13.5px;
@@ -440,6 +439,61 @@
   line-height: 21px;
   caret-color: var(--accent);
   transition: border-color 0.3s;
+}
+
+/* live highlight overlay — a synced copy of the draft painted BEHIND the
+   textarea, which goes transparent-text while it holds content so the
+   colored version shows through; the field background moves to the wrapper
+   because the textarea now stacks above the overlay */
+.comp-input {
+  position: relative;
+  background: var(--inset-bg);
+}
+.comp-input textarea {
+  position: relative;
+  z-index: 1;
+  background: transparent;
+}
+/* placeholder keeps its own color; typed text hides while the overlay shows */
+.comp-input textarea:not(:placeholder-shown) {
+  color: transparent;
+}
+.composer textarea::selection {
+  background: color-mix(in srgb, var(--accent) 30%, transparent);
+}
+.comp-hl {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+  /* must clone the textarea box exactly — padding, border, font, 21px lines */
+  padding: 11px 60px 13px 116px;
+  border: 1px solid transparent;
+  font-family: var(--mono);
+  font-size: 13.5px;
+  line-height: 21px;
+  white-space: pre-wrap;
+  /* ponytail: long unbroken tokens can wrap ±1 char vs the textarea's own
+     soft-wrap; tune only if real drafts ever visibly misalign */
+  overflow-wrap: break-word;
+  color: var(--text);
+}
+/* decoration here must stay paint-only (no margins/padding/borders that take
+   layout space) or the overlay stops matching the textarea glyph-for-glyph */
+.comp-fence {
+  color: var(--text-faint);
+  opacity: 0.75;
+}
+/* fenced region incl. its ``` markers — darker well + accent rail left,
+   hairline right; echo of the chat .msg pre treatment */
+.comp-codeblock {
+  background: color-mix(in srgb, black 14%, transparent);
+  box-shadow:
+    inset 2px 0 0 color-mix(in srgb, var(--accent) calc(0.4 * 100%), transparent),
+    inset -1px 0 0 var(--line);
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
 }
 .composer textarea::placeholder {
   color: var(--text-faint);
