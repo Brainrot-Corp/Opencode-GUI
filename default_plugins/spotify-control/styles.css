@@ -1,0 +1,107 @@
+/* spotify — Vencord PlayerComponent style adapted to opencode glass/cyan */
+.sp-panel {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 6px 8px 0 6px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--accent) calc(0.05 * 100%), transparent);
+  backdrop-filter: blur(14px);
+}
+.sp-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-family: var(--sans);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+.sp-head i { font-size: 12px; color: var(--accent); }
+.sp-head .sp-dot {
+  width: 7px; height: 7px; border-radius: 50%; margin-left: auto;
+  background: var(--text-faint);
+}
+.sp-head .sp-dot.on { background: var(--accent); box-shadow: 0 0 8px var(--accent-glow); }
+.sp-head .sp-dot.warn { background: var(--danger); }
+#sp-info {
+  display: flex; flex-direction: row; align-items: center;
+  gap: 8px; min-height: 3.6em;
+}
+#sp-album {
+  width: 44px; height: 44px; object-fit: cover;
+  border-radius: 3px; flex-shrink: 0;
+  background: rgba(255,255,255,.06);
+  transition: filter .2s, transform .2s;
+  cursor: pointer;
+}
+#sp-album:hover { filter: brightness(1.15); }
+#sp-album.expanded { width: 100%; height: auto; aspect-ratio: 1; }
+#sp-titles { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; overflow: hidden; }
+#sp-title { font-family: var(--sans); font-size: 13px; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#sp-title[role=link]:hover, .sp-artist[role=link]:hover, #sp-album-name[role=link]:hover { text-decoration: underline; cursor: pointer; }
+.sp-ellip { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sp-secondary { font-family: var(--sans); font-size: 11px; color: var(--text-dim); line-height: 1.2; }
+.sp-artist, #sp-album-name { color: var(--text-dim); }
+.sp-artist:hover { color: var(--text); }
+
+#sp-progress {
+  position: relative;
+  display: flex; align-items: center; gap: 8px;
+  margin: 2px 0 10px;
+}
+.sp-time {
+  font-family: var(--mono); font-size: 10px; color: var(--text-faint);
+  min-width: 32px; text-align: center;
+}
+.sp-bar {
+  flex: 1; height: 3px; border-radius: 0;
+  background: color-mix(in srgb, var(--text-faint) calc(35 * 1%), transparent);
+  position: relative; overflow: hidden; cursor: pointer;
+}
+.sp-fill {
+  height: 100%; background: var(--text-dim);
+  transition: width .15s linear, background .15s;
+}
+#sp-progress:hover .sp-fill { background: var(--accent); }
+.sp-range {
+  position: absolute; inset: -6px 0; width: 100%; height: 15px;
+  opacity: 0; cursor: pointer; margin: 0;
+}
+#sp-progress:hover .sp-grabber { opacity: 1; }
+.sp-grabber {
+  position: absolute; top: 50%; width: 12px; height: 12px; margin-top: -6px; margin-left: -6px;
+  border-radius: 50%; background: var(--accent); border: 2px solid var(--bg);
+  box-shadow: 0 0 6px var(--accent-glow); opacity: 0; transition: opacity .15s; pointer-events: none;
+}
+
+.sp-row {
+  display: flex; justify-content: center; align-items: center; gap: 2px; margin-top: 2px;
+}
+.sp-btn {
+  width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;
+  border: none; border-radius: 4px; background: none; color: var(--text-dim);
+  cursor: pointer; font-size: 13px; transition: background .2s, color .2s, box-shadow .2s;
+}
+.sp-btn:hover { color: var(--accent); background: color-mix(in srgb, var(--accent) calc(0.08 * 100%), transparent); }
+.sp-btn.on { color: var(--accent); background: color-mix(in srgb, var(--accent) calc(0.14 * 100%), transparent); box-shadow: inset 0 0 10px -6px var(--accent-glow); }
+.sp-btn:disabled { opacity: .35; cursor: default; }
+.sp-btn .sp-one {
+  position: absolute; font-family: var(--mono); font-size: 8px; font-weight: 700;
+  top: 50%; left: 50%; transform: translate(-50%,-50%); background: var(--bg); border-radius: 50%;
+  width: 10px; height: 10px; line-height: 10px; text-align: center; color: var(--accent);
+}
+.sp-vol { display: flex; align-items: center; gap: 6px; margin-top: 6px; }
+.sp-vol i { font-size: 11px; color: var(--text-faint); width: 12px; text-align: center; }
+.sp-vol input { flex: 1; accent-color: var(--accent); height: 3px; }
+
+.sp-empty { font-family: var(--sans); font-size: 11px; color: var(--text-faint); text-align: center; padding: 6px 0; }
+.sp-err { font-family: var(--mono); font-size: 10px; color: var(--danger); white-space: pre-wrap; word-break: break-word; border-left: 2px solid var(--danger); padding: 4px 6px; background: rgba(224,143,143,.07); }
+
+.spotify-box .discord-in { font-size: 11px; }
+.sp-hint { line-height: 1.4; padding: 4px 2px; }

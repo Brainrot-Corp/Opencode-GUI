@@ -47,8 +47,8 @@ export default function ChatPage() {
     effectiveMode,
     colorsFor,
   } = useSettings();
-  // runtime plugins — voice intents, settings sections, error banner
-  const { plugins, exts, sections: pluginSections, error: pluginError, toggleEnabled, removeDisabled } = usePlugins();
+  // runtime plugins — voice intents, settings sections, sidebar widgets, error banner
+  const { plugins, exts, sections: pluginSections, sidebarWidgets, error: pluginError, toggleEnabled, removeDisabled } = usePlugins();
   // spoken replies / narration / debrief — the whole piper voice pipeline
   const { talking, debriefing, announce, pauseSpeech } = useSpeech(
     { msgs: oc.msgs, busy: oc.busy, permission: oc.permission, providers: oc.providers },
@@ -701,6 +701,16 @@ export default function ChatPage() {
             onOpen={(id) => oc.openSession(id)}
             onDelete={(id) => oc.removeSession(id)}
             onClearAll={() => void oc.clearSessions()}
+            sidebarExtras={
+              sidebarWidgets.length ? (
+                <>
+                  {sidebarWidgets.map((w) => {
+                    const C = w.Sidebar!;
+                    return C ? <C key={w.id} settings={settings} updatePlugin={(patch) => updatePlugin(w.id, patch)} /> : null;
+                  })}
+                </>
+              ) : undefined
+            }
           />
           <div className="main">
             {oc.error && <div className="banner">{oc.error}</div>}

@@ -38,6 +38,11 @@ export type PluginExt = {
     settings: Record<string, any>;
     updatePlugin: (patch: Record<string, unknown>) => void;
   }) => React.ReactElement | null;
+  // React component rendered in the sidebar before GitPanel (Vencord-style player)
+  Sidebar?: (props: {
+    settings: Record<string, any>;
+    updatePlugin: (patch: Record<string, unknown>) => void;
+  }) => React.ReactElement | null;
   // documentation rows appended to the Info dialog's tabs, grouped under the
   // plugin name — same [label, description] shape the built-in groups use
   info?: {

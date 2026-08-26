@@ -19,6 +19,7 @@ export default function Sidebar({
   onOpen,
   onDelete,
   onClearAll,
+  sidebarExtras,
 }: {
   sessions: Session[];
   activeId: string;
@@ -34,6 +35,7 @@ export default function Sidebar({
   onOpen: (id: string) => void;
   onDelete: (id: string) => void;
   onClearAll: () => void;
+  sidebarExtras?: React.ReactNode;
 }) {
   const [tab, setTab] = useState(() =>
     localStorage.getItem("oc.sb.tab") === "files" ? "files" : "chats",
@@ -68,11 +70,10 @@ export default function Sidebar({
             <button className="icon-btn sb-expand">
               <i className="fa-solid fa-angles-right" />
             </button>
-            {/* GitPanel owns the oc:git listener that executes voice git
-                commands ("stage all", "commit"…) — it must stay mounted even
-                while the rail is collapsed or those events vanish silently */}
+            {/* keep sidebars mounted when collapsed so voice git + spotify poll don't die */}
             <div style={{ display: "none" }}>
               <GitPanel />
+              {sidebarExtras}
             </div>
           </>
         ) : (
@@ -180,6 +181,7 @@ export default function Sidebar({
                 ))
               )}
             </div>
+            {sidebarExtras}
             <GitPanel />
             <div className="sb-resize" data-tip="Drag to resize" onMouseDown={onStartResize} />
           </>

@@ -85,6 +85,7 @@ export function usePlugins() {
 
   const exts = plugins.flatMap((p) => (p.disabled ? [] : p.ext?.parse ? [p.ext] : []));
   const sections = plugins.flatMap((p) => (p.disabled ? [] : p.ext?.Settings ? [p.ext] : []));
+  const sidebarWidgets = plugins.flatMap((p) => (p.disabled ? [] : p.ext?.Sidebar ? [p.ext] : []));
 
-  return { plugins, exts, sections, error, reload, toggleEnabled, removeDisabled };
+  return { plugins, exts, sections, sidebarWidgets, error, reload, toggleEnabled, removeDisabled };
 }
