@@ -315,6 +315,42 @@ export default function SettingsDrawer({
 
           <div className="setting-row">
             <div className="setting-info">
+              <i className="fa-solid fa-window-restore setting-icon" />
+              <div>
+                <div className="setting-name">Keep window size</div>
+                <div className="setting-desc">Don't reset window size when reopening from tray</div>
+              </div>
+            </div>
+            <button
+              type="button"
+              className={`toggle${settings.keepWindowSize ? " on" : ""}`}
+              aria-pressed={settings.keepWindowSize}
+              onClick={() => update({ keepWindowSize: !settings.keepWindowSize })}
+            >
+              <span className="knob" />
+            </button>
+          </div>
+
+          <div className="setting-row">
+            <div className="setting-info">
+              <i className="fa-solid fa-power-off setting-icon" />
+              <div>
+                <div className="setting-name">Close button quits</div>
+                <div className="setting-desc">Clicking X exits the app instead of hiding to tray</div>
+              </div>
+            </div>
+            <button
+              type="button"
+              className={`toggle${settings.closeOnX ? " on" : ""}`}
+              aria-pressed={settings.closeOnX}
+              onClick={() => update({ closeOnX: !settings.closeOnX })}
+            >
+              <span className="knob" />
+            </button>
+          </div>
+
+          <div className="setting-row">
+            <div className="setting-info">
               <i className="fa-solid fa-magnifying-glass-plus setting-icon" />
               <div>
                 <div className="setting-name">UI scale</div>

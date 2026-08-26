@@ -42,6 +42,10 @@ export type AppSettings = {
   theme: ThemeName;
   mode: Mode;
   alwaysOnTop: boolean;
+  // true = don't snap back to default size when reopening from the tray
+  keepWindowSize: boolean;
+  // true = the titlebar X button exits the app instead of hiding to tray
+  closeOnX: boolean;
   uiScale: number;
   sounds: SoundPrefs;
   colors: AppColors;
@@ -77,6 +81,8 @@ const DEFAULTS: AppSettings = {
   theme: "cyan",
   mode: "dark",
   alwaysOnTop: false,
+  keepWindowSize: false,
+  closeOnX: false,
   uiScale: 1,
   sounds: {
     show: true,
@@ -186,6 +192,8 @@ export function useSettings() {
         theme,
         mode,
         alwaysOnTop: !!p.alwaysOnTop,
+        keepWindowSize: !!p.keepWindowSize,
+        closeOnX: !!p.closeOnX,
         uiScale: num(p.uiScale, DEFAULTS.uiScale, 0.7, 1.5),
         sounds: {
           show: p.sounds?.show ?? true,
@@ -301,6 +309,12 @@ export function useSettings() {
   useEffect(() => {
     getCurrentWindow().setAlwaysOnTop(settings.alwaysOnTop).catch(() => {});
   }, [settings.alwaysOnTop]);
+
+  // mirror into Rust: show_main snaps to default size on tray reopen unless
+  // this says otherwise
+  useEffect(() => {
+    invoke("set_tray_reset", { enabled: !settings.keepWindowSize }).catch(() => {});
+  }, [settings.keepWindowSize]);
 
   useEffect(() => {
     getCurrentWebview().setZoom(settings.uiScale).catch(() => {});

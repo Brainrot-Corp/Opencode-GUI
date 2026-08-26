@@ -434,9 +434,12 @@ export default function ChatPage() {
         document.body.style.userSelect = "";
         window.removeEventListener("mousemove", move);
         window.removeEventListener("mouseup", up);
+        window.removeEventListener("blur", up);
       };
       window.addEventListener("mousemove", move);
       window.addEventListener("mouseup", up);
+      // hiding/minimizing mid-drag eats the mouseup — end the drag on blur
+      window.addEventListener("blur", up);
     },
     [sbW],
   );
@@ -462,6 +465,7 @@ export default function ChatPage() {
         <Titlebar
           pinned={settings.alwaysOnTop}
           onTogglePin={() => update({ alwaysOnTop: !settings.alwaysOnTop })}
+          closeOnX={settings.closeOnX}
           onOpenSettings={openSettings}
           themes={themes}
           theme={settings.theme}

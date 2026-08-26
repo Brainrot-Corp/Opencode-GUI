@@ -1,6 +1,7 @@
 use std::net::TcpListener;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
 use tauri::{Manager, RunEvent, State, WindowEvent};
@@ -248,18 +249,130 @@ fn watch_dir(handle: tauri::AppHandle, path: PathBuf, event: &'static str, recur
     });
 }
 
+// when true (default), reopening the window from the tray snaps it back to
+// the default size from tauri.conf.json — restoring a taskbar-minimized
+// window never resets. The "Keep window size" setting turns this off.
+static TRAY_RESET: AtomicBool = AtomicBool::new(true);
+
+#[tauri::command]
+fn set_tray_reset(enabled: bool) {
+    TRAY_RESET.store(enabled, Ordering::Relaxed);
+}
+
+// logical width/height of the main window as declared in tauri.conf.json —
+// the single source of truth for the tray-reopen reset
+fn default_size(app: &tauri::AppHandle) -> (f64, f64) {
+    app.config()
+        .app
+        .windows
+        .iter()
+        .find(|c| c.label == "main")
+        .map(|c| (c.width, c.height))
+        .unwrap_or((1100.0, 720.0))
+}
+
 fn show_main(app: &tauri::AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.show();
         let _ = w.unminimize();
         let _ = w.set_focus();
+        unpoison_input(app);
     }
     use tauri::Emitter;
     let _ = app.emit("visibility://changed", true);
 }
 
+// minimal user32 surface for the input repair below (user32 is already
+// linked by the tao/webview stack — no extra crate needed)
+#[cfg(windows)]
+mod wininput {
+    use std::sync::atomic::{AtomicI32, Ordering};
+
+    #[repr(C)]
+    pub struct Point {
+        pub x: i32,
+        pub y: i32,
+    }
+    extern "system" {
+        pub fn GetCursorPos(pt: *mut Point) -> i32;
+        pub fn SetCursorPos(x: i32, y: i32) -> i32;
+        pub fn ReleaseCapture() -> i32;
+        pub fn ScreenToClient(hwnd: isize, pt: *mut Point) -> i32;
+        pub fn PostMessageW(hwnd: isize, msg: u32, wparam: usize, lparam: isize) -> i32;
+        pub fn EnumChildWindows(
+            hwnd: isize,
+            cb: unsafe extern "system" fn(isize, isize) -> i32,
+            lparam: isize,
+        ) -> i32;
+    }
+
+    // cursor position shared with the EnumChildWindows callback — a plain
+    // extern fn can't capture anything, so it reads these instead
+    pub static CUR_X: AtomicI32 = AtomicI32::new(0);
+    pub static CUR_Y: AtomicI32 = AtomicI32::new(0);
+
+    const WM_MOUSEMOVE: u32 = 0x0200;
+
+    // forward the current cursor position to one child HWND so Chromium's
+    // hover tracking re-registers (TrackMouseEvent) and :hover recomputes
+    pub unsafe extern "system" fn pump_mousemove(child: isize, _lp: isize) -> i32 {
+        let mut pt = Point {
+            x: CUR_X.load(Ordering::Relaxed),
+            y: CUR_Y.load(Ordering::Relaxed),
+        };
+        ScreenToClient(child, &mut pt);
+        let lp = (((pt.y as u16 as usize) << 16) | (pt.x as u16 as usize)) as isize;
+        PostMessageW(child, WM_MOUSEMOVE, 0, lp);
+        1
+    }
+}
+
+// A programmatic resize while the window is visible can leave WebView2's
+// input pipeline holding a stale mouse capture — real moves get swallowed
+// and :hover stays dead everywhere until some real click releases it.
+// After every show, replicate that repairing click natively: drop whatever
+// capture our thread still holds, pump a fresh WM_MOUSEMOVE into every
+// child HWND of the webview and re-settle the cursor where it already is.
+#[cfg(windows)]
+fn unpoison_input(app: &tauri::AppHandle) {
+    let hwnd = match app.get_webview_window("main").map(|w| w.hwnd()) {
+        Some(Ok(h)) => h.0 as isize,
+        _ => return,
+    };
+    let app = app.clone();
+    std::thread::spawn(move || {
+        // let the resize/show settle before poking at input state
+        std::thread::sleep(std::time::Duration::from_millis(60));
+        let _ = app.run_on_main_thread(move || unsafe {
+            use wininput::*;
+            let _ = ReleaseCapture();
+            let mut pt = Point { x: 0, y: 0 };
+            if GetCursorPos(&mut pt) != 0 {
+                CUR_X.store(pt.x, Ordering::Relaxed);
+                CUR_Y.store(pt.y, Ordering::Relaxed);
+                EnumChildWindows(hwnd, pump_mousemove, 0);
+                SetCursorPos(pt.x, pt.y);
+            }
+        });
+    });
+}
+
+#[cfg(not(windows))]
+fn unpoison_input(_app: &tauri::AppHandle) {}
+
 fn hide_main(app: &tauri::AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
+        // resize BEFORE hiding so the window reopens already at its default
+        // size instead of snapping on show. Never shrink a window carrying
+        // the maximized flag without clearing it first — parent/webview
+        // geometry desyncs and hovers go dead until the next click
+        if TRAY_RESET.load(Ordering::Relaxed) {
+            if w.is_maximized().unwrap_or(false) {
+                let _ = w.unmaximize();
+            }
+            let (width, height) = default_size(app);
+            let _ = w.set_size(tauri::LogicalSize::new(width, height));
+        }
         let _ = w.hide();
     }
     use tauri::Emitter;
@@ -276,6 +389,13 @@ fn toggle_main(app: &tauri::AppHandle) {
             show_main(app);
         }
     }
+}
+
+// frontend entry point for hide-to-tray (titlebar X button) — goes through
+// hide_main so the pre-hide size reset applies on every path to the tray
+#[tauri::command]
+fn hide_to_tray(app: tauri::AppHandle) {
+    hide_main(&app);
 }
 
 // ground-truth focus check for the Alt+Space toggle: after an interactive
@@ -364,6 +484,8 @@ pub fn run() {
             git_pull,
             git_diff,
             git_log,
+            set_tray_reset,
+            hide_to_tray,
             debug_log,
         ]);
 
