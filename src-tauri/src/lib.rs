@@ -178,6 +178,16 @@ fn theme_config_read() -> Result<String, String> {
     std::fs::read_to_string(&p).map_err(|e| e.to_string())
 }
 
+// save edited workspace files from the centered file viewer — the opencode
+// server API is read-only for files, so writes go through the Tauri host
+#[tauri::command]
+fn write_file(path: String, content: String) -> Result<(), String> {
+    if path.trim().is_empty() {
+        return Err("empty path".into());
+    }
+    std::fs::write(&path, content).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 fn theme_config_write(content: String) -> Result<(), String> {
     let dir = themes_dir();
@@ -451,6 +461,7 @@ pub fn run() {
             os_glass,
             theme_config_read,
             theme_config_write,
+            write_file,
             reveal_config_dir,
             plugins_scan,
             http_json,

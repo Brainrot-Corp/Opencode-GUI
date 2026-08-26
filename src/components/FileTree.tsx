@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { opencode } from "../api";
-import { extLang, escPlain, hlHtml } from "../lib/syntax";
+import FileEditor from "./FileEditor";
 import "../styles/files.css";
 
 type Node = {
@@ -37,8 +38,9 @@ export default function FileTree() {
   const [kids, setKids] = useState<Map<string, Node[]>>(new Map());
   const [openDirs, setOpenDirs] = useState<Set<string>>(new Set());
   const [loadingDir, setLoadingDir] = useState("");
-  const [preview, setPreview] = useState<{ path: string; text: string; ok: boolean } | null>(null);
+  const [openPath, setOpenPath] = useState<{ path: string; absolute: string } | null>(null);
   const [error, setError] = useState("");
+  const dirtyRef = useRef(false);
 
   async function load(path: string) {
     setLoadingDir(path);
@@ -73,28 +75,12 @@ export default function FileTree() {
     });
   }
 
-  async function openFile(n: Node) {
-    setPreview({ path: n.path, text: "Loading…", ok: false });
-    try {
-      const { client } = await opencode();
-      const r: any = await client.file.read({ query: { path: n.path } });
-      const fc = r.data;
-      setPreview({
-        path: n.path,
-        text: fc?.type === "binary" ? "(binary file)" : (fc?.content ?? ""),
-        ok: fc?.type !== "binary" && !!fc?.content,
-      });
-    } catch (e) {
-      setPreview({ path: n.path, text: String(e), ok: false });
-    }
+  function openFile(n: Node) {
+    if (openPath?.path === n.path) return;
+    if (dirtyRef.current && !window.confirm(`${openPath!.path}\n\nDiscard unsaved changes?`))
+      return;
+    setOpenPath({ path: n.path, absolute: n.absolute });
   }
-
-  useEffect(() => {
-    if (!preview) return;
-    const key = (e: KeyboardEvent) => e.key === "Escape" && setPreview(null);
-    window.addEventListener("keydown", key);
-    return () => window.removeEventListener("keydown", key);
-  }, [preview]);
 
   function renderNodes(nodes: Node[], depth: number): React.ReactNode {
     return nodes.map((n) =>
@@ -138,31 +124,20 @@ export default function FileTree() {
       )}
       {kids.get("") && renderNodes(kids.get("")!, 0)}
 
-      {preview && (
-        <div className="ft-preview">
-          <div className="ft-preview-head">
-            <span className="mono">{preview.path}</span>
-            <button
-              className="icon-btn"
-              data-tip="Close preview"
-              onClick={() => setPreview(null)}
-            >
-              <i className="fa-solid fa-xmark" />
-            </button>
-          </div>
-          <PreviewBody path={preview.path} text={preview.text} ok={preview.ok} />
-        </div>
-      )}
+      {openPath &&
+        createPortal(
+          <FileEditor
+            key={openPath.path}
+            path={openPath.path}
+            absolute={openPath.absolute}
+            onDirty={(d) => (dirtyRef.current = d)}
+            onClose={() => {
+              dirtyRef.current = false;
+              setOpenPath(null);
+            }}
+          />,
+          document.body,
+        )}
     </div>
   );
-}
-
-// highlighted file preview — language from the real path; placeholders and
-// errors stay plain (hlHtml's size caps keep huge files from janking)
-function PreviewBody({ path, text, ok }: { path: string; text: string; ok: boolean }) {
-  const html = useMemo(
-    () => ({ __html: ok ? hlHtml(text, extLang(path)) : escPlain(text) }),
-    [path, text, ok],
-  );
-  return <pre className="ft-preview-body mono" dangerouslySetInnerHTML={html} />;
 }

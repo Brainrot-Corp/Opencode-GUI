@@ -1,0 +1,150 @@
+/* centered editable file viewer (portal modal on the Dialog stage shell) */
+
+/* the highlight layer and the textarea must share identical metrics or the
+   overlay drifts — change both together */
+.fe-stack {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  background: var(--inset-bg);
+  border: 1px solid var(--line);
+}
+.fe-hl,
+.fe-ta {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  padding: 10px;
+  font-family: var(--mono);
+  font-size: 11px;
+  /* integer px only — Blink snaps the caret on fractional line-heights
+     (1.55em = 17.05px) and it drifts off the highlight layer */
+  line-height: 17px;
+  white-space: pre;
+  tab-size: 2;
+}
+.fe-hl {
+  overflow: hidden;
+  color: var(--text-dim);
+}
+.fe-ta {
+  overflow: auto;
+  border: none;
+  outline: none;
+  resize: none;
+  background: transparent;
+  /* glyphs come from the highlight layer underneath */
+  color: transparent;
+  caret-color: var(--accent);
+  cursor: text;
+}
+.fe-ta::selection {
+  background: rgba(127, 212, 212, 0.25);
+  color: transparent;
+}
+
+/* read-only fallback (binary files, load errors) */
+.fe-ro {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: 10px;
+  overflow: auto;
+  background: var(--inset-bg);
+  border: 1px solid var(--line);
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.55;
+  color: var(--text-dim);
+  user-select: text;
+}
+
+.fe-status {
+  font-size: 10px;
+  color: var(--accent);
+  white-space: nowrap;
+}
+
+/* blocky dirty-state dot */
+.fe-dot {
+  width: 7px;
+  height: 7px;
+  background: var(--line-strong);
+}
+.fe-dot.on {
+  background: var(--danger);
+  box-shadow: 0 0 6px rgba(224, 143, 143, 0.5);
+}
+
+.icon-btn.on {
+  color: var(--accent-bright);
+  background: rgba(127, 212, 212, 0.12);
+}
+
+.fe-stale {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  font-family: var(--sans);
+  font-size: 11px;
+  color: var(--danger);
+  background: rgba(224, 143, 143, 0.08);
+  border: 1px solid rgba(224, 143, 143, 0.35);
+}
+.fe-stale span {
+  flex: 1;
+}
+
+.fe-find {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.fe-find-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.fe-input {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 8px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text);
+  background: var(--inset-bg);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  outline: none;
+  transition: border-color 0.15s var(--ease);
+}
+.fe-input:focus {
+  border-color: color-mix(in srgb, var(--accent) calc(0.4 * 100%), var(--line));
+}
+.fe-count {
+  font-size: 10px;
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+.icon-btn.fe-cs {
+  font-family: var(--mono);
+  font-size: 9px;
+}
+.fe-mini {
+  flex: none;
+  padding: 4px 10px;
+  font-family: var(--sans);
+  font-size: 10.5px;
+  color: var(--text-dim);
+  background: var(--inset-bg);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 0.15s var(--ease), border-color 0.15s var(--ease);
+}
+.fe-mini:hover {
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--accent) calc(0.4 * 100%), var(--line));
+}
