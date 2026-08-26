@@ -8,12 +8,14 @@ export default function PickerMenu({
   entries,
   label,
   disabled,
+  empty,
 }: {
   value: string;
   onPick: (v: string) => void;
   entries: { value: string; label: string }[];
   label: string;
   disabled?: boolean;
+  empty?: string;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -42,7 +44,10 @@ export default function PickerMenu({
       </button>
       {open && (
         <div className="model-menu picker-drop" role="listbox">
-          {entries.map((it) => (
+          {entries.length === 0 && empty ? (
+            <div className="model-empty">{empty}</div>
+          ) : (
+            entries.map((it) => (
             <button
               key={it.value}
               type="button"
@@ -57,7 +62,8 @@ export default function PickerMenu({
               <span>{it.label}</span>
               {it.value === value && <i className="fa-solid fa-check" />}
             </button>
-          ))}
+          ))
+          )}
         </div>
       )}
     </div>

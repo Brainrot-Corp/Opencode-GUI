@@ -48,17 +48,18 @@ export default function VoicesDialog({
       .finally(() => setCatLoading(false));
   }, [open, tab, catLoading, catalog.length]);
 
-  // whisper model catalog — same lazy per-tab-session load
+  // whisper model catalog — loads with the dialog so Options-tab picker and
+  // chips get real sizes/labels too, not just the Models browser
   const [wModels, setWModels] = useState<WhisperModel[]>([]);
   const [wLoading, setWLoading] = useState(false);
 
   useEffect(() => {
-    if (!open || tab !== "models" || wLoading || wModels.length) return;
+    if (!open || wLoading || wModels.length) return;
     setWLoading(true);
     loadWhisperCatalog()
       .then(setWModels)
       .finally(() => setWLoading(false));
-  }, [open, tab, wLoading, wModels.length]);
+  }, [open, wLoading, wModels.length]);
 
   // the voice currently streaming in — derived from the shared download
   // indicator label ("<id> · voice" / "<id> · config") so lists can mark it
@@ -71,6 +72,11 @@ export default function VoicesDialog({
   })();
   // whisper model downloads are labeled with the bare model id
   const dlModelId = dl?.label?.endsWith(".bin") ? dl.label : "";
+  // pretty label for an installed model — catalog entry when fetched, bare
+  // name otherwise (offline)
+  const modelLabel = (id: string) =>
+    wModels.find((m) => m.id === id)?.label ??
+    id.replace("ggml-", "").replace(".bin", "");
 
   // --- voices browser --------------------------------------------------------
   const q = query.trim().toLowerCase();
@@ -265,9 +271,16 @@ export default function VoicesDialog({
               <div>
                 <div className="setting-name">Speech engine</div>
                 <div className="setting-desc">
-                  {voice?.bin
-                    ? `whisper.cpp ready · ${voice.items.length} model${voice.items.length === 1 ? "" : "s"} downloaded`
-                    : "Local whisper.cpp — downloads once, runs offline"}
+                  {voice?.bin ? (
+                    <>
+                      {`whisper.cpp ready · ${voice.items.length} model${voice.items.length === 1 ? "" : "s"} downloaded — `}
+                      <button type="button" className="linklike" onClick={() => setTab("models")}>
+                        browse all in the Models tab
+                      </button>
+                    </>
+                  ) : (
+                    "Local whisper.cpp — downloads once, runs offline"
+                  )}
                 </div>
               </div>
             </div>
@@ -286,14 +299,13 @@ export default function VoicesDialog({
               <PickerMenu
                 value={settings.voice.model}
                 disabled={!!dl}
+                empty="No models downloaded"
                 label={
-                  settings.voice.model
-                    ? settings.voice.model.replace("ggml-", "").replace(".bin", "")
-                    : "model"
+                  settings.voice.model ? modelLabel(settings.voice.model) : "model"
                 }
                 entries={(voice?.items ?? []).map((id) => ({
                   value: id,
-                  label: id.replace("ggml-", "").replace(".bin", ""),
+                  label: modelLabel(id),
                 }))}
                 onPick={(v) => update({ voice: { ...settings.voice, model: v } })}
               />
@@ -312,7 +324,7 @@ export default function VoicesDialog({
               <div className="model-chips">
                 {voice.items.map((m) => (
                   <span key={m} className={`model-chip${settings.voice.model === m ? " active" : ""}`}>
-                    {m.replace("ggml-", "").replace(".bin", "")}
+                    {modelLabel(m)}
                     <button
                       type="button"
                       aria-label={`Remove ${m}`}
@@ -438,6 +450,7 @@ export default function VoicesDialog({
               <PickerMenu
                 value={settings.ttsVoice}
                 disabled={!!dl}
+                empty="No voices downloaded"
                 label={
                   settings.ttsVoice
                     ? piperLabel(settings.ttsVoice.replace(/\.onnx$/, ""))
