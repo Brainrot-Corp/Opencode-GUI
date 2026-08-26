@@ -42,6 +42,10 @@ export type AppSettings = {
   theme: ThemeName;
   mode: Mode;
   alwaysOnTop: boolean;
+  // true = don't snap back to default size when reopening from the tray
+  keepWindowSize: boolean;
+  // true = the titlebar X button exits the app instead of hiding to tray
+  closeOnX: boolean;
   uiScale: number;
   sounds: SoundPrefs;
   colors: AppColors;
@@ -77,6 +81,8 @@ const DEFAULTS: AppSettings = {
   theme: "cyan",
   mode: "dark",
   alwaysOnTop: false,
+  keepWindowSize: false,
+  closeOnX: false,
   uiScale: 1,
   sounds: {
     show: true,
@@ -186,6 +192,8 @@ export function useSettings() {
         theme,
         mode,
         alwaysOnTop: !!p.alwaysOnTop,
+        keepWindowSize: !!p.keepWindowSize,
+        closeOnX: !!p.closeOnX,
         uiScale: num(p.uiScale, DEFAULTS.uiScale, 0.7, 1.5),
         sounds: {
           show: p.sounds?.show ?? true,
@@ -302,8 +310,47 @@ export function useSettings() {
     getCurrentWindow().setAlwaysOnTop(settings.alwaysOnTop).catch(() => {});
   }, [settings.alwaysOnTop]);
 
+  // mirror into Rust: show_main snaps to default size on tray reopen unless
+  // this says otherwise
   useEffect(() => {
+    invoke("set_tray_reset", { enabled: !settings.keepWindowSize }).catch(() => {});
+  }, [settings.keepWindowSize]);
+
+  // zoom — and keep every scroll container at the same relative position:
+  // the native zoom reflows the whole DOM asynchronously, so ratios are
+  // snapshotted before and reapplied while the layout settles
+  useEffect(() => {
+    type Snap = { el: HTMLElement; yr: number; xr: number };
+    const snap: Snap[] = [];
+    document.querySelectorAll<HTMLElement>("*").forEach((el) => {
+      const yMax = el.scrollHeight - el.clientHeight;
+      const xMax = el.scrollWidth - el.clientWidth;
+      if (yMax > 1 || xMax > 1) {
+        snap.push({
+          el,
+          yr: yMax > 1 ? el.scrollTop / yMax : 0,
+          xr: xMax > 1 ? el.scrollLeft / xMax : 0,
+        });
+      }
+    });
     getCurrentWebview().setZoom(settings.uiScale).catch(() => {});
+    const restore = () => {
+      for (const { el, yr, xr } of snap) {
+        el.scrollTop = yr * (el.scrollHeight - el.clientHeight);
+        el.scrollLeft = xr * (el.scrollWidth - el.clientWidth);
+      }
+    };
+    const raf = requestAnimationFrame(restore);
+    window.addEventListener("resize", restore);
+    const stop = window.setTimeout(
+      () => window.removeEventListener("resize", restore),
+      600,
+    );
+    return () => {
+      cancelAnimationFrame(raf);
+      window.clearTimeout(stop);
+      window.removeEventListener("resize", restore);
+    };
   }, [settings.uiScale]);
 
   const update = useCallback(

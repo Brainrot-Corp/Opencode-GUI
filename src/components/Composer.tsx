@@ -132,9 +132,12 @@ export default function Composer({
       document.body.style.userSelect = "";
       window.removeEventListener("mousemove", move);
       window.removeEventListener("mouseup", up);
+      window.removeEventListener("blur", up);
     };
     window.addEventListener("mousemove", move);
     window.addEventListener("mouseup", up);
+    // hiding/minimizing mid-drag eats the mouseup — end the drag on blur
+    window.addEventListener("blur", up);
   };
 
   const attach = useAttachments();

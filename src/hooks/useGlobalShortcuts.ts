@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { listen } from "@tauri-apps/api/event";
 import type { AppSettings } from "./useSettings";
 import { playSound } from "../lib/sounds";
+import { UI_SCALES } from "../lib/uiScale";
 
 // window/document-level listeners ChatPage used to inline: embedded-browser
 // link capture, WebView2 hotkey suppression, Ctrl+P pin, tray sounds,
@@ -41,24 +42,50 @@ export function useGlobalShortcuts({
     return () => document.removeEventListener("click", click, true);
   }, [openBrowser]);
 
-  // block WebView2 zoom hotkeys entirely: Ctrl+wheel / Ctrl +/-/0
-  // and suppress the raw browser right-click menu (desktop app, not a page)
+  // Ctrl+wheel / Ctrl +/-/0 drive the uiScale setting through the shared
+  // zoom presets — preventDefault stays so WebView2's own zoom never kicks in
   useEffect(() => {
+    // one preset step per ~50px of accumulated wheel delta — trackpads emit
+    // many small deltas, mouse notches one big one
+    let acc = 0;
+    const stepZoom = (dir: 1 | -1) => {
+      const i = UI_SCALES.indexOf(settings.uiScale);
+      const cur = i === -1 ? UI_SCALES.indexOf(1) : i;
+      const next = UI_SCALES[Math.min(Math.max(cur + dir, 0), UI_SCALES.length - 1)];
+      if (next !== settings.uiScale) update({ uiScale: next });
+    };
     const wheel = (e: WheelEvent) => {
-      if (e.ctrlKey) e.preventDefault();
+      if (!e.ctrlKey) return;
+      e.preventDefault();
+      acc += e.deltaY;
+      if (Math.abs(acc) >= 50) {
+        stepZoom(acc > 0 ? -1 : 1);
+        acc = 0;
+      }
     };
     const key = (e: KeyboardEvent) => {
-      if (e.ctrlKey && ["=", "+", "-", "0"].includes(e.key)) e.preventDefault();
+      if (!e.ctrlKey || e.altKey) return;
+      if (["=", "+", "-"].includes(e.key)) {
+        e.preventDefault();
+        stepZoom(e.key === "-" ? -1 : 1);
+      } else if (e.key === "0") {
+        e.preventDefault();
+        update({ uiScale: 1 });
+      }
     };
-    const ctx = (e: MouseEvent) => e.preventDefault();
     window.addEventListener("wheel", wheel, { passive: false });
     window.addEventListener("keydown", key);
-    document.addEventListener("contextmenu", ctx);
     return () => {
       window.removeEventListener("wheel", wheel);
       window.removeEventListener("keydown", key);
-      document.removeEventListener("contextmenu", ctx);
     };
+  }, [settings.uiScale, update]);
+
+  // suppress the raw browser right-click menu (desktop app, not a page)
+  useEffect(() => {
+    const ctx = (e: MouseEvent) => e.preventDefault();
+    document.addEventListener("contextmenu", ctx);
+    return () => document.removeEventListener("contextmenu", ctx);
   }, []);
 
   // Ctrl+P toggles always-on-top — a plain window listener, so it naturally

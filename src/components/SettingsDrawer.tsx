@@ -8,6 +8,7 @@ import type { CmdEntry } from "../hooks/useOpencode";
 import type { PluginExt } from "../lib/plugins";
 import { applyWorkspace, pickWorkspace } from "../lib/workspace";
 import { splitModel } from "../lib/models";
+import { UI_SCALES } from "../lib/uiScale";
 import ThemeSelect from "./ThemeSelect";
 import ModelMenu, { type ModelEntry } from "./ModelMenu";
 import VoicesDialog from "./VoicesDialog";
@@ -105,7 +106,7 @@ export default function SettingsDrawer({
     }
   }
 
-  const scales = [0.8, 0.9, 1, 1.1, 1.25];
+  const scales = UI_SCALES;
 
   // secondary model picker — cheap model for commit messages, debriefs & long-answer summaries
   const [gmOpen, setGmOpen] = useState(false);
@@ -308,6 +309,42 @@ export default function SettingsDrawer({
               className={`toggle${settings.alwaysOnTop ? " on" : ""}`}
               aria-pressed={settings.alwaysOnTop}
               onClick={() => update({ alwaysOnTop: !settings.alwaysOnTop })}
+            >
+              <span className="knob" />
+            </button>
+          </div>
+
+          <div className="setting-row">
+            <div className="setting-info">
+              <i className="fa-solid fa-window-restore setting-icon" />
+              <div>
+                <div className="setting-name">Keep window size</div>
+                <div className="setting-desc">Don't reset window size when reopening from tray</div>
+              </div>
+            </div>
+            <button
+              type="button"
+              className={`toggle${settings.keepWindowSize ? " on" : ""}`}
+              aria-pressed={settings.keepWindowSize}
+              onClick={() => update({ keepWindowSize: !settings.keepWindowSize })}
+            >
+              <span className="knob" />
+            </button>
+          </div>
+
+          <div className="setting-row">
+            <div className="setting-info">
+              <i className="fa-solid fa-power-off setting-icon" />
+              <div>
+                <div className="setting-name">Close button quits</div>
+                <div className="setting-desc">Clicking X exits the app instead of hiding to tray</div>
+              </div>
+            </div>
+            <button
+              type="button"
+              className={`toggle${settings.closeOnX ? " on" : ""}`}
+              aria-pressed={settings.closeOnX}
+              onClick={() => update({ closeOnX: !settings.closeOnX })}
             >
               <span className="knob" />
             </button>

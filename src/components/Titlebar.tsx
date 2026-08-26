@@ -1,4 +1,5 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { invoke } from "@tauri-apps/api/core";
 import { playSound } from "../lib/sounds";
 import type { Mode } from "../hooks/useSettings";
 import type { ThemeMeta } from "../lib/themes";
@@ -7,6 +8,7 @@ import ThemeSelect from "./ThemeSelect";
 export default function Titlebar({
   pinned,
   onTogglePin,
+  closeOnX,
   onOpenSettings,
   themes,
   theme,
@@ -19,6 +21,8 @@ export default function Titlebar({
 }: {
   pinned?: boolean;
   onTogglePin?: () => void;
+  // true = the X button really quits instead of hiding to tray
+  closeOnX?: boolean;
   onOpenSettings?: () => void;
   themes?: ThemeMeta[];
   theme?: string;
@@ -117,10 +121,16 @@ export default function Titlebar({
         </button>
         <button
           className="icon-btn close"
-          data-tip="Hide to tray"
+          data-tip={closeOnX ? "Quit OpenCode" : "Hide to tray"}
           onClick={() => {
             playSound("close");
-            window.setTimeout(() => getCurrentWindow().hide(), 130);
+            if (closeOnX) {
+              window.setTimeout(() => getCurrentWindow().close(), 130);
+            } else {
+              // Rust-side hide: applies the pre-hide size reset like every
+              // other path to the tray (Alt+Space, tray click, tray menu)
+              window.setTimeout(() => invoke("hide_to_tray"), 130);
+            }
           }}
         >
           <i className="fa-solid fa-xmark" />
