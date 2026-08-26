@@ -254,9 +254,32 @@ fn watch_dir(handle: tauri::AppHandle, path: PathBuf, event: &'static str, recur
 // window never resets. The "Keep window size" setting turns this off.
 static TRAY_RESET: AtomicBool = AtomicBool::new(true);
 
+// disk mirror of the "Keep window size" setting — present ⇔ ON. The frontend
+// keeps it in sync through set_tray_reset, so a fresh launch (which happens
+// BEFORE the webview can report anything) knows whether the window-state
+// plugin's size restore must be undone
+fn keep_size_flag(app: &tauri::AppHandle) -> Option<PathBuf> {
+    app.path()
+        .app_config_dir()
+        .ok()
+        .map(|d| d.join("keep-window-size"))
+}
+
 #[tauri::command]
-fn set_tray_reset(enabled: bool) {
+fn set_tray_reset(app: tauri::AppHandle, enabled: bool) {
     TRAY_RESET.store(enabled, Ordering::Relaxed);
+    // enabled ⇔ snap-back active ⇔ "Keep window size" is OFF — mirror the
+    // preference to disk so the next launch starts at the default size too
+    if let Some(path) = keep_size_flag(&app) {
+        if enabled {
+            let _ = std::fs::remove_file(&path);
+        } else {
+            if let Some(dir) = path.parent() {
+                let _ = std::fs::create_dir_all(dir);
+            }
+            let _ = std::fs::write(&path, b"");
+        }
+    }
 }
 
 // logical width/height of the main window as declared in tauri.conf.json —
@@ -295,8 +318,6 @@ mod wininput {
     }
     extern "system" {
         pub fn GetCursorPos(pt: *mut Point) -> i32;
-        pub fn SetCursorPos(x: i32, y: i32) -> i32;
-        pub fn ReleaseCapture() -> i32;
         pub fn ScreenToClient(hwnd: isize, pt: *mut Point) -> i32;
         pub fn PostMessageW(hwnd: isize, msg: u32, wparam: usize, lparam: isize) -> i32;
         pub fn EnumChildWindows(
@@ -304,14 +325,16 @@ mod wininput {
             cb: unsafe extern "system" fn(isize, isize) -> i32,
             lparam: isize,
         ) -> i32;
+        pub fn SendInput(count: u32, inputs: *mut Input, size: i32) -> u32;
     }
 
-    // cursor position shared with the EnumChildWindows callback — a plain
+    // cursor position shared with the EnumChildWindows callbacks — a plain
     // extern fn can't capture anything, so it reads these instead
     pub static CUR_X: AtomicI32 = AtomicI32::new(0);
     pub static CUR_Y: AtomicI32 = AtomicI32::new(0);
 
     const WM_MOUSEMOVE: u32 = 0x0200;
+    const WM_CANCELMODE: u32 = 0x001F;
 
     // forward the current cursor position to one child HWND so Chromium's
     // hover tracking re-registers (TrackMouseEvent) and :hover recomputes
@@ -325,14 +348,60 @@ mod wininput {
         PostMessageW(child, WM_MOUSEMOVE, 0, lp);
         1
     }
+
+    // tell one child HWND to drop any stuck mouse capture / modal input loop.
+    // Unlike ReleaseCapture — which only reaches OUR thread — a posted
+    // WM_CANCELMODE crosses into the webview process where the stale state
+    // actually lives
+    pub unsafe extern "system" fn pump_cancelmode(child: isize, _lp: isize) -> i32 {
+        PostMessageW(child, WM_CANCELMODE, 0, 0);
+        1
+    }
+
+    // INPUT/MOUSEINPUT mirror (x64 layout: type + pad + 32-byte MOUSEINPUT)
+    #[repr(C)]
+    pub struct MouseInput {
+        pub dx: i32,
+        pub dy: i32,
+        pub mouse_data: u32,
+        pub dw_flags: u32,
+        pub time: u32,
+        pub extra_info: usize,
+    }
+    #[repr(C)]
+    pub struct Input {
+        pub kind: u32,
+        pub pad: u32,
+        pub union: MouseInput,
+    }
+
+    const INPUT_MOUSE: u32 = 0;
+    const MOUSEEVENTF_MOVE: u32 = 0x0001;
+
+    // two REAL relative moves (+1px then -1px) injected through the OS input
+    // pipeline. This is what actually clears Chromium's stuck mouse state —
+    // genuine WM_MOUSEMOVEs re-run its hit testing and TrackMouseEvent, the
+    // same effect as the repairing click users had to perform manually
+    pub fn wiggle_cursor() -> bool {
+        let mut inputs: [Input; 2] = [
+            Input { kind: INPUT_MOUSE, pad: 0, union: MouseInput { dx: 1, dy: 0, mouse_data: 0, dw_flags: MOUSEEVENTF_MOVE, time: 0, extra_info: 0 } },
+            Input { kind: INPUT_MOUSE, pad: 0, union: MouseInput { dx: -1, dy: 0, mouse_data: 0, dw_flags: MOUSEEVENTF_MOVE, time: 0, extra_info: 0 } },
+        ];
+        unsafe {
+            SendInput(2, inputs.as_mut_ptr(), std::mem::size_of::<Input>() as i32) == 2
+        }
+    }
 }
 
-// A programmatic resize while the window is visible can leave WebView2's
-// input pipeline holding a stale mouse capture — real moves get swallowed
-// and :hover stays dead everywhere until some real click releases it.
-// After every show, replicate that repairing click natively: drop whatever
-// capture our thread still holds, pump a fresh WM_MOUSEMOVE into every
-// child HWND of the webview and re-settle the cursor where it already is.
+// Hiding + reshowing the window leaves WebView2's input pipeline stuck:
+// the webview process keeps a stale mouse capture and never sees a mouse
+// ENTER again, so real moves/wheel/hover are swallowed until a real click.
+// Repair after every show, in escalating force:
+//   1. WM_CANCELMODE to every descendant HWND — drops the stuck capture
+//      inside the webview process (cross-process, unlike ReleaseCapture)
+//   2. posted WM_MOUSEMOVEs — nudge hover tracking as a cheap first pass
+//   3. a REAL SendInput cursor wiggle (+1px/-1px) — genuine OS-level moves
+//      that re-run Chromium's hit testing, equivalent to the repairing click
 #[cfg(windows)]
 fn unpoison_input(app: &tauri::AppHandle) {
     let hwnd = match app.get_webview_window("main").map(|w| w.hwnd()) {
@@ -341,39 +410,58 @@ fn unpoison_input(app: &tauri::AppHandle) {
     };
     let app = app.clone();
     std::thread::spawn(move || {
-        // let the resize/show settle before poking at input state
+        // let the show settle before poking at input state
         std::thread::sleep(std::time::Duration::from_millis(60));
         let _ = app.run_on_main_thread(move || unsafe {
             use wininput::*;
-            let _ = ReleaseCapture();
+            EnumChildWindows(hwnd, pump_cancelmode, 0);
             let mut pt = Point { x: 0, y: 0 };
             if GetCursorPos(&mut pt) != 0 {
                 CUR_X.store(pt.x, Ordering::Relaxed);
                 CUR_Y.store(pt.y, Ordering::Relaxed);
                 EnumChildWindows(hwnd, pump_mousemove, 0);
-                SetCursorPos(pt.x, pt.y);
             }
         });
+        // real events through the OS input pipeline — the part that
+        // actually clears the webview's stuck state; needs no main thread
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        if wininput::wiggle_cursor() {
+            let _ = app.run_on_main_thread(move || unsafe {
+                use wininput::*;
+                EnumChildWindows(hwnd, pump_mousemove, 0);
+            });
+        }
     });
 }
 
 #[cfg(not(windows))]
 fn unpoison_input(_app: &tauri::AppHandle) {}
 
+// snap the main window back to the size declared in tauri.conf.json — shared
+// by the tray-reopen reset and the launch reset ("Keep window size" off)
+fn apply_default_size(app: &tauri::AppHandle) {
+    if let Some(w) = app.get_webview_window("main") {
+        // never shrink a window carrying the maximized flag without clearing
+        // it first — parent/webview geometry desyncs and hovers go dead
+        // until the next click
+        if w.is_maximized().unwrap_or(false) {
+            let _ = w.unmaximize();
+        }
+        let (width, height) = default_size(app);
+        let _ = w.set_size(tauri::LogicalSize::new(width, height));
+    }
+}
+
 fn hide_main(app: &tauri::AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
-        // resize BEFORE hiding so the window reopens already at its default
-        // size instead of snapping on show. Never shrink a window carrying
-        // the maximized flag without clearing it first — parent/webview
-        // geometry desyncs and hovers go dead until the next click
-        if TRAY_RESET.load(Ordering::Relaxed) {
-            if w.is_maximized().unwrap_or(false) {
-                let _ = w.unmaximize();
-            }
-            let (width, height) = default_size(app);
-            let _ = w.set_size(tauri::LogicalSize::new(width, height));
-        }
+        // hide FIRST, then resize while invisible: a programmatic set_size
+        // on a visible window is what poisons WebView2's input pipeline.
+        // The reopen still lands at the default size — same end state as
+        // the old pre-hide resize, minus the poisoning
         let _ = w.hide();
+        if TRAY_RESET.load(Ordering::Relaxed) {
+            apply_default_size(app);
+        }
     }
     use tauri::Emitter;
     let _ = app.emit("visibility://changed", false);
@@ -438,8 +526,17 @@ fn debug_log(msg: String) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = tauri::Builder::default()
-        // remembers window size/position across launches
-        .plugin(tauri_plugin_window_state::Builder::default().build())
+        // remembers window size/position across launches — but never
+        // visibility: the window is created hidden ("visible": false) and
+        // shown explicitly in setup once the launch resize has run on it
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                .with_state_flags(
+                    tauri_plugin_window_state::StateFlags::all()
+                        - tauri_plugin_window_state::StateFlags::VISIBLE,
+                )
+                .build(),
+        )
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
@@ -600,12 +697,22 @@ pub fn run() {
             watch_dir(h.clone(), themes_dir(), "themes://changed", false);
             watch_dir(h, plugins_dir(), "plugins://changed", true);
             apply_glass(app.handle());
-            // make sure the window actually owns keyboard focus on launch Ã¢â‚¬â€
-            // otherwise the first Alt+Space sees "visible but unfocused" and
-            // only focuses it instead of hiding it
-            if let Some(w) = app.get_webview_window("main") {
-                let _ = w.set_focus();
+            // the window is created hidden (tauri.conf.json "visible": false)
+            // so any launch-time resize happens on an invisible window — a
+            // programmatic set_size on a visible one poisons WebView2 input.
+            // "Keep window size" OFF (the default): undo the window-state
+            // plugin's restore first. The marker file mirrors the setting
+            // because the webview hasn't loaded yet — its set_tray_reset
+            // sync only lands later
+            if !keep_size_flag(app.handle())
+                .map(|p| p.exists())
+                .unwrap_or(false)
+            {
+                apply_default_size(app.handle());
             }
+            // show + focus + input repair. The explicit focus matters: the
+            // first Alt+Space must see "visible and focused" to hide again
+            show_main(app.handle());
 
             Ok(())
         })

@@ -19,6 +19,7 @@
         "minHeight": 600,
         "decorations": false,
         "transparent": true,
+        "visible": false,
         "dragDropEnabled": false,
         "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --autoplay-policy=no-user-gesture-required"
       }

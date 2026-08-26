@@ -70,97 +70,23 @@ export default function Composer({
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // y-resize: explicit composer height in px, 0 = auto. Dragging the top edge
-  // grows the input and shrinks the chat history (flex sibling). Persisted
-  // under oc.comp.h; double-click the handle to return to auto.
-  const [h, setH] = useState(() => {
-    const v = Number(localStorage.getItem("oc.comp.h"));
-    return v >= 112 && v <= 3000 ? v : 0;
-  });
-  const compRef = useRef<HTMLDivElement>(null);
-  const dragRef = useRef<{ y: number; h: number; min: number } | null>(null);
-  // height auto-grow added above the user's base size — erased lines take
-  // exactly this back, so manual sizing survives typing
-  const grownRef = useRef(0);
-
+  // the composer used to be drag-resizable (oc.comp.h) — clear any stale
+  // stored height so old installs fall back to auto sizing
   useEffect(() => {
-    if (h) localStorage.setItem("oc.comp.h", String(h));
-    else localStorage.removeItem("oc.comp.h");
-  }, [h]);
+    localStorage.removeItem("oc.comp.h");
+  }, []);
 
   // auto-grow: the whole input follows its line count — the textarea (and
   // with it the entire composer card) expands until half the window, then
-  // scrolls internally. In manual-height mode the card grows when lines
-  // outgrow the dragged size (same ceiling as the drag) and gives that
-  // height back as lines are erased — only what auto-grow added, never the
-  // user's own base size (dragging re-baselines)
+  // scrolls internally
   useEffect(() => {
     const el = inputRef.current;
     if (!el) return;
-    if (h) {
-      el.style.height = "";
-      const deficit = el.scrollHeight - el.clientHeight;
-      const cap = Math.max(h, Math.round(window.innerHeight * 0.72));
-      if (deficit > 0) {
-        const add = Math.min(deficit, cap - h);
-        if (add > 0) {
-          grownRef.current += add;
-          setH(h + add);
-        }
-      } else if (deficit < 0) {
-        const give = Math.min(grownRef.current, -deficit);
-        if (give > 0) {
-          grownRef.current -= give;
-          setH(h - give);
-        }
-      }
-      return;
-    }
-    grownRef.current = 0;
     const max = Math.round(window.innerHeight * 0.5);
     el.style.height = "auto";
     // floor at the single-line rest height so the box never sits below it
     el.style.height = `${Math.max(46, Math.min(el.scrollHeight, max))}px`;
-  }, [input, h]);
-
-  const startResize = (e: React.MouseEvent) => {
-    e.preventDefault();
-    const el = compRef.current;
-    // natural auto-flow height = the perfect minimum: at it the textarea
-    // rests at one line, its top/bottom edges flush with the send button.
-    // Measured once per drag with the explicit height cleared (synchronous,
-    // so no flicker)
-    const saved = el?.style.height ?? "";
-    if (el) el.style.height = "";
-    const min = el?.offsetHeight || 200;
-    if (el) el.style.height = saved;
-    dragRef.current = { y: e.clientY, h: h || min, min };
-    grownRef.current = 0; // the dragged size becomes the new base
-    document.body.style.cursor = "row-resize";
-    document.body.style.userSelect = "none";
-    const move = (ev: MouseEvent) => {
-      if (!dragRef.current) return;
-      const max = Math.round(window.innerHeight * 0.72);
-      setH(
-        Math.min(
-          Math.max(dragRef.current.h - (ev.clientY - dragRef.current.y), dragRef.current.min),
-          max,
-        ),
-      );
-    };
-    const up = () => {
-      dragRef.current = null;
-      document.body.style.cursor = "";
-      document.body.style.userSelect = "";
-      window.removeEventListener("mousemove", move);
-      window.removeEventListener("mouseup", up);
-      window.removeEventListener("blur", up);
-    };
-    window.addEventListener("mousemove", move);
-    window.addEventListener("mouseup", up);
-    // hiding/minimizing mid-drag eats the mouseup — end the drag on blur
-    window.addEventListener("blur", up);
-  };
+  }, [input]);
 
   const attach = useAttachments();
 
@@ -407,11 +333,7 @@ export default function Composer({
 
   return (
     <div
-      ref={compRef}
-      className={`composer${attach.dragOver ? " dragover" : ""}${h ? " resized" : ""}${
-        h >= 140 ? " tall" : ""
-      }`}
-      style={h ? { height: h } : undefined}
+      className={`composer${attach.dragOver ? " dragover" : ""}`}
       onDragOver={(e) => {
         if (!Array.from(e.dataTransfer.types).includes("Files")) return;
         e.preventDefault();
@@ -427,12 +349,6 @@ export default function Composer({
         attach.addFiles(e.dataTransfer.files);
       }}
     >
-      <div
-        className="comp-resize"
-        data-tip="Drag to resize · double-click to reset"
-        onMouseDown={startResize}
-        onDoubleClick={() => setH(0)}
-      />
       <div className="model-row">
         <span>{currentLabel()}</span>
         {onCycleAgent && agents && (
@@ -614,17 +530,16 @@ export default function Composer({
                   }
                 />
                 {busy ? (
-                  <button className="stop-btn" onClick={onAbort}>
+                  <button className="stop-btn" data-tip="Stop generating" onClick={onAbort}>
                     <i className="fa-solid fa-stop" />
-                    Stop
                   </button>
                 ) : (
                   <button
                     className="send-btn"
+                    data-tip="Send · Enter"
                     onClick={send}
                     disabled={(!input.trim() && !attach.readyFiles().length) || needsModel}
                   >
-                    Send
                     <i className="fa-solid fa-paper-plane" />
                   </button>
                 )}
