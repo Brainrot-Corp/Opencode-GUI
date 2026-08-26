@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "opencode-gui",
-  "version": "1.5.3",
+  "version": "1.5.4",
   "identifier": "com.ewanr.opencode-gui",
   "build": {
     "beforeDevCommand": "npm run dev",

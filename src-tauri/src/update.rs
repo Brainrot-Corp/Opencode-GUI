@@ -134,6 +134,14 @@ fn move_file(src: &PathBuf, dst: &PathBuf) {
     }
 }
 
+pub fn cleanup_old() {
+    if let Ok(cur) = std::env::current_exe() {
+        if let Some(dir) = cur.parent() {
+            let _ = std::fs::remove_file(dir.join("opencode-gui.old.exe"));
+        }
+    }
+}
+
 pub fn apply_on_exit() {
     if !ARMED.load(Ordering::Relaxed) {
         return;
@@ -155,7 +163,8 @@ pub fn apply_on_exit() {
     move_file(&dir.join("opencode.exe"), &exe_dir.join("opencode.exe"));
 
     let _ = std::fs::remove_dir_all(&dir);
-    let _ = std::fs::remove_file(&old);
+    // the old exe's image may still be held open until this process fully
+    // exits — the new instance cleans it up on launch via cleanup_old()
 
     let mut cmd = std::process::Command::new(exe_dir.join("opencode-gui.exe"));
     cmd.args(std::env::args().skip(1));

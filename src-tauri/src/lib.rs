@@ -968,6 +968,7 @@ pub fn run() {
             app.manage(browser::BrowserState::default());
             app.manage(PtyState::default());
             app.manage(DiscordState::default());
+            update::cleanup_old();
             let h = app.handle().clone();
             watch_dir(h.clone(), themes_dir(), "themes://changed", false);
             watch_dir(h, plugins_dir(), "plugins://changed", true);
