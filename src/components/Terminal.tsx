@@ -168,14 +168,34 @@ export default function TerminalPanel({
         aliveRef.current = false;
         setDead(true);
       }),
-      // hot-reloaded themes re-derive the whole palette
-      listen("themes://changed", () => {
-        term.options.theme = termTheme();
-      }),
     ];
 
     void spawn();
   }, [spawn]);
+
+  // theme applications write the palette as inline CSS vars / data attrs on
+  // <html> — watch instead of guessing when. This covers every path: the
+  // late async themes.json load at app start (the terminal boots before it
+  // lands), dropdown switches, /scheme mode toggles and hot-reloaded file
+  // edits (which also emit themes://changed — same applyTheme, same attrs)
+  useEffect(() => {
+    let raf = 0;
+    const obs = new MutationObserver(() => {
+      if (!termRef.current) return;
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => {
+        if (termRef.current) termRef.current.options.theme = termTheme();
+      });
+    });
+    obs.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["style", "data-theme", "data-mode"],
+    });
+    return () => {
+      obs.disconnect();
+      cancelAnimationFrame(raf);
+    };
+  }, []);
 
   useEffect(() => {
     if (open) boot();

@@ -41,6 +41,8 @@
   height: 30px;
   padding: 0 8px;
   flex-shrink: 0;
+  /* identical chrome tones to the titlebar/sidebar strips */
+  background: linear-gradient(90deg, rgba(var(--chrome-rgb), 0.14), rgba(var(--chrome-rgb), 0.22));
   font-family: var(--mono);
   font-size: 11px;
   letter-spacing: 0.06em;
@@ -78,10 +80,13 @@
   min-height: 0;
 }
 /* xterm measures its parent — the mount is the sizing box, inset by the
-   6px spacing unit */
+   6px spacing unit. Recessed input surface, same recipe as inset controls.
+   No padding here: FitAddon measures this box, so inset does all the work */
 .term-mount {
   position: absolute;
-  inset: 6px 10px 10px;
+  inset: 6px 12px 10px;
+  background: var(--inset-bg);
+  border: 1px solid var(--line);
 }
 .term-mount .xterm {
   height: 100%;
