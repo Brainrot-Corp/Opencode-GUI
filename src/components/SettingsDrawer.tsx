@@ -8,6 +8,7 @@ import type { CmdEntry } from "../hooks/useOpencode";
 import type { PluginExt } from "../lib/plugins";
 import { applyWorkspace, pickWorkspace } from "../lib/workspace";
 import { splitModel } from "../lib/models";
+import { UI_SCALES } from "../lib/uiScale";
 import ThemeSelect from "./ThemeSelect";
 import ModelMenu, { type ModelEntry } from "./ModelMenu";
 import VoicesDialog from "./VoicesDialog";
@@ -105,7 +106,7 @@ export default function SettingsDrawer({
     }
   }
 
-  const scales = [0.8, 0.9, 1, 1.1, 1.25];
+  const scales = UI_SCALES;
 
   // secondary model picker — cheap model for commit messages, debriefs & long-answer summaries
   const [gmOpen, setGmOpen] = useState(false);

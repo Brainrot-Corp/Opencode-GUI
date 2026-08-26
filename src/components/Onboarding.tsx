@@ -7,13 +7,14 @@ import { useVoiceInstall } from "../hooks/useVoiceInstall";
 import { loadRecommended, DEFAULT_RECO, recoModelOk, type Reco } from "../lib/recommended";
 import { obCopy } from "../lib/onboardingText";
 import { splitModel } from "../lib/models";
+import { UI_SCALES } from "../lib/uiScale";
 import Dialog from "./Dialog";
 import ThemeSelect from "./ThemeSelect";
 import ModelMenu, { type ModelEntry } from "./ModelMenu";
 import "../styles/onboarding.css";
 import "../styles/settings.css";
 
-const SCALES = [0.8, 0.9, 1, 1.1, 1.25];
+const SCALES = UI_SCALES;
 
 // first-launch setup wizard — four short steps (hello / look / system / voice)
 // with slide transitions. Closing by any means (finish, skip, Escape, scrim)
