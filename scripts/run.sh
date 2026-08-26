@@ -80,8 +80,8 @@ case "${CMD}" in
             mkdir -p "$out/OpenCode"
             cp "$rel/opencode-gui.exe" "$out/OpenCode/"
             cp "$rel/opencode.exe" "$out/OpenCode/"
-            (cd "$out" && zip -qr "OpenCode-portable-$t-x64.zip" OpenCode)
-            echo ">> portable [$t]: $out/OpenCode-portable-$t-x64.zip"
+            (cd "$out" && zip -qr "opencode-gui-$t-x64.zip" OpenCode)
+            echo ">> portable [$t]: $out/opencode-gui-$t-x64.zip"
         done
         ;;
     check)

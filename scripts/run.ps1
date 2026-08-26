@@ -84,7 +84,7 @@ switch ($Cmd) {
             New-Item -ItemType Directory -Force $stage | Out-Null
             Copy-Item (Join-Path $rel "opencode-gui.exe") $stage -Force
             Copy-Item (Join-Path $rel "opencode.exe") $stage -Force
-            $zip = Join-Path $out "OpenCode-portable-$t-x64.zip"
+            $zip = Join-Path $out "opencode-gui-$t-x64.zip"
             Compress-Archive -Path $stage -DestinationPath $zip -Force
             Write-Host ">> portable [$t]: $zip ($([math]::Round((Get-Item $zip).Length / 1MB, 1)) MB)"
         }
