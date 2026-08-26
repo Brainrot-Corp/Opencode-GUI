@@ -144,13 +144,6 @@
   box-shadow: none;
 }
 
-.theme-menu {
-  /* opens downward from the trigger */
-  top: calc(100% + 6px);
-  bottom: auto;
-  min-width: 180px;
-}
-
 /* debrief indicator — right side of titlebar, next to win-controls */
 .debrief-indicator {
   display: inline-flex;

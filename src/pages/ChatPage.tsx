@@ -77,6 +77,36 @@ export default function ChatPage() {
     [oc.sessions, oc.activeId, oc.openSession],
   );
 
+  // Ctrl+W close active session — empty sessions go instantly, non-empty need
+  // a second Ctrl+W within 1s (banner shows while armed)
+  const [closeHint, setCloseHint] = useState(false);
+  const closeArm = useRef(0);
+  const closeTimer = useRef(0);
+  const closeActiveSession = useCallback(() => {
+    const id = oc.activeId;
+    if (!id) return;
+    if (!oc.msgs.some((m) => m.info.role === "user")) {
+      void oc.removeSession(id);
+      return;
+    }
+    if (Date.now() - closeArm.current < 1000) {
+      clearTimeout(closeTimer.current);
+      closeArm.current = 0;
+      setCloseHint(false);
+      playSound("close");
+      void oc.removeSession(id);
+    } else {
+      closeArm.current = Date.now();
+      setCloseHint(true);
+      playSound("click");
+      clearTimeout(closeTimer.current);
+      closeTimer.current = window.setTimeout(() => {
+        closeArm.current = 0;
+        setCloseHint(false);
+      }, 1000);
+    }
+  }, [oc.activeId, oc.msgs, oc.removeSession]);
+
   // browser bar band = titlebar bottom + bar height; the child webview starts
   // right below the bar
   function barTop() {
@@ -102,6 +132,7 @@ export default function ChatPage() {
     themeIds: themes.map((t) => t.id),
     activeModes,
     onCycleSessions: cycleSessions,
+    onCloseSession: closeActiveSession,
   });
 
   // spoken rendering of a voice act — used to read embedded commands back
@@ -581,6 +612,12 @@ export default function ChatPage() {
                       <i className="fa-solid fa-rotate-left" />
                       Undo rewind
                     </button>
+                  </div>
+                )}
+                {closeHint && (
+                  <div className="revert-banner close-confirm">
+                    <i className="fa-solid fa-trash-can" />
+                    Press Ctrl+W again to close this session
                   </div>
                 )}
                 {oc.permission && (

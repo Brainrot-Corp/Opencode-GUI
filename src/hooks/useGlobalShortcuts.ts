@@ -16,6 +16,7 @@ export function useGlobalShortcuts({
   themeIds,
   activeModes,
   onCycleSessions,
+  onCloseSession,
 }: {
   settings: AppSettings;
   update: (patch: Partial<AppSettings>) => void;
@@ -28,6 +29,8 @@ export function useGlobalShortcuts({
   activeModes?: ("dark" | "light")[];
   // Ctrl(+Shift+)Tab session cycling — dir follows sidebar recency order
   onCycleSessions?: (dir: 1 | -1) => void;
+  // Ctrl+W close active session — ChatPage owns empty-vs-confirm logic
+  onCloseSession?: () => void;
 }) {
   // follow links from chat content in the embedded browser — capture phase,
   // because react-markdown anchors aren't ours to attach handlers to
@@ -124,6 +127,24 @@ export function useGlobalShortcuts({
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
   }, [onCycleSessions]);
+
+  // Ctrl+W closes the active session
+  useEffect(() => {
+    if (!onCloseSession) return;
+    const key = (e: KeyboardEvent) => {
+      if (
+        e.ctrlKey &&
+        !e.shiftKey &&
+        !e.altKey &&
+        e.key.toLowerCase() === "w"
+      ) {
+        e.preventDefault();
+        onCloseSession();
+      }
+    };
+    window.addEventListener("keydown", key);
+    return () => window.removeEventListener("keydown", key);
+  }, [onCloseSession]);
 
   // Rust emits visibility://changed on tray click / Alt+Space / tray menu
   useEffect(() => {
