@@ -462,8 +462,8 @@ export default function ChatPage() {
       const startW = sbW;
       let lastTick = 0;
       setResizing(true);
-      // body.resizing lets CSS force col-resize over every descendant cursor
-      // rule (panels/buttons/editors all declare their own)
+      // body.resizing lets CSS force the custom col-resize cursor over every
+      // descendant cursor rule (panels/buttons/editors all declare their own)
       document.body.classList.add("resizing");
       document.body.style.userSelect = "none";
       const move = (ev: MouseEvent) => {

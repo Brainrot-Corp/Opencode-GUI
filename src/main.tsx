@@ -14,6 +14,17 @@ invoke<boolean>("os_glass")
   })
   .catch(() => {});
 
+// sidebar resize cursor = the user's live Windows pointer scheme (WebView2
+// ignores schemes for CSS cursors, so Rust ships the real one as a data URL)
+invoke<{ url: string; x: number; y: number }>("resize_cursor")
+  .then(({ url, x, y }) =>
+    document.documentElement.style.setProperty(
+      "--cur-colresize",
+      `url("${url}") ${x} ${y}`,
+    ),
+  )
+  .catch(() => {});
+
 // TEMP crash diagnostics — every JS error lands in %TEMP%\oc-gui-debug.log
 const logErr = (kind: string, e: unknown) => {
   const msg = e instanceof Error ? `${e.stack ?? e.message}` : String(e);

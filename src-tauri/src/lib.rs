@@ -533,6 +533,198 @@ fn debug_log(msg: String) {
     }
 }
 
+// Sidebar drag/hover cursor must match the user's live Windows pointer scheme
+// (custom schemes included). WebView2 ignores the scheme for CSS cursors and
+// paints stock bitmaps, so pull the real IDC_SIZEWE handle, pack it into a
+// .cur file and ship it to the DOM as a data URL. None → frontend keeps its
+// bundled fallback.
+#[cfg(windows)]
+fn b64(d: &[u8]) -> String {
+    const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut s = String::with_capacity((d.len() + 2) / 3 * 4);
+    for c in d.chunks(3) {
+        let n = (c[0] as u32) << 16
+            | (*c.get(1).unwrap_or(&0) as u32) << 8
+            | *c.get(2).unwrap_or(&0) as u32;
+        s.push(T[(n >> 18) as usize & 63] as char);
+        s.push(T[(n >> 12) as usize & 63] as char);
+        s.push(if c.len() > 1 { T[(n >> 6) as usize & 63] as char } else { '=' });
+        s.push(if c.len() > 2 { T[n as usize & 63] as char } else { '=' });
+    }
+    s
+}
+
+#[cfg(windows)]
+#[tauri::command]
+fn resize_cursor() -> Option<serde_json::Value> {
+    #[repr(C)]
+    struct IconInfo {
+        f_icon: i32,
+        x_hotspot: u32,
+        y_hotspot: u32,
+        hbm_mask: isize,
+        hbm_color: isize,
+    }
+    #[repr(C)]
+    struct Bitmap {
+        bm_type: i32,
+        bm_width: i32,
+        bm_height: i32,
+        bm_width_bytes: i32,
+        bm_planes: u16,
+        bm_bits_pixel: u16,
+        bm_bits: isize,
+    }
+    #[repr(C)]
+    struct BmiHeader {
+        size: u32,
+        width: i32,
+        height: i32,
+        planes: u16,
+        bit_count: u16,
+        compression: u32,
+        size_image: u32,
+        x_ppm: i32,
+        y_ppm: i32,
+        clr_used: u32,
+        clr_important: u32,
+    }
+    #[repr(C)]
+    struct Bmi {
+        header: BmiHeader,
+        colors: [u32; 3],
+    }
+
+    extern "system" {
+        fn LoadCursorW(hinstance: isize, name: *const u16) -> isize;
+        fn GetIconInfo(icon: isize, info: *mut IconInfo) -> i32;
+        fn GetObjectW(obj: isize, cb: i32, out: *mut Bitmap) -> i32;
+        fn GetDIBits(dc: isize, bmp: isize, start: u32, lines: u32, bits: *mut u8, bmi: *mut Bmi, usage: u32) -> i32;
+        fn GetDC(hwnd: isize) -> isize;
+        fn ReleaseDC(hwnd: isize, dc: isize) -> i32;
+        fn DeleteObject(obj: isize) -> i32;
+    }
+
+    unsafe {
+        // IDC_SIZEWE — resolves through the active pointer scheme
+        let hc = LoadCursorW(0, 32644usize as *const u16);
+        if hc == 0 {
+            return None;
+        }
+        let mut ii: IconInfo = std::mem::zeroed();
+        if GetIconInfo(hc, &mut ii) == 0 {
+            return None;
+        }
+        let _ = DeleteObject(ii.hbm_color);
+        let _ = DeleteObject(ii.hbm_mask);
+
+        // mask bitmap height = color + AND halves, so /2 is the real height
+        let mut mbm: Bitmap = std::mem::zeroed();
+        if GetObjectW(ii.hbm_mask, std::mem::size_of::<Bitmap>() as i32, &mut mbm) == 0 {
+            return None;
+        }
+        let (w, h) = (mbm.bm_width, mbm.bm_height / 2);
+        if w <= 0 || h <= 0 || w > 256 || h > 256 {
+            return None;
+        }
+
+        let dc = GetDC(0);
+        if dc == 0 {
+            return None;
+        }
+        let mut px = vec![0u8; (w * h * 4) as usize];
+        let mut bmi: Bmi = std::mem::zeroed();
+        bmi.header = BmiHeader {
+            size: std::mem::size_of::<BmiHeader>() as u32,
+            width: w,
+            height: -h, // top-down
+            planes: 1,
+            bit_count: 32,
+            compression: 0, // BI_RGB
+            size_image: px.len() as u32,
+            x_ppm: 0,
+            y_ppm: 0,
+            clr_used: 0,
+            clr_important: 0,
+        };
+        let ok_px =
+            GetDIBits(dc, ii.hbm_color, 0, h as u32, px.as_mut_ptr(), &mut bmi, 0) == h;
+
+        let mstride = (((w + 31) / 32) * 4) as usize;
+        let mut mask = vec![0u8; mstride * h as usize];
+        let mut mbmi: Bmi = std::mem::zeroed();
+        mbmi.header = BmiHeader {
+            size: std::mem::size_of::<BmiHeader>() as u32,
+            width: w,
+            height: h,
+            planes: 1,
+            bit_count: 1,
+            compression: 0,
+            size_image: mask.len() as u32,
+            x_ppm: 0,
+            y_ppm: 0,
+            clr_used: 0,
+            clr_important: 0,
+        };
+        let ok_mask =
+            GetDIBits(dc, ii.hbm_mask, 0, h as u32, mask.as_mut_ptr(), &mut mbmi, 0) == h;
+        ReleaseDC(0, dc);
+        if !ok_px {
+            return None;
+        }
+
+        // schemes without per-pixel alpha encode transparency in the AND
+        // mask — bake it into alpha so one code path serves both
+        if !px.chunks_exact(4).any(|p| p[3] != 0) && ok_mask {
+            for y in 0..h as usize {
+                for x in 0..w as usize {
+                    // AND mask rows arrive bottom-up
+                    let opaque = (mask[(h as usize - 1 - y) * mstride + x / 8]
+                        >> (7 - x % 8))
+                        & 1
+                        == 0;
+                    if opaque {
+                        px[(y * w as usize + x) * 4 + 3] = 255;
+                    }
+                }
+            }
+        }
+
+        // pack as .cur: ICONDIR + entry + BITMAPINFOHEADER + bottom-up BGRA
+        // + all-zero AND mask (alpha now decides everything)
+        let mut out = Vec::with_capacity(22 + 40 + px.len() + mask.len());
+        out.extend([0u8, 0, 2, 0, 1, 0]); // type 2 = cursor, count 1
+        out.extend([w as u8, h as u8, 0, 0]);
+        out.extend((ii.x_hotspot as u16).to_le_bytes());
+        out.extend((ii.y_hotspot as u16).to_le_bytes());
+        out.extend(((40 + px.len() + mask.len()) as u32).to_le_bytes());
+        out.extend(22u32.to_le_bytes()); // pixel data offset
+        out.extend(40u32.to_le_bytes());
+        out.extend(w.to_le_bytes());
+        out.extend(((h * 2) as i32).to_le_bytes());
+        out.extend(1u16.to_le_bytes());
+        out.extend(32u16.to_le_bytes());
+        out.extend([0u8; 24]); // BI_RGB + sizeimage + ppms + clr fields
+        let w4 = (w * 4) as usize;
+        for row in (0..h as usize).rev() {
+            out.extend_from_slice(&px[row * w4..(row + 1) * w4]);
+        }
+        out.resize(out.capacity(), 0); // trailing zero AND mask
+
+        Some(serde_json::json!({
+            "url": format!("data:image/x-icon;base64,{}", b64(&out)),
+            "x": ii.x_hotspot,
+            "y": ii.y_hotspot,
+        }))
+    }
+}
+
+#[cfg(not(windows))]
+#[tauri::command]
+fn resize_cursor() -> Option<serde_json::Value> {
+    None
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = tauri::Builder::default()
@@ -595,6 +787,7 @@ pub fn run() {
             set_tray_reset,
             hide_to_tray,
             debug_log,
+            resize_cursor,
         ]);
 
     // global hotkeys, work system-wide.

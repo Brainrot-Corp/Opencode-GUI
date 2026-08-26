@@ -140,14 +140,18 @@
   bottom: 0;
   right: -3px;
   width: 9px;
-  cursor: col-resize;
+  /* the user's live Windows scheme cursor, injected by main.tsx as a data
+     URL; bundled native-style PNG until it lands / on non-Windows */
+  cursor: var(--cur-colresize, url("../assets/cur-col-resize.png") 16 16),
+    col-resize;
   z-index: 5;
 }
 /* during the drag, beat every descendant cursor rule (panels/buttons/editors
    all declare their own) — inherited body style alone loses to them */
 body.resizing,
 body.resizing * {
-  cursor: col-resize !important;
+  cursor: var(--cur-colresize, url("../assets/cur-col-resize.png") 16 16),
+    col-resize !important;
 }
 .sb-resize::before {
   content: "";
