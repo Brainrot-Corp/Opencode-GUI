@@ -63,10 +63,31 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  flex-wrap: wrap;
   gap: 6px 12px;
   padding: 11px 12px;
   border-radius: 0;
+}
+/* modifier for rows whose control stacks below (model chip lists) */
+.setting-row.wrap {
+  flex-wrap: wrap;
+}
+/* dropdown rows: picker sits under the description, starting at the text
+   column (icon 18px + 12px gap), separated by the 6px row gap */
+.setting-row.drop {
+  flex-wrap: wrap;
+}
+.setting-row.drop > .color-controls,
+.setting-row.drop > .model-select {
+  flex: 1 1 auto;
+  margin-left: 30px;
+}
+.setting-row.drop .color-controls .model-select {
+  flex: 1;
+}
+.setting-row.drop .picker-trigger,
+.setting-row.drop .picker-menu,
+.setting-row.drop .model-select-btn {
+  width: 100%;
 }
 .setting-row:hover {
   background: color-mix(in srgb, var(--accent) calc(0.05 * 100%), transparent);
@@ -76,6 +97,10 @@
   display: flex;
   align-items: center;
   gap: 12px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.setting-info > div {
   min-width: 0;
 }
 .setting-icon {
@@ -289,7 +314,7 @@
    model picker design language (native select popups can't be styled) */
 .picker-menu {
   position: relative;
-  flex: 1 1 150px;
+  flex: 0 1 auto;
   min-width: 120px;
   max-width: 100%;
 }

@@ -255,7 +255,7 @@ export default function Onboarding({
                 </button>
               ))}
             </div>
-            <div className="setting-row">
+            <div className="setting-row drop">
               <div className="setting-info">
                 <i className="fa-solid fa-layer-group setting-icon" />
                 <div>

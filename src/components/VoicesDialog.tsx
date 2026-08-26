@@ -265,7 +265,7 @@ export default function VoicesDialog({
         </>
       ) : (
         <>
-          <div className="setting-row">
+          <div className="setting-row drop">
             <div className="setting-info">
               <i className="fa-solid fa-microchip setting-icon" />
               <div>
@@ -315,7 +315,7 @@ export default function VoicesDialog({
           </div>
 
           {!!voice?.items.length && (
-            <div className="setting-row">
+            <div className="setting-row wrap">
               <div className="setting-info">
                 <i className="fa-solid fa-database setting-icon" />
                 <div>
@@ -436,7 +436,7 @@ export default function VoicesDialog({
             </button>
           </div>
 
-          <div className="setting-row">
+          <div className="setting-row drop">
             <div className="setting-info">
               <i className="fa-solid fa-volume-high setting-icon" />
               <div>
@@ -567,7 +567,7 @@ export default function VoicesDialog({
           )}
 
           {!!piper?.items.length && (
-            <div className="setting-row">
+            <div className="setting-row wrap">
               <div className="setting-info">
                 <i className="fa-solid fa-database setting-icon" />
                 <div>

@@ -189,7 +189,7 @@ export default function SettingsDrawer({
             </div>
           </div>
 
-          <div className="setting-row git-model-row secondary-model-row">
+          <div className="setting-row drop git-model-row secondary-model-row">
             <div className="setting-info">
               <i className="fa-solid fa-layer-group setting-icon" />
                 <div>
