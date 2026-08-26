@@ -107,9 +107,22 @@
   gap: 6px;
 }
 
-/* voices browser (VoicesDialog "Voices" tab) */
+/* voices browser (VoicesDialog "Voices" tab) + plugin browser — field wraps input+button on shared inset background */
 .browse-search {
-  padding: 2px 0 6px;
+  padding: 2px 0 3px;
+}
+.browse-search .model-search-wrap {
+  /* override dropdown sticky/chrome bleed for dialog filter bars — single inset field behind input + buttons */
+  position: relative;
+  top: auto;
+  margin: 0;
+  background: var(--inset-bg);
+  border: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+.browse-search .model-search-wrap .reset-btn {
+  flex: none;
+  margin-left: auto;
 }
 .browse-list {
   max-height: 46vh;

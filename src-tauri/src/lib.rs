@@ -275,6 +275,41 @@ fn plugin_remove(dir: String) -> Result<(), String> {
     Ok(())
 }
 
+#[tauri::command]
+fn plugin_install_files(dir: String, manifest: String, main_js: String, css: String) -> Result<(), String> {
+    let name = dir.trim().to_string();
+    if name.is_empty() {
+        return Err("empty plugin name".into());
+    }
+    if name.contains('/') || name.contains('\\') || name.contains("..") || name.contains(':') {
+        return Err("invalid plugin name".into());
+    }
+    if manifest.trim().is_empty() {
+        return Err("missing plugin.json".into());
+    }
+    if main_js.trim().is_empty() {
+        return Err("missing main.js".into());
+    }
+    // validate manifest is JSON with fallback handling done frontend-side
+    serde_json::from_str::<serde_json::Value>(&manifest).map_err(|e| format!("bad plugin.json: {e}"))?;
+    let target = plugins_dir().join(&name);
+    std::fs::create_dir_all(&target).map_err(|e| e.to_string())?;
+    // ensure still inside plugins_dir
+    let canon_plugins = plugins_dir().canonicalize().unwrap_or_else(|_| plugins_dir());
+    let canon_target = target.canonicalize().map_err(|e| e.to_string())?;
+    if !canon_target.starts_with(&canon_plugins) {
+        return Err("invalid plugin path".into());
+    }
+    std::fs::write(canon_target.join("plugin.json"), manifest).map_err(|e| e.to_string())?;
+    std::fs::write(canon_target.join("main.js"), main_js).map_err(|e| e.to_string())?;
+    if css.trim().is_empty() {
+        let _ = std::fs::remove_file(canon_target.join("styles.css"));
+    } else {
+        std::fs::write(canon_target.join("styles.css"), css).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 // watch a config dir; coalesce bursts of events into one emit
 fn watch_dir(handle: tauri::AppHandle, path: PathBuf, event: &'static str, recursive: bool) {
     use notify::Watcher as _;
@@ -810,6 +845,7 @@ pub fn run() {
             reveal_config_dir,
             reveal_plugins_dir,
             plugin_remove,
+            plugin_install_files,
             plugins_scan,
             discord_set,
             discord_clear,
