@@ -1,9 +1,13 @@
+import { useEffect } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { invoke } from "@tauri-apps/api/core";
 import { playSound } from "../lib/sounds";
 import type { Mode } from "../hooks/useSettings";
 import type { ThemeMeta } from "../lib/themes";
 import ThemeSelect from "./ThemeSelect";
+
+// titlebar height — keep in sync with layout.css
+const TB_H = 42;
 
 export default function Titlebar({
   pinned,
@@ -35,6 +39,36 @@ export default function Titlebar({
   talking?: boolean;
   debriefing?: boolean;
 }) {
+  // invisible drag bar: when a dialog/drawer scrim covers the titlebar, its
+  // presses would normally die on the dim layer. This capture listener
+  // grabs any press that lands on the strip over DEAD scrim space and turns
+  // it into a native window drag — without covering real controls.
+  useEffect(() => {
+    const down = (e: MouseEvent) => {
+      if (e.button !== 0 || e.detail !== 1) return;
+      if (e.clientY > TB_H) return;
+      const t = e.target as HTMLElement | null;
+      if (!t || t.closest(".titlebar")) return; // bare titlebar drags itself
+      if (!t.closest(".dlg-scrim, .drawer-scrim")) return; // only dead dim space
+      // never steal from live content stacked in the strip (panel headers,
+      // menus, buttons peeking through)
+      const stack = document.elementsFromPoint(e.clientX, e.clientY);
+      if (
+        stack.some((el) =>
+          el.closest(
+            ".dlg-panel, .settings-drawer, button, input, select, textarea, a, label, [role]",
+          ),
+        )
+      )
+        return;
+      e.preventDefault();
+      e.stopPropagation();
+      getCurrentWindow().startDragging();
+    };
+    window.addEventListener("mousedown", down, true);
+    return () => window.removeEventListener("mousedown", down, true);
+  }, []);
+
   return (
     <header
       className="titlebar"
