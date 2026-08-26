@@ -194,7 +194,10 @@ export function useSettings() {
         alwaysOnTop: !!p.alwaysOnTop,
         keepWindowSize: !!p.keepWindowSize,
         closeOnX: !!p.closeOnX,
-        uiScale: num(p.uiScale, DEFAULTS.uiScale, 0.7, 1.5),
+        uiScale: (() => {
+          const v = num(p.uiScale, DEFAULTS.uiScale, 0.7, 2);
+          return v === 2 ? 1.75 : v > 1.75 ? 1.75 : v;
+        })(),
         sounds: {
           show: p.sounds?.show ?? true,
           hide: p.sounds?.hide ?? true,
