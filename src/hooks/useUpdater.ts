@@ -4,23 +4,22 @@ import { getVersion } from "@tauri-apps/api/app";
 import { newer, releaseVersion } from "../lib/version";
 
 const REPO = "Brainrot-Corp/Opencode-GUI";
-// releases attach the two portable exes directly (gui + opencode sidecar) —
-// both must be present, each verified against its GitHub asset sha256
-const ASSETS = ["opencode-gui.exe", "opencode.exe"];
+// releases attach two portable zips (win10 = noglass build, win11 = default
+// glass build) — the running app picks its own flavor
+const ZIP = (flavor: string) => `opencode-gui-${flavor}-x64.zip`;
 // GitHub's unauthenticated API allows ~60 req/hr — silence repeat checks
 const CHECK_COOLDOWN = 60 * 60 * 1000;
-
-export type UpdateAsset = { name: string; url: string; sha256: string };
 
 export type UpdateInfo = {
   version: string;
   notes: string;
-  assets: UpdateAsset[];
+  url: string;
+  sha256: string;
 };
 
 // silent check on launch (cooldown-cached), manual check + install from the
-// Settings drawer. The release exes are verified against the GitHub asset
-// sha256 digests before staging; update_install exits the app and the host
+// Settings drawer. The matching release zip is verified against the GitHub
+// asset sha256 before staging; update_install exits the app and the host
 // swaps the files on exit.
 export function useUpdater() {
   const [ver, setVer] = useState("");
@@ -28,7 +27,14 @@ export function useUpdater() {
   const [busy, setBusy] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [err, setErr] = useState("");
+  const [flavor, setFlavor] = useState("");
   const ranRef = useRef(false);
+
+  useEffect(() => {
+    invoke<string>("build_flavor")
+      .then(setFlavor)
+      .catch(() => setFlavor("win11"));
+  }, []);
 
   const check = useCallback(async (): Promise<void> => {
     setBusy(true);
@@ -56,24 +62,23 @@ export function useUpdater() {
         body: null,
       });
       const j = JSON.parse(r.body);
-      const byName = new Map<string, { digest?: string; browser_download_url: string }>(
-        (j.assets ?? []).map((a: { name: string; digest?: string; browser_download_url: string }) => [
-          a.name,
-          a,
-        ]),
+      const asset = (j.assets ?? []).find(
+        (a: { name: string }) => a.name === ZIP(flavor),
       );
       const version = releaseVersion(String(j.tag_name ?? ""));
-      const assets: UpdateAsset[] = [];
-      for (const name of ASSETS) {
-        const a = byName.get(name);
-        const digest: string = a?.digest ?? "";
-        if (!a || !digest.startsWith("sha256:")) break;
-        assets.push({ name, url: a.browser_download_url, sha256: digest.slice(7) });
+      const digest: string = asset?.digest ?? "";
+      let info: UpdateInfo | null = null;
+      if (asset && digest.startsWith("sha256:")) {
+        const sha256 = digest.slice(7);
+        if (newer(version, cur) && sha256) {
+          info = {
+            version,
+            notes: String(j.body ?? ""),
+            url: asset.browser_download_url,
+            sha256,
+          };
+        }
       }
-      const info =
-        assets.length === ASSETS.length && newer(version, cur)
-          ? { version, notes: String(j.body ?? ""), assets }
-          : null;
       localStorage.setItem("oc.upd", JSON.stringify({ at: now, info }));
       setLatest(info);
     } catch (e) {
@@ -81,14 +86,15 @@ export function useUpdater() {
     } finally {
       setBusy(false);
     }
-  }, [ver]);
+  }, [ver, flavor]);
 
-  // one silent check per app launch (SettingsDrawer mounts at startup)
+  // one silent check per app launch (SettingsDrawer mounts at startup) —
+  // after the build flavor is known
   useEffect(() => {
-    if (ranRef.current) return;
+    if (ranRef.current || !flavor) return;
     ranRef.current = true;
     void check();
-  }, [check]);
+  }, [check, flavor]);
 
   async function install(): Promise<void> {
     if (!latest) return;
@@ -96,7 +102,8 @@ export function useUpdater() {
     setDownloading(true);
     try {
       await invoke("update_download", {
-        assets: latest.assets,
+        url: latest.url,
+        sha256: latest.sha256,
         version: latest.version,
       });
       await invoke("update_install", {});

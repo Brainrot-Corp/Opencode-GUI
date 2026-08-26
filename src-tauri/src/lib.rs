@@ -22,7 +22,7 @@ mod pty;
 use pty::{pty_kill, pty_resize, pty_spawn, pty_write, PtyState};
 
 mod update;
-use update::{apply_on_exit, update_download, update_install};
+use update::{apply_on_exit, build_flavor, update_download, update_install};
 
 struct ServerState {
     port: u16,
@@ -845,6 +845,7 @@ pub fn run() {
             pty_kill,
             update_download,
             update_install,
+            build_flavor,
             set_tray_reset,
             hide_to_tray,
             debug_log,

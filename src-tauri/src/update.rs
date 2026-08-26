@@ -22,67 +22,81 @@ fn sha256_of(path: &PathBuf) -> Result<String, String> {
     Ok(format!("{:x}", h.finalize()))
 }
 
-#[derive(serde::Deserialize)]
-pub struct UpdateAsset {
-    pub name: String,
-    pub url: String,
-    pub sha256: String,
+// which portable flavor this build is — decides which release zip the
+// updater downloads (noglass = Windows 10 build, default = Windows 11)
+#[tauri::command]
+pub fn build_flavor() -> &'static str {
+    if cfg!(feature = "noglass") {
+        "win10"
+    } else {
+        "win11"
+    }
 }
 
-// curl.exe + sha256 per asset — same download pipeline as the voice
+// curl.exe + sha256 + zip extraction — same download pipeline as the voice
 // installs; staging under %TEMP%\oc-update\<version> keeps partial/replaced
-// releases from colliding
+// releases from colliding. The release zip holds both portable exes
+// (opencode-gui.exe + opencode.exe sidecar).
 #[tauri::command]
-pub async fn update_download(
-    assets: Vec<UpdateAsset>,
-    version: String,
-) -> Result<(), String> {
-    if assets.is_empty() {
-        return Err("no update assets".into());
+pub async fn update_download(url: String, sha256: String, version: String) -> Result<(), String> {
+    if !url.starts_with("https://") {
+        return Err("bad download url".into());
     }
     let dir = staging_dir(&version);
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    for a in &assets {
-        if !a.url.starts_with("https://") {
-            let _ = std::fs::remove_dir_all(&dir);
-            return Err("bad download url".into());
-        }
-        // asset names come straight from GitHub — reject anything that could
-        // escape the staging dir
-        if a.name.contains('/') || a.name.contains('\\') || a.name.contains("..") {
-            let _ = std::fs::remove_dir_all(&dir);
-            return Err("bad asset name".into());
-        }
-        let dest = dir.join(&a.name);
-        let mut cmd = std::process::Command::new("curl.exe");
-        cmd.args(["-L", "--fail", "--silent", "--show-error", "--max-time", "1800", "-o"]);
-        cmd.arg(&dest).arg(&a.url);
-        // release: no console flash next to the frameless window
-        #[cfg(all(windows, not(debug_assertions)))]
-        {
-            use std::os::windows::process::CommandExt;
-            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-            cmd.creation_flags(CREATE_NO_WINDOW);
-        }
-        cmd.stdout(std::process::Stdio::null()).stderr(std::process::Stdio::piped());
-        let out = cmd.output().map_err(|e| format!("failed to run curl: {e}"))?;
-        if !out.status.success() {
-            let _ = std::fs::remove_dir_all(&dir);
-            let err = String::from_utf8_lossy(&out.stderr);
-            return Err(format!("download failed: {}", err.trim()));
-        }
-        let actual = sha256_of(&dest)?;
-        if !actual.eq_ignore_ascii_case(&a.sha256) {
-            let _ = std::fs::remove_dir_all(&dir);
-            return Err(format!(
-                "checksum mismatch for {} — download corrupted or tampered",
-                a.name
-            ));
-        }
+    let zip_path = dir.join("update.zip");
+
+    let mut cmd = std::process::Command::new("curl.exe");
+    cmd.args(["-L", "--fail", "--silent", "--show-error", "--max-time", "1800", "-o"]);
+    cmd.arg(&zip_path).arg(&url);
+    // release: no console flash next to the frameless window
+    #[cfg(all(windows, not(debug_assertions)))]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
     }
-    if !dir.join("opencode-gui.exe").exists() || !dir.join("opencode.exe").exists() {
+    cmd.stdout(std::process::Stdio::null()).stderr(std::process::Stdio::piped());
+    let out = cmd.output().map_err(|e| format!("failed to run curl: {e}"))?;
+    if !out.status.success() {
         let _ = std::fs::remove_dir_all(&dir);
-        return Err("release is missing opencode-gui.exe or opencode.exe".into());
+        let err = String::from_utf8_lossy(&out.stderr);
+        return Err(format!("download failed: {}", err.trim()));
+    }
+
+    let actual = sha256_of(&zip_path)?;
+    if !actual.eq_ignore_ascii_case(&sha256) {
+        let _ = std::fs::remove_dir_all(&dir);
+        return Err("checksum mismatch — download corrupted or tampered".into());
+    }
+
+    let data = std::fs::read(&zip_path).map_err(|e| e.to_string())?;
+    let _ = std::fs::remove_file(&zip_path);
+    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(data)).map_err(|e| e.to_string())?;
+    // flatten: both zips pack the exes at the root; tolerate wrapper dirs
+    let (mut has_exe, mut has_sidecar) = (false, false);
+    for i in 0..archive.len() {
+        let mut f = archive.by_index(i).map_err(|e| e.to_string())?;
+        if f.is_dir() {
+            continue;
+        }
+        let name = f.name();
+        let fname = name.rsplit(['/', '\\']).next().unwrap_or(name);
+        if fname.is_empty() || fname.starts_with('.') {
+            continue;
+        }
+        if fname.eq_ignore_ascii_case("opencode-gui.exe") {
+            has_exe = true;
+        }
+        if fname.eq_ignore_ascii_case("opencode.exe") {
+            has_sidecar = true;
+        }
+        let mut w = std::fs::File::create(dir.join(fname)).map_err(|e| e.to_string())?;
+        std::io::copy(&mut f, &mut w).map_err(|e| e.to_string())?;
+    }
+    if !has_exe || !has_sidecar {
+        let _ = std::fs::remove_dir_all(&dir);
+        return Err("release zip missing opencode-gui.exe or opencode.exe".into());
     }
 
     *STAGED.lock().unwrap_or_else(|e| e.into_inner()) = Some(dir);
