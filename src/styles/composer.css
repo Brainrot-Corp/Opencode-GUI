@@ -25,47 +25,6 @@
   border-color: color-mix(in srgb, var(--accent) calc(0.16 * 100%), transparent);
 }
 
-/* y-resize: drag strip on the top edge; explicit height turns the card into
-   a column so the input row stretches and chat history shrinks (flex sib) */
-.comp-resize {
-  position: absolute;
-  top: -3px;
-  left: 0;
-  right: 0;
-  height: 7px;
-  cursor: row-resize;
-  z-index: 5;
-}
-.comp-resize:hover {
-  background: var(--accent-dim);
-}
-.composer.resized {
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  /* a stored height from a taller window must never overflow this one */
-  max-height: 72vh;
-}
-.composer.resized .model-row {
-  flex-shrink: 0;
-}
-.composer.resized .composer-row {
-  flex: 1;
-  min-height: 0;
-  align-items: stretch;
-}
-/* the row stretches with the composer, but controls keep their resting
-   size and stay pinned to the bottom — only the textarea grows */
-.composer.resized .send-btn,
-.composer.resized .stop-btn {
-  align-self: flex-end;
-  min-height: 44px;
-  max-height: 54px;
-}
-.composer.resized textarea {
-  max-height: none;
-}
-
 .model-row {
   display: flex;
   align-items: center;
@@ -147,52 +106,6 @@
   color: var(--accent);
   background: var(--accent-dim);
   box-shadow: 0 0 12px -4px var(--accent-glow);
-}
-
-/* tools rail left of the input: clip + mic sit side by side normally; once
-   the composer is dragged tall enough (.tall) they stack into the freed-up
-   space wearing the New-chat look (dashed accent frame): mic becomes the
-   top rectangle, clip the bottom square */
-.comp-tools {
-  display: flex;
-  align-items: flex-end;
-  gap: 6px;
-  flex-shrink: 0;
-}
-.composer.tall .comp-tools {
-  flex-direction: column;
-  justify-content: flex-end;
-  align-items: stretch;
-  width: 44px;
-  gap: 6px;
-}
-.composer.tall .comp-tools .mic-btn {
-  flex: 1 1 18px;
-  min-height: 18px;
-  width: 100%;
-  height: auto;
-}
-.composer.tall .comp-tools .attach-btn {
-  width: 100%;
-  height: 44px;
-}
-.composer.tall .comp-tools .attach-btn,
-.composer.tall .comp-tools .mic-btn {
-  background: color-mix(in srgb, var(--accent) calc(0.06 * 100%), transparent);
-  border: 1px dashed color-mix(in srgb, var(--accent) calc(0.25 * 100%), transparent);
-  color: var(--text-faint);
-}
-.composer.tall .comp-tools .attach-btn:hover:not(:disabled),
-.composer.tall .comp-tools .mic-btn:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--accent) calc(0.11 * 100%), transparent);
-  border-color: color-mix(in srgb, var(--accent) calc(0.45 * 100%), transparent);
-  box-shadow: 0 0 24px -8px var(--accent-glow);
-}
-/* recording pulse must survive the restyle */
-.composer.tall .comp-tools .mic-btn.recording {
-  color: var(--danger);
-  background: color-mix(in srgb, var(--danger) 12%, transparent);
-  border-color: color-mix(in srgb, var(--danger) calc(0.35 * 100%), transparent);
 }
 
 /* voice input — pulsing danger tint while recording */
@@ -474,26 +387,47 @@
 }
 
 .composer-row {
-  display: flex;
-  gap: 10px;
-  align-items: flex-end;
+  position: relative;
 }
 
-/* rest at exactly the single-line textarea's height so their edges align
-   on the y axis regardless of font metrics */
+/* attach + mic live INSIDE the input, pinned to the first line (fixed top
+   offset — never recenters when the textarea grows) */
+.comp-tools {
+  position: absolute;
+  left: 10px;
+  top: 11px;
+  z-index: 1;
+  display: flex;
+  gap: 6px;
+}
+
+/* send/stop: compact icon-only squares, same first-line anchor, right side */
 .composer-row .send-btn,
 .composer-row .stop-btn {
-  height: 46px;
-  padding-top: 0;
-  padding-bottom: 0;
+  position: absolute;
+  right: 10px;
+  top: 10px;
+  z-index: 1;
+  width: 38px;
+  height: 28px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+}
+.send-btn i,
+.stop-btn i {
+  margin: 0;
 }
 
 .composer textarea {
-  flex: 1;
+  display: block;
+  width: 100%;
   resize: none;
   min-height: 46px;
   max-height: 50vh; /* auto-grow cap — matches the JS in Composer */
-  padding: 11px 13px;
+  /* left/right reserves keep text clear of the floating attach/mic tools
+     and the send button that live inside the input */
+  padding: 11px 60px 13px 116px;
   border-radius: 0;
   border: 1px solid transparent;
   background: var(--inset-bg);
@@ -525,7 +459,6 @@
 
 .send-btn,
 .stop-btn {
-  padding: 12px 22px;
   border-radius: 0;
   cursor: pointer;
   font-family: var(--sans);
@@ -534,19 +467,11 @@
   letter-spacing: 0.06em;
   transition: border-color 0.35s var(--ease), background 0.35s var(--ease), box-shadow 0.45s var(--ease);
 }
-.send-btn i,
-.stop-btn i {
-  font-size: 11.5px;
-}
 .send-btn i {
-  margin-left: 8px;
   transition: transform 0.3s var(--ease);
 }
 .send-btn:hover:not(:disabled) i {
   transform: translateX(2px);
-}
-.stop-btn i {
-  margin-right: 8px;
 }
 
 .send-btn {
