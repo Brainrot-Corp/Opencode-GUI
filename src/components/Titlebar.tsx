@@ -92,7 +92,7 @@ export default function Titlebar({
     >
       <div className="brand">
         <i />
-        <span>OpenCode</span>
+        <span>OpenCode - test</span>
       </div>
       <div className="win-controls">
         {debriefing && (
