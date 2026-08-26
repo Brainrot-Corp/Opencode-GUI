@@ -12,11 +12,13 @@ import { UI_SCALES } from "../lib/uiScale";
 import ThemeSelect from "./ThemeSelect";
 import ModelMenu, { type ModelEntry } from "./ModelMenu";
 import VoicesDialog from "./VoicesDialog";
+import PluginsDialog from "./PluginsDialog";
 import Onboarding from "./Onboarding";
 import AppearanceSettings from "./AppearanceSettings";
 import SoundsSettings from "./SoundsSettings";
 import InfoDialog from "./InfoDialog";
 import type { ProviderGroup } from "../types";
+import type { LoadedPlugin } from "../lib/plugins";
 import "../styles/settings.css";
 
 export default function SettingsDrawer({
@@ -36,6 +38,9 @@ export default function SettingsDrawer({
   commands,
   pluginSections,
   pluginDocs,
+  plugins,
+  onTogglePlugin,
+  onRemoveDisabled,
 }: {
   open: boolean;
   onClose: () => void;
@@ -59,6 +64,9 @@ export default function SettingsDrawer({
   pluginSections?: PluginExt[];
   // plugin documentation rows for the Info dialog
   pluginDocs?: { name: string; info: NonNullable<PluginExt["info"]> }[];
+  plugins?: LoadedPlugin[];
+  onTogglePlugin?: (id: string, enabled: boolean) => void;
+  onRemoveDisabled?: (id: string) => void;
 }) {
   // custom themes have no stored color entry yet — cyan's shared base is the
   // starting point until the user overrides it
@@ -66,6 +74,7 @@ export default function SettingsDrawer({
   const [autoLaunch, setAutoLaunch] = useState<boolean | null>(null);
   const [infoOpen, setInfoOpen] = useState(false);
   const [voiceOpen, setVoiceOpen] = useState(false);
+  const [pluginsOpen, setPluginsOpen] = useState(false);
   // first-launch setup can be replayed from here any time
   const [wizOpen, setWizOpen] = useState(false);
   // clean state: two-click confirm, then wipe voice installs + every oc.*
@@ -167,6 +176,9 @@ export default function SettingsDrawer({
           <div className="color-controls">
             <button className="icon-btn" data-tip="Run setup again" onClick={() => setWizOpen(true)}>
               <i className="fa-solid fa-wand-magic-sparkles" />
+            </button>
+            <button className="icon-btn" data-tip="Plugins" onClick={() => setPluginsOpen(true)}>
+              <i className="fa-solid fa-puzzle-piece" />
             </button>
             <button className="icon-btn" data-tip="Voice, commands & hotkeys" onClick={() => setInfoOpen(true)}>
               <i className="fa-solid fa-circle-info" />
@@ -481,6 +493,13 @@ export default function SettingsDrawer({
           onClose={() => setVoiceOpen(false)}
           settings={settings}
           update={update}
+        />
+        <PluginsDialog
+          open={pluginsOpen}
+          onClose={() => setPluginsOpen(false)}
+          plugins={plugins ?? []}
+          onToggle={(id, enabled) => onTogglePlugin?.(id, enabled)}
+          onRemoved={(id) => onRemoveDisabled?.(id)}
         />
     </>
   );

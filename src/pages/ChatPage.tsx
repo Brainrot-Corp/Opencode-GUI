@@ -45,7 +45,7 @@ export default function ChatPage() {
     colorsFor,
   } = useSettings();
   // runtime plugins — voice intents, settings sections, error banner
-  const { plugins, exts, sections: pluginSections, error: pluginError } = usePlugins();
+  const { plugins, exts, sections: pluginSections, error: pluginError, toggleEnabled, removeDisabled } = usePlugins();
   // spoken replies / narration / debrief — the whole piper voice pipeline
   const { talking, debriefing, announce, pauseSpeech } = useSpeech(
     { msgs: oc.msgs, busy: oc.busy, permission: oc.permission, providers: oc.providers },
@@ -571,6 +571,9 @@ export default function ChatPage() {
           effectiveMode={effectiveMode}
           pluginSections={pluginSections}
           pluginDocs={pluginDocs}
+          plugins={plugins}
+          onTogglePlugin={toggleEnabled}
+          onRemoveDisabled={removeDisabled}
         />
         <div
           className={`layout${resizing ? " no-anim" : ""}`}

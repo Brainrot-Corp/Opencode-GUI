@@ -222,6 +222,53 @@ fn reveal_config_dir() -> Result<(), String> {
     Ok(())
 }
 
+#[tauri::command]
+fn reveal_plugins_dir() -> Result<(), String> {
+    let dir = plugins_dir();
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        std::process::Command::new("explorer")
+            .arg(&dir)
+            .creation_flags(CREATE_NO_WINDOW)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    #[cfg(not(windows))]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(&dir)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn plugin_remove(dir: String) -> Result<(), String> {
+    let name = dir.trim().to_string();
+    if name.is_empty() {
+        return Err("empty plugin name".into());
+    }
+    if name.contains('/') || name.contains('\\') || name.contains("..") || name.contains(':') {
+        return Err("invalid plugin name".into());
+    }
+    let target = plugins_dir().join(&name);
+    if !target.exists() {
+        return Err("plugin not found".into());
+    }
+    // ensure target is still inside plugins_dir (prevent traversal)
+    let canon_plugins = plugins_dir().canonicalize().unwrap_or_else(|_| plugins_dir());
+    let canon_target = target.canonicalize().map_err(|e| e.to_string())?;
+    if !canon_target.starts_with(&canon_plugins) {
+        return Err("invalid plugin path".into());
+    }
+    std::fs::remove_dir_all(&canon_target).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 // watch a config dir; coalesce bursts of events into one emit
 fn watch_dir(handle: tauri::AppHandle, path: PathBuf, event: &'static str, recursive: bool) {
     use notify::Watcher as _;
@@ -755,6 +802,8 @@ pub fn run() {
             theme_config_write,
             write_file,
             reveal_config_dir,
+            reveal_plugins_dir,
+            plugin_remove,
             plugins_scan,
             http_json,
             browser_open,

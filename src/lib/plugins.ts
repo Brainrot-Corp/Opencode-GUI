@@ -49,8 +49,10 @@ export type PluginExt = {
 export type LoadedPlugin = {
   id: string;
   name: string;
+  dir: string;
   ext: PluginExt | null;
   error: string;
+  disabled: boolean;
 };
 
 // pure manifest reader — node tests exercise this directly
@@ -65,6 +67,37 @@ export function parseManifest(dir: string, raw: string): { id: string; name: str
   } catch {
     return null;
   }
+}
+
+// disabled persistence — localStorage `oc.plugins.disabled` (string[] of ids)
+const DISABLED_KEY = "oc.plugins.disabled";
+
+export function getDisabledIds(): Set<string> {
+  try {
+    const raw = localStorage.getItem(DISABLED_KEY);
+    if (!raw) return new Set();
+    const arr = JSON.parse(raw);
+    if (!Array.isArray(arr)) return new Set();
+    return new Set(arr.filter((x: unknown) => typeof x === "string" && x));
+  } catch {
+    return new Set();
+  }
+}
+
+export function isPluginDisabled(id: string): boolean {
+  return getDisabledIds().has(id);
+}
+
+export function setPluginDisabled(id: string, disabled: boolean): void {
+  const set = getDisabledIds();
+  if (disabled) set.add(id);
+  else set.delete(id);
+  localStorage.setItem(DISABLED_KEY, JSON.stringify([...set]));
+}
+
+export function removeDisabledId(id: string): void {
+  const set = getDisabledIds();
+  if (set.delete(id)) localStorage.setItem(DISABLED_KEY, JSON.stringify([...set]));
 }
 
 // assets of the last load — revoked/replaced wholesale on hot reload
@@ -82,11 +115,22 @@ export async function loadPlugins(): Promise<LoadedPlugin[]> {
     { dir: string; manifest: string; main: string; css: string }[]
   >("plugins_scan").catch(() => []);
 
+  const disabledIds = getDisabledIds();
   const out: LoadedPlugin[] = [];
   for (const d of dirs) {
     try {
       const man = parseManifest(d.dir, d.manifest);
-      if (!man || !d.main.trim()) continue; // empty or half-written folder
+      if (!man) continue;
+      const disabled = disabledIds.has(man.id) || disabledIds.has(d.dir);
+      if (disabled) {
+        out.push({ id: man.id, name: man.name, dir: d.dir, ext: null, error: "", disabled: true });
+        continue;
+      }
+      if (!d.main.trim()) {
+        // empty or half-written folder — surface as error, not disabled
+        out.push({ id: man.id, name: man.name, dir: d.dir, ext: null, error: "missing main.js", disabled: false });
+        continue;
+      }
       const url = URL.createObjectURL(new Blob([d.main], { type: "text/javascript" }));
       const mod = await import(/* @vite-ignore */ url);
       mine.push({ url });
@@ -106,7 +150,10 @@ export async function loadPlugins(): Promise<LoadedPlugin[]> {
         },
       };
       const raw = typeof mod.default === "function" ? await mod.default(api) : null;
-      if (!raw) continue;
+      if (!raw) {
+        out.push({ id: man.id, name: man.name, dir: d.dir, ext: null, error: "", disabled: false });
+        continue;
+      }
       if (typeof d.css === "string" && d.css.trim()) {
         const style = document.createElement("style");
         style.dataset.plugin = man.id;
@@ -114,13 +161,13 @@ export async function loadPlugins(): Promise<LoadedPlugin[]> {
         document.head.appendChild(style);
         mine.push({ style });
       }
-      out.push({ id: man.id, name: man.name, ext: { ...raw, id: man.id, name: man.name }, error: "" });
+      out.push({ id: man.id, name: man.name, dir: d.dir, ext: { ...raw, id: man.id, name: man.name }, error: "", disabled: false });
     } catch (e) {
-      out.push({ id: d.dir, name: d.dir, ext: null, error: e instanceof Error ? e.message : String(e) });
+      out.push({ id: d.dir, name: d.dir, dir: d.dir, ext: null, error: e instanceof Error ? e.message : String(e), disabled: false });
     }
   }
   // plugins can't import host modules — the loader merges their lexicon
-  // contributions (replaced wholesale on hot reload)
-  setPluginLexicon(out.flatMap((p) => p.ext?.lexicon ?? []));
+  // contributions (replaced wholesale on hot reload) — disabled plugins excluded
+  setPluginLexicon(out.flatMap((p) => (p.disabled ? [] : p.ext?.lexicon ?? [])));
   return out;
 }
