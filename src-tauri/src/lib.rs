@@ -266,6 +266,44 @@ fn hide_main(app: &tauri::AppHandle) {
     let _ = app.emit("visibility://changed", false);
 }
 
+// visibility-only toggle shared by the tray icon click and the tray menu —
+// unlike Alt+Space there is no focus check: both are explicit user intents
+fn toggle_main(app: &tauri::AppHandle) {
+    if let Some(w) = app.get_webview_window("main") {
+        if w.is_visible().unwrap_or(false) {
+            hide_main(app);
+        } else {
+            show_main(app);
+        }
+    }
+}
+
+// ground-truth focus check for the Alt+Space toggle: after an interactive
+// resize, tao's internal focus tracking desyncs and is_focused() reports
+// false until a hide/minimize cycle resets it — making the hotkey take the
+// "show" branch on an already-visible window. Ask user32 directly instead.
+#[cfg(windows)]
+fn window_focused(win: &tauri::WebviewWindow) -> bool {
+    // user32 is already linked by the tao/webview stack; GetForegroundWindow
+    // always returns a top-level HWND, so plain equality with the main
+    // window's handle covers child-webview focus too
+    extern "system" {
+        fn GetForegroundWindow() -> *mut std::ffi::c_void;
+    }
+    match win.hwnd() {
+        Ok(h) => {
+            let fg = unsafe { GetForegroundWindow() };
+            fg == h.0
+        }
+        Err(_) => win.is_focused().unwrap_or(false),
+    }
+}
+
+#[cfg(not(windows))]
+fn window_focused(win: &tauri::WebviewWindow) -> bool {
+    win.is_focused().unwrap_or(false)
+}
+
 // TEMP diagnostics — appends frontend errors to %TEMP%\oc-gui-debug.log so
 // they survive a hard renderer crash (remove once the crash is fixed)
 #[tauri::command]
@@ -366,7 +404,7 @@ pub fn run() {
                 } else {
                     if let Some(w) = app.get_webview_window("main") {
                         let visible = w.is_visible().unwrap_or(false);
-                        let focused = w.is_focused().unwrap_or(false);
+                        let focused = window_focused(&w);
                         if visible && focused {
                             hide_main(app);
                         } else {
@@ -392,7 +430,7 @@ pub fn run() {
                 tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
             };
 
-            let show = MenuItem::with_id(app, "show", "Show OpenCode", true, None::<&str>)?;
+            let show = MenuItem::with_id(app, "show", "Show/Hide OpenCode GUI", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&show, &quit])?;
 
@@ -402,7 +440,7 @@ pub fn run() {
                 .menu(&menu)
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id.as_ref() {
-                    "show" => show_main(app),
+                    "show" => toggle_main(app),
                     "quit" => app.exit(0),
                     _ => {}
                 })
@@ -414,13 +452,7 @@ pub fn run() {
                     } = event
                     {
                         let app = tray.app_handle();
-                        if let Some(w) = app.get_webview_window("main") {
-                            if w.is_visible().unwrap_or(false) {
-                                hide_main(app);
-                            } else {
-                                show_main(app);
-                            }
-                        }
+                        toggle_main(app);
                     }
                 })
                 .build(app)?;

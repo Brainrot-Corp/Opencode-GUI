@@ -97,10 +97,10 @@ export default function Titlebar({
         <span className="ctrl-sep" />
         <button
           className="icon-btn"
-          data-tip="Hide to tray"
+          data-tip="Minimize"
           onClick={() => {
             playSound("hide");
-            getCurrentWindow().hide();
+            getCurrentWindow().minimize();
           }}
         >
           <i className="fa-solid fa-minus" />
@@ -117,10 +117,10 @@ export default function Titlebar({
         </button>
         <button
           className="icon-btn close"
-          data-tip="Close"
+          data-tip="Hide to tray"
           onClick={() => {
             playSound("close");
-            window.setTimeout(() => getCurrentWindow().close(), 130);
+            window.setTimeout(() => getCurrentWindow().hide(), 130);
           }}
         >
           <i className="fa-solid fa-xmark" />
