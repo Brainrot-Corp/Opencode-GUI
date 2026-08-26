@@ -76,8 +76,6 @@ export function useVoiceInstall(
     modelId: string = settings.voice.model || VOICE_MODELS[1].id,
     urls?: { binUrl?: string; modelUrl?: string },
   ): Promise<boolean> {
-    const model =
-      VOICE_MODELS.find((m) => m.id === modelId) ?? { id: modelId, label: modelId };
     if (!voice?.bin) {
       if (!(await downloadTo("whisper-bin", urls?.binUrl ?? WHISPER_BIN_URL, "voice engine")))
         return false;
@@ -89,24 +87,20 @@ export function useVoiceInstall(
       }
       setVoice((v) => ({ bin: true, items: v?.items ?? [] }));
     }
-    if (!voice?.items.includes(model.id)) {
-      if (
-        !(await downloadTo(
-          model.id,
-          urls?.modelUrl ?? MODEL_BASE + model.id,
-          model.label ?? model.id,
-        ))
-      )
+    if (!voice?.items.includes(modelId)) {
+      // label is the bare model id — VoicesDialog matches it to mark the
+      // downloading row
+      if (!(await downloadTo(modelId, urls?.modelUrl ?? MODEL_BASE + modelId, modelId)))
         return false;
       try {
-        await invoke("install_model_finalize", { key: model.id, name: model.id });
+        await invoke("install_model_finalize", { key: modelId, name: modelId });
       } catch (e) {
         setErr(String(e));
         return false;
       }
-      setVoice((v) => ({ bin: v?.bin ?? false, items: [...(v?.items ?? []), model.id] }));
+      setVoice((v) => ({ bin: v?.bin ?? false, items: [...(v?.items ?? []), modelId] }));
     }
-    update({ voice: { ...settings.voice, model: model.id } });
+    update({ voice: { ...settings.voice, model: modelId } });
     return true;
   }
 
