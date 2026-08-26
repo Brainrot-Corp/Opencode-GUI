@@ -447,6 +447,9 @@
    because the textarea now stacks above the overlay */
 .comp-input {
   position: relative;
+  /* own stacking context — otherwise the textarea's z-index leaks into
+     composer-row and covers the attach/mic tools below it */
+  z-index: 0;
   background: var(--inset-bg);
 }
 .comp-input textarea {

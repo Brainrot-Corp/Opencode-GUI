@@ -89,6 +89,7 @@ export default function Composer({
   onSend,
   onAbort,
   onToggleDiff,
+  onToggleTerm,
   onPickWorkspace,
   workspace,
   commands,
@@ -118,6 +119,7 @@ export default function Composer({
   onSend: (text: string, files?: Attachment[]) => void;
   onAbort: () => void;
   onToggleDiff?: () => void;
+  onToggleTerm?: () => void;
   onPickWorkspace?: () => void;
   workspace?: string;
   commands?: CmdEntry[];
@@ -498,6 +500,16 @@ export default function Composer({
             onClick={onToggleDiff}
           >
             <i className="fa-solid fa-code-compare" />
+          </button>
+        )}
+        {onToggleTerm && (
+          <button
+            type="button"
+            className="icon-btn diff-btn"
+            data-tip="Terminal (Ctrl+`)"
+            onClick={onToggleTerm}
+          >
+            <i className="fa-solid fa-square-terminal" />
           </button>
         )}
       </div>

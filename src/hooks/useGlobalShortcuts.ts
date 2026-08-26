@@ -29,6 +29,7 @@ export function useGlobalShortcuts({
   activeModes,
   onCycleSessions,
   onCloseSession,
+  onToggleTerm,
 }: {
   settings: AppSettings;
   update: (patch: Partial<AppSettings>) => void;
@@ -46,6 +47,8 @@ export function useGlobalShortcuts({
   onCycleSessions?: (dir: 1 | -1) => void;
   // Ctrl+W close active session — ChatPage owns empty-vs-confirm logic
   onCloseSession?: () => void;
+  // Ctrl+` toggles the terminal dock
+  onToggleTerm?: () => void;
 }) {
   // double-Escape stop gesture — armed by the first free Escape (the stop
   // button surfaces the window as a draining countdown ring), landed by the
@@ -125,6 +128,8 @@ export function useGlobalShortcuts({
     let last = 0;
     const key = (e: KeyboardEvent) => {
       if (e.key !== "Escape" || e.repeat) return;
+      // Escape inside the terminal belongs to the shell (vim et al.)
+      if ((e.target as HTMLElement)?.closest?.(".term-dock")) return;
       if (document.querySelector(OVERLAY_SEL)) {
         clearStopArmed();
         return;
@@ -209,6 +214,20 @@ export function useGlobalShortcuts({
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
   }, [onCloseSession]);
+
+  // Ctrl+` toggles the terminal dock — e.code (physical backtick) so it
+  // fires on layouts where the character needs Shift
+  useEffect(() => {
+    if (!onToggleTerm) return;
+    const key = (e: KeyboardEvent) => {
+      if (!e.ctrlKey || e.altKey || e.code !== "Backquote") return;
+      e.preventDefault();
+      playSound("click");
+      onToggleTerm();
+    };
+    window.addEventListener("keydown", key);
+    return () => window.removeEventListener("keydown", key);
+  }, [onToggleTerm]);
 
   // Rust emits visibility://changed on tray click / Alt+Space / tray menu
   useEffect(() => {

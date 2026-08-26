@@ -75,6 +75,8 @@ src/
 │   ├── MessageList.tsx   markdown rendering, tool lines, autoscroll follower, hover rewind
 │   ├── Composer.tsx      input, model picker, workspace + diff toggles, send/stop
 │   ├── PermissionBar.tsx approve/deny floating dialog
+│   ├── Terminal.tsx      bottom-dock terminal (xterm.js over Rust ConPTY pty.rs;
+│   │                     keep-alive while hidden, Ctrl+` toggle)
 │   ├── DiffPanel.tsx     session diff overlay (colors the server's unified patch)
 │   ├── SettingsDrawer.tsx themes, custom colors, ui scale, sounds, workspace
 │   ├── ThemeSelect.tsx   titlebar theme dropdown

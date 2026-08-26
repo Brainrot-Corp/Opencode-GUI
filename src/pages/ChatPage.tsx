@@ -11,6 +11,7 @@ import BrowserBar, { BROWSER_BAR_H } from "../components/BrowserBar";
 import SettingsDrawer from "../components/SettingsDrawer";
 import Onboarding from "../components/Onboarding";
 import DiffPanel from "../components/DiffPanel";
+import TerminalPanel from "../components/Terminal";
 import TooltipLayer from "../components/TooltipLayer";
 import { HelpDialog, ShareDialog, VariantsDialog } from "../components/CommandDialog";
 import { useOpencode } from "../hooks/useOpencode";
@@ -51,6 +52,10 @@ export default function ChatPage() {
   );
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [diffOpen, setDiffOpen] = useState(false);
+  // terminal dock visibility (height lives inside TerminalPanel)
+  const [termOpen, setTermOpen] = useState(
+    () => localStorage.getItem("oc.term.open") === "1",
+  );
   // first-launch setup wizard — any close records the flag so it shows once
   const [onboardOpen, setOnboardOpen] = useState(
     () => localStorage.getItem("oc.onboarded") !== "1",
@@ -135,6 +140,7 @@ export default function ChatPage() {
     activeModes,
     onCycleSessions: cycleSessions,
     onCloseSession: closeActiveSession,
+    onToggleTerm: () => setTermOpen((v) => !v),
   });
 
   // spoken rendering of a voice act — used to read embedded commands back
@@ -454,6 +460,9 @@ export default function ChatPage() {
   useEffect(() => {
     localStorage.setItem(SB_C_KEY, sbClosed ? "1" : "0");
   }, [sbClosed]);
+  useEffect(() => {
+    localStorage.setItem("oc.term.open", termOpen ? "1" : "0");
+  }, [termOpen]);
 
   const startResize = useCallback(
     (e: React.MouseEvent) => {
@@ -657,6 +666,7 @@ export default function ChatPage() {
                   onSend={oc.submit}
                   onAbort={oc.abort}
                   onToggleDiff={() => setDiffOpen((v) => !v)}
+                  onToggleTerm={() => setTermOpen((v) => !v)}
                   onPickWorkspace={() => pickWorkspace()}
                   workspace={settings.workspace}
                   commands={oc.cmdList}
@@ -676,6 +686,11 @@ export default function ChatPage() {
                 />
               </>
             )}
+            <TerminalPanel
+              open={termOpen}
+              workspace={settings.workspace}
+              onClose={() => setTermOpen(false)}
+            />
           </div>
         </div>
         {oc.dialog?.kind === "help" && (

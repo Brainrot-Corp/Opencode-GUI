@@ -18,6 +18,9 @@ tts_remove_voice, tts_speak, tts_status, voice_download, voice_remove_all, voice
 mod git;
 use git::{git_commit, git_diff, git_discard, git_log, git_pull, git_push, git_stage, git_status, git_unstage};
 
+mod pty;
+use pty::{pty_kill, pty_resize, pty_spawn, pty_write, PtyState};
+
 struct ServerState {
     port: u16,
     child: Mutex<Option<Child>>,
@@ -784,6 +787,10 @@ pub fn run() {
             git_pull,
             git_diff,
             git_log,
+            pty_spawn,
+            pty_write,
+            pty_resize,
+            pty_kill,
             set_tray_reset,
             hide_to_tray,
             debug_log,
@@ -897,6 +904,7 @@ pub fn run() {
             };
             app.manage(state);
             app.manage(browser::BrowserState::default());
+            app.manage(PtyState::default());
             let h = app.handle().clone();
             watch_dir(h.clone(), themes_dir(), "themes://changed", false);
             watch_dir(h, plugins_dir(), "plugins://changed", true);
@@ -944,6 +952,17 @@ pub fn run() {
                     .take()
                 {
                     let _ = child.kill();
+                }
+                // terminal shell dies with the app
+                if let Some(ses) = _app_handle
+                    .state::<PtyState>()
+                    .inner()
+                    .0
+                    .lock()
+                    .unwrap()
+                    .take()
+                {
+                    ses.kill();
                 }
             }
         });

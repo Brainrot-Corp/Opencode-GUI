@@ -1,0 +1,88 @@
+/* terminal dock: flush bottom panel inside .main, glass header, mono body */
+
+.term-dock {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  background: linear-gradient(
+    180deg,
+    rgba(var(--surf-rgb), calc(var(--surf-a) * 1.1)),
+    rgba(var(--surf-rgb), var(--surf-a))
+  );
+  border-top: 1px solid var(--line);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.045);
+  transition: height 0.25s var(--ease), border-color 0.4s;
+}
+.term-dock.closed {
+  border-top-color: transparent;
+}
+.term-dock.dragging {
+  transition: none;
+}
+
+/* drag handle — vertical twin of .sb-resize */
+.term-resize {
+  height: 5px;
+  flex-shrink: 0;
+  cursor: row-resize;
+}
+.term-resize:hover {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.term-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 30px;
+  padding: 0 8px;
+  flex-shrink: 0;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  user-select: none;
+  border-bottom: 1px solid var(--line);
+}
+.term-head > i {
+  font-size: 12px;
+  color: var(--accent);
+  opacity: 0.85;
+}
+.term-spacer {
+  flex: 1;
+}
+.term-err {
+  color: var(--danger);
+  text-transform: none;
+  letter-spacing: 0.02em;
+}
+/* compact icon buttons inside the strip */
+.term-head .icon-btn {
+  width: 26px;
+  height: 22px;
+  margin-right: 0;
+}
+.term-head .icon-btn i {
+  font-size: 11px;
+}
+
+.term-body {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+/* xterm measures its parent — the mount is the sizing box, inset by the
+   6px spacing unit */
+.term-mount {
+  position: absolute;
+  inset: 6px 10px 10px;
+}
+.term-mount .xterm {
+  height: 100%;
+}
