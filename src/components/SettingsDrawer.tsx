@@ -43,6 +43,7 @@ export default function SettingsDrawer({
   onTogglePlugin,
   onRemoveDisabled,
   upd: updProp,
+  onDebugUpdate,
 }: {
   open: boolean;
   onClose: () => void;
@@ -70,6 +71,7 @@ export default function SettingsDrawer({
   onTogglePlugin?: (id: string, enabled: boolean) => void;
   onRemoveDisabled?: (id: string) => void;
   upd?: ReturnType<typeof useUpdaterInternal>;
+  onDebugUpdate?: () => void;
 }) {
   // custom themes have no stored color entry yet — cyan's shared base is the
   // starting point until the user overrides it
@@ -516,6 +518,20 @@ export default function SettingsDrawer({
               }}
             >
               <span className="knob" />
+            </button>
+          </div>
+
+          <div className="setting-row">
+            <div className="setting-info">
+              <i className="fa-solid fa-bug setting-icon" />
+              <div>
+                <div className="setting-name">Debug update prompt</div>
+                <div className="setting-desc">Preview the launch update dialog</div>
+              </div>
+            </div>
+            <button type="button" className="reset-btn" onClick={() => onDebugUpdate?.()}>
+              <i className="fa-solid fa-eye" />
+              Show
             </button>
           </div>
 

@@ -84,6 +84,7 @@ export default function ChatPage() {
   const [updDismissed, setUpdDismissed] = useState(
     () => localStorage.getItem("oc.update.dismissed") || "",
   );
+  const [debugUpdateForced, setDebugUpdateForced] = useState(false);
 
   const [sbW, setSbW] = useState(() => {
     const w = Number(localStorage.getItem(SB_W_KEY)) || 248;
@@ -543,13 +544,28 @@ export default function ChatPage() {
     setSettingsOpen(false);
   }
 
+  const debugUpdateInfo = debugUpdateForced
+    ? {
+        version: "9.9.9",
+        notes: "Debug preview — this is how the update prompt looks. No download will start.",
+        url: "",
+        sha256: "",
+      }
+    : null;
+
   const showUpdatePrompt =
     !onboardOpen &&
-    settings.updateNotifications &&
-    !!upd.latest &&
-    upd.latest.version !== updDismissed;
+    (!!debugUpdateInfo ||
+      (settings.updateNotifications && !!upd.latest && upd.latest.version !== updDismissed));
+
+  const promptInfo = debugUpdateInfo ?? upd.latest;
 
   function handleUpdateDismiss(disable: boolean) {
+    if (debugUpdateForced) {
+      setDebugUpdateForced(false);
+      if (disable) update({ updateNotifications: false });
+      return;
+    }
     if (disable) {
       update({ updateNotifications: false });
     } else if (upd.latest) {
@@ -557,6 +573,16 @@ export default function ChatPage() {
       setUpdDismissed(upd.latest.version);
     } else {
       setUpdDismissed("1");
+    }
+  }
+
+  function handleDebugUpdate() {
+    if (upd.latest) {
+      localStorage.removeItem("oc.update.dismissed");
+      setUpdDismissed("");
+      setDebugUpdateForced(false);
+    } else {
+      setDebugUpdateForced(true);
     }
   }
 
@@ -596,19 +622,26 @@ export default function ChatPage() {
             providers={oc.providers}
           />
         )}
-        {showUpdatePrompt && upd.latest && (
+        {(showUpdatePrompt || debugUpdateForced) && promptInfo && (
           <UpdatePrompt
-            info={upd.latest}
+            info={promptInfo}
             curVer={upd.ver}
             busy={upd.busy}
             downloading={upd.downloading}
             err={upd.err}
-            onUpdate={() => void upd.install()}
+            onUpdate={() => {
+              if (debugUpdateForced && !upd.latest) {
+                setDebugUpdateForced(false);
+                return;
+              }
+              void upd.install();
+            }}
             onDismiss={handleUpdateDismiss}
           />
         )}
         <SettingsDrawer
           upd={upd}
+          onDebugUpdate={handleDebugUpdate}
           open={settingsOpen}
           providers={oc.providers}
           commands={oc.cmdList}
