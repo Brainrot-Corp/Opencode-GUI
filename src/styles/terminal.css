@@ -80,12 +80,12 @@
   flex: 1;
   min-height: 0;
 }
-/* xterm measures its parent — the mount is the sizing box. Flush: no inset,
-   no padding, no border — text starts at the dock's edges like a real
-   terminal pane. No padding on .xterm either: FitAddon measures this box */
+/* xterm measures its parent — the mount is the sizing box, so the 6px
+   spacing-unit inset IS the text padding (padding on .xterm itself would
+   desync FitAddon's column math). No border, no fill */
 .term-mount {
   position: absolute;
-  inset: 0;
+  inset: 6px;
 }
 .term-mount .xterm {
   height: 100%;
