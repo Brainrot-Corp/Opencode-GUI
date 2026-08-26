@@ -105,6 +105,13 @@ export default function TerminalPanel({
   const retriesRef = useRef(0);
   // set after killAndRespawn is defined — breaks the spawn↔respawn cycle
   const respawnRef = useRef<() => void>(() => {});
+  // set after fitNow is defined — spawn needs to re-fit once the shell is
+  // alive, but fitNow is declared later in the component body
+  const fitNowRef = useRef<() => void>(() => {});
+  // last size actually sent to the ConPTY — skips redundant resizes (the
+  // RO + window listener would otherwise re-send the same size dozens of
+  // times a second, churning PSReadLine's redraw mid-output)
+  const lastResizeRef = useRef<{ c: number; r: number }>({ c: 0, r: 0 });
 
   const [h, setH] = useState(() => clampH(Number(localStorage.getItem(H_KEY)) || 240));
   const [dead, setDead] = useState(false);
@@ -122,6 +129,9 @@ export default function TerminalPanel({
     try {
       await invoke("pty_spawn", { cwd: wsRef.current ?? "", gen });
       aliveRef.current = true;
+      // fits that ran before the shell existed were skipped (sent=false) —
+      // push the current size now that a session is alive
+      setTimeout(() => fitNowRef.current(), 60);
       // self-heal watchdog: if the shell never delivers a frame within 5s,
       // kill it and respawn once — a wedged ConPTY otherwise leaves a dead
       // cursor forever
@@ -182,6 +192,11 @@ export default function TerminalPanel({
       cursorBlink: true,
       scrollback: 5000,
       allowTransparency: true,
+      // TermHighlighter collapses PowerShell's \r\n to bare \n for buffered
+      // lines; without convertEol xterm keeps the column on LF, so every line
+      // starts where the previous one ended (cascading offset). Treat LF as a
+      // full newline like Windows Terminal / VS Code do.
+      convertEol: true,
       theme: termTheme(),
     });
     termRef.current = term;
@@ -257,25 +272,21 @@ export default function TerminalPanel({
     } catch {
       return;
     }
-    if (
-      !next ||
-      !Number.isFinite(next.cols) ||
-      !Number.isFinite(next.rows) ||
-      next.cols < 2 ||
-      next.rows < 2 ||
-      next.cols > 1000 ||
-      next.rows > 1000
-    )
+    if (!next || !Number.isFinite(next.cols) || !Number.isFinite(next.rows) || next.cols < 2 || next.rows < 2 || next.cols > 1000 || next.rows > 1000)
       return;
     try {
       fit.fit();
     } catch {
       return;
     }
+    if (next.cols === lastResizeRef.current.c && next.rows === lastResizeRef.current.r) {
+      return; // unchanged — no ConPTY churn
+    }
+    lastResizeRef.current = { c: next.cols, r: next.rows };
     if (aliveRef.current)
       invoke("pty_resize", { cols: next.cols, rows: next.rows }).catch(() => {});
   }, []);
-
+  fitNowRef.current = fitNow;
   // full rebuild is delegated to the parent via a key bump: React unmounts
   // this panel (teardown effect kills the PTY, listeners unsubscribe) and
   // mounts a fresh one that boots xterm and spawns a new shell exactly like
@@ -338,7 +349,10 @@ export default function TerminalPanel({
   );
 
   // container resizes (panel drag, window resize, open/close collapse) drive
-  // both the renderer grid and the PTY size — coalesced to one fit per frame
+  // both the renderer grid and the PTY size — coalesced to one fit per frame.
+  // The RO on .term-body is the single source: window resizes propagate to the
+  // dock/body layout, so no separate window listener is needed (it would just
+  // double-fire the same fit). Change-detection in fitNow skips re-sends.
   useEffect(() => {
     const el = bodyRef.current;
     if (!el) return;
