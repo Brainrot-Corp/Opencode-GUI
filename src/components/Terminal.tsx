@@ -18,6 +18,10 @@ const H_KEY = "oc.term.h";
 const H_MIN = 120;
 const H_DEFAULT = 240;
 
+// monotonic PTY generation counter — module-scoped so it survives panel
+// remounts (reload). See the note at genRef below.
+let ptyGen = 0;
+
 const clampH = (h: number) =>
   Math.min(Math.max(H_MIN, Math.floor(h)), Math.floor(window.innerHeight * 0.7));
 
@@ -67,10 +71,12 @@ export default function TerminalPanel({
   open,
   workspace,
   onClose,
+  onReload,
 }: {
   open: boolean;
   workspace?: string;
   onClose: () => void;
+  onReload: () => void;
 }) {
   const bodyRef = useRef<HTMLDivElement>(null);
   const mountRef = useRef<HTMLDivElement>(null);
@@ -86,8 +92,19 @@ export default function TerminalPanel({
   const openRef = useRef(open);
   const roRafRef = useRef(0);
   // session generation — every spawn bumps it; frames tagged with older
-  // generations are dropped so dead shells can't bleed into this view
-  const genRef = useRef(0);
+  // generations are dropped so dead shells can't bleed into this view.
+  // MODULE-LEVEL on purpose: reload remounts this component, and a per-instance
+  // counter would restart at 1 — making the old panel's teardown kill (gen 1)
+  // collide with the fresh panel's first spawn (also gen 1) and kill it.
+  const genRef = useRef(ptyGen);
+  // last frame timestamp + watchdog id — used to detect a shell that spawned
+  // but never delivers output (Windows ConPTY quirk after a respawn) so we can
+  // self-heal with one kill+respawn instead of leaving a dead cursor
+  const frameAtRef = useRef(0);
+  const watchdogRef = useRef(0);
+  const retriesRef = useRef(0);
+  // set after killAndRespawn is defined — breaks the spawn↔respawn cycle
+  const respawnRef = useRef<() => void>(() => {});
 
   const [h, setH] = useState(() => clampH(Number(localStorage.getItem(H_KEY)) || 240));
   const [dead, setDead] = useState(false);
@@ -100,13 +117,30 @@ export default function TerminalPanel({
     // fresh shell → fresh screen; without this a respawn appends its banner
     // onto whatever the previous session left in the buffer
     termRef.current?.reset();
-    const gen = ++genRef.current;
+    const gen = ++ptyGen;
+    genRef.current = gen;
     try {
       await invoke("pty_spawn", { cwd: wsRef.current ?? "", gen });
       aliveRef.current = true;
+      // self-heal watchdog: if the shell never delivers a frame within 5s,
+      // kill it and respawn once — a wedged ConPTY otherwise leaves a dead
+      // cursor forever
+      frameAtRef.current = 0;
+      window.clearTimeout(watchdogRef.current);
+      watchdogRef.current = window.setTimeout(() => {
+        if (frameAtRef.current !== 0 || !aliveRef.current) return;
+        if (retriesRef.current >= 2) {
+          setErr("shell produced no output");
+          return;
+        }
+        retriesRef.current += 1;
+        console.error(`[term] no output for gen=${gen} — respawning`);
+        respawnRef.current();
+      }, 5000);
     } catch (e) {
       aliveRef.current = false;
-      setErr(e instanceof Error ? e.message : String(e));
+      const msg = e instanceof Error ? e.message : String(e);
+      setErr(msg);
     }
   }, []);
 
@@ -114,8 +148,11 @@ export default function TerminalPanel({
   // app deliberately keeps no background shells) and as half of respawn flows
   const killSession = useCallback(async () => {
     suppressExitRef.current = true;
-    ++genRef.current; // any frames the dying shell still emits get dropped
-    await invoke("pty_kill").catch(() => {});
+    window.clearTimeout(watchdogRef.current);
+    const gen = genRef.current; // the live session's gen — pty_kill is gen-tagged
+    ++ptyGen; // any frames the dying shell still emits get dropped
+    genRef.current = ptyGen;
+    await invoke("pty_kill", { gen }).catch(() => {});
     termRef.current?.reset();
     aliveRef.current = false;
     setTimeout(() => {
@@ -130,6 +167,7 @@ export default function TerminalPanel({
     await killSession();
     await spawn();
   }, [killSession, spawn]);
+  respawnRef.current = killAndRespawn;
 
   // one-time boot on first open. NO cleanup on close — the whole point is
   // that hide/show leaves the shell running; teardown lives in the
@@ -190,6 +228,7 @@ export default function TerminalPanel({
         const bin = atob(e.payload.d);
         const bytes = new Uint8Array(bin.length);
         for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+        frameAtRef.current = performance.now();
         hlRef.current.write(bytes);
       }),
       listen<{ g: number }>("pty://exit", (e) => {
@@ -237,29 +276,14 @@ export default function TerminalPanel({
       invoke("pty_resize", { cols: next.cols, rows: next.rows }).catch(() => {});
   }, []);
 
-  // full rebuild — disposes xterm and the highlight filter, then spawns a
-  // fresh shell (new generation). The guaranteed escape hatch when renderer
-  // state corrupts in any way; transport wiring persists untouched
+  // full rebuild is delegated to the parent via a key bump: React unmounts
+  // this panel (teardown effect kills the PTY, listeners unsubscribe) and
+  // mounts a fresh one that boots xterm and spawns a new shell exactly like
+  // first open — no in-place dispose/reboot races to reason about
   const reloadTerm = useCallback(() => {
     playSound("click");
-    hlRef.current?.dispose();
-    hlRef.current = null;
-    termRef.current?.dispose();
-    termRef.current = null;
-    fitRef.current = null;
-    bootedRef.current = false;
-    suppressExitRef.current = true;
-    void invoke("pty_kill")
-      .catch(() => {})
-      .then(() => {
-        boot();
-        void spawn();
-        setTimeout(() => {
-          suppressExitRef.current = false;
-          if (openRef.current) termRef.current?.focus();
-        }, 80);
-      });
-  }, [boot, spawn]);
+    onReload();
+  }, [onReload]);
 
   // theme applications write the palette as inline CSS vars / data attrs on
   // <html> — watch instead of guessing when. This covers every path: the
@@ -303,9 +327,12 @@ export default function TerminalPanel({
   // full teardown only when the app/page itself goes away
   useEffect(
     () => () => {
+      window.clearTimeout(watchdogRef.current);
       hlRef.current?.dispose();
       termRef.current?.dispose();
-      void invoke("pty_kill").catch(() => {});
+      // gen-tagged: on a reload remount this fires against the old session's
+      // gen, so it can't kill the fresh session the new panel just spawned
+      void invoke("pty_kill", { gen: genRef.current }).catch(() => {});
     },
     [],
   );

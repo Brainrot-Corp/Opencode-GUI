@@ -57,6 +57,9 @@ export default function ChatPage() {
   const [termOpen, setTermOpen] = useState(
     () => localStorage.getItem("oc.term.open") === "1",
   );
+  // reload = full remount (bumped by the panel's reload button); a fresh mount
+  // boots xterm + spawns a shell exactly like first open — no in-place rebuild
+  const [termKey, setTermKey] = useState(0);
   // first-launch setup wizard — any close records the flag so it shows once
   const [onboardOpen, setOnboardOpen] = useState(
     () => localStorage.getItem("oc.onboarded") !== "1",
@@ -688,9 +691,11 @@ export default function ChatPage() {
               </>
             )}
             <TerminalPanel
+              key={termKey}
               open={termOpen}
               workspace={settings.workspace}
               onClose={() => setTermOpen(false)}
+              onReload={() => setTermKey((k) => k + 1)}
             />
           </div>
         </div>

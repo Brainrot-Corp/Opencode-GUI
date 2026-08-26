@@ -5,18 +5,26 @@
 // read boundaries), exit signals on "pty://exit".
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
 use std::io::Read;
-use std::sync::Mutex;
-use std::time::{Duration, Instant};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use tauri::{AppHandle, Emitter, State};
 
 pub struct PtySession {
+    gen: u64,
     writer: Mutex<Box<dyn std::io::Write + Send>>,
     master: Mutex<Box<dyn MasterPty + Send>>,
     child: Mutex<Box<dyn Child + Send + Sync>>,
+    // set just before the child is killed. The reader thread owns only a clone
+    // of this flag (NOT the session — holding the session would keep the
+    // ConPTY master alive and its blocking read would never see EOF after a
+    // kill). Set + master dropped = ClosePseudoConsole = the pending read
+    // unblocks and the reader exits.
+    killed: Arc<AtomicBool>,
 }
 
 #[derive(Default)]
-pub struct PtyState(pub Mutex<Option<std::sync::Arc<PtySession>>>);
+pub struct PtyState(pub Mutex<Option<Arc<PtySession>>>);
 
 fn shell() -> String {
     std::env::var("SHELL").unwrap_or_else(|_| "powershell.exe".into())
@@ -34,7 +42,23 @@ fn workdir(cwd: &str) -> std::path::PathBuf {
 
 impl PtySession {
     pub fn kill(&self) {
+        self.killed.store(true, Ordering::Relaxed);
         let _ = self.child.lock().unwrap_or_else(|e| e.into_inner()).kill();
+    }
+}
+
+// takes the live session out of the slot, marks it killed and terminates the
+// child. Dropping the returned Arc runs the master's Drop → ClosePseudoConsole
+// → the old reader's blocked read unblocks with EOF and the thread exits, so
+// the ConPTY is fully torn down before the caller continues.
+fn kill_and_close(slot: &mut Option<Arc<PtySession>>) {
+    if let Some(old) = slot.take() {
+        old.kill();
+        // ClosePseudoConsole returns before the conhost has fully detached;
+        // a fresh CreatePseudoConsole in that window can come up wedged (the
+        // shell starts but never delivers output to the master). Give the
+        // old console host a beat to finish tearing down.
+        std::thread::sleep(Duration::from_millis(150));
     }
 }
 
@@ -50,80 +74,69 @@ pub fn pty_spawn(
     gen: u64,
 ) -> Result<(), String> {
     let mut slot = state.inner().0.lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(old) = slot.take() {
-        old.kill();
-    }
+    kill_and_close(&mut slot);
 
     let pair = native_pty_system()
         .openpty(PtySize { rows: 24, cols: 80, pixel_width: 0, pixel_height: 0 })
         .map_err(|e| e.to_string())?;
-    let mut cmd = CommandBuilder::new(shell());
+    let shell_cmd = shell();
+    let mut cmd = CommandBuilder::new(shell_cmd.clone());
+    if shell_cmd.to_lowercase().contains("powershell") || shell_cmd.to_lowercase().contains("pwsh") {
+        cmd.arg("-NoLogo");
+        cmd.arg("-NoExit");
+    }
     cmd.cwd(workdir(&cwd));
-    let child = pair.slave.spawn_command(cmd).map_err(|e| format!("{}: {e}", shell()))?;
+    let child = pair.slave.spawn_command(cmd).map_err(|e| format!("{}: {e}", shell_cmd))?;
     // slave must drop before reads EOF correctly on exit
     drop(pair.slave);
 
     let mut reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
     let writer = pair.master.take_writer().map_err(|e| e.to_string())?;
 
-    let session = std::sync::Arc::new(PtySession {
+    let session = Arc::new(PtySession {
+        gen,
         writer: Mutex::new(writer),
         master: Mutex::new(pair.master),
         child: Mutex::new(child),
+        killed: Arc::new(AtomicBool::new(false)),
     });
 
-    // coalesce reads into ≥8ms frames (or 64KB) so fast output doesn't flood
-    // IPC. A read error is NOT death: ConPTY aborts outstanding reads on
-    // resize, so retry until the child process is really gone — otherwise
-    // every drag of the size handle would "exit" the shell
+    // emits one frame per read (≤8KB). The old coalescing (≥64KB or ≥8ms
+    // elapsed, checked only on the NEXT read) held a lone startup burst in
+    // pending forever — a fresh shell wrote its whole prompt in one read and
+    // no frame was ever emitted, so reloads looked like they produced no
+    // output. The frontend highlighter already reassembles UTF-8 and escape
+    // sequences split across frames.
     let emitter = app.clone();
-    let reader_session = session.clone();
+    let killed = session.killed.clone();
     std::thread::spawn(move || {
         let mut buf = [0u8; 8192];
-        let mut pending: Vec<u8> = Vec::new();
-        let mut last = Instant::now();
+        let mut total = 0usize;
         use base64::Engine as _;
+        let mut reason = "eof";
         loop {
             match reader.read(&mut buf) {
                 Ok(0) => break,
                 Ok(n) => {
-                    pending.extend_from_slice(&buf[..n]);
-                    if pending.len() >= 64 * 1024 || last.elapsed() >= Duration::from_millis(8) {
-                        let _ = emitter.emit(
-                            "pty://frame",
-                            serde_json::json!({
-                                "g": gen,
-                                "d": base64::engine::general_purpose::STANDARD.encode(&pending)
-                            }),
-                        );
-                        pending.clear();
-                        last = Instant::now();
-                    }
+                    total += n;
+                    let _ = emitter.emit(
+                        "pty://frame",
+                        serde_json::json!({
+                            "g": gen,
+                            "d": base64::engine::general_purpose::STANDARD.encode(&buf[..n])
+                        }),
+                    );
                 }
                 Err(_) => {
-                    let dead = reader_session
-                        .child
-                        .lock()
-                        .unwrap_or_else(|e| e.into_inner())
-                        .try_wait()
-                        .map(|o| o.is_some())
-                        .unwrap_or(true);
-                    if dead {
+                    if killed.load(Ordering::Relaxed) {
+                        reason = "killed";
                         break;
                     }
                     std::thread::sleep(Duration::from_millis(20));
                 }
             }
         }
-        if !pending.is_empty() {
-            let _ = emitter.emit(
-                "pty://frame",
-                serde_json::json!({
-                    "g": gen,
-                    "d": base64::engine::general_purpose::STANDARD.encode(&pending)
-                }),
-            );
-        }
+        eprintln!("[pty] reader exit gen={gen} reason={reason} total={total}B");
         let _ = emitter.emit("pty://exit", serde_json::json!({ "g": gen }));
     });
 
@@ -161,11 +174,14 @@ pub fn pty_resize(state: State<'_, PtyState>, cols: u16, rows: u16) -> Result<()
 }
 
 // user-invoked restart (or teardown): kills the shell; the reader thread
-// emits pty://exit on its own
+// emits pty://exit on its own. `gen` must match the session's spawn gen —
+// a stale kill from a superseded panel must NOT be able to kill the session
+// that replaced it (reload = remount races teardown-kill vs fresh-spawn)
 #[tauri::command]
-pub fn pty_kill(state: State<'_, PtyState>) -> Result<(), String> {
-    if let Some(ses) = state.inner().0.lock().unwrap_or_else(|e| e.into_inner()).take() {
-        ses.kill();
+pub fn pty_kill(state: State<'_, PtyState>, gen: u64) -> Result<(), String> {
+    let mut slot = state.inner().0.lock().unwrap_or_else(|e| e.into_inner());
+    if slot.as_ref().map(|s| s.gen) == Some(gen) {
+        kill_and_close(&mut slot);
     }
     Ok(())
 }
