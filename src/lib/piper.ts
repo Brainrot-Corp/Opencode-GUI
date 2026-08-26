@@ -122,6 +122,88 @@ async function fetchCatalogPages(): Promise<string[]> {
   return [...ids];
 }
 
+// --- whisper STT model catalog — same live-fetch pattern as the piper
+// catalog: HF tree API through http_json, localStorage cache, static slice
+// as offline fallback
+const WHISPER_CATALOG_API = "https://huggingface.co/api/models/ggerganov/whisper.cpp/tree/main";
+const WHISPER_CACHE_KEY = "oc.whisper.catalog";
+
+export type WhisperModel = { id: string; label: string };
+type WhisperFile = { id: string; size: number };
+
+// pure parser — node tests exercise this directly. keeps real engine models
+// (skips CoreML dumps and CI fixtures), smallest download first
+export function parseWhisperCatalog(body: string): WhisperFile[] {
+  let j: unknown;
+  try {
+    j = JSON.parse(body);
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(j)) return [];
+  const out = new Map<string, number>();
+  for (const f of j) {
+    const e = f as { path?: unknown; size?: unknown };
+    if (
+      typeof e.path !== "string" ||
+      !e.path.startsWith("ggml-") ||
+      !e.path.endsWith(".bin") ||
+      e.path.includes(".ml.") ||
+      e.path.startsWith("for-tests")
+    )
+      continue;
+    out.set(e.path, typeof e.size === "number" ? e.size : 0);
+  }
+  return [...out].map(([id, size]) => ({ id, size })).sort((a, b) => a.size - b.size);
+}
+
+// "ggml-large-v3-turbo-q5_0.bin" → "large-v3-turbo-q5_0 · 548 MB · fast"
+// (quant suffix stays — it distinguishes same-model variants)
+export function whisperLabel(id: string, size: number): string {
+  const name = id.replace(/^ggml-/, "").replace(/\.bin$/, "");
+  const hints: string[] = [];
+  if (/\.en$/.test(name)) hints.push("English-only");
+  if (name.includes("turbo")) hints.push("fast");
+  const mb = size > 0 ? `${Math.round(size / 1048576)} MB` : "";
+  return [name, mb, ...hints].filter(Boolean).join(" · ");
+}
+
+// tiny | base | small | medium | large — browser grouping key
+export function wmGroup(id: string): string {
+  return id.replace(/^ggml-/, "").split(/[.-]/)[0];
+}
+
+// cached model list; falls back to the curated static slice offline
+export async function loadWhisperCatalog(force = false): Promise<WhisperModel[]> {
+  if (!force) {
+    try {
+      const raw = localStorage.getItem(WHISPER_CACHE_KEY);
+      if (raw) {
+        const c = JSON.parse(raw) as { at: number; models: WhisperModel[] };
+        if (Array.isArray(c.models) && c.models.length > 0 && Date.now() - c.at < CACHE_TTL)
+          return c.models;
+      }
+    } catch {}
+  }
+  try {
+    const r = await invoke<Page>("http_json", {
+      method: "GET",
+      url: WHISPER_CATALOG_API,
+      headers: {},
+      body: null,
+    });
+    const models = parseWhisperCatalog(r.body).map((e) => ({
+      id: e.id,
+      label: whisperLabel(e.id, e.size),
+    }));
+    if (models.length) {
+      localStorage.setItem(WHISPER_CACHE_KEY, JSON.stringify({ at: Date.now(), models }));
+      return models;
+    }
+  } catch {}
+  return [...VOICE_MODELS];
+}
+
 // cached full catalog; falls back to the curated static slice offline
 export async function loadPiperCatalog(force = false): Promise<string[]> {
   if (!force) {

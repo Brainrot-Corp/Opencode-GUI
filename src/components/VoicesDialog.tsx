@@ -3,7 +3,7 @@ import type { AppSettings } from "../hooks/useSettings";
 import { useVoiceInstall } from "../hooks/useVoiceInstall";
 import PickerMenu from "./PickerMenu";
 import Dialog from "./Dialog";
-import { VOICE_MODELS, PIPER_LANGS, piperLabel, loadPiperCatalog } from "../lib/piper";
+import { PIPER_LANGS, piperLabel, loadPiperCatalog, loadWhisperCatalog, wmGroup, type WhisperModel } from "../lib/piper";
 
 // centered glass dialog hosting everything speech-related: tab "Options"
 // carries the whole former Settings Voice box (whisper engine, hands-free,
@@ -20,7 +20,7 @@ export default function VoicesDialog({
   settings: AppSettings;
   update: (patch: Partial<AppSettings>) => void;
 }) {
-  const [tab, setTab] = useState<"options" | "voices">("options");
+  const [tab, setTab] = useState<"options" | "voices" | "models">("options");
   // download/install pipeline lives in the shared hook (also feeds the
   // onboarding wizard)
   const inst = useVoiceInstall(settings, update);
@@ -48,6 +48,18 @@ export default function VoicesDialog({
       .finally(() => setCatLoading(false));
   }, [open, tab, catLoading, catalog.length]);
 
+  // whisper model catalog — same lazy per-tab-session load
+  const [wModels, setWModels] = useState<WhisperModel[]>([]);
+  const [wLoading, setWLoading] = useState(false);
+
+  useEffect(() => {
+    if (!open || tab !== "models" || wLoading || wModels.length) return;
+    setWLoading(true);
+    loadWhisperCatalog()
+      .then(setWModels)
+      .finally(() => setWLoading(false));
+  }, [open, tab, wLoading, wModels.length]);
+
   // the voice currently streaming in — derived from the shared download
   // indicator label ("<id> · voice" / "<id> · config") so lists can mark it
   // live without extra state
@@ -57,6 +69,8 @@ export default function VoicesDialog({
       ? l.slice(0, l.lastIndexOf(" · "))
       : "";
   })();
+  // whisper model downloads are labeled with the bare model id
+  const dlModelId = dl?.label?.endsWith(".bin") ? dl.label : "";
 
   // --- voices browser --------------------------------------------------------
   const q = query.trim().toLowerCase();
@@ -65,6 +79,9 @@ export default function VoicesDialog({
       !q ||
       id.toLowerCase().includes(q) ||
       piperLabel(id).toLowerCase().includes(q),
+  );
+  const wFiltered = wModels.filter(
+    (m) => !q || m.id.toLowerCase().includes(q) || m.label.toLowerCase().includes(q),
   );
 
   if (!open) return null;
@@ -75,6 +92,7 @@ export default function VoicesDialog({
         {(
           [
             ["options", "Options"],
+            ["models", "Models"],
             ["voices", "Voices"],
           ] as const
         ).map(([id, label]) => (
@@ -177,6 +195,68 @@ export default function VoicesDialog({
             })}
           </div>
         </>
+      ) : tab === "models" ? (
+        <>
+          <div className="browse-search">
+            <div className="model-search-wrap">
+              <i className="fa-solid fa-magnifying-glass" />
+              <input
+                className="model-search"
+                type="text"
+                placeholder={`Filter ${wModels.length || "..."} whisper models...`}
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                spellCheck={false}
+              />
+            </div>
+          </div>
+          <div className="browse-list">
+            {wFiltered.length === 0 && (
+              <div className="model-empty">{wLoading ? "Loading catalog..." : "No models match"}</div>
+            )}
+            {wFiltered.map((m, i) => {
+              const group = wmGroup(m.id);
+              const showGroup = i === 0 || wmGroup(wFiltered[i - 1].id) !== group;
+              const downloaded = (voice?.items ?? []).includes(m.id);
+              const active = settings.voice.model === m.id;
+              const downloading = dlModelId === m.id;
+              const suffix = active
+                ? ""
+                : downloading
+                  ? " — downloading..."
+                  : downloaded
+                    ? ""
+                    : " — not downloaded";
+              return (
+                <div key={m.id}>
+                  {showGroup && (
+                    <div className="model-group-label">
+                      {group[0].toUpperCase() + group.slice(1)}
+                    </div>
+                  )}
+                  <div className={`browse-row${active ? " selected" : ""}`}>
+                    <button
+                      type="button"
+                      role="option"
+                      aria-selected={active}
+                      className={`model-opt${active ? " selected" : ""}`}
+                      onClick={() => {
+                        if (downloaded) update({ voice: { ...settings.voice, model: m.id } });
+                        else void inst.installWhisper(m.id);
+                      }}
+                    >
+                      <span>
+                        {m.label}
+                        {suffix}
+                      </span>
+                      {active && <i className="fa-solid fa-check" />}
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </>
       ) : (
         <>
           <div className="setting-row">
@@ -207,12 +287,13 @@ export default function VoicesDialog({
                 value={settings.voice.model}
                 disabled={!!dl}
                 label={
-                  VOICE_MODELS.find((m) => m.id === settings.voice.model)?.label.split(" · ")[0] ??
-                  "model"
+                  settings.voice.model
+                    ? settings.voice.model.replace("ggml-", "").replace(".bin", "")
+                    : "model"
                 }
-                entries={VOICE_MODELS.map((m) => ({
-                  value: m.id,
-                  label: m.label + (voice?.items.includes(m.id) ? "" : " — not downloaded"),
+                entries={(voice?.items ?? []).map((id) => ({
+                  value: id,
+                  label: id.replace("ggml-", "").replace(".bin", ""),
                 }))}
                 onPick={(v) => update({ voice: { ...settings.voice, model: v } })}
               />
