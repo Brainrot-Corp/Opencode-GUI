@@ -509,7 +509,7 @@ export default function Composer({
             data-tip="Terminal (Ctrl+`)"
             onClick={onToggleTerm}
           >
-            <i className="fa-solid fa-square-terminal" />
+            <i className="fa-solid fa-terminal" />
           </button>
         )}
       </div>

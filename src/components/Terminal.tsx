@@ -275,7 +275,7 @@ export default function TerminalPanel({
     >
       <div className="term-resize" data-tip="Drag to resize" onMouseDown={startResize} />
       <div className="term-head">
-        <i className="fa-solid fa-square-terminal" />
+        <i className="fa-solid fa-terminal" />
         <span>terminal</span>
         {err && <span className="term-err">{err}</span>}
         <span className="term-spacer" />
