@@ -1,4 +1,4 @@
-import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Attachment, ProviderGroup } from "../types";
 import { prettySize, iconFor } from "../lib/attachments";
 import type { CmdEntry } from "../hooks/useOpencode";
@@ -69,9 +69,10 @@ function draftHtml(src: string): string {
       } else {
         i = j + 1;
       }
-      out.push("</span>");
+      out.push("</span></span>");
     } else {
       i = lines.length;
+      out.push("</span>");
     }
   }
   return out.join("");
@@ -146,14 +147,17 @@ export default function Composer({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const hlRef = useRef<HTMLDivElement>(null);
 
-  // live highlight layer: rebuilt from a deferred copy of the draft so
-  // typing never waits on highlighting; empty draft → no overlay at all
-  const deferred = useDeferredValue(input);
-  const markup = useMemo(
-    () =>
-      deferred ? draftHtml(deferred) + (/\n$/.test(deferred) ? "\n" : "") : "",
-    [deferred],
-  );
+  // live highlight layer: rebuilt synchronously. Plain text bypasses the
+  // overlay entirely (hasCode gate) so many newlines never drift; code
+  // blocks keep the trailing "\n" sentinel to make pre-wrap render the last
+  // empty line (textarea shows it natively).
+  const markup = useMemo(() => {
+    if (!input) return "";
+    const base = draftHtml(input);
+    const needsSentinel = base.includes("comp-codeblock") && /\n$/.test(input);
+    return needsSentinel ? base + "\n" : base;
+  }, [input]);
+  const hasCode = markup.includes("comp-codeblock");
 
   // the composer used to be drag-resizable (oc.comp.h) — clear any stale
   // stored height so old installs fall back to auto sizing
@@ -172,6 +176,15 @@ export default function Composer({
     // floor at the single-line rest height so the box never sits below it
     el.style.height = `${Math.max(46, Math.min(el.scrollHeight, max))}px`;
   }, [input]);
+
+  // keep highlight overlay scroll in sync — onScroll alone misses auto-grow
+  // height changes (many newlines -> permanent offset)
+  useEffect(() => {
+    if (hlRef.current && inputRef.current) {
+      hlRef.current.scrollTop = inputRef.current.scrollTop;
+      hlRef.current.scrollLeft = inputRef.current.scrollLeft;
+    }
+  }, [input, markup]);
 
   const attach = useAttachments();
 
@@ -595,8 +608,8 @@ export default function Composer({
             </button>
           )}
         </div>
-        <div className="comp-input">
-          {markup && (
+        <div className={`comp-input${hasCode ? " has-code" : ""}`}>
+          {hasCode && (
             <div
               ref={hlRef}
               className="comp-hl"
@@ -606,6 +619,7 @@ export default function Composer({
           )}
           <textarea
                   ref={inputRef}
+                  rows={1}
                   value={input}
                   disabled={needsModel}
                   onChange={(e) => setInput(e.target.value)}
@@ -636,7 +650,10 @@ export default function Composer({
                     }
                   }}
                   onScroll={(e) => {
-                    if (hlRef.current) hlRef.current.scrollTop = e.currentTarget.scrollTop;
+                    if (hlRef.current) {
+                      hlRef.current.scrollTop = e.currentTarget.scrollTop;
+                      hlRef.current.scrollLeft = e.currentTarget.scrollLeft;
+                    }
                   }}
                   onKeyDown={(e) => {
                     // typing sounds only — all key ROUTING (menus, send,
