@@ -91,12 +91,13 @@ export function useUpdater() {
     }
   }, [ver, flavor]);
 
-  // one silent check per app launch (SettingsDrawer mounts at startup) —
-  // after the build flavor is known
+  // force-check on every launch so a just-published release is never
+  // hidden by the 1h cache — the cache is still written for offline use
+  // but the launch path always hits the network
   useEffect(() => {
     if (ranRef.current || !flavor) return;
     ranRef.current = true;
-    void check();
+    void check(true);
   }, [check, flavor]);
 
   async function install(): Promise<void> {
