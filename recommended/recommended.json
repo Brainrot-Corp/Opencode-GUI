@@ -1,6 +1,6 @@
 {
     "version": 1,
-    "whisperModel": "ggml-base.bin",
+    "whisperModel": "ggml-tiny-q8_0.bin",
     "ttsVoice": "en_US-ljspeech-high",
     "secondaryModel": "opencode/muse-spark-1.2-contributor-free",
     "note": "Dev setup: base multilingual STT, LJ Speech high-quality US English voice"

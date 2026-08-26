@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import DropdownPortal from "./DropdownPortal";
 
 export type ModelEntry = { value: string; label: string; group?: string };
 
@@ -41,9 +42,11 @@ export default function ModelMenu({
   useEffect(() => {
     if (!open) return;
     // capture-phase pointerdown: fires before anything else, so clicking
-    // anywhere outside the dropdown always closes it
+    // anywhere outside the dropdown (trigger box or portaled menu) closes it
     const onDoc = (e: Event) => {
-      if (!boxRef.current?.contains(e.target as Node)) setOpen(() => false);
+      const t = e.target as Node;
+      if (!boxRef.current?.contains(t) && !menuRef.current?.contains(t))
+        setOpen(() => false);
     };
     const onBlur = () => setOpen(() => false);
     document.addEventListener("pointerdown", onDoc, true);
@@ -60,25 +63,6 @@ export default function ModelMenu({
       ?.querySelector('[data-hl="true"]')
       ?.scrollIntoView({ block: "nearest" });
   }, [hi, open]);
-
-  // clamp the open menu inside the viewport: measure after mount and nudge
-  // with a transform — anchors vary per host (composer opens upward, the
-  // settings drawer drops down) and narrow windows let either poke out
-  useEffect(() => {
-    if (!open) return;
-    const el = menuRef.current;
-    if (!el) return;
-    el.style.transform = "";
-    const r = el.getBoundingClientRect();
-    const pad = 8;
-    let dx = 0;
-    if (r.right > window.innerWidth - pad) dx = window.innerWidth - pad - r.right;
-    if (r.left + dx < pad) dx = pad - r.left;
-    let dy = 0;
-    if (r.bottom > window.innerHeight - pad) dy = window.innerHeight - pad - r.bottom;
-    if (r.top + dy < pad) dy = pad - r.top;
-    if (dx || dy) el.style.transform = `translate(${dx}px, ${dy}px)`;
-  }, [open]);
 
   // focus the filter when the menu opens so typing starts filtering at once
   useEffect(() => {
@@ -110,7 +94,7 @@ export default function ModelMenu({
         <span>{label}</span>
         <i className={`fa-solid fa-chevron-${open ? "up" : "down"}`} />
       </button>
-      {open && (
+      <DropdownPortal anchor={boxRef} open={open} align="right" prefer="up">
         <div className="model-menu" role="listbox" ref={menuRef}>
           <div className="model-search-wrap">
             <i className="fa-solid fa-magnifying-glass" />
@@ -146,7 +130,7 @@ export default function ModelMenu({
             );
           })}
         </div>
-      )}
+      </DropdownPortal>
     </div>
   );
 }
