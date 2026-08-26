@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import type { Session } from "@opencode-ai/sdk/client";
 import { playSound } from "../lib/sounds";
 import FileTree from "./FileTree";
@@ -182,19 +181,7 @@ export default function Sidebar({
               )}
             </div>
             <GitPanel />
-            <div
-              className="sb-resize"
-              data-tip="Drag to resize"
-              onMouseDown={onStartResize}
-              onMouseEnter={() =>
-                invoke("set_cursor", { shape: "col-resize" }).catch(() => {})
-              }
-              onMouseLeave={() => {
-                // mid-drag the ChatPage drag handlers own the cursor
-                if (!document.body.classList.contains("resizing"))
-                  invoke("set_cursor").catch(() => {});
-              }}
-            />
+            <div className="sb-resize" data-tip="Drag to resize" onMouseDown={onStartResize} />
           </>
         )}
       </aside>

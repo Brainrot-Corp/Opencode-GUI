@@ -463,9 +463,8 @@ export default function ChatPage() {
       let lastTick = 0;
       setResizing(true);
       // body.resizing lets CSS force col-resize over every descendant cursor
-      // rule; host-side override re-asserts it when WebView2 drops WM_SETCURSOR
+      // rule (panels/buttons/editors all declare their own)
       document.body.classList.add("resizing");
-      invoke("set_cursor", { shape: "col-resize" }).catch(() => {});
       document.body.style.userSelect = "none";
       const move = (ev: MouseEvent) => {
         setSbW(Math.min(Math.max(170, startW + (ev.clientX - startX)), 440));
@@ -478,7 +477,6 @@ export default function ChatPage() {
       const up = () => {
         setResizing(false);
         document.body.classList.remove("resizing");
-        invoke("set_cursor").catch(() => {});
         document.body.style.userSelect = "";
         window.removeEventListener("mousemove", move);
         window.removeEventListener("mouseup", up);

@@ -336,8 +336,6 @@ mod wininput {
             lparam: isize,
         ) -> i32;
         pub fn SendInput(count: u32, inputs: *mut Input, size: i32) -> u32;
-        pub fn LoadCursorW(hinstance: isize, name: *const u16) -> isize;
-        pub fn SetCursor(hcursor: isize) -> isize;
     }
 
     // cursor position shared with the EnumChildWindows callbacks — a plain
@@ -448,60 +446,6 @@ fn unpoison_input(app: &tauri::AppHandle) {
 
 #[cfg(not(windows))]
 fn unpoison_input(_app: &tauri::AppHandle) {}
-
-// WebView2 intermittently drops its own WM_SETCURSOR handling, so CSS
-// cursors (col-resize during the sidebar drag et al.) snap back to the
-// class-cursor arrow. While the frontend holds an override, re-assert the
-// native cursor on the UI thread every ~15ms — SetCursor is nearly free and
-// wins no matter who ate the WM_SETCURSOR.
-#[cfg(windows)]
-static CUR_OVERRIDE: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
-#[cfg(windows)]
-static CUR_PUMP: AtomicBool = AtomicBool::new(false);
-
-// LoadCursorW resource ids from winuser.h
-#[cfg(windows)]
-fn native_cursor_id(shape: &str) -> i32 {
-    match shape {
-        "text" => 32513,      // IDC_IBEAM
-        "crosshair" => 32515, // IDC_CROSS
-        "col-resize" | "ew-resize" | "e-resize" | "w-resize" => 32644, // IDC_SIZEWE
-        "row-resize" | "ns-resize" | "n-resize" | "s-resize" => 32645, // IDC_SIZENS
-        "nwse-resize" => 32642,
-        "nesw-resize" => 32643,
-        "pointer" | "grab" | "grabbing" => 32649, // IDC_HAND
-        _ => 32512,           // IDC_ARROW
-    }
-}
-
-#[tauri::command]
-fn set_cursor(app: tauri::AppHandle, shape: Option<String>) {
-    #[cfg(windows)]
-    {
-        let id = shape.map(|s| native_cursor_id(&s)).unwrap_or(0);
-        CUR_OVERRIDE.store(id, Ordering::Relaxed);
-        // spawn-once eternal ticker; it reads CUR_OVERRIDE each tick, so a
-        // cleared-then-re-set override can never race it into an early exit
-        if id != 0 && !CUR_PUMP.swap(true, Ordering::SeqCst) {
-            std::thread::spawn(move || loop {
-                if CUR_OVERRIDE.load(Ordering::Relaxed) != 0 {
-                    let _ = app.run_on_main_thread(|| unsafe {
-                        use wininput::*;
-                        SetCursor(LoadCursorW(
-                            0,
-                            CUR_OVERRIDE.load(Ordering::Relaxed) as *const u16,
-                        ));
-                    });
-                }
-                std::thread::sleep(std::time::Duration::from_millis(15));
-            });
-        }
-    }
-    #[cfg(not(windows))]
-    {
-        let _ = (app, shape);
-    }
-}
 
 // snap the main window back to the size declared in tauri.conf.json — shared
 // by the tray-reopen reset and the launch reset ("Keep window size" off)
@@ -650,7 +594,6 @@ pub fn run() {
             git_log,
             set_tray_reset,
             hide_to_tray,
-            set_cursor,
             debug_log,
         ]);
 
