@@ -43,6 +43,8 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  /* a stored height from a taller window must never overflow this one */
+  max-height: 72vh;
 }
 .composer.resized .model-row {
   flex-shrink: 0;
@@ -51,6 +53,14 @@
   flex: 1;
   min-height: 0;
   align-items: stretch;
+}
+/* the row stretches with the composer, but controls keep their resting
+   size and stay pinned to the bottom — only the textarea grows */
+.composer.resized .send-btn,
+.composer.resized .stop-btn {
+  align-self: flex-end;
+  min-height: 44px;
+  max-height: 54px;
 }
 .composer.resized textarea {
   max-height: none;
@@ -137,6 +147,33 @@
   color: var(--accent);
   background: var(--accent-dim);
   box-shadow: 0 0 12px -4px var(--accent-glow);
+}
+
+/* tools rail left of the input: clip + mic sit side by side normally; once
+   the composer is dragged tall enough (.tall) they stack into the freed-up
+   space — attach becomes a rectangle filling the top, mic a bottom square */
+.comp-tools {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.composer.tall .comp-tools {
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: stretch;
+  width: 44px;
+  gap: 6px;
+}
+.composer.tall .comp-tools .attach-btn {
+  flex: 1 1 18px;
+  min-height: 18px;
+  width: 100%;
+  height: auto;
+}
+.composer.tall .comp-tools .mic-btn {
+  width: 100%;
+  height: 44px;
 }
 
 /* voice input — pulsing danger tint while recording */
