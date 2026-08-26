@@ -15,6 +15,7 @@ import "../styles/terminal.css";
 
 const H_KEY = "oc.term.h";
 const H_MIN = 120;
+const H_DEFAULT = 240;
 
 const clampH = (h: number) =>
   Math.min(Math.max(H_MIN, Math.floor(h)), Math.floor(window.innerHeight * 0.7));
@@ -288,13 +289,30 @@ export default function TerminalPanel({
     [h],
   );
 
+  // double-click on the handle or header snaps back to the default height
+  const resetSize = useCallback(() => {
+    setH(H_DEFAULT);
+    playSound("click");
+  }, []);
+
   return (
     <div
       className={`term-dock${open ? "" : " closed"}${dragging ? " dragging" : ""}`}
       style={{ height: open ? h : 0 }}
     >
-      <div className="term-resize" data-tip="Drag to resize" onMouseDown={startResize} />
-      <div className="term-head">
+      <div
+        className="term-resize"
+        data-tip="Drag to resize · double-click to reset"
+        onMouseDown={startResize}
+        onDoubleClick={resetSize}
+      />
+      <div
+        className="term-head"
+        onDoubleClick={(e) => {
+          // buttons own their clicks — don't reset when mashing close/restart
+          if (!(e.target as HTMLElement).closest("button")) resetSize();
+        }}
+      >
         <i className="fa-solid fa-terminal" />
         <span>terminal</span>
         {err && <span className="term-err">{err}</span>}

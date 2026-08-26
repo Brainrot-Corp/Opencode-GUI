@@ -6,9 +6,10 @@
   flex-direction: column;
   min-height: 0;
   overflow: hidden;
+  /* exact composer recipe so the dock reads as part of the main column */
   background: linear-gradient(
     180deg,
-    rgba(var(--surf-rgb), calc(var(--surf-a) * 1.1)),
+    rgba(var(--surf-rgb), min(1, calc(var(--surf-a) * 1.15))),
     rgba(var(--surf-rgb), var(--surf-a))
   );
   border-top: 1px solid var(--line);
@@ -79,15 +80,21 @@
   flex: 1;
   min-height: 0;
 }
-/* xterm measures its parent — the mount is the sizing box, inset by the
-   6px spacing unit. Recessed input surface, same recipe as inset controls.
-   No padding here: FitAddon measures this box, so inset does all the work */
+/* xterm measures its parent — the mount is the sizing box. Flush: no inset,
+   no padding, no border — text starts at the dock's edges like a real
+   terminal pane. No padding on .xterm either: FitAddon measures this box */
 .term-mount {
   position: absolute;
-  inset: 6px 12px 10px;
-  background: var(--inset-bg);
-  border: 1px solid var(--line);
+  inset: 0;
 }
 .term-mount .xterm {
   height: 100%;
+}
+/* safety net: pin whatever layers the renderer paints clear so the themed
+   glass always shows through; cell colors (ls/git output) live on deeper
+   spans and are untouched */
+.term-mount .xterm,
+.term-mount .xterm .xterm-viewport,
+.term-mount .xterm .xterm-screen {
+  background: transparent !important;
 }
