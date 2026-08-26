@@ -39,6 +39,52 @@
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
 }
 
+/* wrapper takes the stage's flex slot so the jump pill can float above the
+   scroller without scrolling away with the content */
+.msgs-wrap {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+/* floating "back to tail" pill — fades in once the bottom is out of view */
+.jump-bottom {
+  position: absolute;
+  right: 26px;
+  bottom: 20px;
+  width: 36px;
+  height: 36px;
+  border-radius: 18px;
+  display: grid;
+  place-items: center;
+  font-size: 13px;
+  color: var(--text-dim);
+  background: rgba(var(--surf-rgb), min(1, calc(var(--surf-a) * 1.4)));
+  border: 1px solid var(--line);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  box-shadow: 0 2px 14px rgba(0, 0, 0, 0.28);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(6px);
+  transition:
+    opacity 0.25s var(--ease),
+    transform 0.25s var(--ease),
+    border-color 0.2s,
+    color 0.2s;
+}
+.jump-bottom:hover {
+  color: var(--accent-bright);
+  border-color: color-mix(in srgb, var(--accent) calc(0.35 * 100%), transparent);
+  box-shadow: 0 0 12px var(--accent-glow);
+}
+.jump-bottom.show {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+
 /* slim workspace header above the chat stage — same glass surface,
    full-bleed like the stage; its bottom edge is the separator */
 .stage-head {

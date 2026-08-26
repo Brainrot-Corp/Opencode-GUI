@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
@@ -243,23 +243,33 @@ export default function MessageList({
   // "session:head-message" signature of the last render — a change means
   // content was replaced (switch/fill), not streamed onto
   const lastSig = useRef<string | undefined>(undefined);
-  // while streaming, follow the tail — until the user scrolls away from it
+  // pinned = reader is at the exact tail: follow every growth until they
+  // scroll away (any distance). only real user input moves the pin —
+  // content growth alone can never unpin, and an unpinned reader is never
+  // moved by the app
   const stick = useRef(true);
   // tail message id at the previous render — detects an outgoing message
   const lastTail = useRef<string | undefined>(undefined);
+  // bottom scrolled out of view → show the floating "back to tail" pill
+  const [showJump, setShowJump] = useState(false);
+  // true while the pill's smooth ride is in flight — suppresses pill
+  // refreshes from content growth so it can't blink back mid-glide
+  const riding = useRef(false);
 
-  useEffect(() => {
+  // jump straight to the tail, no animation
+  const snap = useCallback(() => {
     const el = listRef.current;
     if (!el) return;
-    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    cancelAnimationFrame(raf.current);
+    expected.current = el.scrollHeight;
+    el.scrollTop = el.scrollHeight;
+  }, []);
 
-    const snap = () => {
-      cancelAnimationFrame(raf.current);
-      expected.current = el.scrollHeight;
-      el.scrollTop = el.scrollHeight;
-    };
-    // eased chase toward the tail — text grows in place instead of snapping
-    const follow = () => {
+  // eased chase toward the tail — text grows in place instead of snapping.
+  // onDone lets callers react to the arrival (the jump pill hides itself
+  // there: its own scrolls are invisible to the scroll listener)
+  const follow = useCallback(
+    (onDone?: () => void) => {
       cancelAnimationFrame(raf.current);
       const step = () => {
         const el = listRef.current;
@@ -269,6 +279,7 @@ export default function MessageList({
         if (Math.abs(d) < 2) {
           expected.current = target;
           el.scrollTop = target;
+          onDone?.();
           return;
         }
         expected.current = el.scrollTop + d * 0.22;
@@ -276,49 +287,68 @@ export default function MessageList({
         raf.current = requestAnimationFrame(step);
       };
       raf.current = requestAnimationFrame(step);
-    };
+    },
+    [],
+  );
+
+  // pill click: smooth ride back to the tail, then stay pinned for streaming
+  const goBottom = useCallback(() => {
+    stick.current = true;
+    riding.current = true;
+    setShowJump(false);
+    follow(() => {
+      riding.current = false;
+    });
+  }, [follow]);
+
+  useEffect(() => {
+    const el = listRef.current;
+    if (!el) return;
 
     // replaced content (session switch / history fill): land at the bottom.
     // detected via the head message id so stream-end and trailing updates
-    // on the SAME session never move the viewport
+    // on the SAME session never move the viewport.
+    // outgoing message: always jump to the tail, wherever the reader was.
     const sig = `${sessionId}:${msgs[0]?.info.id ?? ""}`;
-    // outgoing message: always jump to the tail, wherever the reader was
     const tail = msgs[msgs.length - 1];
     const sent = tail?.info.role === "user" && tail.info.id !== lastTail.current;
     lastTail.current = tail?.info.id;
     if (sig !== lastSig.current || sent) {
       lastSig.current = sig;
       stick.current = true;
+      setShowJump(false);
       snap();
       return;
     }
-    // stream end / idle: leave the reader exactly where they are
-    if (!busy || !stick.current) return;
+    // refresh the pill while the reader is scrolled away and the bottom
+    // drifts further out (streaming growth happens without scroll events) —
+    // unless the jump ride is in flight, which owns the pill until it lands
     const dist = el.scrollHeight - el.clientHeight - el.scrollTop;
-    // tail ran far ahead (bulk output, or height grew above the viewport —
-    // e.g. an expanded thinking block): stop chasing, the reader decides
-    // when to come back. only a near-tail scroll re-attaches.
-    if (dist > el.clientHeight * 1.5) {
-      stick.current = false;
-      cancelAnimationFrame(raf.current);
-      return;
-    }
-    // small growth: ease after it (no animation under reduced motion)
-    if (reduced) snap();
+    if (!riding.current) setShowJump((v) => (v ? dist > 40 : dist > 80));
+    // pinned readers chase the tail; unpinned readers are never touched
+    if (!busy || !stick.current) return;
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) snap();
     else follow();
-  }, [msgs, busy, sessionId]);
+  }, [msgs, busy, sessionId, snap, follow]);
 
-  // stick/unstick: only real user input moves the pin. Our eased chase and
-  // snaps record their scrollTop in `expected` first, so their scroll events
-  // are recognized and ignored — content growth alone can never unpin.
-  // A genuine user scroll near the tail re-sticks; further up unpins.
+  // stick/unstick + pill visibility on scroll. Our eased chase and snaps
+  // record their scrollTop in `expected` first, so their scroll events are
+  // recognized and ignored — only genuine user scrolling moves the pin,
+  // and it kills any chase in flight so it can never fight the reader.
   useEffect(() => {
     const el = listRef.current;
     if (!el) return;
     const scroll = () => {
       if (Math.abs(el.scrollTop - expected.current) <= 2) return;
+      // genuine user input — a running chase would otherwise drag the view
+      // back down and mask the unpin; it also aborts any jump ride
+      cancelAnimationFrame(raf.current);
+      riding.current = false;
       const dist = el.scrollHeight - el.clientHeight - el.scrollTop;
-      stick.current = dist < 48;
+      // zero-tolerance pin: ONLY the exact tail counts as "at the bottom"
+      stick.current = dist <= 1;
+      // hysteresis so the pill can't flicker at one threshold
+      setShowJump((v) => (v ? dist > 40 : dist > 80));
     };
     el.addEventListener("scroll", scroll, { passive: true });
     return () => {
@@ -328,23 +358,34 @@ export default function MessageList({
   }, []);
 
   return (
-    <div className={`messages${busy ? " streaming" : ""}`} ref={listRef}>
-      {loading && (
-        <>
-          <div className="msg skel user" />
-          <div className="msg skel" style={{ width: "55%" }} />
-          <div className="msg skel" style={{ width: "40%" }} />
-        </>
-      )}
-      {!loading && msgs.length === 0 && !busy && <p className="empty">Say something…</p>}
-      {msgs.filter(rowVisible).map((m) => (
-        <MsgRow key={m.info.id} m={m} collapsed={collapsed} onRevert={onRevert} />
-      ))}
-      {busy && (
-        <div className="thinking">
-          <span className="cursor-dot" /> thinking
-        </div>
-      )}
+    <div className="msgs-wrap">
+      <div className={`messages${busy ? " streaming" : ""}`} ref={listRef}>
+        {loading && (
+          <>
+            <div className="msg skel user" />
+            <div className="msg skel" style={{ width: "55%" }} />
+            <div className="msg skel" style={{ width: "40%" }} />
+          </>
+        )}
+        {!loading && msgs.length === 0 && !busy && <p className="empty">Say something…</p>}
+        {msgs.filter(rowVisible).map((m) => (
+          <MsgRow key={m.info.id} m={m} collapsed={collapsed} onRevert={onRevert} />
+        ))}
+        {busy && (
+          <div className="thinking">
+            <span className="cursor-dot" /> thinking
+          </div>
+        )}
+      </div>
+      <button
+        type="button"
+        className={`jump-bottom${showJump ? " show" : ""}`}
+        data-tip="Back to tail"
+        aria-label="Scroll to bottom"
+        onClick={goBottom}
+      >
+        <i className="fa-solid fa-arrow-down" />
+      </button>
     </div>
   );
 }
