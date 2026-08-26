@@ -1,0 +1,46 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "Version-*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - name: Install dependencies
+        run: npm ci
+      - name: Build (Windows 11)
+        run: npm run tauri build
+      - name: Pack win11 portable zip
+        shell: pwsh
+        run: |
+          Compress-Archive -Force -Path src-tauri/target/release/opencode-gui.exe, src-tauri/target/release/opencode.exe -DestinationPath src-tauri/target/release/opencode-gui-win11-x64.zip
+      - name: Build (Windows 10, no glass)
+        run: npm run tauri build -- --features noglass --no-bundle
+      - name: Pack win10 portable zip
+        shell: pwsh
+        run: |
+          Compress-Archive -Force -Path src-tauri/target/release/opencode-gui.exe, src-tauri/target/release/opencode.exe -DestinationPath src-tauri/target/release/opencode-gui-win10-x64.zip
+      - name: Upload to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            src-tauri/target/release/opencode-gui-win11-x64.zip
+            src-tauri/target/release/opencode-gui-win10-x64.zip
+            src-tauri/target/release/bundle/msi/*.msi
+          generate_release_notes: true
+          fail_on_unmatched_files: false

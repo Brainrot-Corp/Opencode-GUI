@@ -224,6 +224,11 @@
   color: var(--danger);
 }
 
+/* updater section — failure message */
+.upd-err {
+  color: var(--danger);
+}
+
 /* small blocky action button (reset, workspace browse…) */
 .reset-btn {
   display: inline-flex;

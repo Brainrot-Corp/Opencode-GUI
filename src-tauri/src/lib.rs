@@ -24,6 +24,9 @@ use pty::{pty_kill, pty_resize, pty_spawn, pty_write, PtyState};
 mod discord;
 use discord::{discord_clear, discord_close, discord_set, discord_status, DiscordState};
 
+mod update;
+use update::{apply_on_exit, build_flavor, update_download, update_install};
+
 struct ServerState {
     port: u16,
     child: Mutex<Option<Child>>,
@@ -847,6 +850,9 @@ pub fn run() {
             pty_write,
             pty_resize,
             pty_kill,
+            update_download,
+            update_install,
+            build_flavor,
             set_tray_reset,
             hide_to_tray,
             debug_log,
@@ -1010,6 +1016,9 @@ pub fn run() {
                 {
                     let _ = child.kill();
                 }
+                // staged update swap + relaunch — after the sidecar is dead
+                // so its image file is no longer locked
+                apply_on_exit();
                 // terminal shell dies with the app
                 if let Some(ses) = _app_handle
                     .state::<PtyState>()

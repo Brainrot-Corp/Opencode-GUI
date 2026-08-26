@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { enable, isEnabled, disable } from "@tauri-apps/plugin-autostart";
 import type { AppSettings, ColorSet } from "../hooks/useSettings";
+import { useUpdater } from "../hooks/useUpdater";
 import type { ThemeMeta } from "../lib/themes";
 import type { SoundPrefs } from "../lib/sounds";
 import type { CmdEntry } from "../hooks/useOpencode";
@@ -80,6 +81,7 @@ export default function SettingsDrawer({
   // clean state: two-click confirm, then wipe voice installs + every oc.*
   // preference and reload into the first-launch wizard
   const [confirmClean, setConfirmClean] = useState(false);
+  const upd = useUpdater();
 
   async function cleanState() {
     if (!confirmClean) {
@@ -445,6 +447,54 @@ export default function SettingsDrawer({
           />
 
           <SoundsSettings sounds={settings.sounds} updateSounds={updateSounds} />
+          <div className="setting-row">
+            <div className="setting-info">
+              <i className="fa-solid fa-arrows-rotate setting-icon" />
+              <div>
+                <div className="setting-name">Updates</div>
+                <div className="setting-desc">
+                  {upd.err ? (
+                    <span className="upd-err">{upd.err}</span>
+                  ) : upd.latest ? (
+                    <>
+                      Version {upd.latest.version} available ·{" "}
+                      {upd.latest.notes.replace(/\s+/g, " ").slice(0, 90)}
+                    </>
+                  ) : upd.busy ? (
+                    "Checking for releases…"
+                  ) : upd.ver ? (
+                    <>You're up to date · v{upd.ver}</>
+                  ) : (
+                    "Check for new releases from GitHub"
+                  )}
+                </div>
+              </div>
+            </div>
+            <div className="color-controls">
+              {upd.latest ? (
+                <button
+                  type="button"
+                  className="reset-btn"
+                  disabled={upd.downloading}
+                  onClick={() => void upd.install()}
+                >
+                  <i className={`fa-solid ${upd.downloading ? "fa-spinner fa-spin" : "fa-download"}`} />
+                  {upd.downloading ? "Downloading…" : "Update & restart"}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="reset-btn"
+                  disabled={upd.busy}
+                  onClick={() => void upd.check()}
+                >
+                  <i className="fa-solid fa-magnifying-glass" />
+                  Check
+                </button>
+              )}
+            </div>
+          </div>
+
           <div className="setting-row">
             <div className="setting-info">
               <i className="fa-solid fa-broom setting-icon" />
