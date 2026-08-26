@@ -21,6 +21,9 @@ use git::{git_commit, git_diff, git_discard, git_log, git_pull, git_push, git_st
 mod pty;
 use pty::{pty_kill, pty_resize, pty_spawn, pty_write, PtyState};
 
+mod discord;
+use discord::{discord_clear, discord_close, discord_set, discord_status, DiscordState};
+
 struct ServerState {
     port: u16,
     child: Mutex<Option<Child>>,
@@ -805,6 +808,10 @@ pub fn run() {
             reveal_plugins_dir,
             plugin_remove,
             plugins_scan,
+            discord_set,
+            discord_clear,
+            discord_close,
+            discord_status,
             http_json,
             browser_open,
             browser_back,
@@ -954,6 +961,7 @@ pub fn run() {
             app.manage(state);
             app.manage(browser::BrowserState::default());
             app.manage(PtyState::default());
+            app.manage(DiscordState::default());
             let h = app.handle().clone();
             watch_dir(h.clone(), themes_dir(), "themes://changed", false);
             watch_dir(h, plugins_dir(), "plugins://changed", true);
@@ -1012,6 +1020,10 @@ pub fn run() {
                     .take()
                 {
                     ses.kill();
+                }
+                // discord ipc pipe close
+                if let Some(state) = _app_handle.try_state::<DiscordState>() {
+                    state.shutdown();
                 }
             }
         });

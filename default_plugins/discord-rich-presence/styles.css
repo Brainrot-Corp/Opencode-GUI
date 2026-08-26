@@ -1,0 +1,26 @@
+/* discord rich presence — matches settings sound-box language */
+.discord-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px 0 4px;
+}
+.discord-in {
+  width: 100%;
+  padding: 6px 8px;
+  background: var(--inset-bg);
+  border: 1px solid var(--line);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 11px;
+  outline: none;
+  transition: border-color 0.2s var(--ease), box-shadow 0.2s var(--ease);
+}
+.discord-in:focus {
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+  box-shadow: 0 0 8px -4px var(--accent-glow);
+}
+.discord-hint {
+  padding: 0 2px 2px;
+  line-height: 1.4;
+}

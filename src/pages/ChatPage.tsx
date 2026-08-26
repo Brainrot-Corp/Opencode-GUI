@@ -46,6 +46,19 @@ export default function ChatPage() {
   } = useSettings();
   // runtime plugins — voice intents, settings sections, error banner
   const { plugins, exts, sections: pluginSections, error: pluginError, toggleEnabled, removeDisabled } = usePlugins();
+  // presence live snapshot for plugins (discord etc.) — always mirrored to window
+  useEffect(() => {
+    const ws = settings.workspace;
+    const model = oc.modelSel || oc.defaultModel || "";
+    (window as any).__presence = {
+      workspace: ws,
+      workspaceName: ws ? ws.split(/[/\\]/).filter(Boolean).pop() || ws : "",
+      model,
+      busy: oc.busy,
+      sessionId: oc.activeId || "",
+      sessionTitle: oc.sessions.find((s) => s.id === oc.activeId)?.title || "",
+    };
+  }, [settings.workspace, oc.modelSel, oc.defaultModel, oc.busy, oc.activeId, oc.sessions]);
   // spoken replies / narration / debrief — the whole piper voice pipeline
   const { talking, debriefing, announce, pauseSpeech } = useSpeech(
     { msgs: oc.msgs, busy: oc.busy, permission: oc.permission, providers: oc.providers },

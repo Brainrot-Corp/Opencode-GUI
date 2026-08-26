@@ -33,6 +33,16 @@ export default function PluginsDialog({
     setRemoving(p.dir);
     setErr("");
     try {
+      const isDiscord = p.id === "discord-rich-presence" || p.dir === "discord-rich-presence";
+      if (isDiscord) {
+        try {
+          const w = window as unknown as Record<string, unknown>;
+          const stop = w["__discordStop"] as (() => void) | undefined;
+          if (typeof stop === "function") stop();
+        } catch {}
+        invoke("discord_clear").catch(() => {});
+        invoke("discord_close").catch(() => {});
+      }
       await invoke("plugin_remove", { dir: p.dir });
       onRemoved(p.id);
       // also clean dir-named disabled entry if present
