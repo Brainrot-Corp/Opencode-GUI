@@ -79,6 +79,9 @@ export default function Composer({
   });
   const compRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{ y: number; h: number; min: number } | null>(null);
+  // height auto-grow added above the user's base size — erased lines take
+  // exactly this back, so manual sizing survives typing
+  const grownRef = useRef(0);
 
   useEffect(() => {
     if (h) localStorage.setItem("oc.comp.h", String(h));
@@ -87,15 +90,33 @@ export default function Composer({
 
   // auto-grow: the whole input follows its line count — the textarea (and
   // with it the entire composer card) expands until half the window, then
-  // scrolls internally. Skipped in manual-height mode — there the row
-  // stretch owns the textarea's size, so a stale inline height would fight it
+  // scrolls internally. In manual-height mode the card grows when lines
+  // outgrow the dragged size (same ceiling as the drag) and gives that
+  // height back as lines are erased — only what auto-grow added, never the
+  // user's own base size (dragging re-baselines)
   useEffect(() => {
     const el = inputRef.current;
     if (!el) return;
     if (h) {
       el.style.height = "";
+      const deficit = el.scrollHeight - el.clientHeight;
+      const cap = Math.max(h, Math.round(window.innerHeight * 0.72));
+      if (deficit > 0) {
+        const add = Math.min(deficit, cap - h);
+        if (add > 0) {
+          grownRef.current += add;
+          setH(h + add);
+        }
+      } else if (deficit < 0) {
+        const give = Math.min(grownRef.current, -deficit);
+        if (give > 0) {
+          grownRef.current -= give;
+          setH(h - give);
+        }
+      }
       return;
     }
+    grownRef.current = 0;
     const max = Math.round(window.innerHeight * 0.5);
     el.style.height = "auto";
     // floor at the single-line rest height so the box never sits below it
@@ -114,6 +135,7 @@ export default function Composer({
     const min = el?.offsetHeight || 200;
     if (el) el.style.height = saved;
     dragRef.current = { y: e.clientY, h: h || min, min };
+    grownRef.current = 0; // the dragged size becomes the new base
     document.body.style.cursor = "row-resize";
     document.body.style.userSelect = "none";
     const move = (ev: MouseEvent) => {
