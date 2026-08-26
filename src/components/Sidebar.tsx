@@ -52,7 +52,7 @@ export default function Sidebar({
       <aside
         className={`sidebar${collapsed ? " collapsed" : ""}${resizing ? " resizing" : ""}`}
         {...(collapsed
-          ? ({ "data-tip": "Show session history", "data-tip-cursor": "" } as any)
+          ? ({ "data-tip": "Show session history (Ctrl+B)", "data-tip-cursor": "" } as any)
           : {})}
         onClick={
           collapsed
@@ -101,7 +101,7 @@ export default function Sidebar({
                 </div>
                 <button
                   className="icon-btn sb-toggle"
-                  data-tip="Hide panel"
+                  data-tip="Hide panel (Ctrl+B)"
                   onClick={() => {
                     playSound("collapse");
                     onToggle();

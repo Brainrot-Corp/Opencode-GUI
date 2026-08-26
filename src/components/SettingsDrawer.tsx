@@ -199,7 +199,7 @@ export default function SettingsDrawer({
                   <i className="fa-solid fa-rotate-left" />
                 </button>
               )}
-              <button type="button" className="reset-btn" onClick={() => pickWorkspace()}>
+              <button type="button" className="reset-btn" data-tip="Open workspace (Ctrl+O)" onClick={() => pickWorkspace()}>
                 <i className="fa-solid fa-folder" />
                 Browse…
               </button>

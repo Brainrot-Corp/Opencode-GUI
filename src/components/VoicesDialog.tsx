@@ -3,6 +3,7 @@ import type { AppSettings } from "../hooks/useSettings";
 import { useVoiceInstall } from "../hooks/useVoiceInstall";
 import PickerMenu from "./PickerMenu";
 import Dialog from "./Dialog";
+import InlineNumberInput from "./InlineNumberInput";
 import { PIPER_LANGS, piperLabel, loadPiperCatalog, loadWhisperCatalog, wmGroup, type WhisperModel } from "../lib/piper";
 
 // centered glass dialog hosting everything speech-related: tab "Options"
@@ -387,7 +388,15 @@ export default function VoicesDialog({
                     update({ voice: { ...settings.voice, sens: Number(e.target.value) } })
                   }
                 />
-                <span className="alpha-num">{Math.round(settings.voice.sens * 100)}%</span>
+                <InlineNumberInput
+                  value={settings.voice.sens}
+                  min={0}
+                  max={1}
+                  step={0.05}
+                  suffix="%"
+                  ariaLabel="Microphone sensitivity percent"
+                  onChange={(v) => update({ voice: { ...settings.voice, sens: v } })}
+                />
               </div>
             </div>
           )}
@@ -516,7 +525,18 @@ export default function VoicesDialog({
                   window.dispatchEvent(new CustomEvent("oc:tts-vol", { detail: v }));
                 }}
               />
-              <span className="alpha-num">{Math.round(settings.ttsVol * 100)}%</span>
+              <InlineNumberInput
+                value={settings.ttsVol}
+                min={0}
+                max={1}
+                step={0.05}
+                suffix="%"
+                ariaLabel="Speech volume percent"
+                onChange={(v) => {
+                  update({ ttsVol: v });
+                  window.dispatchEvent(new CustomEvent("oc:tts-vol", { detail: v }));
+                }}
+              />
             </div>
           </div>
 
@@ -538,7 +558,15 @@ export default function VoicesDialog({
                 aria-label="Speech speed"
                 onChange={(e) => update({ ttsSpeed: Number(e.target.value) })}
               />
-              <span className="alpha-num">{settings.ttsSpeed.toFixed(2)}×</span>
+              <InlineNumberInput
+                value={settings.ttsSpeed}
+                min={0.5}
+                max={2}
+                step={0.05}
+                suffix="×"
+                ariaLabel="Speech speed multiplier"
+                onChange={(v) => update({ ttsSpeed: v })}
+              />
             </div>
           </div>
 

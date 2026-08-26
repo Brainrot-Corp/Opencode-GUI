@@ -73,13 +73,14 @@ const KEYS: Group[] = [
   [
     "In the app",
     [
+      ["Ctrl+B", "toggle sidebar"],
       ["Ctrl+M", "mic on/off"],
+      ["Ctrl+O", "open workspace"],
       ["Ctrl+P", "pin window on top"],
       ["Ctrl+wheel", "zoom the UI in / out"],
       ["Ctrl+= · Ctrl+-", "zoom in · out"],
       ["Ctrl+0", "reset zoom"],
       ["Tab", "cycle agent"],
-      ["Enter · Shift+Enter", "send · newline"],
       ["Esc ×2 (within 4s)", "stop generation — a first Esc arms it, menus eat theirs"],
       ["Escape", "close menus and dialogs"],
     ],

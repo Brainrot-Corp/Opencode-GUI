@@ -132,6 +132,14 @@ export default function ChatPage() {
       .catch(() => {});
   }, []);
 
+  const toggleSidebar = useCallback(() => {
+    // directional sound — mirrors the sidebar buttons (collapse/expand)
+    setSbClosed((v) => {
+      playSound(v ? "expand" : "collapse");
+      return !v;
+    });
+  }, []);
+
   const { stopArmed, clearStopArmed } = useGlobalShortcuts({
     settings,
     update,
@@ -145,6 +153,8 @@ export default function ChatPage() {
     onCycleSessions: cycleSessions,
     onCloseSession: closeActiveSession,
     onToggleTerm: () => setTermOpen((v) => !v),
+    onToggleSidebar: toggleSidebar,
+    onOpenWorkspace: () => void pickWorkspace(),
   });
 
   // spoken rendering of a voice act — used to read embedded commands back

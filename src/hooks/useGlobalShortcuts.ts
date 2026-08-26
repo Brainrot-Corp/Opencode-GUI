@@ -30,6 +30,8 @@ export function useGlobalShortcuts({
   onCycleSessions,
   onCloseSession,
   onToggleTerm,
+  onToggleSidebar,
+  onOpenWorkspace,
 }: {
   settings: AppSettings;
   update: (patch: Partial<AppSettings>) => void;
@@ -49,6 +51,10 @@ export function useGlobalShortcuts({
   onCloseSession?: () => void;
   // Ctrl+` toggles the terminal dock
   onToggleTerm?: () => void;
+  // Ctrl+B toggles the session sidebar (VS Code parity, global)
+  onToggleSidebar?: () => void;
+  // Ctrl+O opens the workspace picker (same as Browse button)
+  onOpenWorkspace?: () => void;
 }) {
   // double-Escape stop gesture — armed by the first free Escape (the stop
   // button surfaces the window as a draining countdown ring), landed by the
@@ -104,7 +110,7 @@ export function useGlobalShortcuts({
       if (["=", "+", "-"].includes(e.key)) {
         e.preventDefault();
         stepZoom(e.key === "-" ? -1 : 1);
-      } else if (e.key === "0") {
+      } else if (e.key === "0" || e.code === "Digit0" || e.code === "Numpad0") {
         e.preventDefault();
         update({ uiScale: 1 });
       }
@@ -228,6 +234,34 @@ export function useGlobalShortcuts({
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
   }, [onToggleTerm]);
+
+  // Ctrl+B toggles the session sidebar — VS Code parity, global (no terminal
+  // guard, works even when an editor/terminal has focus)
+  useEffect(() => {
+    if (!onToggleSidebar) return;
+    const key = (e: KeyboardEvent) => {
+      if (!e.ctrlKey || e.shiftKey || e.altKey || e.repeat) return;
+      if (e.key.toLowerCase() !== "b") return;
+      e.preventDefault();
+      onToggleSidebar();
+    };
+    window.addEventListener("keydown", key);
+    return () => window.removeEventListener("keydown", key);
+  }, [onToggleSidebar]);
+
+  // Ctrl+O opens the workspace picker — exact same behavior as the Browse
+  // button (pickWorkspace → applyWorkspace → reload), global like VS Code
+  useEffect(() => {
+    if (!onOpenWorkspace) return;
+    const key = (e: KeyboardEvent) => {
+      if (!e.ctrlKey || e.shiftKey || e.altKey || e.repeat) return;
+      if (e.key.toLowerCase() !== "o") return;
+      e.preventDefault();
+      onOpenWorkspace();
+    };
+    window.addEventListener("keydown", key);
+    return () => window.removeEventListener("keydown", key);
+  }, [onOpenWorkspace]);
 
   // Rust emits visibility://changed on tray click / Alt+Space / tray menu
   useEffect(() => {
