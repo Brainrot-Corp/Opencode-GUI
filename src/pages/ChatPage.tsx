@@ -82,12 +82,14 @@ export default function ChatPage() {
       .catch(() => {});
   }, []);
 
-  useGlobalShortcuts({
+  const { stopArmed, clearStopArmed } = useGlobalShortcuts({
     settings,
     update,
     openBrowser,
     toggleDiff,
     openSettings: openSettingsDrawer,
+    abort: oc.abort,
+    busy: oc.busy,
     themeIds: themes.map((t) => t.id),
     activeModes,
   });
@@ -595,6 +597,8 @@ export default function ChatPage() {
                 )}
                 <Composer
                   busy={oc.busy}
+                  escHint={stopArmed}
+                  clearEscHint={clearStopArmed}
                   loadingModels={oc.booting}
                   providers={oc.providers}
                   modelSel={oc.modelSel}

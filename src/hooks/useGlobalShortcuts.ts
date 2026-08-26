@@ -1,8 +1,18 @@
-import { useEffect } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import type { AppSettings } from "./useSettings";
 import { playSound } from "../lib/sounds";
 import { UI_SCALES } from "../lib/uiScale";
+
+// surfaces that own a single Escape (menus, dialogs, popups) — while any of
+// them is open the double-Escape stop gesture stands down entirely and the
+// keypress goes to whatever handles closing that surface. NOTE: only pick
+// classes that are MOUNTED only while open — .drawer-scrim for one stays in
+// the DOM forever and just toggles its .open class
+const OVERLAY_SEL =
+  ".cmd-menu, .model-menu, .dlg-scrim, .drawer-scrim.open, .permission-bar";
+// window in which the second Escape completes the stop gesture
+const STOP_ARM_MS = 4000;
 
 // window/document-level listeners ChatPage used to inline: embedded-browser
 // link capture, WebView2 hotkey suppression, Ctrl+P pin, tray sounds,
@@ -13,6 +23,8 @@ export function useGlobalShortcuts({
   openBrowser,
   toggleDiff,
   openSettings,
+  abort,
+  busy,
   themeIds,
   activeModes,
 }: {
@@ -21,11 +33,26 @@ export function useGlobalShortcuts({
   openBrowser: (url: string) => void;
   toggleDiff: () => void;
   openSettings: () => void;
+  // double-Escape stops generation — same as the stop button
+  abort: () => void;
+  busy: boolean;
   // live theme list — /themes cycles whatever themes.json currently has
   themeIds?: string[];
   // variations the active theme provides — /scheme no-ops when locked to one
   activeModes?: ("dark" | "light")[];
 }) {
+  // double-Escape stop gesture — armed by the first free Escape (the stop
+  // button surfaces the window as a draining countdown ring), landed by the
+  // second. clearStopArmed also goes to the stop button so a manual click
+  // dismisses the ring instantly
+  const [stopArmed, setStopArmed] = useState(false);
+  const armTimer = useRef<number | undefined>(undefined);
+  const clearStopArmed = useCallback(() => {
+    window.clearTimeout(armTimer.current);
+    setStopArmed(false);
+  }, []);
+  // keep no stale timer across unmount
+  useEffect(() => () => window.clearTimeout(armTimer.current), []);
   // follow links from chat content in the embedded browser — capture phase,
   // because react-markdown anchors aren't ours to attach handlers to
   useEffect(() => {
@@ -80,6 +107,43 @@ export function useGlobalShortcuts({
       window.removeEventListener("keydown", key);
     };
   }, [settings.uiScale, update]);
+
+  // double-Escape within four seconds aborts the running turn — the
+  // keyboard twin of the stop button. The first free Escape arms the
+  // gesture; the second lands it. An Escape hitting an open menu/dialog
+  // belongs to that surface: the gesture disarms and the local handler
+  // closes its thing (this listener still sees the keydown even when they
+  // preventDefault). e.repeat is ignored so holding the key cannot
+  // machine-gun aborts
+  useEffect(() => {
+    let last = 0;
+    const key = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || e.repeat) return;
+      if (document.querySelector(OVERLAY_SEL)) {
+        clearStopArmed();
+        return;
+      }
+      if (!busy) return;
+      const now = Date.now();
+      if (now - last <= STOP_ARM_MS) {
+        last = 0;
+        clearStopArmed();
+        abort();
+      } else {
+        last = now;
+        setStopArmed(true);
+        window.clearTimeout(armTimer.current);
+        armTimer.current = window.setTimeout(clearStopArmed, STOP_ARM_MS);
+      }
+    };
+    window.addEventListener("keydown", key);
+    return () => window.removeEventListener("keydown", key);
+  }, [busy, abort, clearStopArmed]);
+
+  // the turn ended some other way → drop any pending arm
+  useEffect(() => {
+    if (!busy) clearStopArmed();
+  }, [busy, clearStopArmed]);
 
   // suppress the raw browser right-click menu (desktop app, not a page)
   useEffect(() => {
@@ -164,4 +228,6 @@ export function useGlobalShortcuts({
     document.addEventListener("mousedown", onDown);
     return () => document.removeEventListener("mousedown", onDown);
   }, []);
+
+  return { stopArmed, clearStopArmed };
 }

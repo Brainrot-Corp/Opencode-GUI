@@ -75,8 +75,12 @@ const KEYS: Group[] = [
     [
       ["Ctrl+M", "mic on/off"],
       ["Ctrl+P", "pin window on top"],
+      ["Ctrl+wheel", "zoom the UI in / out"],
+      ["Ctrl+= · Ctrl+-", "zoom in · out"],
+      ["Ctrl+0", "reset zoom"],
       ["Tab", "cycle agent"],
       ["Enter · Shift+Enter", "send · newline"],
+      ["Esc ×2 (within 4s)", "stop generation — a first Esc arms it, menus eat theirs"],
       ["Escape", "close menus and dialogs"],
     ],
   ],
@@ -148,7 +152,7 @@ export default function InfoDialog({
       {tab === "keys" && (
         <>
           <Groups data={[...KEYS, ...docGroups(pluginDocs, "keys")]} />
-          <p className="cmd-note">Ctrl+=/-/0 and Ctrl+wheel are blocked — UI scale lives in Settings.</p>
+          <p className="cmd-note">Zoom shortcuts scale the whole interface (same presets as Settings) — WebView2's own page zoom stays disabled.</p>
         </>
       )}
     </Dialog>

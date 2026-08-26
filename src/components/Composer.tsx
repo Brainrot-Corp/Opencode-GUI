@@ -11,6 +11,8 @@ import "../styles/composer.css";
 
 export default function Composer({
   busy,
+  escHint,
+  clearEscHint,
   loadingModels,
   providers,
   modelSel,
@@ -37,6 +39,9 @@ export default function Composer({
   onVoiceToggle,
 }: {
   busy: boolean;
+  // double-Escape stop gesture armed — the stop button shows its countdown
+  escHint?: boolean;
+  clearEscHint?: () => void;
   loadingModels?: boolean;
   providers: ProviderGroup[];
   modelSel: string;
@@ -530,7 +535,14 @@ export default function Composer({
                   }
                 />
                 {busy ? (
-                  <button className="stop-btn" data-tip="Stop generating" onClick={onAbort}>
+                  <button
+                    className={`stop-btn${escHint ? " armed" : ""}`}
+                    data-tip={escHint ? "Press Esc again to stop" : "Stop generating"}
+                    onClick={() => {
+                      clearEscHint?.();
+                      onAbort();
+                    }}
+                  >
                     <i className="fa-solid fa-stop" />
                   </button>
                 ) : (

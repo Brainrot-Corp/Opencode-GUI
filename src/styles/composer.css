@@ -504,6 +504,14 @@
   box-shadow: 0 0 28px -8px rgba(224, 143, 143, 0.55);
 }
 
+/* double-Escape armed — the stop button holds a steady red glow while the
+   gesture window is open (4s, kept in sync with STOP_ARM_MS in useGlobalShortcuts) */
+.stop-btn.armed {
+  background: rgba(224, 143, 143, 0.16);
+  border-color: rgba(224, 143, 143, 0.75);
+  box-shadow: 0 0 20px -2px rgba(224, 143, 143, 0.7);
+}
+
 /* attachments: staged chips with read progress + inline rejects */
 .attach-row {
   display: flex;
