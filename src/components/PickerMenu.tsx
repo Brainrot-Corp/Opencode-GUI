@@ -1,7 +1,11 @@
 import { useEffect, useRef, useState } from "react";
+import DropdownPortal from "./DropdownPortal";
 
 // custom dropdown matching the model picker design language (native select
-// popups can't be styled) — trigger + glass menu, closes on outside click
+// popups can't be styled) — trigger + glass menu portaled to document.body
+// (DropdownPortal) so it paints above every panel, closes on outside click.
+// Opens downward, hugging the trigger's left edge — or right edge inside
+// dialogs, where the picker sits at the row's end.
 export default function PickerMenu({
   value,
   onPick,
@@ -19,11 +23,13 @@ export default function PickerMenu({
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!open) return;
     const onDoc = (e: Event) => {
-      if (!ref.current?.contains(e.target as Node)) setOpen(false);
+      const t = e.target as Node;
+      if (!ref.current?.contains(t) && !menuRef.current?.contains(t)) setOpen(false);
     };
     document.addEventListener("pointerdown", onDoc, true);
     return () => document.removeEventListener("pointerdown", onDoc, true);
@@ -42,30 +48,30 @@ export default function PickerMenu({
         <span>{label}</span>
         <i className={`fa-solid fa-chevron-${open ? "up" : "down"}`} />
       </button>
-      {open && (
-        <div className="model-menu picker-drop" role="listbox">
+      <DropdownPortal anchor={ref} open={open} prefer="down">
+        <div className="model-menu picker-drop" role="listbox" ref={menuRef}>
           {entries.length === 0 && empty ? (
             <div className="model-empty">{empty}</div>
           ) : (
             entries.map((it) => (
-            <button
-              key={it.value}
-              type="button"
-              role="option"
-              aria-selected={it.value === value}
-              className={`model-opt${it.value === value ? " selected" : ""}`}
-              onClick={() => {
-                onPick(it.value);
-                setOpen(false);
-              }}
-            >
-              <span>{it.label}</span>
-              {it.value === value && <i className="fa-solid fa-check" />}
-            </button>
-          ))
+              <button
+                key={it.value}
+                type="button"
+                role="option"
+                aria-selected={it.value === value}
+                className={`model-opt${it.value === value ? " selected" : ""}`}
+                onClick={() => {
+                  onPick(it.value);
+                  setOpen(false);
+                }}
+              >
+                <span>{it.label}</span>
+                {it.value === value && <i className="fa-solid fa-check" />}
+              </button>
+            ))
           )}
         </div>
-      )}
+      </DropdownPortal>
     </div>
   );
 }

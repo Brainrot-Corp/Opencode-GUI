@@ -355,7 +355,9 @@ export default function Composer({
   return (
     <div
       ref={compRef}
-      className={`composer${attach.dragOver ? " dragover" : ""}${h ? " resized" : ""}`}
+      className={`composer${attach.dragOver ? " dragover" : ""}${h ? " resized" : ""}${
+        h >= 140 ? " tall" : ""
+      }`}
       style={h ? { height: h } : undefined}
       onDragOver={(e) => {
         if (!Array.from(e.dataTransfer.types).includes("Files")) return;
@@ -489,44 +491,46 @@ export default function Composer({
             e.target.value = "";
           }}
         />
-        <button
-          type="button"
-          className="icon-btn diff-btn attach-btn"
-          data-tip={
-            caps?.input?.length && !caps.input.includes("image") && !caps.input.includes("video")
-              ? `Attach files — this model reports: ${caps.input.join(", ")}`
-              : "Attach files"
-          }
-          onClick={() => fileInputRef.current?.click()}
-        >
-          <i className="fa-solid fa-paperclip" />
-        </button>
-        {onVoiceToggle && (
+        <div className="comp-tools">
           <button
             type="button"
-            className={`icon-btn diff-btn mic-btn${
-              voicePhase === "recording" || voiceStreaming ? " recording" : ""
-            }`}
+            className="icon-btn diff-btn attach-btn"
             data-tip={
-              voiceError ||
-              (voicePhase === "transcribing"
-                ? "Transcribing…"
-                : voiceStreaming
-                  ? "Hands-free listening… pause to review, then say 'envoyé' / 'send it' — click to stop"
-                  : voicePhase === "recording"
-                    ? "Recording… click to transcribe"
-                    : "Voice input — dictate a prompt or say 'new session', 'theme latte', 'run compact'…")
+              caps?.input?.length && !caps.input.includes("image") && !caps.input.includes("video")
+                ? `Attach files — this model reports: ${caps.input.join(", ")}`
+                : "Attach files"
             }
-            disabled={voicePhase === "transcribing" && !voiceStreaming}
-            onClick={onVoiceToggle}
+            onClick={() => fileInputRef.current?.click()}
           >
-            <i
-              className={`fa-solid ${
-                voicePhase === "transcribing" ? "fa-spinner fa-spin" : "fa-microphone"
-              }`}
-            />
+            <i className="fa-solid fa-paperclip" />
           </button>
-        )}
+          {onVoiceToggle && (
+            <button
+              type="button"
+              className={`icon-btn diff-btn mic-btn${
+                voicePhase === "recording" || voiceStreaming ? " recording" : ""
+              }`}
+              data-tip={
+                voiceError ||
+                (voicePhase === "transcribing"
+                  ? "Transcribing…"
+                  : voiceStreaming
+                    ? "Hands-free listening… pause to review, then say 'envoyé' / 'send it' — click to stop"
+                    : voicePhase === "recording"
+                      ? "Recording… click to transcribe"
+                      : "Voice input — dictate a prompt or say 'new session', 'theme latte', 'run compact'…")
+              }
+              disabled={voicePhase === "transcribing" && !voiceStreaming}
+              onClick={onVoiceToggle}
+            >
+              <i
+                className={`fa-solid ${
+                  voicePhase === "transcribing" ? "fa-spinner fa-spin" : "fa-microphone"
+                }`}
+              />
+            </button>
+          )}
+        </div>
         <textarea
                   ref={inputRef}
                   value={input}

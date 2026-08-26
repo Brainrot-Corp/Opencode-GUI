@@ -224,7 +224,7 @@ export default function VoicesDialog({
               const group = wmGroup(m.id);
               const showGroup = i === 0 || wmGroup(wFiltered[i - 1].id) !== group;
               const downloaded = (voice?.items ?? []).includes(m.id);
-              const active = settings.voice.model === m.id;
+              const active = downloaded && settings.voice.model === m.id;
               const downloading = dlModelId === m.id;
               const suffix = active
                 ? ""
@@ -301,7 +301,9 @@ export default function VoicesDialog({
                 disabled={!!dl}
                 empty="No models downloaded"
                 label={
-                  settings.voice.model ? modelLabel(settings.voice.model) : "model"
+                  voice?.items.includes(settings.voice.model)
+                    ? modelLabel(settings.voice.model)
+                    : "No models downloaded"
                 }
                 entries={(voice?.items ?? []).map((id) => ({
                   value: id,

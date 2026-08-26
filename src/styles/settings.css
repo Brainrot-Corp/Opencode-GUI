@@ -330,54 +330,10 @@
   cursor: default;
 }
 .picker-menu .picker-drop {
-  /* opens downward from the trigger, hugging its left edge */
-  top: calc(100% + 6px);
-  bottom: auto;
-  right: auto;
-  left: 0;
   min-width: min(280px, calc(100vw - 40px));
   max-width: 320px;
 }
-/* inside centered dialogs the picker sits at the row's right edge — anchor
-   there and open leftward so the menu can't cross the panel border */
-.dlg-body .picker-menu .picker-drop {
-  left: auto;
-  right: 0;
-  max-width: min(320px, calc(100vw - 80px));
-}
 
-/* commit-model picker: the squeezed controls can wrap to a line at the
-   drawer's left, dragging an absolutely-positioned menu out of bounds.
-   Give the picker its own full-width line and anchor the menu to the ROW
-   instead of the trigger — it then always lands inside the drawer */
-.git-model-row {
-  position: relative;
-  flex-wrap: wrap;
-}
-.git-model-row .color-controls {
-  width: 100%;
-}
-.git-model-row .model-select,
-.git-model-row .model-select-btn {
-  width: 100%;
-}
-.git-model-row .model-select-btn {
-  max-width: none;
-  min-width: 0;
-}
-.git-model-row .model-select {
-  /* static: the menu's positioned ancestor becomes this row */
-  position: static;
-}
-.git-model-row .model-menu {
-  position: absolute;
-  top: calc(100% + 6px);
-  bottom: auto;
-  right: 12px; /* align with the row's content edge */
-  left: auto;
-  min-width: min(280px, calc(100vw - 48px));
-  max-height: min(300px, 50vh);
-}
 .color-controls input[type="color"] {
   width: 30px;
   height: 24px;
