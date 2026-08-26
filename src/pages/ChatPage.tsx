@@ -66,6 +66,17 @@ export default function ChatPage() {
   const toggleDiff = useCallback(() => setDiffOpen((v) => !v), []);
   const openSettingsDrawer = useCallback(() => setSettingsOpen(true), []);
 
+  // Ctrl(+Shift+)Tab — walk the sidebar list (recency order), looping at both ends
+  const cycleSessions = useCallback(
+    (dir: 1 | -1) => {
+      const list = oc.sessions;
+      if (!list.length) return;
+      const i = list.findIndex((s) => s.id === oc.activeId);
+      void oc.openSession(list[i < 0 ? 0 : (i + dir + list.length) % list.length].id);
+    },
+    [oc.sessions, oc.activeId, oc.openSession],
+  );
+
   // browser bar band = titlebar bottom + bar height; the child webview starts
   // right below the bar
   function barTop() {
@@ -90,6 +101,7 @@ export default function ChatPage() {
     openSettings: openSettingsDrawer,
     themeIds: themes.map((t) => t.id),
     activeModes,
+    onCycleSessions: cycleSessions,
   });
 
   // spoken rendering of a voice act — used to read embedded commands back

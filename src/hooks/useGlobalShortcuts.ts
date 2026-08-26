@@ -15,6 +15,7 @@ export function useGlobalShortcuts({
   openSettings,
   themeIds,
   activeModes,
+  onCycleSessions,
 }: {
   settings: AppSettings;
   update: (patch: Partial<AppSettings>) => void;
@@ -25,6 +26,8 @@ export function useGlobalShortcuts({
   themeIds?: string[];
   // variations the active theme provides — /scheme no-ops when locked to one
   activeModes?: ("dark" | "light")[];
+  // Ctrl(+Shift+)Tab session cycling — dir follows sidebar recency order
+  onCycleSessions?: (dir: 1 | -1) => void;
 }) {
   // follow links from chat content in the embedded browser — capture phase,
   // because react-markdown anchors aren't ours to attach handlers to
@@ -107,6 +110,20 @@ export function useGlobalShortcuts({
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
   }, [settings.alwaysOnTop, update]);
+
+  // Ctrl+Tab next chat, Ctrl+Shift+Tab previous — full loop at both ends.
+  // preventDefault keeps WebView2 from treating Tab as focus traversal
+  useEffect(() => {
+    if (!onCycleSessions) return;
+    const key = (e: KeyboardEvent) => {
+      if (!e.ctrlKey || e.altKey || e.key !== "Tab") return;
+      e.preventDefault();
+      playSound("click");
+      onCycleSessions(e.shiftKey ? -1 : 1);
+    };
+    window.addEventListener("keydown", key);
+    return () => window.removeEventListener("keydown", key);
+  }, [onCycleSessions]);
 
   // Rust emits visibility://changed on tray click / Alt+Space / tray menu
   useEffect(() => {
