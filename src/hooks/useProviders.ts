@@ -7,10 +7,30 @@ type OcClient = Awaited<ReturnType<typeof import("../api").opencode>>["client"];
 
 // provider/model selection: boot-time loading + capability enrichment,
 // persisted hand-picked model (oc.lastModel), server-default learning,
-// and per-model thinking-effort variants (oc.variants)
-export function useProviders(onError: (msg: string) => void) {
+// per-session model memory (oc.sessionModels), and per-model
+// thinking-effort variants (oc.variants)
+const SESSION_MODELS_KEY = "oc.sessionModels";
+
+function isReachable(model: string, groups: ProviderGroup[]): boolean {
+  if (!model) return false;
+  const [pid, mid] = splitModel(model);
+  return groups.some((g) => g.id === pid && g.models.some((m) => m.id === mid));
+}
+
+export function useProviders(onError: (msg: string) => void, activeId: string) {
   const [providers, setProviders] = useState<ProviderGroup[]>([]);
   const [modelSel, setModelSel] = useState("");
+  // per-session model memory: only entries that were EXPLICITLY picked for
+  // that session get stored; everything else follows the global selection.
+  // keyed by session id -> model. boot-load prunes models that vanished
+  const [sessionModels, setSessionModels] = useState<Record<string, string>>(() => {
+    try {
+      const raw = JSON.parse(localStorage.getItem(SESSION_MODELS_KEY) ?? "{}");
+      return raw && typeof raw === "object" ? raw : {};
+    } catch {
+      return {};
+    }
+  });
   // the server's effective fallback model is not exposed by any endpoint
   // (the /config/providers default map lies). It is *learned* from the first
   // reply of an unsteered prompt — see learnDefault / message.updated handling
@@ -35,6 +55,11 @@ export function useProviders(onError: (msg: string) => void) {
     if (modelSel) localStorage.setItem("oc.lastModel", modelSel);
   }, [modelSel]);
 
+  // persist the session->model map (every write is a validated selection)
+  useEffect(() => {
+    localStorage.setItem(SESSION_MODELS_KEY, JSON.stringify(sessionModels));
+  }, [sessionModels]);
+
   const learnDefault = useCallback((resolved: string) => {
     setDefaultModel((prev) => (prev === resolved ? prev : resolved));
   }, []);
@@ -42,6 +67,46 @@ export function useProviders(onError: (msg: string) => void) {
   const markExplicit = useCallback(() => {
     sentExplicitModel.current = !!modelSel;
   }, [modelSel]);
+
+  // record (or clear) which model a session last used — stable identity,
+  // called both from the picker path and the SSE reply handler. "" clears
+  // (that session follows the global again); reachability is enforced at
+  // apply/prune time, writes here are trusted (menu picks + live replies)
+  const rememberSession = useCallback((sid: string, value: string) => {
+    if (!sid) return;
+    setSessionModels((prev) => {
+      if (!value) {
+        if (!(sid in prev)) return prev;
+        const next = { ...prev };
+        delete next[sid];
+        return next;
+      }
+      if (prev[sid] === value) return prev;
+      return { ...prev, [sid]: value };
+    });
+  }, []);
+
+  // session switch (or providers arriving late): re-apply the active
+  // session's remembered model — but only if it's still reachable. Entries
+  // whose models vanished from the provider list are pruned so they can
+  // never come back on a later switch
+  useEffect(() => {
+    if (!providers.length) return;
+    setSessionModels((prev) => {
+      let next = prev;
+      for (const [sid, model] of Object.entries(prev)) {
+        if (!isReachable(model, providers)) {
+          if (next === prev) next = { ...prev };
+          delete next[sid];
+        }
+      }
+      return next;
+    });
+    if (!activeId) return;
+    const remembered = sessionModels[activeId];
+    if (remembered && isReachable(remembered, providers))
+      setModelSel((cur) => (cur === remembered ? cur : remembered));
+  }, [activeId, providers, sessionModels]);
 
   // boot-time provider list + optional capability enrichment. attachment /
   // modality hints live only in GET /provider; SDK types stale AGAIN: runtime
@@ -162,6 +227,7 @@ export function useProviders(onError: (msg: string) => void) {
     providers,
     modelSel,
     setModelSel,
+    rememberSession,
     defaultModel,
     learnDefault,
     sentExplicitModel,

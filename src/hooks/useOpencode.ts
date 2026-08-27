@@ -46,7 +46,7 @@ export function useOpencode() {
   const [live, setLive] = useState(false);
   const [booting, setBooting] = useState(true);
 
-  const prov = useProviders(setError);
+  const prov = useProviders(setError, activeId);
 
   const activeRef = useRef(activeId);
   activeRef.current = activeId;
@@ -54,6 +54,10 @@ export function useOpencode() {
   busyRef.current = busyIds;
   const sessionsRef = useRef(sessions);
   sessionsRef.current = sessions;
+  // the SSE handler lives in a boot-time closure — modelSel must be read
+  // through a ref there, or it would see the boot-time "" forever
+  const modelSelRef = useRef(prov.modelSel);
+  modelSelRef.current = prov.modelSel;
   // command-registry refetch throttle for file-watcher bursts
   const cmdFetchAt = useRef(0);
 
@@ -192,6 +196,20 @@ export function useOpencode() {
             (info as any).modelID
           ) {
             prov.learnDefault(`${(info as any).providerID}/${(info as any).modelID}`);
+          }
+          // remember the model this session actually ran on — the "last
+          // model used" that gets re-applied on switch. only steered replies
+          // record (an unsteered one was the server default: keep following
+          // the global dynamically). the equality guard keys it to the
+          // current selection so background replies can't misattribute
+          if (
+            info.role === "assistant" &&
+            (info as any).providerID &&
+            (info as any).modelID
+          ) {
+            const actual = `${(info as any).providerID}/${(info as any).modelID}`;
+            if (actual === modelSelRef.current && modelSelRef.current)
+              prov.rememberSession(sid, actual);
           }
           store.applyMessage(info);
           break;
@@ -575,6 +593,16 @@ export function useOpencode() {
     playSound("click");
   }, [agents, agentSel]);
 
+  // picker entry: applies the choice globally AND remembers it for the
+  // session it was made in (so switching back re-applies it)
+  const selectModel = useCallback(
+    (v: string) => {
+      prov.rememberSession(activeRef.current, v);
+      prov.setModelSel(v);
+    },
+    [prov.rememberSession, prov.setModelSel],
+  );
+
   // /undo target: the user message to rewind TO — one before the last
   // exchange normally, one before the rewind point when already viewing an
   // earlier version. "" when there is nothing left to undo.
@@ -709,7 +737,7 @@ export function useOpencode() {
     busy,
     providers: prov.providers as ProviderGroup[],
     modelSel: prov.modelSel,
-    setModelSel: prov.setModelSel,
+    setModelSel: selectModel,
     permission,
     question,
     answerQuestion,

@@ -388,6 +388,171 @@ fn set_tray_reset(app: tauri::AppHandle, enabled: bool) {
     }
 }
 
+// last focused HWND tracking for system-wide hotkeys across multiple instances
+fn last_focused_path(app: &tauri::AppHandle) -> Option<PathBuf> {
+    app.path().app_config_dir().ok().map(|d| d.join("last-focused-hwnd"))
+}
+fn write_last_focused(app: &tauri::AppHandle, hwnd: isize) {
+    if let Some(p) = last_focused_path(app) {
+        if let Some(dir) = p.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let _ = std::fs::write(p, hwnd.to_string());
+    }
+}
+fn read_last_focused(app: &tauri::AppHandle) -> Option<isize> {
+    last_focused_path(app)
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .and_then(|s| s.trim().parse().ok())
+}
+
+#[cfg(windows)]
+fn is_opencode_window(hwnd: isize) -> bool {
+    // Cheap check: title must be "OpenCode" (our main window title)
+    // Use GetWindowTextW via windows crate
+    use windows::Win32::UI::WindowsAndMessaging::{GetWindowTextW, IsWindowVisible};
+    if hwnd == 0 {
+        return false;
+    }
+    // hidden tray windows are not visible, but foreground check already ensures visible
+    // For foreground check, we also want to verify it's an OpenCode window, not just any
+    unsafe {
+        if IsWindowVisible(windows::Win32::Foundation::HWND(hwnd as *mut _)).as_bool() == false {
+            // Still consider hidden? For foreground check, hidden can't be foreground, so false is fine
+            // But for is_opencode check, we still want to compare title even if hidden? Not needed
+        }
+        let mut buf = [0u16; 256];
+        let len = GetWindowTextW(windows::Win32::Foundation::HWND(hwnd as *mut _), &mut buf);
+        if len == 0 {
+            return false;
+        }
+        let title = String::from_utf16_lossy(&buf[..len as usize]);
+        title == "OpenCode"
+    }
+}
+
+#[cfg(windows)]
+fn send_ipc_to_hwnd(hwnd: isize, dw_data: usize) -> bool {
+    use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
+    use windows::Win32::System::DataExchange::COPYDATASTRUCT;
+    use windows::Win32::UI::WindowsAndMessaging::{SendMessageW, WM_COPYDATA};
+    if hwnd == 0 {
+        return false;
+    }
+    unsafe {
+        let cds = COPYDATASTRUCT {
+            dwData: dw_data,
+            cbData: 0,
+            lpData: std::ptr::null_mut(),
+        };
+        let res = SendMessageW(
+            HWND(hwnd as *mut _),
+            WM_COPYDATA,
+            WPARAM(0),
+            LPARAM(&cds as *const _ as isize),
+        );
+        res.0 != 0
+    }
+}
+
+#[cfg(windows)]
+const IPC_TOGGLE: usize = 0x4F4347; // "OCG"
+#[cfg(windows)]
+const IPC_MIC: usize = 0x4F434D; // "OCM"
+#[cfg(windows)]
+const IPC_SHOW: usize = 0x4F4353; // "OCS" for explicit show (not toggle)
+
+#[cfg(windows)]
+mod ipc_hook {
+    use super::*;
+    use std::sync::{Mutex, OnceLock};
+    use std::sync::atomic::{AtomicIsize, Ordering};
+    use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        CallWindowProcW, DefWindowProcW, GetWindowLongPtrW, SetWindowLongPtrW, GWLP_WNDPROC, WM_COPYDATA,
+    };
+    use windows::Win32::System::DataExchange::COPYDATASTRUCT;
+
+    static IPC_APP: OnceLock<Mutex<Option<tauri::AppHandle>>> = OnceLock::new();
+    static ORIGINAL_PROC: AtomicIsize = AtomicIsize::new(0);
+
+    pub fn set_app(app: tauri::AppHandle) {
+        let m = IPC_APP.get_or_init(|| Mutex::new(None));
+        *m.lock().unwrap() = Some(app);
+    }
+
+    unsafe extern "system" fn wndproc(
+        hwnd: HWND,
+        msg: u32,
+        wparam: WPARAM,
+        lparam: LPARAM,
+    ) -> LRESULT {
+        if msg == WM_COPYDATA {
+            let cds = &*(lparam.0 as *const COPYDATASTRUCT);
+            let app_opt = IPC_APP.get().and_then(|m| m.lock().unwrap().clone());
+            if let Some(app) = app_opt {
+                match cds.dwData as usize {
+                    super::IPC_TOGGLE => {
+                        let app2 = app.clone();
+                        let _ = app.run_on_main_thread(move || {
+                            // toggle logic matching global shortcut: hide if visible+focused else show
+                            if let Some(w) = app2.get_webview_window("main") {
+                                let visible = w.is_visible().unwrap_or(false);
+                                let focused = super::window_focused(&w);
+                                if visible && focused {
+                                    super::hide_main(&app2);
+                                } else {
+                                    super::show_main(&app2);
+                                }
+                            }
+                        });
+                        return LRESULT(1);
+                    }
+                    super::IPC_MIC => {
+                        use tauri::Emitter;
+                        let _ = app.emit("mic://toggle", ());
+                        return LRESULT(1);
+                    }
+                    super::IPC_SHOW => {
+                        let app2 = app.clone();
+                        let _ = app.run_on_main_thread(move || {
+                            super::show_main(&app2);
+                        });
+                        return LRESULT(1);
+                    }
+                    _ => {}
+                }
+            }
+        }
+        let orig = ORIGINAL_PROC.load(Ordering::Relaxed);
+        if orig != 0 {
+            CallWindowProcW(
+                std::mem::transmute::<isize, windows::Win32::UI::WindowsAndMessaging::WNDPROC>(orig),
+                hwnd,
+                msg,
+                wparam,
+                lparam,
+            )
+        } else {
+            DefWindowProcW(hwnd, msg, wparam, lparam)
+        }
+    }
+
+    pub fn install(app: &tauri::AppHandle) {
+        set_app(app.clone());
+        if let Some(w) = app.get_webview_window("main") {
+            if let Ok(hwnd) = w.hwnd() {
+                unsafe {
+                    let hwnd_raw = HWND(hwnd.0);
+                    let orig = GetWindowLongPtrW(hwnd_raw, GWLP_WNDPROC);
+                    ORIGINAL_PROC.store(orig, Ordering::Relaxed);
+                    SetWindowLongPtrW(hwnd_raw, GWLP_WNDPROC, wndproc as *const () as usize as isize);
+                }
+            }
+        }
+    }
+}
+
 fn spawn_new_instance() {
     let exe = match std::env::current_exe() {
         Ok(p) => p,
@@ -930,6 +1095,20 @@ pub fn run() {
             } else if args.iter().any(|a| a == "--quit") {
                 app.exit(0);
             } else {
+                // Pinned taskbar left-click: show last focused window system-wide
+                #[cfg(windows)]
+                {
+                    let my_hwnd = app
+                        .get_webview_window("main")
+                        .and_then(|w| w.hwnd().ok())
+                        .map(|h| h.0 as isize)
+                        .unwrap_or(0);
+                    if let Some(target) = read_last_focused(app) {
+                        if target != my_hwnd && target != 0 && send_ipc_to_hwnd(target, IPC_SHOW) {
+                            return;
+                        }
+                    }
+                }
                 show_main(app);
             }
         }));
@@ -1029,17 +1208,80 @@ pub fn run() {
             let mic: tauri_plugin_global_shortcut::Shortcut =
                 "ctrl+shift+m".parse().expect("valid hotkey");
                 if *shortcut == mic {
-                    // mic toggle anywhere — frontend owns the real start/stop
-                    use tauri::Emitter;
-                    let _ = app.emit("mic://toggle", ());
-                } else {
-                    if let Some(w) = app.get_webview_window("main") {
-                        let visible = w.is_visible().unwrap_or(false);
-                        let focused = window_focused(&w);
-                        if visible && focused {
-                            hide_main(app);
+                    // mic toggle — forward to last focused instance if different
+                    #[cfg(windows)]
+                    {
+                        let my_hwnd = app
+                            .get_webview_window("main")
+                            .and_then(|w| w.hwnd().ok())
+                            .map(|h| h.0 as isize)
+                            .unwrap_or(0);
+                        let fg = unsafe {
+                            windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow().0 as isize
+                        };
+                        let target = if fg != 0 && is_opencode_window(fg) {
+                            Some(fg)
                         } else {
-                            show_main(app);
+                            read_last_focused(app)
+                        };
+                        if let Some(t) = target {
+                            if t != my_hwnd && t != 0 && send_ipc_to_hwnd(t, IPC_MIC) {
+                                return;
+                            }
+                        }
+                        use tauri::Emitter;
+                        let _ = app.emit("mic://toggle", ());
+                    }
+                    #[cfg(not(windows))]
+                    {
+                        use tauri::Emitter;
+                        let _ = app.emit("mic://toggle", ());
+                    }
+                } else {
+                    // Alt+Space toggle — apply to last focused instance system-wide
+                    #[cfg(windows)]
+                    {
+                        let my_hwnd = app
+                            .get_webview_window("main")
+                            .and_then(|w| w.hwnd().ok())
+                            .map(|h| h.0 as isize)
+                            .unwrap_or(0);
+                        let fg = unsafe {
+                            windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow().0 as isize
+                        };
+                        let target = if fg != 0 && is_opencode_window(fg) {
+                            Some(fg)
+                        } else {
+                            read_last_focused(app)
+                        };
+                        if let Some(t) = target {
+                            if t != my_hwnd && t != 0 {
+                                if send_ipc_to_hwnd(t, IPC_TOGGLE) {
+                                    return;
+                                }
+                                // SendMessage failed (target closed), fallback to self
+                            }
+                        }
+                        if let Some(w) = app.get_webview_window("main") {
+                            let visible = w.is_visible().unwrap_or(false);
+                            let focused = window_focused(&w);
+                            if visible && focused {
+                                hide_main(app);
+                            } else {
+                                show_main(app);
+                            }
+                        }
+                    }
+                    #[cfg(not(windows))]
+                    {
+                        if let Some(w) = app.get_webview_window("main") {
+                            let visible = w.is_visible().unwrap_or(false);
+                            let focused = window_focused(&w);
+                            if visible && focused {
+                                hide_main(app);
+                            } else {
+                                show_main(app);
+                            }
                         }
                     }
                 }
@@ -1160,11 +1402,38 @@ pub fn run() {
             // first Alt+Space must see "visible and focused" to hide again
             show_main(app.handle());
 
+            #[cfg(windows)]
+            {
+                // per-instance IPC hook for last-focused hotkey forwarding
+                ipc_hook::install(app.handle());
+                if let Some(w) = app.handle().get_webview_window("main") {
+                    if let Ok(hwnd) = w.hwnd() {
+                        write_last_focused(app.handle(), hwnd.0 as isize);
+                    }
+                }
+            }
+
             Ok(())
         })
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|_app_handle, event| {
+            // track last focused HWND for system-wide hotkeys across multiple instances
+            #[cfg(windows)]
+            if let RunEvent::WindowEvent {
+                label,
+                event: WindowEvent::Focused(focused),
+                ..
+            } = &event
+            {
+                if *focused && label == "main" {
+                    if let Some(w) = _app_handle.get_webview_window("main") {
+                        if let Ok(hwnd) = w.hwnd() {
+                            write_last_focused(_app_handle, hwnd.0 as isize);
+                        }
+                    }
+                }
+            }
             // keep the browser webview glued below the top bar across
             // window resizes / DPI changes while it is open
             if let RunEvent::WindowEvent {
