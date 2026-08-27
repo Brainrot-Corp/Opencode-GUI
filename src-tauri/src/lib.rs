@@ -180,8 +180,14 @@ async fn http_json(
         .and_then(|v| v.to_str().ok())
         .unwrap_or_default()
         .to_string();
+    let retry_after = resp
+        .headers()
+        .get("retry-after")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default()
+        .to_string();
     let text = resp.text().await.map_err(|e| e.to_string())?;
-    Ok(serde_json::json!({ "status": status, "body": text, "link": link }))
+    Ok(serde_json::json!({ "status": status, "body": text, "link": link, "retryAfter": retry_after }))
 }
 
 #[tauri::command]
