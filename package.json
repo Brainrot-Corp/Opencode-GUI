@@ -1,7 +1,7 @@
 {
   "name": "opencode-gui",
   "private": true,
-  "version": "1.6.0",
+  "version": "1.6.5",
   "type": "module",
   "scripts": {
     "dev": "vite",
