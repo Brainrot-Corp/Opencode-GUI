@@ -6,10 +6,12 @@ import type { ProviderGroup } from "../types";
 type OcClient = Awaited<ReturnType<typeof import("../api").opencode>>["client"];
 
 // provider/model selection: boot-time loading + capability enrichment,
-// per-instance hand-picked model (sessionStorage oc.lastModel), server-default
-// learning, per-session model memory (oc.sessionModels — explicit picks only),
-// and per-model thinking-effort variants (oc.variants)
+// shared hand-picked model (localStorage oc.lastModel — synced across all
+// windows), server-default learning, per-session model memory
+// (oc.sessionModels — explicit picks only), and per-model thinking-effort
+// variants (oc.variants)
 const SESSION_MODELS_KEY = "oc.sessionModels";
+const LAST_MODEL_KEY = "oc.lastModel";
 
 function isReachable(model: string, groups: ProviderGroup[]): boolean {
   if (!model) return false;
@@ -49,13 +51,35 @@ export function useProviders(onError: (msg: string) => void, activeId: string) {
     }
   });
 
-  // remember this instance's last hand-picked model. sessionStorage scopes
-  // it to the window (other instances keep their own globals); it survives
-  // workspace reloads but resets for a fresh window. only real selections
-  // persist — never wipe the stored one with ""
+  // shared last hand-picked model — visible to every window/instance via
+  // localStorage (cross-window "storage" events keep live windows in sync).
+  // only real selections persist — never wipe the stored one with ""
   useEffect(() => {
-    if (modelSel) sessionStorage.setItem("oc.lastModel", modelSel);
+    if (modelSel) {
+      try {
+        localStorage.setItem(LAST_MODEL_KEY, modelSel);
+      } catch {}
+      // clear legacy per-window copy if it exists
+      try {
+        sessionStorage.removeItem(LAST_MODEL_KEY);
+      } catch {}
+    }
   }, [modelSel]);
+
+  // live sync: another window picked a model -> reflect it here unless the
+  // active session has its own remembered model (which outranks the global)
+  useEffect(() => {
+    const onStorage = (e: StorageEvent) => {
+      if (e.key !== LAST_MODEL_KEY || !e.newValue) return;
+      if (!providers.length) return;
+      if (!isReachable(e.newValue, providers)) return;
+      const remembered = sessionModels[activeId];
+      if (remembered && isReachable(remembered, providers)) return;
+      setModelSel((cur) => (cur === e.newValue! ? cur : e.newValue!));
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, [providers, activeId, sessionModels]);
 
   // persist the session->model map (every write is a validated selection)
   useEffect(() => {
@@ -88,14 +112,37 @@ export function useProviders(onError: (msg: string) => void, activeId: string) {
   }, []);
 
   // session switch (or providers arriving late): re-apply the active
-  // session's remembered model — but only if it's still reachable. the
-  // memory map itself is written only by explicit user picks (selectModel);
-  // nothing here auto-changes what a session selected
+  // session's remembered model when it exists and is still reachable;
+  // otherwise fall back to the shared global last model. The global is the
+  // "last used model between all instances" and is required on app launch
+  // when the active session has no model. Unreachable remembered entries are
+  // pruned so the session correctly follows the global from then on.
   useEffect(() => {
     if (!providers.length || !activeId) return;
     const remembered = sessionModels[activeId];
-    if (remembered && isReachable(remembered, providers))
-      setModelSel((cur) => (cur === remembered ? cur : remembered));
+    if (remembered) {
+      if (isReachable(remembered, providers)) {
+        setModelSel((cur) => (cur === remembered ? cur : remembered));
+        return;
+      }
+      // stale — provider/model vanished: drop the per-session pin
+      setSessionModels((prev) => {
+        if (!(activeId in prev)) return prev;
+        const next = { ...prev };
+        delete next[activeId];
+        return next;
+      });
+    }
+    // no valid per-session model — apply the shared global last model if
+    // it exists and is still reachable (app-launch fallback + inter-session
+    // fallback)
+    let global: string | null = null;
+    try {
+      global = localStorage.getItem(LAST_MODEL_KEY) ?? sessionStorage.getItem(LAST_MODEL_KEY);
+    } catch {}
+    if (global && isReachable(global, providers)) {
+      setModelSel((cur) => (cur === global ? cur : global));
+    }
   }, [activeId, providers, sessionModels]);
 
   // boot-time provider list + optional capability enrichment. attachment /
@@ -143,26 +190,51 @@ export function useProviders(onError: (msg: string) => void, activeId: string) {
         groups.sort((a, b) => a.label.localeCompare(b.label));
         setProviders(groups);
 
-        // restore this instance's last hand-picked model if it still exists.
-        // the global lives in sessionStorage (per window); a one-time claim
-        // of the legacy shared localStorage value keeps the primary window's
-        // model across the upgrade, then clears it so new instances start
-        // their own global fresh
-        let saved = sessionStorage.getItem("oc.lastModel");
-        if (!saved) {
-          const legacy = localStorage.getItem("oc.lastModel");
-          if (legacy) {
-            sessionStorage.setItem("oc.lastModel", legacy);
-            localStorage.removeItem("oc.lastModel");
-            saved = legacy;
+        // prune any per-session entries that vanished (provider/model removed)
+        setSessionModels((prev) => {
+          let changed = false;
+          const next = { ...prev };
+          for (const [sid, mod] of Object.entries(prev)) {
+            if (!isReachable(mod, groups)) {
+              delete next[sid];
+              changed = true;
+            }
           }
+          return changed ? next : prev;
+        });
+
+        // restore the *shared* last hand-picked model (localStorage so every
+        // window/instance sees the same value). Migrate a legacy per-window
+        // sessionStorage entry if it exists — the app used to be per-instance.
+        let saved: string | null = null;
+        try {
+          saved = localStorage.getItem(LAST_MODEL_KEY);
+        } catch {}
+        if (!saved) {
+          try {
+            const legacy = sessionStorage.getItem(LAST_MODEL_KEY);
+            if (legacy) {
+              try {
+                localStorage.setItem(LAST_MODEL_KEY, legacy);
+              } catch {}
+              try {
+                sessionStorage.removeItem(LAST_MODEL_KEY);
+              } catch {}
+              saved = legacy;
+            }
+          } catch {}
         }
         if (saved) {
           const [pid, mid] = splitModel(saved);
           if (groups.some((g) => g.id === pid && g.models.some((m) => m.id === mid))) {
-            setModelSel(saved);
+            setModelSel((cur) => (cur === saved! ? cur : saved!));
           } else {
-            sessionStorage.removeItem("oc.lastModel");
+            try {
+              localStorage.removeItem(LAST_MODEL_KEY);
+            } catch {}
+            try {
+              sessionStorage.removeItem(LAST_MODEL_KEY);
+            } catch {}
           }
         }
       } catch (e) {
