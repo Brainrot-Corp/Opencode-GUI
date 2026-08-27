@@ -112,7 +112,7 @@ export default function ModelMenu({
           {entries.map((it, i) => {
             const showGroup = it.group && entries[i - 1]?.group !== it.group;
             return (
-              <div key={it.value || `def-${i}`}>
+              <div key={`${it.group ?? ""}:${it.value || "def"}:${i}`}>
                 {showGroup && <div className="model-group-label">{it.group}</div>}
                 <button
                   type="button"

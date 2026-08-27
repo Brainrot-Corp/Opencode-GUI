@@ -503,21 +503,32 @@ export default function GitPanel() {
 
           {staged.length > 0 && (
             <>
-              <div className="gp-sect">
-                <button
-                  className="gp-sect-toggle"
-                  onClick={() => setStagedCollapsed((v) => !v)}
-                  data-tip={stagedCollapsed ? "Expand staged" : "Collapse staged"}
-                >
+              <div
+                className="gp-sect"
+                role="button"
+                tabIndex={0}
+                onClick={() => setStagedCollapsed((v) => !v)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    setStagedCollapsed((v) => !v);
+                  }
+                }}
+                data-tip={stagedCollapsed ? "Expand staged" : "Collapse staged"}
+              >
+                <span className="gp-sect-toggle">
                   <i className={`fa-solid fa-chevron-${stagedCollapsed ? "right" : "down"} gp-sect-chev`} />
                   <span>Staged</span>
                   <span className="gp-sect-count">{staged.length}</span>
-                </button>
+                </span>
                 <button
                   className="gp-sact"
                   data-tip="Unstage all"
                   disabled={busy}
-                  onClick={() => act(() => invoke("git_unstage", { dir: dir.current, paths: staged.map((f) => f.path) }))}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void act(() => invoke("git_unstage", { dir: dir.current, paths: staged.map((f) => f.path) }));
+                  }}
                 >
                   <i className="fa-solid fa-minus" />
                   Unstage all
@@ -526,16 +537,24 @@ export default function GitPanel() {
               {!stagedCollapsed && staged.map((f) => row(f, true))}
             </>
           )}
-          <div className="gp-sect">
-            <button
-              className="gp-sect-toggle"
-              onClick={() => setChangesCollapsed((v) => !v)}
-              data-tip={changesCollapsed ? "Expand changes" : "Collapse changes"}
-            >
+          <div
+            className="gp-sect"
+            role="button"
+            tabIndex={0}
+            onClick={() => setChangesCollapsed((v) => !v)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                setChangesCollapsed((v) => !v);
+              }
+            }}
+            data-tip={changesCollapsed ? "Expand changes" : "Collapse changes"}
+          >
+            <span className="gp-sect-toggle">
               <i className={`fa-solid fa-chevron-${changesCollapsed ? "right" : "down"} gp-sect-chev`} />
               <span>Changes</span>
               {!!changes.length && <span className="gp-sect-count">{changes.length}</span>}
-            </button>
+            </span>
             <span className="gp-sect-acts">
               {!!changes.length && (
                 <>
@@ -543,7 +562,10 @@ export default function GitPanel() {
                     className="gp-sact"
                     data-tip="Stage all"
                     disabled={busy}
-                    onClick={() => act(() => invoke("git_stage", { dir: dir.current, paths: changes.map((f) => f.path) }))}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void act(() => invoke("git_stage", { dir: dir.current, paths: changes.map((f) => f.path) }));
+                    }}
                   >
                     <i className="fa-solid fa-plus" />
                     Stage all
@@ -556,7 +578,10 @@ export default function GitPanel() {
                           className="gp-sact danger"
                           data-tip="Really discard all"
                           disabled={busy}
-                          onClick={discardAll}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void discardAll();
+                          }}
                         >
                           <i className="fa-solid fa-check" />
                           Sure?
@@ -564,7 +589,10 @@ export default function GitPanel() {
                         <button
                           className="gp-sact"
                           data-tip="Keep"
-                          onClick={() => setConfirmPath("")}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setConfirmPath("");
+                          }}
                         >
                           <i className="fa-solid fa-xmark" />
                         </button>
@@ -574,7 +602,10 @@ export default function GitPanel() {
                         className="gp-sact"
                         data-tip="Discard all unstaged"
                         disabled={busy}
-                        onClick={() => setConfirmPath("*")}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setConfirmPath("*");
+                        }}
                       >
                         <i className="fa-solid fa-rotate-left" />
                         Revert all

@@ -10,6 +10,7 @@ import ModelMenu, { type ModelEntry } from "./ModelMenu";
 import SlashMenu from "./SlashMenu";
 import { playSound } from "../lib/sounds";
 import { getDraft, setDraft } from "../lib/drafts";
+import { getRecentModels, pushRecentModel } from "../lib/recentModels";
 import "../styles/composer.css";
 
 // rebuild the draft as HTML for the highlight layer behind the textarea:
@@ -147,6 +148,7 @@ export default function Composer({
   const [hi, setHi] = useState(-1); // keyboard highlight index
   const [hiCmd, setHiCmd] = useState(0); // slash-menu highlight
   const [cmdClosed, setCmdClosed] = useState(false);
+  const [recent, setRecent] = useState<string[]>(() => getRecentModels());
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const hlRef = useRef<HTMLDivElement>(null);
@@ -395,29 +397,63 @@ export default function Composer({
     return g && m ? `${g.label} · ${m.label}` : sel;
   };
 
-  // flat selectable entries (server default first, then provider models)
-  const allEntries: ModelEntry[] = [];
-  if (defaultModel) {
-    allEntries.push({ value: "", label: `Server default · ${pretty(defaultModel)}` });
-  }
-  providers.forEach((g) =>
-    g.models.forEach((m) =>
-      allEntries.push({ value: `${g.id}/${m.id}`, label: m.label, group: g.label }),
-    ),
-  );
+  // keep recent list in sync when model changes externally (voice, restore)
+  useEffect(() => {
+    if (!modelSel || !providers.length) return;
+    if (recent[0] === modelSel) return;
+    const valid = providers.some((g) => g.models.some((m) => `${g.id}/${m.id}` === modelSel));
+    if (!valid) return;
+    const next = pushRecentModel(modelSel);
+    if (next.join("|") !== recent.join("|")) setRecent(next);
+  }, [modelSel, providers, recent]);
+
+  // flat selectable entries: recent (5) on top, then server default, then provider models (deduped)
+  const allEntries: ModelEntry[] = useMemo(() => {
+    const out: ModelEntry[] = [];
+    if (recent.length && providers.length) {
+      const valid = new Set(providers.flatMap((g) => g.models.map((m) => `${g.id}/${m.id}`)));
+      const seen = new Set<string>();
+      for (const v of recent) {
+        if (!v || !valid.has(v) || seen.has(v)) continue;
+        seen.add(v);
+        const [pid, mid] = splitModel(v);
+        const g = providers.find((x) => x.id === pid);
+        const m = g?.models.find((x) => x.id === mid);
+        const label = g && m ? `${g.label} · ${m.label}` : v;
+        out.push({ value: v, label, group: "Recent" });
+        if (out.length >= 5) break;
+      }
+    }
+    if (defaultModel) {
+      out.push({ value: "", label: `Server default · ${pretty(defaultModel)}` });
+    }
+    const recentSet = new Set(out.filter((e) => e.group === "Recent").map((e) => e.value));
+    providers.forEach((g) =>
+      g.models.forEach((m) => {
+        const v = `${g.id}/${m.id}`;
+        if (recentSet.has(v)) return;
+        out.push({ value: v, label: m.label, group: g.label });
+      }),
+    );
+    return out;
+  }, [providers, defaultModel, recent]);
 
   // model-menu filter: keyboard brain navigates the FILTERED list, so
   // highlight indices always match what's on screen
   const [mq, setMq] = useState("");
   const q = mq.trim().toLowerCase();
-  const entries: ModelEntry[] = q
-    ? allEntries.filter(
-        (e2) =>
-          e2.label.toLowerCase().includes(q) ||
-          e2.value.toLowerCase().includes(q) ||
-          (e2.group ?? "").toLowerCase().includes(q),
-      )
-    : allEntries;
+  const entries: ModelEntry[] = useMemo(
+    () =>
+      q
+        ? allEntries.filter(
+            (e2) =>
+              e2.label.toLowerCase().includes(q) ||
+              e2.value.toLowerCase().includes(q) ||
+              (e2.group ?? "").toLowerCase().includes(q),
+          )
+        : allEntries,
+    [q, allEntries],
+  );
   // typing restarts highlight from the top of the results
   useEffect(() => {
     if (open) setHi(q ? 0 : allEntries.findIndex((e2) => e2.value === modelSel));
@@ -429,6 +465,10 @@ export default function Composer({
   }, [open]);
 
   function pick(v: string) {
+    if (v) {
+      const next = pushRecentModel(v);
+      setRecent(next);
+    }
     onModelSelect(v);
     setOpen(false);
     setHi(-1);

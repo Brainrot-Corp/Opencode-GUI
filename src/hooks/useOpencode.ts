@@ -105,12 +105,12 @@ export function useOpencode() {
   const refreshSessions = useCallback(async () => {
     const { client } = await opencode();
     const r = await client.session.list();
-    // most recently updated first; helper sessions (summary/debrief/commit
+    // most recently created first; helper sessions (summary/debrief/commit
     // gen) are dropped — live-tracked ids plus title-marked crash orphans
     const list = ((r.data ?? []) as Session[])
       .filter((s) => !hiddenSessions.has(s.id) && s.title !== HIDDEN_TITLE)
       .slice()
-      .sort((a, b) => (b.time?.updated ?? 0) - (a.time?.updated ?? 0));
+      .sort((a, b) => (b.time?.created ?? 0) - (a.time?.created ?? 0));
     setSessions(list);
     return list;
   }, []);
@@ -264,9 +264,9 @@ export function useOpencode() {
           setSessions((prev) => {
             const i = prev.findIndex((x) => x.id === s.id);
             if (i < 0) return prev;
-            // keep refreshSessions' ordering rule: newest activity first
+            // keep refreshSessions' ordering rule: newest created first
             return [...prev.map((x, j) => (j === i ? s : x))].sort(
-              (a, b) => (b.time?.updated ?? 0) - (a.time?.updated ?? 0),
+              (a, b) => (b.time?.created ?? 0) - (a.time?.created ?? 0),
             );
           });
           break;

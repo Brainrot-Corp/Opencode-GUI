@@ -252,6 +252,19 @@ body.gp-resizing * {
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--text-faint);
+  cursor: pointer;
+  border-radius: 3px;
+  transition: color 0.15s, background 0.15s;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.gp-sect:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) calc(0.06 * 100%), transparent);
+}
+.gp-sect:focus-visible {
+  outline: 1px solid color-mix(in srgb, var(--accent) calc(0.35 * 100%), transparent);
+  outline-offset: -1px;
 }
 .gp-sect-toggle {
   display: flex;
@@ -261,18 +274,12 @@ body.gp-resizing * {
   border: none;
   border-radius: 3px;
   background: none;
-  cursor: pointer;
   font: inherit;
   font-size: inherit;
   font-weight: inherit;
   letter-spacing: inherit;
   text-transform: inherit;
   color: inherit;
-  transition: color 0.15s, background 0.15s;
-}
-.gp-sect-toggle:hover {
-  color: var(--text);
-  background: color-mix(in srgb, var(--accent) calc(0.06 * 100%), transparent);
 }
 .gp-sect-chev {
   width: 10px;
@@ -280,7 +287,7 @@ body.gp-resizing * {
   color: var(--text-faint);
   transition: color 0.15s;
 }
-.gp-sect-toggle:hover .gp-sect-chev {
+.gp-sect:hover .gp-sect-chev {
   color: var(--accent);
 }
 .gp-sect-count {
@@ -311,6 +318,8 @@ body.gp-resizing * {
   text-transform: uppercase;
   color: var(--text-faint);
   transition: color 0.15s, background 0.15s;
+  user-select: none;
+  -webkit-user-select: none;
 }
 .gp-sact:hover:not(:disabled) {
   color: var(--accent);
