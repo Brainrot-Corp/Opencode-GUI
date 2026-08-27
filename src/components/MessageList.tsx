@@ -79,6 +79,30 @@ function fmtTok(n: number) {
   return n >= 1000 ? `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k` : `${n}`;
 }
 
+function fmtTime(ts?: number): string {
+  if (!ts) return "";
+  const d = new Date(ts);
+  if (Number.isNaN(d.getTime())) return "";
+  const now = new Date();
+  const sameDay = d.toDateString() === now.toDateString();
+  const time = d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+  if (sameDay) return time;
+  const sameYear = d.getFullYear() === now.getFullYear();
+  const date = d.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    ...(sameYear ? {} : { year: "numeric" }),
+  });
+  return `${date} ${time}`;
+}
+
+function fmtFull(ts?: number): string {
+  if (!ts) return "";
+  const d = new Date(ts);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "medium" } as any);
+}
+
 function renderPart(
   part: Part,
   key: number,
@@ -234,6 +258,9 @@ const MsgRow = memo(function MsgRow({
 }) {
   const err = m.info.role === "assistant" ? (m.info as any).error : null;
   const showErr = err && err.name !== "MessageAbortedError";
+  const rawTs = (m.info as any).time?.completed ?? (m.info as any).time?.created;
+  const short = fmtTime(rawTs);
+  const full = fmtFull(rawTs);
   return (
     <div className={`msg ${m.info.role}${showErr ? " msg-error" : ""}`}>
       {m.info.role === "user" && onRevert && (
@@ -252,6 +279,12 @@ const MsgRow = memo(function MsgRow({
         </div>
       )}
       {m.parts.map((part, i) => renderPart(part, i, collapsed, onImage))}
+      {short && (
+        <div className="msg-time" data-tip={full} data-tip-cursor="">
+          <i className="fa-solid fa-clock" />
+          {short}
+        </div>
+      )}
     </div>
   );
 });

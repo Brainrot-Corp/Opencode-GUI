@@ -284,6 +284,30 @@
   animation: skel-pulse 1.2s ease-in-out infinite;
 }
 
+/* per-message timestamp — mono faint, 6px rhythm, FA clock */
+.msg-time {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 6px;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.05em;
+  color: var(--text-faint);
+  opacity: 0.72;
+  user-select: none;
+}
+.msg-time i {
+  font-size: 9px;
+  opacity: 0.85;
+}
+.msg.user .msg-time {
+  justify-content: flex-end;
+}
+.msg.assistant .msg-time {
+  justify-content: flex-start;
+}
+
 /* "viewing earlier version" notice above the composer */
 .revert-banner {
   display: flex;
