@@ -5,8 +5,8 @@
 const ID = "tiktok";
 const KEY = "oc.tiktok";
 const TIKTOK_URL = "https://www.tiktok.com";
-const MIN_W = 320, MIN_H = 400, MAX_W = 520, MAX_H = 900;
-const DEF_W = 380, DEF_H = 680; // phone 9:16
+const MIN_W = 280, MIN_H = 350, MAX_W = 1200, MAX_H = 1200;
+const DEF_W = 380, DEF_H = 680; // phone 9:16, but freely resizable up to viewport
 
 function clamp(n, a, b){ return Math.min(Math.max(n, a), b); }
 
