@@ -23,7 +23,8 @@ function webviewRect(geom){
 function defaultGeom(){
   const w = DEF_W, h = DEF_H;
   const x = Math.max(8, Math.floor((window.innerWidth - w) / 2));
-  const y = Math.max(8, Math.floor((window.innerHeight - h) / 2));
+  // center the *webview* (not the panel chrome) — panel is offset by headerH/2 so hole is centered
+  const y = Math.max(8, Math.floor((window.innerHeight - h) / 2 - headerH / 2));
   return { x, y, w, h };
 }
 
@@ -117,9 +118,27 @@ export default function activate(api){
     const lastOpen = useRef(false);
     const lastGeom = useRef(null);
     const lastGlass = useRef(null);
+    function holeBounds(fallbackGeom){
+      try{
+        const hole = panelRef.current?.querySelector(".tiktok-hole");
+        if(hole){
+          const rect = hole.getBoundingClientRect();
+          if(rect.width > 0 && rect.height > 0){
+            return {
+              x: rect.left + INSET,
+              y: rect.top + INSET,
+              w: Math.max(120, rect.width - INSET * 2),
+              h: Math.max(120, rect.height - INSET * 2),
+            };
+          }
+        }
+      }catch{}
+      return webviewRect(fallbackGeom);
+    }
     useEffect(()=>{
       const { open, geom, glass } = state;
-      const r = webviewRect(geom);
+      // prefer DOM-measured hole rect (correct header/border) — falls back to computed geom
+      const r = holeBounds(geom);
       const geomChanged = !lastGeom.current || !equal(geom, lastGeom.current);
       const glassChanged = lastGlass.current === null || glass !== lastGlass.current;
 
@@ -127,10 +146,20 @@ export default function activate(api){
         lastOpen.current = true;
         lastGeom.current = geom;
         lastGlass.current = glass;
-        api.invoke("tiktok_open", { url: TIKTOK_URL, x: r.x, y: r.y, w: r.w, h: r.h }).then(()=>{
-          // init script auto-injects glass; if user disabled, remove it
-          if(!glass) api.invoke("tiktok_set_glass", { enabled:false }).catch(()=>{});
-        }).catch(()=>{});
+        // ensure hole is laid out before measuring — rAF if panel not yet measured
+        if(!panelRef.current?.querySelector(".tiktok-hole")?.getBoundingClientRect()?.width){
+          requestAnimationFrame(()=>{
+            const rr = holeBounds(geom);
+            api.invoke("tiktok_open", { url: TIKTOK_URL, x: rr.x, y: rr.y, w: rr.w, h: rr.h }).then(()=>{
+              if(!glass) api.invoke("tiktok_set_glass", { enabled:false }).catch(()=>{});
+            }).catch(()=>{});
+          });
+        } else {
+          api.invoke("tiktok_open", { url: TIKTOK_URL, x: r.x, y: r.y, w: r.w, h: r.h }).then(()=>{
+            // init script auto-injects glass; if user disabled, remove it
+            if(!glass) api.invoke("tiktok_set_glass", { enabled:false }).catch(()=>{});
+          }).catch(()=>{});
+        }
       } else if(!open && lastOpen.current){
         lastOpen.current = false;
         lastGeom.current = geom;
