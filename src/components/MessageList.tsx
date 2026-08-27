@@ -78,7 +78,12 @@ function fmtTok(n: number) {
   return n >= 1000 ? `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k` : `${n}`;
 }
 
-function renderPart(part: Part, key: number, collapsedDefault?: boolean) {
+function renderPart(
+  part: Part,
+  key: number,
+  collapsedDefault?: boolean,
+  onImage?: (url: string) => void,
+) {
   if (part.type === "text") {
     const t = (part as any).text ?? "";
     if (!t.trim()) return null;
@@ -159,7 +164,17 @@ function renderPart(part: Part, key: number, collapsedDefault?: boolean) {
     const mime: string = f.mime ?? "";
     const name = f.filename || "file";
     if (mime.startsWith("image/") && url)
-      return <img key={key} className="file-img" src={url} alt={name} loading="lazy" />;
+      return (
+        <img
+          key={key}
+          className="file-img"
+          src={url}
+          alt={name}
+          loading="lazy"
+          data-tip="Click to expand"
+          onClick={() => onImage?.(url)}
+        />
+      );
     if (mime.startsWith("video/") && url)
       return <video key={key} className="file-video" src={url} controls preload="metadata" />;
     return (
@@ -209,10 +224,12 @@ const MsgRow = memo(function MsgRow({
   m,
   collapsed,
   onRevert,
+  onImage,
 }: {
   m: Msg;
   collapsed?: boolean;
   onRevert?: (messageID: string) => void;
+  onImage?: (url: string) => void;
 }) {
   const err = m.info.role === "assistant" ? (m.info as any).error : null;
   const showErr = err && err.name !== "MessageAbortedError";
@@ -233,7 +250,7 @@ const MsgRow = memo(function MsgRow({
           <span>{errText(err)}</span>
         </div>
       )}
-      {m.parts.map((part, i) => renderPart(part, i, collapsed))}
+      {m.parts.map((part, i) => renderPart(part, i, collapsed, onImage))}
     </div>
   );
 });
@@ -254,6 +271,14 @@ export default function MessageList({
   onRevert?: (messageID: string) => void;
   sessionId?: string;
 }) {
+  const [lightbox, setLightbox] = useState<string | null>(null);
+  useEffect(() => {
+    if (!lightbox) return;
+    const k = (e: KeyboardEvent) => e.key === "Escape" && setLightbox(null);
+    window.addEventListener("keydown", k);
+    return () => window.removeEventListener("keydown", k);
+  }, [lightbox]);
+
   const listRef = useRef<HTMLDivElement>(null);
   const raf = useRef(0);
   // last scrollTop we set ourselves — lets the scroll listener tell our own
@@ -388,7 +413,7 @@ export default function MessageList({
         )}
         {!loading && msgs.length === 0 && !busy && <p className="empty">Say something…</p>}
         {msgs.filter(rowVisible).map((m) => (
-          <MsgRow key={m.info.id} m={m} collapsed={collapsed} onRevert={onRevert} />
+          <MsgRow key={m.info.id} m={m} collapsed={collapsed} onRevert={onRevert} onImage={setLightbox} />
         ))}
         {busy && (
           <div className="thinking">
@@ -405,6 +430,11 @@ export default function MessageList({
       >
         <i className="fa-solid fa-arrow-down" />
       </button>
+      {lightbox && (
+        <div className="img-lightbox" onClick={() => setLightbox(null)} role="dialog" aria-label="Image preview">
+          <img src={lightbox} alt="" onClick={() => setLightbox(null)} />
+        </div>
+      )}
     </div>
   );
 }

@@ -641,7 +641,7 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  max-width: 240px;
+  max-width: 320px;
   padding: 4px 6px;
   background: var(--inset-bg);
   border: 1px solid var(--line);
@@ -652,11 +652,14 @@
   overflow: hidden;
 }
 .attach-chip img {
-  width: 34px;
-  height: 34px;
-  object-fit: cover;
+  width: 96px;
+  height: 96px;
+  object-fit: contain;
   border-radius: 3px;
   flex-shrink: 0;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  cursor: zoom-in;
 }
 .attach-icon {
   color: var(--accent);

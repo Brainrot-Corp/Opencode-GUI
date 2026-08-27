@@ -213,6 +213,13 @@ export default function Composer({
   }, [input, sessionId]);
 
   const attach = useAttachments();
+  const [preview, setPreview] = useState<string | null>(null);
+  useEffect(() => {
+    if (!preview) return;
+    const k = (e: KeyboardEvent) => e.key === "Escape" && setPreview(null);
+    window.addEventListener("keydown", k);
+    return () => window.removeEventListener("keydown", k);
+  }, [preview]);
 
   // no selection and the server default is still unknown → require a pick
   const needsModel = !loadingModels && !modelSel && !defaultModel;
@@ -560,7 +567,7 @@ export default function Composer({
           {attach.files.map((a) => (
             <div key={a.id} className={`attach-chip${a.status === "reading" ? " reading" : ""}`}>
               {a.mime.startsWith("image/") && a.url ? (
-                <img src={a.url} alt="" />
+                <img src={a.url} alt="" data-tip="Click to expand" onClick={() => setPreview(a.url)} />
               ) : (
                 <i className={`fa-solid ${iconFor(a.mime)} attach-icon`} />
               )}
@@ -721,6 +728,11 @@ export default function Composer({
                   </button>
                 )}
               </div>
+      {preview && (
+        <div className="img-lightbox" onClick={() => setPreview(null)} role="dialog" aria-label="Image preview">
+          <img src={preview} alt="" onClick={() => setPreview(null)} />
+        </div>
+      )}
     </div>
   );
 }
