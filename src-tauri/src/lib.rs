@@ -554,6 +554,7 @@ mod ipc_hook {
     }
 }
 
+#[tauri::command]
 fn spawn_new_instance() {
     let exe = match std::env::current_exe() {
         Ok(p) => p,
@@ -1175,6 +1176,7 @@ pub fn run() {
             build_flavor,
             set_tray_reset,
             hide_to_tray,
+            spawn_new_instance,
             debug_log,
             resize_cursor,
         ]);
