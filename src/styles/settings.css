@@ -59,6 +59,73 @@
   padding: 10px;
 }
 
+/* grouped sections — headings + dividers for scanability */
+.settings-section {
+  padding: 2px 0 4px;
+}
+.settings-section + .settings-section {
+  border-top: 1px solid var(--line);
+  margin-top: 6px;
+  padding-top: 6px;
+}
+.settings-section-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 12px 8px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+.settings-section-title i {
+  font-size: 11px;
+  color: var(--accent);
+  opacity: 0.65;
+}
+.settings-section--appearance .settings-section-title i {
+  opacity: 0.9;
+}
+/* tighten the segmented controls when they live inside a section */
+.settings-section .seg-row {
+  padding: 2px 12px 8px;
+}
+/* boxed sound/appearance groups already have margins — reduce double gap inside sections */
+.settings-section .sound-box {
+  margin-top: 4px;
+}
+/* danger zone — distinct top border + subtle tint */
+.settings-section--danger {
+  border-top-color: color-mix(in srgb, var(--danger) 22%, transparent) !important;
+  background: color-mix(in srgb, var(--danger) 3.5%, transparent);
+  margin-left: -10px;
+  margin-right: -10px;
+  padding-left: 10px;
+  padding-right: 10px;
+  padding-bottom: 6px;
+}
+.settings-section--danger .settings-section-title {
+  color: color-mix(in srgb, var(--danger) 70%, var(--text-faint));
+}
+.settings-section--danger .settings-section-title i {
+  color: var(--danger);
+  opacity: 0.8;
+}
+.settings-section--danger .setting-row:hover {
+  background: color-mix(in srgb, var(--danger) 6%, transparent);
+}
+/* debug helper — muted secondary row inside Updates */
+.setting-row--muted {
+  opacity: 0.85;
+}
+.setting-row--muted .setting-name {
+  font-size: 12.5px;
+}
+.setting-row--muted .setting-desc {
+  font-size: 11px;
+}
+
 .setting-row {
   display: flex;
   align-items: center;

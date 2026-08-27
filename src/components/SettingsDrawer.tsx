@@ -192,37 +192,136 @@ export default function SettingsDrawer({
         </div>
 
         <div className="settings-body">
-          <div className="setting-row">
-            <div className="setting-info">
-              <i className="fa-solid fa-folder-open setting-icon" />
-              <div>
-                <div className="setting-name">Workspace</div>
-                <div className="setting-desc mono-hint">
-                  {settings.workspace || "Home folder (no Git snapshots)"}
+          {/* ── Appearance ── most-tweaked first */}
+          <section className="settings-section settings-section--appearance" aria-label="Appearance">
+            <div className="settings-section-title">
+              <i className="fa-solid fa-palette" /> Appearance
+            </div>
+
+            <div className="setting-row">
+              <div className="setting-info">
+                <i className="fa-solid fa-circle-half-stroke setting-icon" />
+                <div>
+                  <div className="setting-name">Theme</div>
+                  <div className="setting-desc">Interface color scheme</div>
                 </div>
               </div>
-            </div>
-            <div className="color-controls">
-              {settings.workspace && (
+              <div className="color-controls">
                 <button
                   type="button"
                   className="reset-btn"
-                  data-tip="Back to home folder"
-                  onClick={() => applyWorkspace("")}
+                  data-tip="Open config folder"
+                  onClick={() => invoke("reveal_config_dir").catch(() => {})}
                 >
-                  <i className="fa-solid fa-rotate-left" />
+                  <i className="fa-solid fa-folder-tree" />
                 </button>
-              )}
-              <button type="button" className="reset-btn" data-tip="Open workspace (Ctrl+O)" onClick={() => pickWorkspace()}>
-                <i className="fa-solid fa-folder" />
-                Browse…
-              </button>
+                <ThemeSelect
+                  themes={themes ?? []}
+                  variant="drawer"
+                  value={settings.theme}
+                  onChange={(t) => update({ theme: t })}
+                />
+              </div>
             </div>
-          </div>
 
-          <div className="setting-row drop git-model-row secondary-model-row">
-            <div className="setting-info">
-              <i className="fa-solid fa-layer-group setting-icon" />
+            {(!modes || modes.length > 1) && (
+              <>
+                <div className="setting-row">
+                  <div className="setting-info">
+                    <i className="fa-solid fa-circle-half-stroke setting-icon" />
+                    <div>
+                      <div className="setting-name">Mode</div>
+                      <div className="setting-desc">Dark or light variant of the theme</div>
+                    </div>
+                  </div>
+                </div>
+                <div className="seg-row" role="radiogroup" aria-label="Mode">
+                  {(modes ?? (["dark", "light"] as const)).map((m) => (
+                    <button
+                      key={m}
+                      type="button"
+                      role="radio"
+                      aria-checked={effectiveMode === m}
+                      className={`seg${effectiveMode === m ? " on" : ""}`}
+                      onClick={() => update({ mode: m })}
+                    >
+                      {m === "dark" ? "Dark" : "Light"}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+
+            <div className="setting-row">
+              <div className="setting-info">
+                <i className="fa-solid fa-magnifying-glass-plus setting-icon" />
+                <div>
+                  <div className="setting-name">UI scale</div>
+                  <div className="setting-desc">Zoom level of the whole interface</div>
+                </div>
+              </div>
+            </div>
+            <div className="seg-row" role="radiogroup" aria-label="UI scale">
+              {scales.map((s) => (
+                <button
+                  key={s}
+                  type="button"
+                  role="radio"
+                  aria-checked={settings.uiScale === s}
+                  className={`seg${settings.uiScale === s ? " on" : ""}`}
+                  onClick={() => update({ uiScale: s })}
+                >
+                  {Math.round(s * 100)}%
+                </button>
+              ))}
+            </div>
+
+            <AppearanceSettings
+              themes={themes}
+              themeId={settings.theme}
+              cs={cs}
+              updateColors={updateColors}
+              resetColors={resetColors}
+            />
+          </section>
+
+          {/* ── Project & Models ── */}
+          <section className="settings-section" aria-label="Project and models">
+            <div className="settings-section-title">
+              <i className="fa-solid fa-folder-open" /> Project &amp; Models
+            </div>
+
+            <div className="setting-row">
+              <div className="setting-info">
+                <i className="fa-solid fa-folder-open setting-icon" />
+                <div>
+                  <div className="setting-name">Workspace</div>
+                  <div className="setting-desc mono-hint">
+                    {settings.workspace || "Home folder (no Git snapshots)"}
+                  </div>
+                </div>
+              </div>
+              <div className="color-controls">
+                {settings.workspace && (
+                  <button
+                    type="button"
+                    className="reset-btn"
+                    data-tip="Back to home folder"
+                    onClick={() => applyWorkspace("")}
+                  >
+                    <i className="fa-solid fa-rotate-left" />
+                  </button>
+                )}
+                <button type="button" className="reset-btn" data-tip="Open workspace (Ctrl+O)" onClick={() => pickWorkspace()}>
+                  <i className="fa-solid fa-folder" />
+                  Browse…
+                </button>
+              </div>
+            </div>
+
+            <div className="setting-row drop git-model-row secondary-model-row">
+              <div className="setting-info">
+                <i className="fa-solid fa-layer-group setting-icon" />
                 <div>
                   <div className="setting-name">Secondary model</div>
                   <div className="setting-desc">
@@ -232,313 +331,257 @@ export default function SettingsDrawer({
                     )}
                   </div>
                 </div>
-            </div>
-            <div className="color-controls">
-              <ModelMenu
-                open={gmOpen}
-                setOpen={setGmOpen}
-                hi={gmHi}
-                setHi={setGmHi}
-                entries={gmFiltered}
-                query={gmQuery}
-                setQuery={setGmQuery}
-                selected={settings.secondaryModel}
-                label={providers?.length ? gmPretty(settings.secondaryModel) : "loading models…"}
-                onPick={(v) => {
-                  update({ secondaryModel: v });
-                  setGmOpen(false);
-                  setGmHi(-1);
-                  setGmQuery("");
-                }}
-              />
-            </div>
-          </div>
-
-          <div className="setting-row">
-            <div className="setting-info">
-              <i className="fa-solid fa-circle-half-stroke setting-icon" />
-              <div>
-                <div className="setting-name">Theme</div>
-                <div className="setting-desc">Interface color scheme</div>
+              </div>
+              <div className="color-controls">
+                <ModelMenu
+                  open={gmOpen}
+                  setOpen={setGmOpen}
+                  hi={gmHi}
+                  setHi={setGmHi}
+                  entries={gmFiltered}
+                  query={gmQuery}
+                  setQuery={setGmQuery}
+                  selected={settings.secondaryModel}
+                  label={providers?.length ? gmPretty(settings.secondaryModel) : "loading models…"}
+                  onPick={(v) => {
+                    update({ secondaryModel: v });
+                    setGmOpen(false);
+                    setGmHi(-1);
+                    setGmQuery("");
+                  }}
+                />
               </div>
             </div>
-            <div className="color-controls">
+          </section>
+
+          {/* ── Window & System ── */}
+          <section className="settings-section" aria-label="Window and system">
+            <div className="settings-section-title">
+              <i className="fa-solid fa-window-restore" /> Window &amp; System
+            </div>
+
+            <div className="setting-row">
+              <div className="setting-info">
+                <i className="fa-solid fa-rocket setting-icon" />
+                <div>
+                  <div className="setting-name">Launch on startup</div>
+                  <div className="setting-desc">Start OpenCode when Windows boots</div>
+                </div>
+              </div>
               <button
                 type="button"
-                className="reset-btn"
-                data-tip="Open config folder"
-                onClick={() => invoke("reveal_config_dir").catch(() => {})}
+                className={`toggle${autoLaunch ? " on" : ""}`}
+                disabled={autoLaunch === null}
+                aria-pressed={autoLaunch ?? false}
+                onClick={toggleAutoLaunch}
               >
-                <i className="fa-solid fa-folder-tree" />
+                <span className="knob" />
               </button>
-              <ThemeSelect
-                themes={themes ?? []}
-                variant="drawer"
-                value={settings.theme}
-                onChange={(t) => update({ theme: t })}
-              />
             </div>
-          </div>
 
-          {(!modes || modes.length > 1) && (
-            <>
-              <div className="setting-row">
-                <div className="setting-info">
-                  <i className="fa-solid fa-circle-half-stroke setting-icon" />
-                  <div>
-                    <div className="setting-name">Mode</div>
-                    <div className="setting-desc">Dark or light variant of the theme</div>
+            <div className="setting-row">
+              <div className="setting-info">
+                <i className="fa-solid fa-thumbtack setting-icon" />
+                <div>
+                  <div className="setting-name">Always on top</div>
+                  <div className="setting-desc">Keep the window above all others</div>
+                </div>
+              </div>
+              <button
+                type="button"
+                className={`toggle${settings.alwaysOnTop ? " on" : ""}`}
+                aria-pressed={settings.alwaysOnTop}
+                onClick={() => update({ alwaysOnTop: !settings.alwaysOnTop })}
+              >
+                <span className="knob" />
+              </button>
+            </div>
+
+            <div className="setting-row">
+              <div className="setting-info">
+                <i className="fa-solid fa-window-restore setting-icon" />
+                <div>
+                  <div className="setting-name">Keep window size</div>
+                  <div className="setting-desc">Don't reset window size when reopening from tray</div>
+                </div>
+              </div>
+              <button
+                type="button"
+                className={`toggle${settings.keepWindowSize ? " on" : ""}`}
+                aria-pressed={settings.keepWindowSize}
+                onClick={() => update({ keepWindowSize: !settings.keepWindowSize })}
+              >
+                <span className="knob" />
+              </button>
+            </div>
+
+            <div className="setting-row">
+              <div className="setting-info">
+                <i className="fa-solid fa-power-off setting-icon" />
+                <div>
+                  <div className="setting-name">Close button quits</div>
+                  <div className="setting-desc">Clicking X exits the app instead of hiding to tray (hold Ctrl to invert)</div>
+                </div>
+              </div>
+              <button
+                type="button"
+                className={`toggle${settings.closeOnX ? " on" : ""}`}
+                aria-pressed={settings.closeOnX}
+                onClick={() => update({ closeOnX: !settings.closeOnX })}
+              >
+                <span className="knob" />
+              </button>
+            </div>
+          </section>
+
+          {/* ── Voice & Sound ── */}
+          <section className="settings-section" aria-label="Voice and sound">
+            <div className="settings-section-title">
+              <i className="fa-solid fa-headset" /> Voice &amp; Sound
+            </div>
+
+            <div className="setting-row">
+              <div className="setting-info">
+                <i className="fa-solid fa-headset setting-icon" />
+                <div>
+                  <div className="setting-name">Voice &amp; speech</div>
+                  <div className="setting-desc">
+                    Speech engine, hands-free dictation, neural voices &amp; spoken replies
                   </div>
                 </div>
               </div>
-              <div className="seg-row" role="radiogroup" aria-label="Mode">
-                {(modes ?? (["dark", "light"] as const)).map((m) => (
-                  <button
-                    key={m}
-                    type="button"
-                    role="radio"
-                    aria-checked={effectiveMode === m}
-                    className={`seg${effectiveMode === m ? " on" : ""}`}
-                    onClick={() => update({ mode: m })}
-                  >
-                    {m === "dark" ? "Dark" : "Light"}
-                  </button>
-                ))}
-              </div>
-            </>
-          )}
-
-          <div className="setting-row">
-            <div className="setting-info">
-              <i className="fa-solid fa-rocket setting-icon" />
-              <div>
-                <div className="setting-name">Launch on startup</div>
-                <div className="setting-desc">Start OpenCode when Windows boots</div>
-              </div>
-            </div>
-            <button
-              type="button"
-              className={`toggle${autoLaunch ? " on" : ""}`}
-              disabled={autoLaunch === null}
-              aria-pressed={autoLaunch ?? false}
-              onClick={toggleAutoLaunch}
-            >
-              <span className="knob" />
-            </button>
-          </div>
-
-          <div className="setting-row">
-            <div className="setting-info">
-              <i className="fa-solid fa-thumbtack setting-icon" />
-              <div>
-                <div className="setting-name">Always on top</div>
-                <div className="setting-desc">Keep the window above all others</div>
-              </div>
-            </div>
-            <button
-              type="button"
-              className={`toggle${settings.alwaysOnTop ? " on" : ""}`}
-              aria-pressed={settings.alwaysOnTop}
-              onClick={() => update({ alwaysOnTop: !settings.alwaysOnTop })}
-            >
-              <span className="knob" />
-            </button>
-          </div>
-
-          <div className="setting-row">
-            <div className="setting-info">
-              <i className="fa-solid fa-window-restore setting-icon" />
-              <div>
-                <div className="setting-name">Keep window size</div>
-                <div className="setting-desc">Don't reset window size when reopening from tray</div>
-              </div>
-            </div>
-            <button
-              type="button"
-              className={`toggle${settings.keepWindowSize ? " on" : ""}`}
-              aria-pressed={settings.keepWindowSize}
-              onClick={() => update({ keepWindowSize: !settings.keepWindowSize })}
-            >
-              <span className="knob" />
-            </button>
-          </div>
-
-          <div className="setting-row">
-            <div className="setting-info">
-              <i className="fa-solid fa-power-off setting-icon" />
-              <div>
-                <div className="setting-name">Close button quits</div>
-                <div className="setting-desc">Clicking X exits the app instead of hiding to tray (hold Ctrl to invert)</div>
-              </div>
-            </div>
-            <button
-              type="button"
-              className={`toggle${settings.closeOnX ? " on" : ""}`}
-              aria-pressed={settings.closeOnX}
-              onClick={() => update({ closeOnX: !settings.closeOnX })}
-            >
-              <span className="knob" />
-            </button>
-          </div>
-
-          <div className="setting-row">
-            <div className="setting-info">
-              <i className="fa-solid fa-magnifying-glass-plus setting-icon" />
-              <div>
-                <div className="setting-name">UI scale</div>
-                <div className="setting-desc">Zoom level of the whole interface</div>
-              </div>
-            </div>
-          </div>
-          <div className="seg-row" role="radiogroup" aria-label="UI scale">
-            {scales.map((s) => (
               <button
-                key={s}
                 type="button"
-                role="radio"
-                aria-checked={settings.uiScale === s}
-                className={`seg${settings.uiScale === s ? " on" : ""}`}
-                onClick={() => update({ uiScale: s })}
+                className="reset-btn"
+                data-tip="Open voice settings"
+                onClick={() => setVoiceOpen(true)}
               >
-                {Math.round(s * 100)}%
+                <i className="fa-solid fa-sliders" />
+                Open
               </button>
-            ))}
-          </div>
+            </div>
 
-          <div className="setting-row">
-            <div className="setting-info">
-              <i className="fa-solid fa-headset setting-icon" />
-              <div>
-                <div className="setting-name">Voice &amp; speech</div>
-                <div className="setting-desc">
-                  Speech engine, hands-free dictation, neural voices &amp; spoken replies
+            <SoundsSettings sounds={settings.sounds} updateSounds={updateSounds} />
+          </section>
+
+          {/* ── Updates ── */}
+          <section className="settings-section" aria-label="Updates">
+            <div className="settings-section-title">
+              <i className="fa-solid fa-arrows-rotate" /> Updates
+            </div>
+
+            <div className="setting-row">
+              <div className="setting-info">
+                <i className="fa-solid fa-arrows-rotate setting-icon" />
+                <div>
+                  <div className="setting-name">Updates</div>
+                  <div className="setting-desc">
+                    {upd.err ? (
+                      <span className="upd-err">{upd.err}</span>
+                    ) : upd.latest ? (
+                      <>
+                        Version {upd.latest.version} available ·{" "}
+                        {upd.latest.notes.replace(/\s+/g, " ").slice(0, 90)}
+                      </>
+                    ) : upd.busy ? (
+                      "Checking for releases…"
+                    ) : upd.ver ? (
+                      <>You're up to date · v{upd.ver}</>
+                    ) : (
+                      "Check for new releases from GitHub"
+                    )}
+                  </div>
                 </div>
               </div>
+              <div className="color-controls">
+                {upd.latest ? (
+                  <button
+                    type="button"
+                    className="reset-btn"
+                    disabled={upd.downloading}
+                    onClick={() => void upd.install()}
+                  >
+                    <i className={`fa-solid ${upd.downloading ? "fa-spinner fa-spin" : "fa-download"}`} />
+                    {upd.downloading ? "Downloading…" : "Update & restart"}
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="reset-btn"
+                    disabled={upd.busy}
+                    onClick={() => void upd.check(true)}
+                  >
+                    <i className="fa-solid fa-magnifying-glass" />
+                    Check
+                  </button>
+                )}
+              </div>
             </div>
-            <button
-              type="button"
-              className="reset-btn"
-              data-tip="Open voice settings"
-              onClick={() => setVoiceOpen(true)}
-            >
-              <i className="fa-solid fa-sliders" />
-              Open
-            </button>
-          </div>
 
-          <AppearanceSettings
-            themes={themes}
-            themeId={settings.theme}
-            cs={cs}
-            updateColors={updateColors}
-            resetColors={resetColors}
-          />
-
-          <SoundsSettings sounds={settings.sounds} updateSounds={updateSounds} />
-          <div className="setting-row">
-            <div className="setting-info">
-              <i className="fa-solid fa-arrows-rotate setting-icon" />
-              <div>
-                <div className="setting-name">Updates</div>
-                <div className="setting-desc">
-                  {upd.err ? (
-                    <span className="upd-err">{upd.err}</span>
-                  ) : upd.latest ? (
-                    <>
-                      Version {upd.latest.version} available ·{" "}
-                      {upd.latest.notes.replace(/\s+/g, " ").slice(0, 90)}
-                    </>
-                  ) : upd.busy ? (
-                    "Checking for releases…"
-                  ) : upd.ver ? (
-                    <>You're up to date · v{upd.ver}</>
-                  ) : (
-                    "Check for new releases from GitHub"
-                  )}
+            <div className="setting-row">
+              <div className="setting-info">
+                <i className="fa-solid fa-bell setting-icon" />
+                <div>
+                  <div className="setting-name">Update notifications</div>
+                  <div className="setting-desc">Show a prompt on launch when a new version is available</div>
                 </div>
               </div>
+              <button
+                type="button"
+                className={`toggle${settings.updateNotifications ? " on" : ""}`}
+                aria-pressed={settings.updateNotifications}
+                onClick={() => {
+                  const next = !settings.updateNotifications;
+                  update({ updateNotifications: next });
+                  if (next) localStorage.removeItem("oc.update.dismissed");
+                }}
+              >
+                <span className="knob" />
+              </button>
             </div>
-            <div className="color-controls">
-              {upd.latest ? (
-                <button
-                  type="button"
-                  className="reset-btn"
-                  disabled={upd.downloading}
-                  onClick={() => void upd.install()}
-                >
-                  <i className={`fa-solid ${upd.downloading ? "fa-spinner fa-spin" : "fa-download"}`} />
-                  {upd.downloading ? "Downloading…" : "Update & restart"}
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  className="reset-btn"
-                  disabled={upd.busy}
-                  onClick={() => void upd.check(true)}
-                >
-                  <i className="fa-solid fa-magnifying-glass" />
-                  Check
-                </button>
-              )}
-            </div>
-          </div>
 
-          <div className="setting-row">
-            <div className="setting-info">
-              <i className="fa-solid fa-bell setting-icon" />
-              <div>
-                <div className="setting-name">Update notifications</div>
-                <div className="setting-desc">Show a prompt on launch when a new version is available</div>
-              </div>
-            </div>
-            <button
-              type="button"
-              className={`toggle${settings.updateNotifications ? " on" : ""}`}
-              aria-pressed={settings.updateNotifications}
-              onClick={() => {
-                const next = !settings.updateNotifications;
-                update({ updateNotifications: next });
-                if (next) localStorage.removeItem("oc.update.dismissed");
-              }}
-            >
-              <span className="knob" />
-            </button>
-          </div>
-
-          <div className="setting-row">
-            <div className="setting-info">
-              <i className="fa-solid fa-bug setting-icon" />
-              <div>
-                <div className="setting-name">Debug update prompt</div>
-                <div className="setting-desc">Preview the launch update dialog</div>
-              </div>
-            </div>
-            <button type="button" className="reset-btn" onClick={() => onDebugUpdate?.()}>
-              <i className="fa-solid fa-eye" />
-              Show
-            </button>
-          </div>
-
-          <div className="setting-row">
-            <div className="setting-info">
-              <i className="fa-solid fa-broom setting-icon" />
-              <div>
-                <div className="setting-name">Clean state</div>
-                <div className="setting-desc">
-                  Uninstall all voice engines &amp; models and reset every
-                  preference — next launch runs the setup again
+            <div className="setting-row setting-row--muted">
+              <div className="setting-info">
+                <i className="fa-solid fa-bug setting-icon" />
+                <div>
+                  <div className="setting-name">Debug update prompt</div>
+                  <div className="setting-desc">Preview the launch update dialog</div>
                 </div>
               </div>
+              <button type="button" className="reset-btn" onClick={() => onDebugUpdate?.()}>
+                <i className="fa-solid fa-eye" />
+                Show
+              </button>
             </div>
-            <button
-              type="button"
-              className={`reset-btn danger-btn${confirmClean ? " armed" : ""}`}
-              onClick={() => void cleanState()}
-            >
-              <i className={`fa-solid ${confirmClean ? "fa-triangle-exclamation" : "fa-broom"}`} />
-              {confirmClean ? "Really? Click again" : "Reset"}
-            </button>
-          </div>
+          </section>
+
+          {/* ── Danger Zone ── */}
+          <section className="settings-section settings-section--danger" aria-label="Danger zone">
+            <div className="settings-section-title">
+              <i className="fa-solid fa-triangle-exclamation" /> Danger Zone
+            </div>
+
+            <div className="setting-row">
+              <div className="setting-info">
+                <i className="fa-solid fa-broom setting-icon" />
+                <div>
+                  <div className="setting-name">Clean state</div>
+                  <div className="setting-desc">
+                    Uninstall all voice engines &amp; models and reset every
+                    preference — next launch runs the setup again
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                className={`reset-btn danger-btn${confirmClean ? " armed" : ""}`}
+                onClick={() => void cleanState()}
+              >
+                <i className={`fa-solid ${confirmClean ? "fa-triangle-exclamation" : "fa-broom"}`} />
+                {confirmClean ? "Really? Click again" : "Reset"}
+              </button>
+            </div>
+          </section>
 
         </div>
 
