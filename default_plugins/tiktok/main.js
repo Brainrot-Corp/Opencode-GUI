@@ -85,16 +85,24 @@ export default function activate(api){
     const dragRef = useRef(null);
     const resizeRef = useRef(null);
     const [blocked, setBlocked] = useState("");
-    // if persisted open but geom is stale/off-center, recenter once so webview appears centered
+    // if persisted open but geom is stale/off-center (e.g. window was 0px at first load), recenter after layout
     useEffect(()=>{
       if(!state.open) return;
-      const c = defaultGeom();
-      if(Math.abs(state.geom.x - c.x) > 16 || Math.abs(state.geom.y - c.y) > 16){
-        const next = {...state, geom: c};
-        save(next);
-        setState(next);
-      }
-    },[]);
+      let raf = 0, tid = 0;
+      const recenter = ()=>{
+        const c = defaultGeom();
+        setState(s=>{
+          if(Math.abs(s.geom.x - c.x) > 16 || Math.abs(s.geom.y - c.y) > 16){
+            const next = {...s, geom: c};
+            save(next);
+            return next;
+          }
+          return s;
+        });
+      };
+      raf = requestAnimationFrame(()=>{ tid = setTimeout(recenter, 120); });
+      return ()=>{ cancelAnimationFrame(raf); clearTimeout(tid); };
+    },[state.open]);
 
     // sync external toggle
     useEffect(()=>{
