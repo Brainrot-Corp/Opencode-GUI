@@ -118,9 +118,11 @@ export default function activate(api) {
       try {
         const res = await fetch(url, { method: method.toUpperCase(), headers: hdrs, body: b ?? undefined });
         const text = await res.text();
-        return { status: res.status, body: text };
+        const ra = res.headers.get("Retry-After") || res.headers.get("retry-after") || "";
+        return { status: res.status, body: text, retryAfter: ra };
       } catch (e) {
-        return await api.invoke("http_json", { method: method.toUpperCase(), url, headers: hdrs, body: b });
+        const r = await api.invoke("http_json", { method: method.toUpperCase(), url, headers: hdrs, body: b });
+        return { status: r.status, body: r.body, retryAfter: r.retryAfter || "" };
       }
     }
     let r = await doFetch(headers, body);
@@ -134,6 +136,13 @@ export default function activate(api) {
       let d401 = String(r.body);
       try { const je = JSON.parse(r.body); d401 = je.error_description || je.error?.message || je.error || r.body; } catch {}
       throw new Error(`${method} ${path} → ${r.status} ${String(d401).slice(0,300)}`);
+    }
+    if (r.status === 429) {
+      const after = parseInt(String(r.retryAfter || "").trim(), 10) || 5;
+      const e = new Error(`429 Rate limited — retry after ${after}s`);
+      e.retryAfter = after;
+      e.status = 429;
+      throw e;
     }
     if (r.status >= 200 && r.status < 300) return r;
     const snippet = String(r.body).slice(0, 600);
@@ -172,7 +181,6 @@ export default function activate(api) {
           const c = confOf(api.settings());
           if (!c.accessToken) { if (!dead) setStatus("idle"); return; }
           if (c.expiresAt && Date.now() > c.expiresAt) { if (!dead) setStatus("expired"); return; }
-          // lightweight player check
           const r = await api.invoke("http_json", {
             method: "GET",
             url: API,
@@ -180,6 +188,11 @@ export default function activate(api) {
             body: null,
           });
           if (dead) return;
+          if (r.status === 429) {
+            const after = parseInt(String(r.retryAfter || "").trim(), 10) || 5;
+            setStatus(`rate limited — retry in ${after}s`);
+            return;
+          }
           if (r.status === 200) setStatus("connected");
           else if (r.status === 204) setStatus("no-device");
           else if (r.status === 401) setStatus("expired");
@@ -187,7 +200,7 @@ export default function activate(api) {
         } catch (e) { if (!dead) setStatus(e instanceof Error ? e.message.slice(0,80) : String(e).slice(0,80)); }
       };
       tick();
-      const iv = setInterval(tick, 4000);
+      const iv = setInterval(tick, 6000);
       return () => { dead = true; clearInterval(iv); };
     }, [open, conf.accessToken, conf.expiresAt]);
 
@@ -400,6 +413,7 @@ export default function activate(api) {
     const volumeRef = useRef(50);
     const playPausePending = useRef(0);
     const pendingPlayState = useRef(null);
+    const rateLimitedUntil = useRef(0);
 
     const confRef = { current: conf };
     confRef.current = conf;
@@ -410,11 +424,13 @@ export default function activate(api) {
       api.invoke("open_external", { url }).catch(() => {});
     }
 
-    // poll player — kept in ref so controls can trigger immediate refresh (skip = 1-3s → 300ms)
+    // poll player — kept in ref so controls can trigger immediate refresh
+    // 429-aware: backs off on Retry-After, reduces base rate to avoid hitting limits
     useEffect(() => {
       let dead = false;
       let iv = null;
       async function poll() {
+        if (Date.now() < rateLimitedUntil.current) return;
         const c = confOf(api.settings());
         if (!c.accessToken) {
           if (!dead) { setTrack(null); setDevice(null); setIsPlaying(false); setErr(""); }
@@ -432,6 +448,13 @@ export default function activate(api) {
             body: null,
           });
           if (dead) return;
+          if (r.status === 429) {
+            const after = parseInt(String(r.retryAfter || "").trim(), 10) || 5;
+            rateLimitedUntil.current = Date.now() + after * 1000 + 500;
+            setErr(`Rate limited — retrying in ${after}s`);
+            try { console.warn("[spotify] poll 429 retryAfter", after); } catch {}
+            return;
+          }
           if (r.status === 204) {
             setDevice(null); setIsPlaying(false); setDisallows({}); setPlayingType("track"); setErr("");
             return;
@@ -496,9 +519,9 @@ export default function activate(api) {
       }
       pollRef.current = poll;
       poll();
-      // Vencord gets SPOTIFY_PLAYER_STATE via Discord gateway push (FluxDispatcher) — near-instant.
-      // We poll, so use 500ms base (vs 750ms) + burst on controls to feel closer to push.
-      const baseIv = 500;
+      // Reduced from 500ms to 1500ms to stay well under Spotify rate limits (429).
+      // Burst on controls is also trimmed from 6 to 3 polls.
+      const baseIv = 1500;
       iv = setInterval(poll, baseIv);
       const onVis = () => { if (document.visibilityState === "visible") void poll(); };
       document.addEventListener("visibilitychange", onVis);
@@ -507,7 +530,8 @@ export default function activate(api) {
     function triggerQuickPoll() {
       const p = pollRef.current;
       if (!p) return;
-      [80, 200, 400, 700, 1100, 1700].forEach((d) => setTimeout(() => void p(), d));
+      if (Date.now() < rateLimitedUntil.current) return;
+      [300, 900, 1600].forEach((d) => setTimeout(() => void p(), d));
     }
 
     // tick position while playing
@@ -524,22 +548,32 @@ export default function activate(api) {
     // keep pos in sync when mPos changes
     useEffect(() => { setPos(mPos); }, [mPos]);
 
-    // non-blocking req — instant feedback + quick poll burst (skip feels ~300ms not 3s)
+    // non-blocking req — instant feedback + quick poll burst (reduced to 3)
     async function req(method, path, query, opts) {
       const c = confOf(api.settings());
       const key = `${method}:${path}`;
+      if (Date.now() < rateLimitedUntil.current) {
+        const sec = Math.ceil((rateLimitedUntil.current - Date.now()) / 1000);
+        setErr(`Rate limited — retrying in ${sec}s`);
+        setTimeout(() => setPending((v) => v === key ? "" : v), 400);
+        return;
+      }
       setPending(key);
       try {
         await spotifyReq(c, (p) => updatePlugin({ ...c, ...p }), method, path, query, null);
         setErr("");
-        // immediate refresh — Spotify updates state async, poll burst catches it quickly
         triggerQuickPoll();
         if (opts && opts.silent) return;
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
-        if (msg.includes("403")) setErr(msg.slice(0,220));
+        const after = e && typeof e.retryAfter === "number" ? e.retryAfter : (parseInt((msg.match(/retry after (\d+)/i) || [])[1] || "", 10) || 0);
+        if (after) {
+          rateLimitedUntil.current = Date.now() + after * 1000 + 500;
+          setErr(`Rate limited — retrying in ${after}s`);
+          try { console.warn("[spotify] 429", method, path, after); } catch {}
+        } else if (msg.includes("403")) setErr(msg.slice(0,220));
         else if (msg.includes("404")) setErr("No active device — open Spotify on a device");
-        else if (!msg.includes("411")) setErr(msg.slice(0,160));
+        else if (!msg.includes("411") && !msg.includes("429")) setErr(msg.slice(0,160));
         try { if (msg.includes("403")) console.warn("[spotify] req 403", msg); } catch {}
       } finally {
         setTimeout(() => setPending((v) => v === key ? "" : v), 600);
