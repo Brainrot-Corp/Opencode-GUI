@@ -6,9 +6,9 @@ import type { ProviderGroup } from "../types";
 type OcClient = Awaited<ReturnType<typeof import("../api").opencode>>["client"];
 
 // provider/model selection: boot-time loading + capability enrichment,
-// persisted hand-picked model (oc.lastModel), server-default learning,
-// per-session model memory (oc.sessionModels), and per-model
-// thinking-effort variants (oc.variants)
+// per-instance hand-picked model (sessionStorage oc.lastModel), server-default
+// learning, per-session model memory (oc.sessionModels — explicit picks only),
+// and per-model thinking-effort variants (oc.variants)
 const SESSION_MODELS_KEY = "oc.sessionModels";
 
 function isReachable(model: string, groups: ProviderGroup[]): boolean {
@@ -49,10 +49,12 @@ export function useProviders(onError: (msg: string) => void, activeId: string) {
     }
   });
 
-  // remember the last hand-picked model across launches
-  // (only persist real selections — never wipe the stored one with "")
+  // remember this instance's last hand-picked model. sessionStorage scopes
+  // it to the window (other instances keep their own globals); it survives
+  // workspace reloads but resets for a fresh window. only real selections
+  // persist — never wipe the stored one with ""
   useEffect(() => {
-    if (modelSel) localStorage.setItem("oc.lastModel", modelSel);
+    if (modelSel) sessionStorage.setItem("oc.lastModel", modelSel);
   }, [modelSel]);
 
   // persist the session->model map (every write is a validated selection)
@@ -68,10 +70,9 @@ export function useProviders(onError: (msg: string) => void, activeId: string) {
     sentExplicitModel.current = !!modelSel;
   }, [modelSel]);
 
-  // record (or clear) which model a session last used — stable identity,
-  // called both from the picker path and the SSE reply handler. "" clears
-  // (that session follows the global again); reachability is enforced at
-  // apply/prune time, writes here are trusted (menu picks + live replies)
+  // record (or clear) which model a session last used. written ONLY from
+  // the picker path (user hand action); "" clears (that session follows the
+  // instance global again). nothing automatic touches the map
   const rememberSession = useCallback((sid: string, value: string) => {
     if (!sid) return;
     setSessionModels((prev) => {
@@ -87,22 +88,11 @@ export function useProviders(onError: (msg: string) => void, activeId: string) {
   }, []);
 
   // session switch (or providers arriving late): re-apply the active
-  // session's remembered model — but only if it's still reachable. Entries
-  // whose models vanished from the provider list are pruned so they can
-  // never come back on a later switch
+  // session's remembered model — but only if it's still reachable. the
+  // memory map itself is written only by explicit user picks (selectModel);
+  // nothing here auto-changes what a session selected
   useEffect(() => {
-    if (!providers.length) return;
-    setSessionModels((prev) => {
-      let next = prev;
-      for (const [sid, model] of Object.entries(prev)) {
-        if (!isReachable(model, providers)) {
-          if (next === prev) next = { ...prev };
-          delete next[sid];
-        }
-      }
-      return next;
-    });
-    if (!activeId) return;
+    if (!providers.length || !activeId) return;
     const remembered = sessionModels[activeId];
     if (remembered && isReachable(remembered, providers))
       setModelSel((cur) => (cur === remembered ? cur : remembered));
@@ -153,14 +143,26 @@ export function useProviders(onError: (msg: string) => void, activeId: string) {
         groups.sort((a, b) => a.label.localeCompare(b.label));
         setProviders(groups);
 
-        // restore the last hand-picked model if it still exists
-        const saved = localStorage.getItem("oc.lastModel");
+        // restore this instance's last hand-picked model if it still exists.
+        // the global lives in sessionStorage (per window); a one-time claim
+        // of the legacy shared localStorage value keeps the primary window's
+        // model across the upgrade, then clears it so new instances start
+        // their own global fresh
+        let saved = sessionStorage.getItem("oc.lastModel");
+        if (!saved) {
+          const legacy = localStorage.getItem("oc.lastModel");
+          if (legacy) {
+            sessionStorage.setItem("oc.lastModel", legacy);
+            localStorage.removeItem("oc.lastModel");
+            saved = legacy;
+          }
+        }
         if (saved) {
           const [pid, mid] = splitModel(saved);
           if (groups.some((g) => g.id === pid && g.models.some((m) => m.id === mid))) {
             setModelSel(saved);
           } else {
-            localStorage.removeItem("oc.lastModel");
+            sessionStorage.removeItem("oc.lastModel");
           }
         }
       } catch (e) {

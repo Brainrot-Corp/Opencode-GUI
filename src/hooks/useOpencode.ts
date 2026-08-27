@@ -54,10 +54,6 @@ export function useOpencode() {
   busyRef.current = busyIds;
   const sessionsRef = useRef(sessions);
   sessionsRef.current = sessions;
-  // the SSE handler lives in a boot-time closure — modelSel must be read
-  // through a ref there, or it would see the boot-time "" forever
-  const modelSelRef = useRef(prov.modelSel);
-  modelSelRef.current = prov.modelSel;
   // command-registry refetch throttle for file-watcher bursts
   const cmdFetchAt = useRef(0);
 
@@ -196,20 +192,6 @@ export function useOpencode() {
             (info as any).modelID
           ) {
             prov.learnDefault(`${(info as any).providerID}/${(info as any).modelID}`);
-          }
-          // remember the model this session actually ran on — the "last
-          // model used" that gets re-applied on switch. only steered replies
-          // record (an unsteered one was the server default: keep following
-          // the global dynamically). the equality guard keys it to the
-          // current selection so background replies can't misattribute
-          if (
-            info.role === "assistant" &&
-            (info as any).providerID &&
-            (info as any).modelID
-          ) {
-            const actual = `${(info as any).providerID}/${(info as any).modelID}`;
-            if (actual === modelSelRef.current && modelSelRef.current)
-              prov.rememberSession(sid, actual);
           }
           store.applyMessage(info);
           break;
