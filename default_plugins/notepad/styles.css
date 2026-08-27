@@ -7,8 +7,12 @@
   background:var(--surface);
   border:1px solid color-mix(in srgb, var(--accent) 22%, var(--line));
   box-shadow:0 24px 64px -24px var(--accent-glow);
-  backdrop-filter:blur(14px);
-  -webkit-backdrop-filter:blur(14px);
+  backdrop-filter:blur(8px);
+  -webkit-backdrop-filter:blur(8px);
+  /* promote to own layer so backdrop blur doesn't repaint on every keystroke */
+  will-change:transform;
+  contain:layout style paint;
+  transform:translateZ(0);
 }
 .notepad-head{
   display:flex;

@@ -41,10 +41,12 @@ function load(){
   }catch{ return { tabs:[{id:"1", title:"Note 1", content:""}], activeId:"1", geom:defaultGeom(), open:false }; }
 }
 
-function save(state){
+function save(state, notify=true){
   try{ localStorage.setItem(KEY, JSON.stringify(state)); }catch{}
-  try{ window.dispatchEvent(new CustomEvent("oc:notepad:changed")); }catch{}
+  if(notify) try{ window.dispatchEvent(new CustomEvent("oc:notepad:changed")); }catch{}
 }
+// fast compare to avoid feedback loops
+function equal(a,b){ try{ return JSON.stringify(a)===JSON.stringify(b); }catch{ return false; } }
 
 export default function activate(api){
   const { h, useState, useEffect, useRef } = api;
@@ -80,19 +82,47 @@ export default function activate(api){
     const panelRef = useRef(null);
     const dragRef = useRef(null);
     const resizeRef = useRef(null);
+    // debounce content writes — typing stays in React state, localStorage after idle
+    const saveTimer = useRef(0);
+    const pendingRef = useRef(null);
 
-    // sync from external toggle / other panel instance / storage
+    // sync from external toggle / other panel instance / storage — ignore if equal to avoid feedback loop
     useEffect(()=>{
-      const sync = ()=> setState(load());
+      const sync = ()=>{
+        const next = load();
+        setState(prev=> equal(prev, next) ? prev : next);
+      };
       window.addEventListener("oc:notepad:changed", sync);
       window.addEventListener("storage", sync);
       return ()=>{ window.removeEventListener("oc:notepad:changed", sync); window.removeEventListener("storage", sync); };
     },[]);
 
-    // persist on every state change
+    // persist helper for non-typing changes (tabs/geom/open/active)
     const stateRef = useRef(state);
     stateRef.current = state;
-    useEffect(()=>{ save(state); }, [state]);
+    const persist = (next, notify=true)=>{
+      save(next, notify);
+    };
+    const apply = (updater, notify=true)=>{
+      setState(prev=>{
+        const next = typeof updater==="function" ? updater(prev) : updater;
+        if(equal(prev, next)) return prev;
+        // for typing we defer notify, for structural changes notify immediately
+        if(notify) save(next, true);
+        else {
+          // schedule debounced save without notifying Titlebar
+          pendingRef.current = next;
+          clearTimeout(saveTimer.current);
+          saveTimer.current = setTimeout(()=>{
+            const p = pendingRef.current;
+            if(p) { save(p, false); pendingRef.current=null; }
+          }, 400);
+        }
+        return next;
+      });
+    };
+    // flush pending content on unmount/hide
+    useEffect(()=> ()=>{ if(pendingRef.current){ save(pendingRef.current, false); pendingRef.current=null; clearTimeout(saveTimer.current); } },[]);
 
     // clamp geom into viewport on window resize
     useEffect(()=>{
@@ -105,7 +135,9 @@ export default function activate(api){
           const nw = clamp(g.w, MIN_W, Math.min(MAX_W, vw - 12));
           const nh = clamp(g.h, MIN_H, Math.min(MAX_H, vh - 12));
           if(nx===g.x && ny===g.y && nw===g.w && nh===g.h) return s;
-          return { ...s, geom:{x:nx, y:ny, w:nw, h:nh} };
+          const next = { ...s, geom:{x:nx, y:ny, w:nw, h:nh} };
+          save(next, false);
+          return next;
         });
       };
       window.addEventListener("resize", onResize);
@@ -117,7 +149,8 @@ export default function activate(api){
       if(!state.open) return;
       const key = (e)=>{
         if(e.key==="Escape" && !renaming){
-          const s = load(); s.open=false; save(s); setState(s);
+          if(pendingRef.current){ save(pendingRef.current, false); pendingRef.current=null; clearTimeout(saveTimer.current); }
+          const s = load(); s.open=false; save(s, true); setState(s);
           try{ api.playSound("collapse"); }catch{}
         }
       };
@@ -135,27 +168,26 @@ export default function activate(api){
     const active = state.tabs.find(t=>t.id===state.activeId) || state.tabs[0];
     const geom = state.geom;
 
-    const setActive = (id)=> setState(s=> ({...s, activeId:id}));
+    const setActive = (id)=> apply(s=> ({...s, activeId:id}), true);
 
-    const updateContent = (v)=> setState(s=>{
+    const updateContent = (v)=> apply(s=>{
       const tabs = s.tabs.map(t=> t.id===s.activeId ? {...t, content:v} : t);
       return {...s, tabs};
-    });
+    }, false);
 
     const addTab = ()=>{
       const id = uid();
       const n = state.tabs.length + 1;
       const title = `Note ${n}`;
-      setState(s=> ({...s, tabs:[...s.tabs, {id, title, content:""}], activeId:id}));
+      apply(s=> ({...s, tabs:[...s.tabs, {id, title, content:""}], activeId:id}), true);
       setRenaming(id); setDraftName(title);
       try{ api.playSound("expand"); }catch{}
     };
 
     const closeTab = (id, e)=>{
       if(e) e.stopPropagation();
-      setState(s=>{
+      apply(s=>{
         if(s.tabs.length===1){
-          // never delete last tab — clear it
           const tabs = [{...s.tabs[0], content:""}];
           return {...s, tabs, activeId: tabs[0].id};
         }
@@ -167,7 +199,7 @@ export default function activate(api){
           activeId = tabs[Math.max(0,at)].id;
         }
         return {...s, tabs, activeId};
-      });
+      }, true);
       if(renaming===id){ setRenaming(null); }
     };
 
@@ -182,33 +214,53 @@ export default function activate(api){
       const id = renaming;
       if(!id) return;
       const t = draftName.trim();
-      if(t) setState(s=> ({...s, tabs: s.tabs.map(x=> x.id===id ? {...x, title:t.slice(0,40)} : x)}));
+      if(t) apply(s=> ({...s, tabs: s.tabs.map(x=> x.id===id ? {...x, title:t.slice(0,40)} : x)}), true);
       setRenaming(null);
     };
     const cancelRename = ()=> setRenaming(null);
 
     const closePanel = ()=>{
+      // flush pending typing first
+      if(pendingRef.current){ save(pendingRef.current, false); pendingRef.current=null; clearTimeout(saveTimer.current); }
       const s = {...stateRef.current, open:false};
-      save(s); setState(s);
+      save(s, true); setState(s);
       try{ api.playSound("collapse"); }catch{}
     };
 
-    // drag header
+    // drag header — direct DOM move at 60fps, React state only on drop
     const onDragStart = (e)=>{
       if(e.button!==0) return;
       if(e.target.closest("button, input")) return;
       e.preventDefault();
+      const el = panelRef.current;
+      if(!el) return;
       const startX = e.clientX, startY = e.clientY;
       const g0 = {...geom};
       dragRef.current = { startX, startY, g0 };
       document.body.style.userSelect="none";
+      let raf=0, last={x:g0.x, y:g0.y};
+      const flush = ()=>{
+        raf=0;
+        el.style.left = last.x+"px";
+        el.style.top = last.y+"px";
+      };
       const move = (ev)=>{
         const d = dragRef.current; if(!d) return;
-        const nx = clamp(d.g0.x + (ev.clientX - d.startX), 0, Math.max(0, window.innerWidth - g0.w));
-        const ny = clamp(d.g0.y + (ev.clientY - d.startY), 0, Math.max(0, window.innerHeight - 80));
-        setState(s=> ({...s, geom:{...s.geom, x:nx, y:ny}}));
+        last.x = clamp(d.g0.x + (ev.clientX - d.startX), 0, Math.max(0, window.innerWidth - g0.w));
+        last.y = clamp(d.g0.y + (ev.clientY - d.startY), 0, Math.max(0, window.innerHeight - 80));
+        if(!raf) raf=requestAnimationFrame(flush);
       };
       const up = ()=>{
+        if(raf) cancelAnimationFrame(raf);
+        el.style.left = last.x+"px";
+        el.style.top = last.y+"px";
+        // commit once
+        setState(s=>{
+          if(s.geom.x===last.x && s.geom.y===last.y) return s;
+          const next={...s, geom:{...s.geom, x:last.x, y:last.y}};
+          save(next, true);
+          return next;
+        });
         dragRef.current=null;
         document.body.style.userSelect="";
         window.removeEventListener("mousemove", move);
@@ -218,14 +270,24 @@ export default function activate(api){
       window.addEventListener("mouseup", up);
     };
 
-    // resize helper dir: "n","s","e","w","nw","ne","sw","se"
+    // resize — direct DOM, rAF, commit on mouseup
     const onResizeStart = (dir)=>(e)=>{
       if(e.button!==0) return;
       e.preventDefault(); e.stopPropagation();
+      const el = panelRef.current;
+      if(!el) return;
       const sx=e.clientX, sy=e.clientY;
       const g0={...geom};
       resizeRef.current={dir, sx, sy, g0};
       document.body.style.userSelect="none";
+      let raf=0, last={...g0};
+      const flush=()=>{
+        raf=0;
+        el.style.left = last.x+"px";
+        el.style.top = last.y+"px";
+        el.style.width = last.w+"px";
+        el.style.height = last.h+"px";
+      };
       const move=(ev)=>{
         const r=resizeRef.current; if(!r) return;
         let {x,y,w,h}=r.g0;
@@ -234,9 +296,21 @@ export default function activate(api){
         if(r.dir.includes("s")) h = clamp(g0.h + dy, MIN_H, Math.min(MAX_H, window.innerHeight - y - 6));
         if(r.dir.includes("w")){ const nw=clamp(g0.w - dx, MIN_W, g0.x + g0.w); x = g0.x + g0.w - nw; w=nw; x=clamp(x,0,window.innerWidth - MIN_W); }
         if(r.dir.includes("n")){ const nh=clamp(g0.h - dy, MIN_H, g0.y + g0.h); y = g0.y + g0.h - nh; h=nh; y=clamp(y,0,window.innerHeight - MIN_H); }
-        setState(s=> ({...s, geom:{x,y,w,h}}));
+        last={x,y,w,h};
+        if(!raf) raf=requestAnimationFrame(flush);
       };
       const up=()=>{
+        if(raf) cancelAnimationFrame(raf);
+        el.style.left = last.x+"px";
+        el.style.top = last.y+"px";
+        el.style.width = last.w+"px";
+        el.style.height = last.h+"px";
+        setState(s=>{
+          if(equal(s.geom,last)) return s;
+          const next={...s, geom:last};
+          save(next, true);
+          return next;
+        });
         resizeRef.current=null;
         document.body.style.userSelect="";
         window.removeEventListener("mousemove", move);
