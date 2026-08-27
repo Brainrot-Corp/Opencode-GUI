@@ -258,8 +258,16 @@
 .model-opt.selected {
   background: var(--accent-dim);
   color: var(--accent-bright);
+  padding-right: 28px;
+}
+.model-opt {
+  position: relative;
 }
 .model-opt .fa-check {
+  position: absolute;
+  right: 9px;
+  top: 50%;
+  transform: translateY(-50%);
   font-size: 9px;
   color: var(--accent);
 }
