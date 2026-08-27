@@ -1060,39 +1060,61 @@ pub fn run() {
             // Both tray and pinned taskbar JumpList expose "Open new window"
             // and "Quit" so the two surfaces stay consistent.
             use tauri::{
-                menu::{Menu, MenuItem, PredefinedMenuItem},
+                menu::{Menu, MenuItem},
                 tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
             };
 
             let show = MenuItem::with_id(app, "show", "Show/Hide OpenCode GUI", true, None::<&str>)?;
             let new_win = MenuItem::with_id(app, "new-instance", "Open new window", true, None::<&str>)?;
-            let sep = PredefinedMenuItem::separator(app)?;
             let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&show, &new_win, &sep, &quit])?;
+            // separator is cosmetic; omit to maximize tray compat (second instance had empty menu with it)
+            let menu = Menu::with_items(app, &[&show, &new_win, &quit])?;
 
-            TrayIconBuilder::with_id("main")
-                .icon(app.default_window_icon().unwrap().clone())
-                .tooltip("OpenCode")
-                .menu(&menu)
-                .show_menu_on_left_click(false)
-                .on_menu_event(|app, event| match event.id.as_ref() {
-                    "show" => toggle_main(app),
-                    "new-instance" => spawn_new_instance(),
-                    "quit" => app.exit(0),
-                    _ => {}
-                })
-                .on_tray_icon_event(|tray, event| {
-                    if let TrayIconEvent::Click {
-                        button: MouseButton::Left,
-                        button_state: MouseButtonState::Up,
-                        ..
-                    } = event
-                    {
-                        let app = tray.app_handle();
-                        toggle_main(app);
-                    }
-                })
-                .build(app)?;
+            // Build tray icon — don't let a missing icon crash the second instance.
+            // Primary and second instance share the same bundle icon, but be defensive.
+            let tray_icon = match app.default_window_icon().cloned() {
+                Some(icon) => icon,
+                None => {
+                    debug_log("tray icon missing, aborting tray build (non-fatal)".into());
+                    eprintln!("tray icon missing");
+                    // still continue setup so window shows; skip tray
+                    // we need to still run JumpList and server setup, so don't return Err
+                    // Instead, create a dummy 1x1 image to keep tray alive
+                    tauri::image::Image::new(&[0, 0, 0, 0], 1, 1)
+                }
+            };
+            // Wrap tray build so a failure doesn't crash the window (second instance race)
+            let tray_res: Result<(), String> = (|| {
+                TrayIconBuilder::with_id("main")
+                    .icon(tray_icon)
+                    .tooltip("OpenCode")
+                    .menu(&menu)
+                    .show_menu_on_left_click(false)
+                    .on_menu_event(|app, event| match event.id.as_ref() {
+                        "show" => toggle_main(app),
+                        "new-instance" => spawn_new_instance(),
+                        "quit" => app.exit(0),
+                        _ => {}
+                    })
+                    .on_tray_icon_event(|tray, event| {
+                        if let TrayIconEvent::Click {
+                            button: MouseButton::Left,
+                            button_state: MouseButtonState::Up,
+                            ..
+                        } = event
+                        {
+                            let app = tray.app_handle();
+                            toggle_main(app);
+                        }
+                    })
+                    .build(app)
+                    .map(|_| ())
+                    .map_err(|e| e.to_string())
+            })();
+            if let Err(e) = tray_res {
+                debug_log(format!("tray build failed (non-fatal): {e}"));
+                eprintln!("tray build failed: {e}");
+            }
 
             // Pinned taskbar JumpList — mirrors tray: "Open new window" + "Quit"
             apply_jumplist(app.handle());
