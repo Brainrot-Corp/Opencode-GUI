@@ -166,13 +166,45 @@ pub fn apply_on_exit() {
     // the old exe's image may still be held open until this process fully
     // exits — the new instance cleans it up on launch via cleanup_old()
 
-    let mut cmd = std::process::Command::new(exe_dir.join("opencode-gui.exe"));
-    cmd.args(std::env::args().skip(1));
-    #[cfg(all(windows, not(debug_assertions)))]
+    // Relaunch must survive the single-instance mutex race: the new process
+    // started inside RunEvent::Exit still sees the old instance's lock held
+    // on Win10 (slower teardown) and would exit as a "second instance" that
+    // merely signals the old window. Delay the start until the parent has
+    // fully exited, and detach so the child outlives us.
+    let exe_path = exe_dir.join("opencode-gui.exe");
+    #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        cmd.creation_flags(CREATE_NO_WINDOW);
+        const DETACHED_PROCESS: u32 = 0x0000_0008;
+        const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+        // Use PowerShell to sleep 1s then start the new exe detached. The
+        // delay lets the old single-instance mutex be released before the
+        // new instance claims it. Single quotes handle spaces in the path.
+        let exe_str = exe_path.to_string_lossy().replace('\'', "''");
+        let ps_cmd = format!("Start-Sleep -Seconds 1; Start-Process -FilePath '{}'", exe_str);
+        let mut cmd = std::process::Command::new("powershell");
+        cmd.args(["-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-Command", &ps_cmd]);
+        cmd.creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
+        let res = cmd.spawn();
+        if res.is_err() {
+            // Fallback: cmd with timeout (older Win10 without PowerShell)
+            let quoted = format!("\"{}\"", exe_path.display());
+            let cmdline = format!("timeout /t 1 /nobreak >nul && start \"\" {}", quoted);
+            let mut fb = std::process::Command::new("cmd");
+            fb.args(["/C", &cmdline]);
+            fb.creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
+            let r2 = fb.spawn();
+            if r2.is_err() {
+                let mut fallback = std::process::Command::new(&exe_path);
+                fallback.creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
+                let _ = fallback.spawn();
+            }
+        }
     }
-    let _ = cmd.spawn();
+    #[cfg(not(windows))]
+    {
+        let mut cmd = std::process::Command::new(&exe_path);
+        let _ = cmd.spawn();
+    }
 }

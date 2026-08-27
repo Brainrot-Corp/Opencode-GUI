@@ -146,9 +146,14 @@ export function useOpencode() {
     const overrides = getTitleOverrides();
     const pinned = getPinned();
     const mapped = list.map((s) => overrides[s.id] ? { ...s, title: overrides[s.id] } : s);
+    // defensive dedup — protects against the optimistic + SSE race where
+    // session.created arrives before/after newSession's insertion
+    const seen = new Set<string>();
+    const deduped: Session[] = [];
+    for (const s of mapped) if (!seen.has(s.id)) { seen.add(s.id); deduped.push(s); }
     // pinned first, then by created desc
     const p = pinned;
-    return mapped.sort((a, b) => {
+    return deduped.sort((a, b) => {
       const pa = p.has(a.id) ? 1 : 0;
       const pb = p.has(b.id) ? 1 : 0;
       if (pa !== pb) return pb - pa;
@@ -576,7 +581,12 @@ export function useOpencode() {
     const s = r.data as Session;
     localStorage.setItem(LAST_KEY, s.id);
     activeRef.current = s.id;
-    setSessions((prev) => [s, ...prev]);
+    setSessions((prev) => {
+      if (prev.some((x) => x.id === s.id)) return prev;
+      const overrides = getTitleOverrides();
+      const patched = overrides[s.id] ? { ...s, title: overrides[s.id] } : s;
+      return applyOverrides([...prev, patched]);
+    });
     setActiveId(s.id);
     store.clearStashes();
     setMsgs([]);
