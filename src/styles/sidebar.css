@@ -297,6 +297,27 @@ body.resizing * {
   }
 }
 
+/* compacting indicator — same dot geometry, slower pulse to distinguish from busy */
+.row-compacting {
+  width: 7px;
+  height: 7px;
+  flex-shrink: 0;
+  align-self: center;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 8px var(--accent-glow);
+  animation: compact-pulse 1.6s ease-in-out infinite;
+}
+@keyframes compact-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.45; transform: scale(0.85); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .row-compacting {
+    animation: none;
+  }
+}
+
 /* queued-prompt count while the session streams */
 .row-queued {
   flex-shrink: 0;

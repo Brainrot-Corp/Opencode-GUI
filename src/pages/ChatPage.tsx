@@ -690,6 +690,7 @@ export default function ChatPage() {
             sessions={oc.sessions}
             activeId={oc.activeId}
             busyIds={oc.busyIds}
+            compactingIds={oc.compactingIds}
             queueCounts={oc.queueCounts}
             width={sbW}
             collapsed={sbClosed}
@@ -736,6 +737,7 @@ export default function ChatPage() {
                 <MessageList
                   msgs={oc.msgs}
                   busy={oc.busy}
+                  compacting={oc.compacting}
                   loading={oc.booting}
                   collapsed={settings.collapsed}
                   onRevert={oc.revertTo}

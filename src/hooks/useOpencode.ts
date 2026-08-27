@@ -33,6 +33,9 @@ export function useOpencode() {
   // sessions with an in-flight prompt — tracked per session so background
   // streams keep their state (and the sidebar can show an indicator)
   const [busyIds, setBusyIds] = useState<Set<string>>(new Set());
+  // sessions being compacted — server-driven (auto or /compact), surfaced
+  // as a per-session indicator like busyIds but with its own dot/line
+  const [compactingIds, setCompactingIds] = useState<Set<string>>(new Set());
   // pending asks, kept per session — returning to a session resurfaces
   // its popup (both permissions and questions outlive session switches)
   const questionsRef = useRef<Map<string, QuestionAsk>>(new Map());
@@ -53,6 +56,8 @@ export function useOpencode() {
   activeRef.current = activeId;
   const busyRef = useRef(busyIds);
   busyRef.current = busyIds;
+  const compactingRef = useRef(compactingIds);
+  compactingRef.current = compactingIds;
   const sessionsRef = useRef(sessions);
   sessionsRef.current = sessions;
   // command-registry refetch throttle for file-watcher bursts
@@ -104,6 +109,18 @@ export function useOpencode() {
     if (sid !== activeRef.current) return;
     setPermission(permissionsRef.current.get(sid) ?? null);
   };
+
+  const markCompacting = useCallback((sid: string, on: boolean) => {
+    if (!sid) return;
+    setCompactingIds((prev) => {
+      const has = prev.has(sid);
+      if (has === on) return prev;
+      const next = new Set(prev);
+      if (on) next.add(sid);
+      else next.delete(sid);
+      return next;
+    });
+  }, []);
 
   const LAST_KEY = "oc.lastSes";
 
@@ -175,6 +192,14 @@ export function useOpencode() {
 
     const onEvent = (e: OpenCodeEvent) => {
       const p = e.properties;
+      // generic compaction fallback — covers any future naming variant
+      if (typeof e.type === "string" && e.type.includes("compaction")) {
+        const sid = p.sessionID ?? p.id;
+        if (sid) {
+          if (e.type.endsWith(".started") || e.type.endsWith(".delta")) markCompacting(sid, true);
+          else if (e.type.endsWith(".ended") || e.type === "session.compacted") markCompacting(sid, false);
+        }
+      }
       switch (e.type) {
         case "message.updated": {
           const info = p.info as Message;
@@ -298,6 +323,20 @@ export function useOpencode() {
           // mid-turn idles in heavier tasks are ignored
           if (!tracker.hasInflight(p.sessionID)) tracker.settle(p.sessionID);
           break;
+        // compaction live indicator — server decides when to compact (auto
+        // or manual /compact); we just surface its progress per-session
+        case "session.compacted":
+          if (p.sessionID) markCompacting(p.sessionID, false);
+          break;
+        case "session.next.compaction.started":
+          if (p.sessionID) markCompacting(p.sessionID, true);
+          break;
+        case "session.next.compaction.delta":
+          if (p.sessionID) markCompacting(p.sessionID, true);
+          break;
+        case "session.next.compaction.ended":
+          if (p.sessionID) markCompacting(p.sessionID, false);
+          break;
         case "session.updated": {
           // server-side metadata changes — auto-generated titles after the
           // first reply, pin/archive flags — must reach the sidebar live
@@ -318,6 +357,7 @@ export function useOpencode() {
           if (delId) {
             store.remove(delId);
             tracker.reset(delId);
+            markCompacting(delId, false);
             clearDraft(delId);
             questionsRef.current.delete(delId);
             permissionsRef.current.delete(delId);
@@ -568,6 +608,7 @@ export function useOpencode() {
   const abort = useCallback(async () => {
     if (!activeId) return;
     tracker.reset(activeId);
+    markCompacting(activeId, false);
     // an aborted turn drops its pending asks — the server discards the
     // requests with the run, so don't leave popups pointing at corpses
     questionsRef.current.delete(activeId);
@@ -576,7 +617,7 @@ export function useOpencode() {
     setPermission((cur) => (cur?.sessionID === activeId ? null : cur));
     const { client } = await opencode();
     await client.session.abort({ path: { id: activeId } }).catch(() => {});
-  }, [activeId]);
+  }, [activeId, markCompacting]);
 
   const respondToPermission = useCallback(
     async (response: "once" | "always" | "reject") => {
@@ -759,6 +800,7 @@ export function useOpencode() {
       store.remove(id);
       questionsRef.current.delete(id);
       permissionsRef.current.delete(id);
+      markCompacting(id, false);
       tracker.reset(id);
       clearDraft(id);
       if (activeRef.current === id) {
@@ -769,7 +811,7 @@ export function useOpencode() {
         setPermission(null);
       }
     },
-    [],
+    [markCompacting],
   );
 
   // clear every session in the current workspace — server delete + local reset
@@ -783,6 +825,7 @@ export function useOpencode() {
       store.remove(id);
       questionsRef.current.delete(id);
       permissionsRef.current.delete(id);
+      markCompacting(id, false);
       tracker.reset(id);
       clearDraft(id);
     }
@@ -791,10 +834,12 @@ export function useOpencode() {
     setMsgs([]);
     setQuestion(null);
     setPermission(null);
-  }, [store, tracker]);
+    setCompactingIds(new Set());
+  }, [store, tracker, markCompacting]);
 
-  // the active session's busy state, derived from the per-session set
+  // the active session's busy/compacting state, derived from per-session sets
   const busy = busyIds.has(activeId);
+  const compacting = compactingIds.has(activeId);
 
   return {
     error,
@@ -802,6 +847,8 @@ export function useOpencode() {
     booting,
     sessions,
     busyIds,
+    compactingIds,
+    compacting,
     defaultModel: prov.defaultModel,
     activeId,
     msgs: visibleMsgs,

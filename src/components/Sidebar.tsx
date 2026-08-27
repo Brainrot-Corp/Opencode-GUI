@@ -9,6 +9,7 @@ export default function Sidebar({
   sessions,
   activeId,
   busyIds,
+  compactingIds,
   queueCounts,
   collapsed,
   loading,
@@ -24,6 +25,7 @@ export default function Sidebar({
   sessions: Session[];
   activeId: string;
   busyIds?: Set<string>;
+  compactingIds?: Set<string>;
   queueCounts?: Record<string, number>;
   width: number;
   collapsed: boolean;
@@ -169,6 +171,9 @@ export default function Sidebar({
                       {s.title || "New session"}
                     </button>
                     {busyIds?.has(s.id) && <span className="row-busy" />}
+                    {compactingIds?.has(s.id) && (
+                      <span className="row-compacting" data-tip="Compacting context" />
+                    )}
                     {!!queueCounts?.[s.id] && (
                       <span className="row-queued" data-tip={`${queueCounts[s.id]} queued`}>
                         {queueCounts[s.id]}

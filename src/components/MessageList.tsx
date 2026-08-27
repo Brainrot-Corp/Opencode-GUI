@@ -259,6 +259,7 @@ const MsgRow = memo(function MsgRow({
 export default function MessageList({
   msgs,
   busy,
+  compacting,
   loading,
   collapsed,
   onRevert,
@@ -266,6 +267,7 @@ export default function MessageList({
 }: {
   msgs: Msg[];
   busy: boolean;
+  compacting?: boolean;
   loading?: boolean;
   // global /collapse default for thinking + tool blocks
   collapsed?: boolean;
@@ -371,10 +373,10 @@ export default function MessageList({
     const dist = el.scrollHeight - el.clientHeight - el.scrollTop;
     if (!riding.current) setShowJump((v) => (v ? dist > 40 : dist > 80));
     // pinned readers chase the tail; unpinned readers are never touched
-    if (!busy || !stick.current) return;
+    if ((!busy && !compacting) || !stick.current) return;
     if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) snap();
     else follow();
-  }, [msgs, busy, sessionId, snap, follow]);
+  }, [msgs, busy, compacting, sessionId, snap, follow]);
 
   // stick/unstick + pill visibility on scroll. Our eased chase and snaps
   // record their scrollTop in `expected` first, so their scroll events are
@@ -416,6 +418,11 @@ export default function MessageList({
         {msgs.filter(rowVisible).map((m) => (
           <MsgRow key={m.info.id} m={m} collapsed={collapsed} onRevert={onRevert} onImage={setLightbox} />
         ))}
+        {compacting && (
+          <div className="compacting">
+            <i className="fa-solid fa-compress fa-spin" /> compacting context…
+          </div>
+        )}
         {busy && (
           <div className="thinking">
             <span className="cursor-dot" /> thinking
