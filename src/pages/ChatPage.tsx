@@ -28,6 +28,8 @@ import { playSound } from "../lib/sounds";
 import { useSpeech } from "../hooks/useSpeech";
 import { usePlugins } from "../hooks/usePlugins";
 import { loadPluginsCatalog } from "../lib/pluginsCatalog";
+import { ContextMenuProvider } from "../hooks/useContextMenu";
+import SelectionMenu from "../components/SelectionMenu";
 
 const SB_W_KEY = "oc.sb.w";
 const SB_C_KEY = "oc.sb.c";
@@ -604,7 +606,8 @@ export default function ChatPage() {
 
 
   return (
-    <>
+    <ContextMenuProvider>
+      <SelectionMenu />
       <div className="noise" aria-hidden="true" />
       <TooltipLayer />
       {browserTop !== null && (
@@ -712,6 +715,10 @@ export default function ChatPage() {
             onOpen={(id) => oc.openSession(id)}
             onDelete={(id) => oc.removeSession(id)}
             onClearAll={() => void oc.clearSessions()}
+            onRename={(id, t) => void oc.renameSession(id, t)}
+            onDuplicate={(id) => void oc.duplicateSession(id)}
+            onTogglePin={(id) => oc.togglePin(id)}
+            isPinned={(id) => oc.isPinned(id)}
             sidebarExtras={
               sidebarWidgets.length ? (
                 <>
@@ -856,6 +863,6 @@ export default function ChatPage() {
           return C ? <C key={w.id} settings={settings} updatePlugin={(patch) => updatePlugin(w.id, patch)} /> : null;
         })}
       </div>
-    </>
+    </ContextMenuProvider>
   );
 }

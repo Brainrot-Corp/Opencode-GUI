@@ -1,6 +1,8 @@
 import { useState } from "react";
 import type { Session } from "@opencode-ai/sdk/client";
 import { playSound } from "../lib/sounds";
+import { useContextMenu } from "../hooks/useContextMenu";
+import { clipboardWrite } from "../lib/clipboard";
 import FileTree from "./FileTree";
 import GitPanel from "./GitPanel";
 import "../styles/sidebar.css";
@@ -20,6 +22,10 @@ export default function Sidebar({
   onOpen,
   onDelete,
   onClearAll,
+  onRename,
+  onDuplicate,
+  onTogglePin,
+  isPinned,
   sidebarExtras,
 }: {
   sessions: Session[];
@@ -37,6 +43,10 @@ export default function Sidebar({
   onOpen: (id: string) => void;
   onDelete: (id: string) => void;
   onClearAll: () => void;
+  onRename?: (id: string, title: string) => void;
+  onDuplicate?: (id: string) => void;
+  onTogglePin?: (id: string) => void;
+  isPinned?: (id: string) => boolean;
   sidebarExtras?: React.ReactNode;
 }) {
   const [tab, setTab] = useState(() =>
@@ -44,11 +54,29 @@ export default function Sidebar({
   );
   // two-step confirm for clear-all — first click arms, second fires
   const [clearArmed, setClearArmed] = useState(false);
+  const [renaming, setRenaming] = useState<string | null>(null);
+  const [draftTitle, setDraftTitle] = useState("");
+  const ctx = (() => { try { return useContextMenu(); } catch { return null; } })();
   const switchTab = (t: "chats" | "files") => {
     if (t === tab) return;
     playSound("click");
     setTab(t);
     localStorage.setItem("oc.sb.tab", t);
+  };
+
+  const startRename = (s: Session) => {
+    setRenaming(s.id);
+    setDraftTitle(s.title || "");
+    setTimeout(() => {
+      const el = document.querySelector<HTMLInputElement>(`input[data-rename="${s.id}"]`);
+      el?.focus(); el?.select();
+    }, 0);
+  };
+  const commitRename = () => {
+    if (!renaming) return;
+    const t = draftTitle.trim();
+    if (t) onRename?.(renaming, t);
+    setRenaming(null);
   };
 
   return (
@@ -151,10 +179,13 @@ export default function Sidebar({
               ) : tab === "files" ? (
                 <FileTree />
               ) : (
-                sessions.map((s) => (
+                sessions.map((s) => {
+                  const pinned = !!isPinned?.(s.id);
+                  const busy = !!busyIds?.has(s.id);
+                  return (
                   <div
                     key={s.id}
-                    className={`session-row ${s.id === activeId ? "active" : ""}`}
+                    className={`session-row ${s.id === activeId ? "active" : ""}${pinned ? " pinned" : ""}`}
                     // middle-click anywhere on the row deletes instantly,
                     // no confirmation — preventDefault kills autoscroll
                     onMouseDown={(e) => {
@@ -162,15 +193,55 @@ export default function Sidebar({
                       e.preventDefault();
                       onDelete(s.id);
                     }}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      if (!ctx) return;
+                      const hasShare = true;
+                      ctx.show(e.clientX, e.clientY, [
+                        { label: "Rename", icon: "fa-pen", action: () => startRename(s) },
+                        { label: "Duplicate", icon: "fa-copy", action: () => onDuplicate?.(s.id), disabled: busy },
+                        { label: pinned ? "Unpin" : "Pin", icon: "fa-thumbtack", action: () => onTogglePin?.(s.id) },
+                        { separator: true },
+                        { label: "Copy ID", icon: "fa-id-badge", action: () => void clipboardWrite(s.id) },
+                        { label: "Copy Title", icon: "fa-heading", action: () => void clipboardWrite(s.title || s.id) },
+                        ...(hasShare ? [{ label: "Share (copy link)", icon: "fa-share", action: async () => {
+                          try {
+                            const { opencode } = await import("../api");
+                            const { client } = await opencode();
+                            const r: any = await (client as any).session.share?.({ path: { id: s.id } });
+                            const url = r?.data?.url || r?.data?.shareUrl || window.location.href + "#session-" + s.id;
+                            await clipboardWrite(String(url));
+                          } catch { await clipboardWrite(s.id); }
+                        }} as any] : []),
+                        { separator: true },
+                        { label: "Close", icon: "fa-xmark", danger: true, action: () => onDelete(s.id) },
+                      ]);
+                    }}
                   >
+                    {renaming === s.id ? (
+                      <input
+                        data-rename={s.id}
+                        className="session-rename"
+                        value={draftTitle}
+                        onChange={(e) => setDraftTitle(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") { e.preventDefault(); commitRename(); }
+                          else if (e.key === "Escape") { e.preventDefault(); setRenaming(null); }
+                        }}
+                        onBlur={commitRename}
+                        spellCheck={false}
+                      />
+                    ) : (
                     <button
                       className="session-item"
                       onClick={() => onOpen(s.id)}
                       data-tip={`${s.title || s.id} — middle-click to close`}
                     >
+                      {pinned && <i className="fa-solid fa-thumbtack" style={{ fontSize: 9, marginRight: 4, color: "var(--accent)" }} />}
                       {s.title || "New session"}
                     </button>
-                    {busyIds?.has(s.id) && <span className="row-busy" />}
+                    )}
+                    {busy && <span className="row-busy" />}
                     {compactingIds?.has(s.id) && (
                       <span className="row-compacting" data-tip="Compacting context" />
                     )}
@@ -183,7 +254,8 @@ export default function Sidebar({
                       <i className="fa-solid fa-xmark" />
                     </button>
                   </div>
-                ))
+                  );
+                })
               )}
             </div>
             {sidebarExtras}

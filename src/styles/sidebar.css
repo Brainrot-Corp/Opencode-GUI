@@ -350,3 +350,18 @@ body.resizing * {
   color: var(--danger);
   background: rgba(224, 143, 143, 0.1);
 }
+.session-row.pinned {
+  border-color: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+.session-rename {
+  flex: 1 1 auto;
+  min-width: 0;
+  background: var(--inset-bg);
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 13px;
+  padding: 8px 10px;
+  outline: none;
+  border-radius: 0;
+}

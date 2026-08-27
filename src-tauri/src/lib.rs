@@ -210,6 +210,108 @@ fn write_file(path: String, content: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn file_create(path: String, is_dir: bool) -> Result<(), String> {
+    if path.trim().is_empty() { return Err("empty path".into()); }
+    if is_dir {
+        std::fs::create_dir_all(&path).map_err(|e| e.to_string())
+    } else {
+        if let Some(parent) = std::path::Path::new(&path).parent() {
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        if std::path::Path::new(&path).exists() { return Err("file exists".into()); }
+        std::fs::write(&path, "").map_err(|e| e.to_string())
+    }
+}
+
+#[tauri::command]
+fn file_delete(path: String) -> Result<(), String> {
+    if path.trim().is_empty() { return Err("empty path".into()); }
+    let p = std::path::Path::new(&path);
+    if !p.exists() { return Err("not found".into()); }
+    if p.is_dir() { std::fs::remove_dir_all(p).map_err(|e| e.to_string()) } else { std::fs::remove_file(p).map_err(|e| e.to_string()) }
+}
+
+#[tauri::command]
+fn file_rename(from: String, to: String) -> Result<(), String> {
+    if from.trim().is_empty() || to.trim().is_empty() { return Err("empty path".into()); }
+    if std::path::Path::new(&to).exists() { return Err("target exists".into()); }
+    if let Some(parent) = std::path::Path::new(&to).parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    std::fs::rename(&from, &to).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn file_duplicate(path: String) -> Result<String, String> {
+    if path.trim().is_empty() { return Err("empty path".into()); }
+    let p = std::path::Path::new(&path);
+    if !p.exists() { return Err("not found".into()); }
+    let parent = p.parent().unwrap_or_else(|| std::path::Path::new("."));
+    let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("copy");
+    let ext = p.extension().and_then(|s| s.to_str()).map(|e| format!(".{e}")).unwrap_or_default();
+    for i in 1..100 {
+        let name = if i==1 { format!("{stem} copy{ext}") } else { format!("{stem} copy {i}{ext}") };
+        let dest = parent.join(&name);
+        if !dest.exists() {
+            if p.is_dir() {
+                copy_dir_recursive(p, &dest).map_err(|e| e.to_string())?;
+            } else {
+                std::fs::copy(p, &dest).map_err(|e| e.to_string())?;
+            }
+            return Ok(dest.to_string_lossy().into_owned());
+        }
+    }
+    Err("too many copies".into())
+}
+
+fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dst)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let ty = entry.file_type()?;
+        let dst_path = dst.join(entry.file_name());
+        if ty.is_dir() { copy_dir_recursive(&entry.path(), &dst_path)?; } else { std::fs::copy(entry.path(), dst_path)?; }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn file_reveal(path: String) -> Result<(), String> {
+    if path.trim().is_empty() { return Err("empty path".into()); }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        std::process::Command::new("explorer")
+            .arg(format!("/select,{}", path))
+            .creation_flags(CREATE_NO_WINDOW)
+            .spawn().map_err(|e| e.to_string())?;
+    }
+    #[cfg(not(windows))]
+    {
+        let dir = std::path::Path::new(&path).parent().unwrap_or(std::path::Path::new(&path));
+        std::process::Command::new("xdg-open").arg(dir).spawn().map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn file_open(path: String) -> Result<(), String> {
+    if path.trim().is_empty() { return Err("empty path".into()); }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        std::process::Command::new("cmd").args(["/C", "start", "", &path]).creation_flags(CREATE_NO_WINDOW).spawn().map_err(|e| e.to_string())?;
+    }
+    #[cfg(not(windows))]
+    {
+        std::process::Command::new("xdg-open").arg(&path).spawn().map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
 fn theme_config_write(content: String) -> Result<(), String> {
     let dir = themes_dir();
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
@@ -1092,7 +1194,8 @@ pub fn run() {
             None,
         ))
         // native folder picker for the workspace setting
-        .plugin(tauri_plugin_dialog::init());
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_clipboard_manager::init());
     if !is_new_instance {
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
             if args.iter().any(|a| a == "--new-instance") {
@@ -1128,6 +1231,12 @@ pub fn run() {
             theme_config_read,
             theme_config_write,
             write_file,
+            file_create,
+            file_delete,
+            file_rename,
+            file_duplicate,
+            file_reveal,
+            file_open,
             reveal_config_dir,
             reveal_plugins_dir,
             plugin_remove,

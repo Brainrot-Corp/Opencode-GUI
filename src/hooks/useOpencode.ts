@@ -123,6 +123,38 @@ export function useOpencode() {
   }, []);
 
   const LAST_KEY = "oc.lastSes";
+  const PINNED_KEY = "oc.pinnedSessions";
+  const TITLE_OVERRIDES_KEY = "oc.sessionTitles";
+
+  function getPinned(): Set<string> {
+    try {
+      const raw = localStorage.getItem(PINNED_KEY);
+      if (!raw) return new Set();
+      const arr = JSON.parse(raw);
+      return new Set(Array.isArray(arr) ? arr.filter((x: unknown) => typeof x === "string") : []);
+    } catch { return new Set(); }
+  }
+  function getTitleOverrides(): Record<string, string> {
+    try {
+      const raw = localStorage.getItem(TITLE_OVERRIDES_KEY);
+      if (!raw) return {};
+      const obj = JSON.parse(raw);
+      return obj && typeof obj === "object" && !Array.isArray(obj) ? obj as Record<string,string> : {};
+    } catch { return {}; }
+  }
+  function applyOverrides(list: Session[]): Session[] {
+    const overrides = getTitleOverrides();
+    const pinned = getPinned();
+    const mapped = list.map((s) => overrides[s.id] ? { ...s, title: overrides[s.id] } : s);
+    // pinned first, then by created desc
+    const p = pinned;
+    return mapped.sort((a, b) => {
+      const pa = p.has(a.id) ? 1 : 0;
+      const pb = p.has(b.id) ? 1 : 0;
+      if (pa !== pb) return pb - pa;
+      return (b.time?.created ?? 0) - (a.time?.created ?? 0);
+    });
+  }
 
   const refreshSessions = useCallback(async () => {
     const { client } = await opencode();
@@ -130,11 +162,10 @@ export function useOpencode() {
     // most recently created first; helper sessions (summary/debrief/commit
     // gen) are dropped — live-tracked ids plus title-marked crash orphans
     const list = ((r.data ?? []) as Session[])
-      .filter((s) => !hiddenSessions.has(s.id) && s.title !== HIDDEN_TITLE)
-      .slice()
-      .sort((a, b) => (b.time?.created ?? 0) - (a.time?.created ?? 0));
-    setSessions(list);
-    return list;
+      .filter((s) => !hiddenSessions.has(s.id) && s.title !== HIDDEN_TITLE);
+    const out = applyOverrides(list);
+    setSessions(out);
+    return out;
   }, []);
 
   // server registry: custom + plugin-registered + skill commands.
@@ -342,13 +373,19 @@ export function useOpencode() {
           // first reply, pin/archive flags — must reach the sidebar live
           const s = p.info as Session | undefined;
           if (!s?.id) break;
+          const overrides = getTitleOverrides();
+          const pinned = getPinned();
+          const patched = overrides[s.id] ? { ...s, title: overrides[s.id] } : s;
           setSessions((prev) => {
-            const i = prev.findIndex((x) => x.id === s.id);
+            const i = prev.findIndex((x) => x.id === patched.id);
             if (i < 0) return prev;
-            // keep refreshSessions' ordering rule: newest created first
-            return [...prev.map((x, j) => (j === i ? s : x))].sort(
-              (a, b) => (b.time?.created ?? 0) - (a.time?.created ?? 0),
-            );
+            const next = prev.map((x, j) => (j === i ? patched : (overrides[x.id] ? { ...x, title: overrides[x.id] } : x)));
+            return next.sort((a, b) => {
+              const pa = pinned.has(a.id) ? 1 : 0;
+              const pb = pinned.has(b.id) ? 1 : 0;
+              if (pa !== pb) return pb - pa;
+              return (b.time?.created ?? 0) - (a.time?.created ?? 0);
+            });
           });
           break;
         }
@@ -814,6 +851,56 @@ export function useOpencode() {
     [markCompacting],
   );
 
+  const renameSession = useCallback(async (id: string, title: string) => {
+    const trimmed = title.trim().slice(0, 120);
+    if (!trimmed) return;
+    try {
+      const { client } = await opencode();
+      // try server update — if available
+      const api: any = (client as any).session;
+      if (api && typeof api.update === "function") {
+        await api.update({ path: { id }, body: { title: trimmed } }).catch(async () => {
+          // fallback to overrides
+          throw new Error("update failed");
+        });
+        // server will emit session.updated — optimistically update too
+        setSessions((prev) => applyOverrides(prev.map((s) => s.id === id ? { ...s, title: trimmed } : s)));
+        return;
+      }
+      throw new Error("no update");
+    } catch {
+      // oc override
+      try {
+        const raw = localStorage.getItem(TITLE_OVERRIDES_KEY);
+        const obj = raw ? JSON.parse(raw) : {};
+        const map = obj && typeof obj === "object" ? obj : {};
+        map[id] = trimmed;
+        localStorage.setItem(TITLE_OVERRIDES_KEY, JSON.stringify(map));
+      } catch {}
+      setSessions((prev) => applyOverrides(prev.map((s) => s.id === id ? { ...s, title: trimmed } : s)));
+    }
+  }, []);
+
+  const duplicateSession = useCallback(async (id: string) => {
+    const { client } = await opencode();
+    const r: any = await (client.session as any).fork({ path: { id } });
+    const s = r.data as Session;
+    await refreshSessions();
+    await openSession(s.id);
+    return s.id;
+  }, [refreshSessions, openSession]);
+
+  const togglePin = useCallback((id: string) => {
+    try {
+      const set = getPinned();
+      if (set.has(id)) set.delete(id); else set.add(id);
+      localStorage.setItem(PINNED_KEY, JSON.stringify([...set]));
+      setSessions((prev) => applyOverrides([...prev]));
+    } catch {}
+  }, []);
+
+  const isPinned = useCallback((id: string) => getPinned().has(id), []);
+
   // clear every session in the current workspace — server delete + local reset
   const clearSessions = useCallback(async () => {
     const { client } = await opencode();
@@ -885,6 +972,10 @@ export function useOpencode() {
     abort,
     respondToPermission,
     removeSession,
+    renameSession,
+    duplicateSession,
+    togglePin,
+    isPinned,
   };
 }
 

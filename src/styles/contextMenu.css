@@ -1,0 +1,86 @@
+/* context menu — reuse model-menu glass tokens, 6px rhythm */
+.ctx-menu {
+  min-width: 280px;
+  max-width: 340px;
+  max-height: 420px;
+  overflow-y: auto;
+  background: var(--drawer-bg);
+  backdrop-filter: blur(30px) saturate(1.3);
+  -webkit-backdrop-filter: blur(30px) saturate(1.3);
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, transparent);
+  box-shadow: 0 20px 50px -12px rgba(0,0,0,0.75), 0 0 40px -16px var(--accent-glow);
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  border-radius: 0;
+  z-index: 100;
+}
+
+.ctx-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-align: left;
+  padding: 7px 9px;
+  background: none;
+  border: none;
+  border-radius: 0;
+  font-family: var(--sans);
+  font-size: 12px;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: background 0.2s var(--ease), color 0.2s var(--ease);
+  white-space: nowrap;
+}
+.ctx-item:hover:not(:disabled),
+.ctx-item.hl {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--text);
+}
+.ctx-item:disabled {
+  opacity: 0.38;
+  cursor: default;
+  color: var(--text-faint);
+}
+.ctx-item.danger {
+  color: var(--text-dim);
+}
+.ctx-item.danger:hover:not(:disabled) {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+}
+.ctx-item i {
+  width: 16px;
+  text-align: center;
+  font-size: 11px;
+  flex-shrink: 0;
+}
+.ctx-item .ctx-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ctx-item .ctx-shortcut {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-faint);
+  margin-left: 12px;
+  flex-shrink: 0;
+}
+.ctx-sep {
+  height: 1px;
+  margin: 4px 2px;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  flex-shrink: 0;
+}
+.ctx-header {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  padding: 6px 9px 2px;
+}
