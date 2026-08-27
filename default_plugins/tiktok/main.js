@@ -7,8 +7,18 @@ const KEY = "oc.tiktok";
 const TIKTOK_URL = "https://www.tiktok.com";
 const MIN_W = 280, MIN_H = 350, MAX_W = 1200, MAX_H = 1200;
 const DEF_W = 380, DEF_H = 680; // phone 9:16, but freely resizable up to viewport
+const INSET = 6; // gap between panel border and webview so handles aren't covered by the native child window
+const headerH = 36;
 
 function clamp(n, a, b){ return Math.min(Math.max(n, a), b); }
+function webviewRect(geom){
+  return {
+    x: geom.x + INSET,
+    y: geom.y + headerH + INSET,
+    w: Math.max(120, geom.w - INSET * 2),
+    h: Math.max(120, geom.h - headerH - INSET * 2),
+  };
+}
 
 function defaultGeom(){
   const w = DEF_W, h = DEF_H;
@@ -20,7 +30,7 @@ function defaultGeom(){
 function load(){
   try{
     const raw = localStorage.getItem(KEY);
-    if(!raw) return { open:false, geom: defaultGeom() };
+    if(!raw) return { open:false, geom: defaultGeom(), glass:true };
     const p = JSON.parse(raw);
     let geom = p.geom && typeof p.geom === "object" ? p.geom : defaultGeom();
     const vw = window.innerWidth, vh = window.innerHeight;
@@ -30,8 +40,8 @@ function load(){
       w: clamp(Number(geom.w)||DEF_W, MIN_W, Math.min(MAX_W, vw - 8)),
       h: clamp(Number(geom.h)||DEF_H, MIN_H, Math.min(MAX_H, vh - 8)),
     };
-    return { open: !!p.open, geom };
-  }catch{ return { open:false, geom: defaultGeom() }; }
+    return { open: !!p.open, geom, glass: p.glass !== false };
+  }catch{ return { open:false, geom: defaultGeom(), glass:true }; }
 }
 
 function save(state){
@@ -71,7 +81,6 @@ export default function activate(api){
     const panelRef = useRef(null);
     const dragRef = useRef(null);
     const resizeRef = useRef(null);
-    const headerH = 36; // must match measured header height for webview y-offset
     const [blocked, setBlocked] = useState("");
 
     // sync external toggle
@@ -107,29 +116,37 @@ export default function activate(api){
     // open/close the child webview based on state.open + geom — no save here (persistence is explicit in drag/resize/close handlers)
     const lastOpen = useRef(state.open);
     const lastGeom = useRef(state.geom);
+    const lastGlass = useRef(state.glass);
     useEffect(()=>{
-      const { open, geom } = state;
-      const x = geom.x;
-      const y = geom.y + headerH;
-      const w = geom.w;
-      const h = Math.max(120, geom.h - headerH);
+      const { open, geom, glass } = state;
+      const r = webviewRect(geom);
       const geomChanged = !equal(geom, lastGeom.current);
+      const glassChanged = glass !== lastGlass.current;
 
       if(open && !lastOpen.current){
         lastOpen.current = true;
         lastGeom.current = geom;
-        api.invoke("tiktok_open", { url: TIKTOK_URL, x, y, w, h }).catch(()=>{});
+        lastGlass.current = glass;
+        api.invoke("tiktok_open", { url: TIKTOK_URL, x: r.x, y: r.y, w: r.w, h: r.h }).then(()=>{
+          // init script auto-injects glass; if user disabled, remove it
+          if(!glass) api.invoke("tiktok_set_glass", { enabled:false }).catch(()=>{});
+        }).catch(()=>{});
       } else if(!open && lastOpen.current){
         lastOpen.current = false;
         lastGeom.current = geom;
+        lastGlass.current = glass;
         api.invoke("tiktok_close").catch(()=>{});
       } else if(open && lastOpen.current && geomChanged){
         lastGeom.current = geom;
-        api.invoke("tiktok_set_bounds", { x, y, w, h }).catch(()=>{});
+        api.invoke("tiktok_set_bounds", { x: r.x, y: r.y, w: r.w, h: r.h }).catch(()=>{});
+      } else if(open && glassChanged){
+        lastGlass.current = glass;
+        api.invoke("tiktok_set_glass", { enabled: !!glass }).catch(()=>{});
       } else {
         lastGeom.current = geom;
+        lastGlass.current = glass;
       }
-    }, [state.open, state.geom.x, state.geom.y, state.geom.w, state.geom.h]);
+    }, [state.open, state.geom.x, state.geom.y, state.geom.w, state.geom.h, state.glass]);
 
     // ensure close on unmount
     useEffect(()=> ()=>{ if(lastOpen.current) api.invoke("tiktok_close").catch(()=>{}); }, []);
@@ -177,6 +194,12 @@ export default function activate(api){
       save(s); setState(s);
       try{ api.playSound("collapse"); }catch{}
     };
+    const toggleGlass = ()=>{
+      const next = !state.glass;
+      const s = {...state, glass: next};
+      save(s); setState(s);
+      try{ api.playSound(next ? "expand" : "collapse"); }catch{}
+    };
 
     const onDragStart = (e)=>{
       if(e.button!==0) return;
@@ -193,8 +216,8 @@ export default function activate(api){
         raf=0;
         el.style.left=last.x+"px";
         el.style.top=last.y+"px";
-        const x=last.x, y=last.y + headerH, w=g0.w, h=Math.max(120,g0.h-headerH);
-        api.invoke("tiktok_set_bounds", { x, y, w, h }).catch(()=>{});
+        const r=webviewRect({x:last.x, y:last.y, w:g0.w, h:g0.h});
+        api.invoke("tiktok_set_bounds", { x:r.x, y:r.y, w:r.w, h:r.h }).catch(()=>{});
       };
       const move=(ev)=>{
         const d=dragRef.current; if(!d) return;
@@ -205,8 +228,8 @@ export default function activate(api){
       const up=()=>{
         if(raf) cancelAnimationFrame(raf);
         el.style.left=last.x+"px"; el.style.top=last.y+"px";
-        const x=last.x, y=last.y + headerH;
-        api.invoke("tiktok_set_bounds", { x, y, w:g0.w, h:Math.max(120,g0.h-headerH) }).catch(()=>{});
+        const r=webviewRect({x:last.x, y:last.y, w:g0.w, h:g0.h});
+        api.invoke("tiktok_set_bounds", { x:r.x, y:r.y, w:r.w, h:r.h }).catch(()=>{});
         setState(s=>{
           if(s.geom.x===last.x && s.geom.y===last.y) return s;
           const next={...s, geom:{...s.geom, x:last.x, y:last.y}};
@@ -235,8 +258,8 @@ export default function activate(api){
         raf=0;
         el.style.left=last.x+"px"; el.style.top=last.y+"px";
         el.style.width=last.w+"px"; el.style.height=last.h+"px";
-        const x=last.x, y=last.y + headerH, w=last.w, h=Math.max(120,last.h-headerH);
-        api.invoke("tiktok_set_bounds", { x, y, w, h }).catch(()=>{});
+        const r=webviewRect(last);
+        api.invoke("tiktok_set_bounds", { x:r.x, y:r.y, w:r.w, h:r.h }).catch(()=>{});
       };
       const move=(ev)=>{
         const r=resizeRef.current; if(!r) return;
@@ -253,8 +276,8 @@ export default function activate(api){
         if(raf) cancelAnimationFrame(raf);
         el.style.left=last.x+"px"; el.style.top=last.y+"px";
         el.style.width=last.w+"px"; el.style.height=last.h+"px";
-        const x=last.x, y=last.y + headerH, w=last.w, h=Math.max(120,last.h-headerH);
-        api.invoke("tiktok_set_bounds", { x, y, w, h }).catch(()=>{});
+        const r=webviewRect(last);
+        api.invoke("tiktok_set_bounds", { x:r.x, y:r.y, w:r.w, h:r.h }).catch(()=>{});
         setState(s=>{
           if(equal(s.geom,last)) return s;
           const next={...s, geom:last};
@@ -282,6 +305,11 @@ export default function activate(api){
         ),
         h("span", { style:{flex:1}}),
         h("div", { className:"tiktok-toolbar" },
+          h("button", {
+            className:`icon-btn${state.glass ? " on" : ""}`,
+            "data-tip": state.glass ? "Glass: on (almost transparent) — click to disable" : "Glass: off — click for transparent glass",
+            onClick: toggleGlass
+          }, h("i", {className: state.glass ? "fa-solid fa-wand-magic-sparkles" : "fa-solid fa-eye-slash"})),
           h("button", { className:"icon-btn", "data-tip":"Reload", onClick:()=> api.invoke("tiktok_navigate", {url:TIKTOK_URL}).catch(()=>{}) }, h("i", {className:"fa-solid fa-rotate-right"})),
           h("button", { className:"icon-btn", "data-tip":"Open in system browser", onClick:()=> api.invoke("open_external", {url:TIKTOK_URL}).catch(()=>{}) }, h("i", {className:"fa-solid fa-up-right-from-square"})),
           h("button", { className:"icon-btn", "data-tip":"Close TikTok", onClick:closePanel, "aria-label":"Close" }, h("i", {className:"fa-solid fa-xmark"}))

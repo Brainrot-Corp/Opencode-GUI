@@ -524,6 +524,53 @@ pub async fn window_app(name: String, action: String) -> Result<String, String> 
 }
 
 // ----------- TikTok floating webview (persistent, tiktok-only) -----------
+const TIKTOK_GLASS_CSS: &str = r#"
+html, body, #app, #root { background: rgba(12,17,22,0.28) !important; background-color: rgba(12,17,22,0.28) !important; }
+body > div, #app > div, main, [data-e2e="app"] { background: transparent !important; }
+/* header / nav glass — matches app titlebar rgba(20,28,35,.14) + blur 14px */
+header, [data-e2e="header"], div[class*="HeaderContainer"], div[class*="DivHeaderContainer"], nav {
+  background: rgba(20,28,35,0.14) !important;
+  background-color: rgba(20,28,35,0.14) !important;
+  backdrop-filter: blur(14px) !important;
+  -webkit-backdrop-filter: blur(14px) !important;
+  border-bottom: 1px solid rgba(127,212,212,0.12) !important;
+}
+/* feed / main containers transparent so glass shows through */
+main, div[class*="MainContainer"], div[class*="DivMainContainer"], div[class*="FeedContainer"], div[class*="DivFeedContainer"], div[class*="ContentContainer"] {
+  background: transparent !important;
+  background-color: transparent !important;
+}
+/* sidebars transparent */
+aside, div[class*="Sidebar"], div[class*="DivSidebar"] { background: transparent !important; }
+/* cards keep subtle surface so videos pop — not full opaque */
+div[class*="DivVideoCard"], div[class*="VideoCard"], article { background: rgba(20,28,35,0.08) !important; border-radius: 8px !important; }
+/* video itself stays opaque with glow */
+video { background: #000 !important; border-radius: 8px !important; box-shadow: 0 8px 24px rgba(0,0,0,0.45) !important; }
+/* scrollbars square + accent tint like app */
+* { scrollbar-width: thin; scrollbar-color: rgba(127,212,212,0.45) transparent; }
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-thumb { background: rgba(127,212,212,0.35); border-radius: 0; }
+*::-webkit-scrollbar-thumb:hover { background: rgba(127,212,212,0.55); box-shadow: 0 0 6px rgba(127,212,212,0.4); }
+*::-webkit-scrollbar-track { background: transparent; }
+"#;
+
+const TIKTOK_GLASS_INIT_JS: &str = r#"(function(){
+  const ID='oc-tiktok-glass';
+  const CSS=`__CSS__`;
+  function inject(){
+    if(document.getElementById(ID)) return;
+    const s=document.createElement('style');
+    s.id=ID;
+    s.textContent=CSS;
+    (document.head||document.documentElement).appendChild(s);
+  }
+  function remove(){ const el=document.getElementById(ID); if(el) el.remove(); }
+  window.__ocTiktokGlass = (on)=> on ? inject() : remove();
+  // auto-inject (almost transparent glass by default)
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', inject);
+  else inject();
+  try{ new MutationObserver(()=>{ if(!document.getElementById(ID) && document.body) inject(); }).observe(document.documentElement,{childList:true,subtree:true}); }catch(e){}
+})();"#;
 
 fn spawn_floating_poll(app: AppHandle, gen: u64) {
     std::thread::spawn(move || loop {
@@ -580,9 +627,13 @@ pub async fn tiktok_open(
     let win = window.as_ref().window();
     let gen = FLOAT_GEN.fetch_add(1, Ordering::Relaxed);
     // persistent session (not incognito) so TikTok login survives restarts
+    // glass: make webview transparent so injected rgba shows app's mica/acrylic behind
+    let init_js = TIKTOK_GLASS_INIT_JS.replace("__CSS__", &TIKTOK_GLASS_CSS.replace('`', "'").replace('\\', "\\\\"));
     let webview = win
         .add_child(
-            WebviewBuilder::new("tiktok", WebviewUrl::External(parsed.clone())),
+            WebviewBuilder::new("tiktok", WebviewUrl::External(parsed.clone()))
+                .transparent(true)
+                .initialization_script(init_js),
             LogicalPosition::new(x, y),
             LogicalSize::new(w, h),
         )
@@ -626,6 +677,27 @@ pub async fn tiktok_set_bounds(
         position: LogicalPosition::new(x, y).into(),
         size: LogicalSize::new(w, h).into(),
     }).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn tiktok_set_glass(state: State<'_, FloatingState>, enabled: bool) -> Result<(), String> {
+    let wv = {
+        let guard = state.0.lock().unwrap();
+        guard.as_ref().map(|b| b.webview.clone())
+    };
+    if let Some(wv) = wv {
+        let js = if enabled {
+            // re-inject (idempotent)
+            format!(
+                "window.__ocTiktokGlass ? window.__ocTiktokGlass(true) : (()=>{{ const s=document.createElement('style'); s.id='oc-tiktok-glass'; s.textContent=`{}`; (document.head||document.documentElement).appendChild(s); }})()",
+                TIKTOK_GLASS_CSS.replace('`', "'").replace('\\', "\\\\").replace('\n', " ")
+            )
+        } else {
+            "window.__ocTiktokGlass ? window.__ocTiktokGlass(false) : document.getElementById('oc-tiktok-glass')?.remove()".to_string()
+        };
+        wv.eval(js).map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 
 #[tauri::command]

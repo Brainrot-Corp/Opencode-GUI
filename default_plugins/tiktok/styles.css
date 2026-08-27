@@ -10,9 +10,9 @@
   backdrop-filter:blur(8px);
   -webkit-backdrop-filter:blur(8px);
   will-change:transform;
-  contain:layout style paint;
+  contain:layout style;
   transform:translateZ(0);
-  overflow:hidden;
+  overflow:visible;
 }
 .tiktok-head{
   display:flex;
@@ -68,14 +68,14 @@
 .tiktok-handle{position:absolute; background:transparent; z-index:5; touch-action:none}
 .tiktok-handle:hover{background:color-mix(in srgb, var(--accent) 18%, transparent)}
 .tiktok-handle:active{background:color-mix(in srgb, var(--accent) 28%, transparent)}
-.tiktok-handle.n{top:-4px; left:8px; right:8px; height:8px; cursor:ns-resize}
-.tiktok-handle.s{bottom:-4px; left:8px; right:8px; height:8px; cursor:ns-resize}
-.tiktok-handle.e{top:8px; right:-4px; bottom:8px; width:8px; cursor:ew-resize}
-.tiktok-handle.w{top:8px; left:-4px; bottom:8px; width:8px; cursor:ew-resize}
-.tiktok-handle.nw{top:-4px; left:-4px; width:14px; height:14px; cursor:nwse-resize}
-.tiktok-handle.ne{top:-4px; right:-4px; width:14px; height:14px; cursor:nesw-resize}
-.tiktok-handle.sw{bottom:-4px; left:-4px; width:14px; height:14px; cursor:nesw-resize}
-.tiktok-handle.se{bottom:-4px; right:-4px; width:14px; height:14px; cursor:nwse-resize}
+.tiktok-handle.n{top:-6px; left:6px; right:6px; height:10px; cursor:ns-resize}
+.tiktok-handle.s{bottom:-6px; left:6px; right:6px; height:10px; cursor:ns-resize}
+.tiktok-handle.e{top:6px; right:-6px; bottom:6px; width:10px; cursor:ew-resize}
+.tiktok-handle.w{top:6px; left:-6px; bottom:6px; width:10px; cursor:ew-resize}
+.tiktok-handle.nw{top:-6px; left:-6px; width:16px; height:16px; cursor:nwse-resize}
+.tiktok-handle.ne{top:-6px; right:-6px; width:16px; height:16px; cursor:nesw-resize}
+.tiktok-handle.sw{bottom:-6px; left:-6px; width:16px; height:16px; cursor:nesw-resize}
+.tiktok-handle.se{bottom:-6px; right:-6px; width:16px; height:16px; cursor:nwse-resize}
 .tiktok-handle.se::after{
   content:"";
   position:absolute;
