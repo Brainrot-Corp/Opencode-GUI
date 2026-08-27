@@ -633,6 +633,7 @@ export default function activate(api) {
       setPos(ms); setMPos(ms); setStartAt(Date.now());
       clearTimeout(seekTimer.current);
       seekTimer.current = setTimeout(() => {
+        seekTimer.current = 0;
         void req("put", "/seek", { position_ms: Math.round(ms), ...(device?.id ? { device_id: device.id } : {}) });
       }, 180);
     };
@@ -644,6 +645,7 @@ export default function activate(api) {
       setVolume(nv);
       clearTimeout(volTimer.current);
       volTimer.current = setTimeout(() => {
+        volTimer.current = 0;
         void req("put", "/volume", { volume_percent: nv, ...(device?.id ? { device_id: device.id } : {}) });
       }, 500);
     };

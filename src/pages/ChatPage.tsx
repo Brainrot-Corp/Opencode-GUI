@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import Titlebar from "../components/Titlebar";
@@ -8,14 +8,17 @@ import Composer from "../components/Composer";
 import PermissionBar from "../components/PermissionBar";
 import QuestionPopup from "../components/QuestionPopup";
 import BrowserBar, { BROWSER_BAR_H } from "../components/BrowserBar";
-import SettingsDrawer from "../components/SettingsDrawer";
-import Onboarding from "../components/Onboarding";
 import UpdatePrompt from "../components/UpdatePrompt";
 import { useUpdater } from "../hooks/useUpdater";
-import DiffPanel from "../components/DiffPanel";
-import FileEditorHost from "../components/FileEditorHost";
-import TerminalPanel from "../components/Terminal";
 import TooltipLayer from "../components/TooltipLayer";
+import DiffPanel from "../components/DiffPanel";
+
+// heavy panels → code-split: only fetched when opened (DiffPanel is NOT lazy:
+// GitPanel + ToolBlock statically import it, so a dynamic import wouldn't split)
+const SettingsDrawer = lazy(() => import("../components/SettingsDrawer"));
+const Onboarding = lazy(() => import("../components/Onboarding"));
+const FileEditorHost = lazy(() => import("../components/FileEditorHost"));
+const TerminalPanel = lazy(() => import("../components/Terminal"));
 import { HelpDialog, ShareDialog, VariantsDialog } from "../components/CommandDialog";
 import { useOpencode } from "../hooks/useOpencode";
 import { useSettings } from "../hooks/useSettings";
@@ -638,17 +641,19 @@ export default function ChatPage() {
           }
         />
         {onboardOpen && (
-          <Onboarding
-            onClose={() => {
-              localStorage.setItem("oc.onboarded", "1");
-              setOnboardOpen(false);
-            }}
-            settings={settings}
-            update={update}
-            themes={themes}
-            activeModes={activeModes}
-            providers={oc.providers}
-          />
+          <Suspense fallback={null}>
+            <Onboarding
+              onClose={() => {
+                localStorage.setItem("oc.onboarded", "1");
+                setOnboardOpen(false);
+              }}
+              settings={settings}
+              update={update}
+              themes={themes}
+              activeModes={activeModes}
+              providers={oc.providers}
+            />
+          </Suspense>
         )}
         {(showUpdatePrompt || debugUpdateForced) && promptInfo && (
           <UpdatePrompt
@@ -667,28 +672,30 @@ export default function ChatPage() {
             onDismiss={handleUpdateDismiss}
           />
         )}
-        <SettingsDrawer
-          upd={upd}
-          onDebugUpdate={handleDebugUpdate}
-          open={settingsOpen}
-          providers={oc.providers}
-          commands={oc.cmdList}
-          onClose={closeSettings}
-          settings={settings}
-          update={update}
-          updatePlugin={updatePlugin}
-          updateSounds={updateSounds}
-          updateColors={updateColors}
-          resetColors={resetColors}
-          themes={themes}
-          colorsFor={colorsFor}
-          modes={activeModes}
-          effectiveMode={effectiveMode}
-          pluginDocs={pluginDocs}
-          plugins={plugins}
-          onTogglePlugin={toggleEnabled}
-          onRemoveDisabled={removeDisabled}
-        />
+        <Suspense fallback={null}>
+          <SettingsDrawer
+            upd={upd}
+            onDebugUpdate={handleDebugUpdate}
+            open={settingsOpen}
+            providers={oc.providers}
+            commands={oc.cmdList}
+            onClose={closeSettings}
+            settings={settings}
+            update={update}
+            updatePlugin={updatePlugin}
+            updateSounds={updateSounds}
+            updateColors={updateColors}
+            resetColors={resetColors}
+            themes={themes}
+            colorsFor={colorsFor}
+            modes={activeModes}
+            effectiveMode={effectiveMode}
+            pluginDocs={pluginDocs}
+            plugins={plugins}
+            onTogglePlugin={toggleEnabled}
+            onRemoveDisabled={removeDisabled}
+          />
+        </Suspense>
         <div
           className={`layout${resizing ? " no-anim" : ""}`}
           style={
@@ -831,13 +838,15 @@ export default function ChatPage() {
                 />
               </>
             )}
-            <TerminalPanel
-              key={termKey}
-              open={termOpen}
-              workspace={settings.workspace}
-              onClose={() => setTermOpen(false)}
-              onReload={() => setTermKey((k) => k + 1)}
-            />
+            <Suspense fallback={null}>
+              <TerminalPanel
+                key={termKey}
+                open={termOpen}
+                workspace={settings.workspace}
+                onClose={() => setTermOpen(false)}
+                onReload={() => setTermKey((k) => k + 1)}
+              />
+            </Suspense>
           </div>
         </div>
         {oc.dialog?.kind === "help" && (
@@ -854,10 +863,10 @@ export default function ChatPage() {
             onClose={oc.closeDialog}
           />
         )}
-        {diffOpen && oc.activeId && (
-          <DiffPanel sessionId={oc.activeId} onClose={() => setDiffOpen(false)} />
-        )}
-        <FileEditorHost />
+        {diffOpen && oc.activeId && <DiffPanel sessionId={oc.activeId} onClose={() => setDiffOpen(false)} />}
+        <Suspense fallback={null}>
+          <FileEditorHost />
+        </Suspense>
         {overlays.map((w) => {
           const C = w.Overlay!;
           return C ? <C key={w.id} settings={settings} updatePlugin={(patch) => updatePlugin(w.id, patch)} /> : null;

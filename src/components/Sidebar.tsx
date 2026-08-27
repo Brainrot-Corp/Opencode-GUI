@@ -3,6 +3,7 @@ import type { Session } from "@opencode-ai/sdk/client";
 import { playSound } from "../lib/sounds";
 import { useContextMenu } from "../hooks/useContextMenu";
 import { clipboardWrite } from "../lib/clipboard";
+import { opencode } from "../api";
 import FileTree from "./FileTree";
 import GitPanel from "./GitPanel";
 import "../styles/sidebar.css";
@@ -206,7 +207,6 @@ export default function Sidebar({
                         { label: "Copy Title", icon: "fa-heading", action: () => void clipboardWrite(s.title || s.id) },
                         ...(hasShare ? [{ label: "Share (copy link)", icon: "fa-share", action: async () => {
                           try {
-                            const { opencode } = await import("../api");
                             const { client } = await opencode();
                             const r: any = await (client as any).session.share?.({ path: { id: s.id } });
                             const url = r?.data?.url || r?.data?.shareUrl || window.location.href + "#session-" + s.id;
