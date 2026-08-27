@@ -64,7 +64,9 @@ export default function activate(api){
     },[]);
     const toggle = ()=>{
       const s = load();
-      s.open = !s.open;
+      const willOpen = !s.open;
+      if(willOpen) s.geom = defaultGeom();
+      s.open = willOpen;
       save(s);
       setOpen(s.open);
       try{ api.playSound(s.open ? "expand" : "collapse"); }catch{}
@@ -83,6 +85,16 @@ export default function activate(api){
     const dragRef = useRef(null);
     const resizeRef = useRef(null);
     const [blocked, setBlocked] = useState("");
+    // if persisted open but geom is stale/off-center, recenter once so webview appears centered
+    useEffect(()=>{
+      if(!state.open) return;
+      const c = defaultGeom();
+      if(Math.abs(state.geom.x - c.x) > 16 || Math.abs(state.geom.y - c.y) > 16){
+        const next = {...state, geom: c};
+        save(next);
+        setState(next);
+      }
+    },[]);
 
     // sync external toggle
     useEffect(()=>{
