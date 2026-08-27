@@ -144,16 +144,88 @@ export function removeDisabledId(id: string): void {
   if (set.delete(id)) localStorage.setItem(DISABLED_KEY, JSON.stringify([...set]));
 }
 
-// assets of the last load — revoked/replaced wholesale on hot reload
-let active: { url?: string; style?: HTMLStyleElement }[] = [];
+// assets of the last load — active resources keyed by dir so a single
+// plugin can be unloaded without touching the others (disable/delete).
+// Each entry may hold a blob URL (main.js) and/or an injected style.
+const active = new Map<string, { url?: string; style?: HTMLStyleElement }>();
+// cache of last scan content for incremental reload (dir -> {manifest,main,css})
+const lastScan = new Map<string, { manifest: string; main: string; css: string }>();
+
+function revokeActive(dir: string, id?: string) {
+  for (const key of [dir, id].filter(Boolean) as string[]) {
+    const a = active.get(key);
+    if (a) {
+      if (a.url) URL.revokeObjectURL(a.url);
+      a.style?.remove();
+      active.delete(key);
+    }
+  }
+  // style is also indexed by id (dataset.plugin) — remove that too if dir!=id
+  if (id && id !== dir) {
+    const s = document.querySelector(`style[data-plugin="${CSS.escape(id)}"]`) as HTMLStyleElement | null;
+    if (s) s.remove();
+  }
+}
+
+async function loadOne(d: { dir: string; manifest: string; main: string; css: string }, disabledIds: Set<string>): Promise<LoadedPlugin> {
+  const man = parseManifest(d.dir, d.manifest);
+  if (!man) throw new Error("bad manifest");
+  const disabled = disabledIds.has(man.id) || disabledIds.has(d.dir);
+  if (disabled) {
+    return { id: man.id, name: man.name, dir: d.dir, version: man.version, description: man.description, ext: null, error: "", disabled: true };
+  }
+  if (!d.main.trim()) {
+    return { id: man.id, name: man.name, dir: d.dir, version: man.version, description: man.description, ext: null, error: "missing main.js", disabled: false };
+  }
+  // replace any previous resources for this dir/id before re-importing
+  revokeActive(d.dir, man.id);
+  const url = URL.createObjectURL(new Blob([d.main], { type: "text/javascript" }));
+  const mod = await import(/* @vite-ignore */ url);
+  const entry: { url?: string; style?: HTMLStyleElement } = { url };
+  active.set(d.dir, entry);
+  // also keep an alias keyed by id for quick disable lookup when dir != id (same object)
+  if (man.id !== d.dir) active.set(man.id, entry);
+  const api: PluginApi = {
+    id: man.id,
+    invoke,
+    h: createElement,
+    useState,
+    useEffect,
+    useRef,
+    settings: () => {
+      try {
+        return JSON.parse(localStorage.getItem("oc.settings") || "{}");
+      } catch {
+        return {};
+      }
+    },
+    playSound: (kind: string) => {
+      try { (hostPlaySound as unknown as (k: string) => void)(kind as never); } catch {}
+    },
+  };
+  const raw = typeof mod.default === "function" ? await mod.default(api) : null;
+  if (!raw) {
+    return { id: man.id, name: man.name, dir: d.dir, version: man.version, description: man.description, ext: null, error: "", disabled: false };
+  }
+  if (typeof d.css === "string" && d.css.trim()) {
+    const style = document.createElement("style");
+    style.dataset.plugin = man.id;
+    style.textContent = d.css;
+    document.head.appendChild(style);
+    const cur = active.get(d.dir);
+    if (cur) cur.style = style;
+  }
+  return { id: man.id, name: man.name, dir: d.dir, version: man.version, description: man.description, ext: { ...raw, id: man.id, name: man.name }, error: "", disabled: false };
+}
 
 export async function loadPlugins(): Promise<LoadedPlugin[]> {
-  for (const a of active) {
+  // full reload — used at boot. Clears everything and rebuilds from scan.
+  for (const [, a] of active) {
     if (a.url) URL.revokeObjectURL(a.url);
     a.style?.remove();
   }
-  const mine: { url?: string; style?: HTMLStyleElement }[] = [];
-  active = mine;
+  active.clear();
+  lastScan.clear();
 
   const dirs = await invoke<
     { dir: string; manifest: string; main: string; css: string }[]
@@ -163,58 +235,123 @@ export async function loadPlugins(): Promise<LoadedPlugin[]> {
   const out: LoadedPlugin[] = [];
   for (const d of dirs) {
     try {
-      const man = parseManifest(d.dir, d.manifest);
-      if (!man) continue;
-      const disabled = disabledIds.has(man.id) || disabledIds.has(d.dir);
-      if (disabled) {
-        out.push({ id: man.id, name: man.name, dir: d.dir, version: man.version, description: man.description, ext: null, error: "", disabled: true });
-        continue;
-      }
-      if (!d.main.trim()) {
-        // empty or half-written folder — surface as error, not disabled
-        out.push({ id: man.id, name: man.name, dir: d.dir, version: man.version, description: man.description, ext: null, error: "missing main.js", disabled: false });
-        continue;
-      }
-      const url = URL.createObjectURL(new Blob([d.main], { type: "text/javascript" }));
-      const mod = await import(/* @vite-ignore */ url);
-      mine.push({ url });
-      const api: PluginApi = {
-        id: man.id,
-        invoke,
-        h: createElement,
-        useState,
-        useEffect,
-        useRef,
-        settings: () => {
-          try {
-            return JSON.parse(localStorage.getItem("oc.settings") || "{}");
-          } catch {
-            return {};
-          }
-        },
-        playSound: (kind: string) => {
-          try { (hostPlaySound as unknown as (k: string) => void)(kind as never); } catch {}
-        },
-      };
-      const raw = typeof mod.default === "function" ? await mod.default(api) : null;
-      if (!raw) {
-        out.push({ id: man.id, name: man.name, dir: d.dir, version: man.version, description: man.description, ext: null, error: "", disabled: false });
-        continue;
-      }
-      if (typeof d.css === "string" && d.css.trim()) {
-        const style = document.createElement("style");
-        style.dataset.plugin = man.id;
-        style.textContent = d.css;
-        document.head.appendChild(style);
-        mine.push({ style });
-      }
-      out.push({ id: man.id, name: man.name, dir: d.dir, version: man.version, description: man.description, ext: { ...raw, id: man.id, name: man.name }, error: "", disabled: false });
+      const p = await loadOne(d, disabledIds);
+      out.push(p);
     } catch (e) {
       out.push({ id: d.dir, name: d.dir, dir: d.dir, ext: null, error: e instanceof Error ? e.message : String(e), disabled: false });
     }
+    lastScan.set(d.dir, { manifest: d.manifest, main: d.main, css: d.css });
   }
-  // plugins can't import host modules — the loader merges their lexicon
-  // contributions (replaced wholesale on hot reload) — disabled plugins excluded
   setPluginLexicon(out.flatMap((p) => (p.disabled ? [] : p.ext?.lexicon ?? [])));
   return out;
+}
+
+// Incremental helpers — disable/enable a single plugin without touching others.
+
+export function unloadPluginResources(idOrDir: string): void {
+  // find the entry for idOrDir and also any alias sharing the same URL object
+  const target = active.get(idOrDir);
+  if (target) {
+    if (target.url) {
+      try { URL.revokeObjectURL(target.url); } catch {}
+    }
+    target.style?.remove();
+    // delete all keys pointing to the same object (dir + id alias)
+    for (const [k, v] of [...active.entries()]) {
+      if (v === target) active.delete(k);
+    }
+  } else {
+    // fallback: delete any entry keyed exactly, and also style by id
+    const a = active.get(idOrDir);
+    if (a) {
+      if (a.url) try { URL.revokeObjectURL(a.url); } catch {}
+      a.style?.remove();
+      active.delete(idOrDir);
+    }
+  }
+  const s = document.querySelector(`style[data-plugin="${CSS.escape(idOrDir)}"]`) as HTMLStyleElement | null;
+  if (s) s.remove();
+  lastScan.delete(idOrDir);
+  // if the key was an id (not dir), also delete the dir entry whose manifest id matches
+  for (const dir of [...lastScan.keys()]) {
+    const cached = lastScan.get(dir);
+    if (!cached) continue;
+    const man = parseManifest(dir, cached.manifest);
+    if (man?.id === idOrDir) {
+      lastScan.delete(dir);
+      break;
+    }
+  }
+}
+
+export async function enablePlugin(idOrDir: string): Promise<LoadedPlugin | null> {
+  const dirs = await invoke<
+    { dir: string; manifest: string; main: string; css: string }[]
+  >("plugins_scan").catch(() => []);
+  const entry = dirs.find((d) => {
+    const man = parseManifest(d.dir, d.manifest);
+    return d.dir === idOrDir || man?.id === idOrDir;
+  });
+  if (!entry) return null;
+  const disabledIds = getDisabledIds();
+  // ensure not marked disabled
+  if (disabledIds.has(idOrDir)) return null;
+  // also need to check manifest id
+  const man = parseManifest(entry.dir, entry.manifest);
+  if (man && disabledIds.has(man.id)) return null;
+  const p = await loadOne(entry, disabledIds);
+  lastScan.set(entry.dir, { manifest: entry.manifest, main: entry.main, css: entry.css });
+  // refresh lexicon incrementally — caller should recompute from plugins state,
+  // but we also update globally for any direct callers
+  return p;
+}
+
+export async function syncPluginsIncremental(prev: LoadedPlugin[]): Promise<LoadedPlugin[]> {
+  const dirs = await invoke<
+    { dir: string; manifest: string; main: string; css: string }[]
+  >("plugins_scan").catch(() => []);
+  const disabledIds = getDisabledIds();
+  const byDir = new Map(prev.map((p) => [p.dir, p] as const));
+  const next: LoadedPlugin[] = [];
+  const seen = new Set<string>();
+
+  for (const d of dirs) {
+    seen.add(d.dir);
+    const man = parseManifest(d.dir, d.manifest);
+    const id = man?.id ?? d.dir;
+    const disabled = man ? disabledIds.has(id) || disabledIds.has(d.dir) : false;
+    const prevEntry = byDir.get(d.dir);
+    const cached = lastScan.get(d.dir);
+    const contentChanged = !cached || cached.manifest !== d.manifest || cached.main !== d.main || cached.css !== d.css;
+    const disabledChanged = !!prevEntry && prevEntry.disabled !== disabled;
+    const needsReload = !prevEntry || contentChanged || disabledChanged;
+
+    if (!needsReload && prevEntry && !prevEntry.disabled && prevEntry.ext) {
+      next.push(prevEntry);
+      // keep cached scan up to date (already)
+      continue;
+    }
+    if (!needsReload && prevEntry && prevEntry.disabled) {
+      next.push(prevEntry);
+      lastScan.set(d.dir, { manifest: d.manifest, main: d.main, css: d.css });
+      continue;
+    }
+    // need to (re)load this dir
+    try {
+      const p = await loadOne(d, disabledIds);
+      next.push(p);
+    } catch (e) {
+      next.push({ id: d.dir, name: d.dir, dir: d.dir, ext: null, error: e instanceof Error ? e.message : String(e), disabled: false });
+    }
+    lastScan.set(d.dir, { manifest: d.manifest, main: d.main, css: d.css });
+  }
+  // dirs that disappeared — revoke their resources
+  for (const p of prev) {
+    if (!seen.has(p.dir)) {
+      revokeActive(p.dir, p.id);
+      lastScan.delete(p.dir);
+    }
+  }
+  setPluginLexicon(next.flatMap((p) => (p.disabled ? [] : p.ext?.lexicon ?? [])));
+  return next;
 }

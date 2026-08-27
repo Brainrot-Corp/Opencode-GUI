@@ -92,14 +92,6 @@ export default function TooltipLayer() {
         cursorMode.current = false;
         return;
       }
-      // TikTok's native HWND sits above the main webview — any DOM tip
-      // overlapping its rect is hidden behind the black page. Use native
-      // `title` for those header buttons (OS tooltip is TOPMOST).
-      if (el.closest(".tiktok-head")) {
-        setTip(null);
-        cursorMode.current = false;
-        return;
-      }
       anchor.current = el;
       cursorMode.current = el.hasAttribute("data-tip-cursor");
       if (cursorMode.current) {

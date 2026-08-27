@@ -1,9 +1,19 @@
 // plugin state — loads once at boot, hot-reloads when the plugins folder
-// changes (same watcher pattern as themes)
+// changes (same watcher pattern as themes). Disable/enable is incremental
+// so other plugins aren't re-imported (preserves their state/hooks).
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { loadPlugins, setPluginDisabled, removeDisabledId, type LoadedPlugin } from "../lib/plugins";
+import {
+  loadPlugins,
+  setPluginDisabled,
+  removeDisabledId,
+  enablePlugin,
+  unloadPluginResources,
+  syncPluginsIncremental,
+  type LoadedPlugin,
+} from "../lib/plugins";
+import { setPluginLexicon } from "../lib/voiceLexicon";
 
 export function usePlugins() {
   const [plugins, setPlugins] = useState<LoadedPlugin[]>([]);
@@ -25,7 +35,21 @@ export function usePlugins() {
   }, []);
 
   const reload = useCallback(async () => {
-    const ps = await loadPlugins();
+    // initial boot still does full load; subsequent watcher events are incremental
+    // so disabling one plugin doesn't re-import the others.
+    let ps: LoadedPlugin[];
+    if (prevRef.current.size === 0) {
+      ps = await loadPlugins();
+    } else {
+      // incremental: diff against current state, only (re)load changed dirs
+      // need current plugins value — use prevRef + actual state via closure
+      // For watcher, we don't have prev plugins array here, so fall back to
+      // sync that reads prev from ref and rebuilds. To get actual array,
+      // we keep a ref to latest plugins.
+      ps = await syncPluginsIncremental([...prevRef.current.values()] as LoadedPlugin[]).catch(async () => await loadPlugins());
+      // sync may miss disabled entries that are not in scan? It handles via byDir.
+      // If sync returns same as prev (no change), it still updates lexicon.
+    }
     // detect discord disabled/removed → clear RPC
     const prev = prevRef.current;
     const nextMap = new Map(ps.map((p) => [p.id, p] as const));
@@ -65,16 +89,50 @@ export function usePlugins() {
 
   const toggleEnabled = useCallback(
     async (id: string, enabled: boolean) => {
-      // enabled=true → remove from disabled set; false → add
-      if (!enabled && id === "discord-rich-presence") {
-        clearDiscord();
+      // incremental toggle — don't reload other plugins (preserves their state)
+      if (!enabled) {
+        if (id === "discord-rich-presence") clearDiscord();
+        setPluginDisabled(id, true);
+        unloadPluginResources(id);
+        setPlugins((prev) => {
+          const next = prev.map((p) =>
+            p.id === id || p.dir === id ? { ...p, disabled: true, ext: null, error: "" } : p,
+          );
+          setPluginLexicon(next.flatMap((p) => (p.disabled ? [] : p.ext?.lexicon ?? [])));
+          prevRef.current = new Map(next.map((p) => [p.id, p] as const));
+          const errs = next.filter((p) => p.error);
+          setError(errs.length ? errs.map((p) => `${p.name}: ${p.error}`).join(" · ") : "");
+          return next;
+        });
+        if (id === "discord-rich-presence") clearDiscord();
+        return;
       }
-      setPluginDisabled(id, !enabled);
+      // enabling — load just that plugin
+      setPluginDisabled(id, false);
+      try {
+        const p = await enablePlugin(id);
+        if (p) {
+          setPlugins((prev) => {
+            const idx = prev.findIndex((x) => x.id === id || x.dir === id);
+            let next: LoadedPlugin[];
+            if (idx >= 0) {
+              next = [...prev];
+              next[idx] = p;
+            } else {
+              next = [...prev, p];
+            }
+            setPluginLexicon(next.flatMap((x) => (x.disabled ? [] : x.ext?.lexicon ?? [])));
+            prevRef.current = new Map(next.map((x) => [x.id, x] as const));
+            const errs = next.filter((x) => x.error);
+            setError(errs.length ? errs.map((x) => `${x.name}: ${x.error}`).join(" · ") : "");
+            return next;
+          });
+          return;
+        }
+      } catch (e) {
+        // fall through to full reload on failure
+      }
       await reload();
-      if (!enabled && id === "discord-rich-presence") {
-        // ensure cleared even if reload raced
-        clearDiscord();
-      }
     },
     [reload, clearDiscord],
   );

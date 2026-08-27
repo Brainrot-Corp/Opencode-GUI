@@ -307,12 +307,13 @@ export default function activate(api){
         h("div", { className:"tiktok-toolbar" },
           h("button", {
             className:`icon-btn${state.glass ? " on" : ""}`,
-            title: state.glass ? "Glass: on (almost transparent) — click to disable" : "Glass: off — click for transparent glass",
+            "data-tip": state.glass ? "Glass: on (almost transparent) — click to disable" : "Glass: off — click for transparent glass",
+            "data-tip-top": "",
             onClick: toggleGlass
           }, h("i", {className: state.glass ? "fa-solid fa-wand-magic-sparkles" : "fa-solid fa-eye-slash"})),
-          h("button", { className:"icon-btn", title:"Reload", onClick:()=> api.invoke("tiktok_navigate", {url:TIKTOK_URL}).catch(()=>{}) }, h("i", {className:"fa-solid fa-rotate-right"})),
-          h("button", { className:"icon-btn", title:"Open in system browser", onClick:()=> api.invoke("open_external", {url:TIKTOK_URL}).catch(()=>{}) }, h("i", {className:"fa-solid fa-up-right-from-square"})),
-          h("button", { className:"icon-btn", title:"Close TikTok", onClick:closePanel, "aria-label":"Close" }, h("i", {className:"fa-solid fa-xmark"}))
+          h("button", { className:"icon-btn", "data-tip":"Reload", "data-tip-top":"", onClick:()=> api.invoke("tiktok_navigate", {url:TIKTOK_URL}).catch(()=>{}) }, h("i", {className:"fa-solid fa-rotate-right"})),
+          h("button", { className:"icon-btn", "data-tip":"Open in system browser", "data-tip-top":"", onClick:()=> api.invoke("open_external", {url:TIKTOK_URL}).catch(()=>{}) }, h("i", {className:"fa-solid fa-up-right-from-square"})),
+          h("button", { className:"icon-btn", "data-tip":"Close TikTok", "data-tip-top":"", onClick:closePanel, "aria-label":"Close" }, h("i", {className:"fa-solid fa-xmark"}))
         )
       ),
       h("div", { className:"tiktok-body" },
