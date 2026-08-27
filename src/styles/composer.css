@@ -513,16 +513,18 @@
   color: var(--text-faint);
   opacity: 0.75;
 }
-/* fenced region incl. its ``` markers — inline-block shrink-wraps to the
-   widest line, so the well fills past every shorter line's last glyph and
-   reads as one solid slab; hairline ring is fully connected (single box).
-   rail + one mono-space gap sit left of the first glyph via a cancelling
+/* fenced region incl. its ``` markers — block so following text starts
+   on a new line (inline-block caused the line under the block to sit to
+   the right of the shrink-wrapped box). Shrink-wraps to the widest line
+   (fit-content) so the well fills past shorter lines but not the whole
+   container; hairline ring is fully connected (single box). Rail + one
+   mono-space gap sit left of the first glyph via a cancelling
    margin/padding pair (-10px + 10px = zero net advance, so overlay glyphs
-   stay glued to the textarea's columns; the extra -10px of available width
-   is eaten back by the padding, keeping soft-wrap breaks identical) */
+   stay glued to the textarea's columns). */
 .comp-codeblock {
-  display: inline-block;
-  vertical-align: top;
+  display: block;
+  width: fit-content;
+  max-width: calc(100% + 10px);
   margin-left: -10px;
   padding-left: 10px;
   background: color-mix(in srgb, black 24%, transparent);
