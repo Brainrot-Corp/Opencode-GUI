@@ -4,6 +4,7 @@ import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
 import type { Part } from "@opencode-ai/sdk/client";
 import type { Msg } from "../types";
+import { iconFor } from "../lib/attachments";
 import ToolBlock from "./ToolBlock";
 import "../styles/chat.css";
 
@@ -152,6 +153,22 @@ function renderPart(part: Part, key: number, collapsedDefault?: boolean) {
       </div>
     );
   }
+  if (part.type === "file") {
+    const f = part as any;
+    const url: string = f.url ?? "";
+    const mime: string = f.mime ?? "";
+    const name = f.filename || "file";
+    if (mime.startsWith("image/") && url)
+      return <img key={key} className="file-img" src={url} alt={name} loading="lazy" />;
+    if (mime.startsWith("video/") && url)
+      return <video key={key} className="file-video" src={url} controls preload="metadata" />;
+    return (
+      <div key={key} className="file-chip mono">
+        <i className={`fa-solid ${iconFor(mime)}`} />
+        {name}
+      </div>
+    );
+  }
   return null;
 }
 
@@ -171,6 +188,8 @@ function rowVisible(m: Msg): boolean {
     switch (p.type) {
       case "text":
         return !!(p.text ?? "").trim();
+      case "file":
+        return true;
       case "step-finish": {
         const tk = p.tokens ?? {};
         return !!((tk.input ?? 0) + (tk.output ?? 0) + (tk.reasoning ?? 0)) || !!p.cost;
