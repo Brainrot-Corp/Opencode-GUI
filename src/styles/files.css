@@ -7,6 +7,12 @@
      height here would cap the tree and its rows would spill unscrollably) */
   display: flex;
   flex-direction: column;
+  flex: 0 0 auto;
+  min-height: min-content;
+  align-items: stretch;
+}
+.filetree > * {
+  flex-shrink: 0;
 }
 
 .ft-row {
@@ -14,6 +20,8 @@
   align-items: center;
   gap: 7px;
   width: 100%;
+  min-height: 26px;
+  flex: 0 0 auto;
   padding: 6px 6px;
   border: none;
   border-radius: 0;

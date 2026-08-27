@@ -54,8 +54,15 @@
   display: flex;
   flex-direction: column;
   gap: 6px;
-  /* left inset for rows; right gap keeps row backgrounds clear of the scrollbar */
-  padding: 0 8px 0 6px;
+  /* left inset for rows; right gap keeps row backgrounds clear of the scrollbar;
+     bottom 6px keeps last gap from being clipped when scrolled to end */
+  padding: 0 8px 6px 6px;
+  align-items: stretch;
+  align-content: flex-start;
+  scrollbar-gutter: stable;
+}
+.sb-scroll > * {
+  flex-shrink: 0;
 }
 
 .sb-head {
