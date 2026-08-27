@@ -33,10 +33,11 @@ export function useOpencode() {
   // sessions with an in-flight prompt — tracked per session so background
   // streams keep their state (and the sidebar can show an indicator)
   const [busyIds, setBusyIds] = useState<Set<string>>(new Set());
-  // pending question-tool asks, kept per session — returning to a session
-  // resurfaces its ask (unlike permissions, these outlive session switches)
+  // pending asks, kept per session — returning to a session resurfaces
+  // its popup (both permissions and questions outlive session switches)
   const questionsRef = useRef<Map<string, QuestionAsk>>(new Map());
   const [question, setQuestion] = useState<QuestionAsk | null>(null);
+  const permissionsRef = useRef<Map<string, PermAsk>>(new Map());
   const [permission, setPermission] = useState<PermAsk | null>(null);
   const [commands, setCommands] = useState<Cmd[]>([]);
   const [agents, setAgents] = useState<{ name: string; mode: string }[]>([]);
@@ -94,10 +95,14 @@ export function useOpencode() {
   }
   const tracker = trackerRef.current;
 
-  // mirror the active session's pending ask (if any) into state
+  // mirror the active session's pending asks (if any) into state
   const showQuestion = (sid: string) => {
     if (sid !== activeRef.current) return;
     setQuestion(questionsRef.current.get(sid) ?? null);
+  };
+  const showPermission = (sid: string) => {
+    if (sid !== activeRef.current) return;
+    setPermission(permissionsRef.current.get(sid) ?? null);
   };
 
   const LAST_KEY = "oc.lastSes";
@@ -142,8 +147,9 @@ export function useOpencode() {
 
   const openSession = useCallback(async (id: string) => {
     localStorage.setItem(LAST_KEY, id);
+    activeRef.current = id;
     setActiveId(id);
-    setPermission(null);
+    setPermission(permissionsRef.current.get(id) ?? null);
     setQuestion(questionsRef.current.get(id) ?? null);
     // show whatever we already have for this session (no blank flash),
     // then refetch — a per-session sequence guard drops stale responses
@@ -209,35 +215,62 @@ export function useOpencode() {
           break;
         }
         case "permission.asked":
-          // v1.18 emits permission.asked {id, sessionID, permission, metadata, patterns}
-          if (p.sessionID === activeRef.current)
-            setPermission({
-              id: p.id,
-              sessionID: p.sessionID,
-              type: p.permission,
-              title:
-                p.metadata?.command ||
-                p.metadata?.title ||
-                (p.patterns ?? []).join(", ") ||
-                p.permission,
-            });
+        case "permission.v2.asked": {
+          // {id, sessionID, permission|action|type, metadata, patterns}
+          const ask: PermAsk = {
+            id: p.id,
+            sessionID: p.sessionID,
+            type: p.permission ?? p.action ?? p.type ?? "permission",
+            title:
+              p.metadata?.command ||
+              p.metadata?.title ||
+              p.title ||
+              (p.patterns ?? []).join(", ") ||
+              (p.permission ?? p.action ?? p.type ?? "permission"),
+          };
+          permissionsRef.current.set(p.sessionID, ask);
+          if (p.sessionID === activeRef.current) {
+            setPermission(ask);
+            playSound("reply");
+          }
           break;
-        case "permission.updated":
-          if (p.sessionID === activeRef.current)
-            setPermission({
-              id: p.id,
-              sessionID: p.sessionID,
-              type: p.type,
-              title: p.title ?? p.type,
-            });
+        }
+        case "permission.updated": {
+          const ask: PermAsk = {
+            id: p.id ?? p.permissionID ?? p.requestID,
+            sessionID: p.sessionID,
+            type: p.type ?? p.permission ?? "permission",
+            title: p.title ?? p.type ?? p.permission ?? "permission",
+          };
+          if (!ask.sessionID || !ask.id) break;
+          permissionsRef.current.set(ask.sessionID, ask);
+          if (ask.sessionID === activeRef.current) setPermission(ask);
           break;
-        case "question.asked": {
+        }
+        case "permission.replied":
+        case "permission.v2.replied": {
+          const pid = p.permissionID ?? p.requestID ?? p.id;
+          const sid = p.sessionID;
+          if (pid) {
+            for (const [s, perm] of [...permissionsRef.current])
+              if (perm.id === pid) permissionsRef.current.delete(s);
+          } else if (sid) {
+            permissionsRef.current.delete(sid);
+          }
+          setPermission((cur) =>
+            cur && (cur.id === pid || (sid && cur.sessionID === sid)) ? null : cur,
+          );
+          break;
+        }
+        case "question.asked":
+        case "question.v2.asked": {
           // question tool ask: {id, sessionID, questions:[{question,header,options,multiple?,custom?}]}
           const ask: QuestionAsk = {
-            id: p.id,
+            id: p.id ?? p.requestID,
             sessionID: p.sessionID,
             questions: Array.isArray(p.questions) ? p.questions : [],
           };
+          if (!ask.sessionID || !ask.id) break;
           questionsRef.current.set(p.sessionID, ask);
           if (p.sessionID === activeRef.current) {
             setQuestion(ask);
@@ -246,11 +279,20 @@ export function useOpencode() {
           break;
         }
         case "question.replied":
+        case "question.v2.replied":
         case "question.rejected":
-          for (const [sid, q] of [...questionsRef.current])
-            if (q.id === p.requestID) questionsRef.current.delete(sid);
-          setQuestion((cur) => (cur && cur.id === p.requestID ? null : cur));
+        case "question.v2.rejected": {
+          const qid = p.requestID ?? p.id;
+          if (qid) {
+            for (const [sid, q] of [...questionsRef.current])
+              if (q.id === qid) questionsRef.current.delete(sid);
+            setQuestion((cur) => (cur && cur.id === qid ? null : cur));
+          } else if (p.sessionID) {
+            questionsRef.current.delete(p.sessionID);
+            setQuestion((cur) => (cur && cur.sessionID === p.sessionID ? null : cur));
+          }
           break;
+        }
         case "session.idle":
           // settles the turn only when no assistant message is still live —
           // mid-turn idles in heavier tasks are ignored
@@ -277,6 +319,12 @@ export function useOpencode() {
             store.remove(delId);
             tracker.reset(delId);
             clearDraft(delId);
+            questionsRef.current.delete(delId);
+            permissionsRef.current.delete(delId);
+            if (delId === activeRef.current) {
+              setQuestion(null);
+              setPermission(null);
+            }
           }
           refreshSessions().catch(() => {});
           break;
@@ -368,6 +416,42 @@ export function useOpencode() {
             showQuestion(activeRef.current);
           })
           .catch(() => {});
+        // same for permissions — best-effort (endpoint may not exist in older server)
+        serverFetch("/permission")
+          .then((r) => (r.ok ? r.json() : null))
+          .then((list: any) => {
+            if (disposed || !list) return;
+            const arr = Array.isArray(list) ? list : Array.isArray(list?.data) ? list.data : [];
+            for (const p of arr) {
+              const ask: PermAsk = {
+                id: p.id,
+                sessionID: p.sessionID,
+                type: p.permission ?? p.type ?? "permission",
+                title: p.metadata?.command ?? p.metadata?.title ?? p.title ?? p.type ?? "permission",
+              };
+              if (ask.sessionID && ask.id) permissionsRef.current.set(ask.sessionID, ask);
+            }
+            showPermission(activeRef.current);
+          })
+          .catch(() => {});
+        // v2 permission request list fallback
+        serverFetch("/api/permission/request")
+          .then((r) => (r.ok ? r.json() : null))
+          .then((res: any) => {
+            if (disposed || !res) return;
+            const arr = Array.isArray(res) ? res : Array.isArray(res?.data) ? res.data : [];
+            for (const p of arr) {
+              const ask: PermAsk = {
+                id: p.id,
+                sessionID: p.sessionID,
+                type: p.permission ?? p.action ?? p.type ?? "permission",
+                title: p.metadata?.command ?? p.metadata?.title ?? (p.patterns ?? []).join(", ") ?? "permission",
+              };
+              if (ask.sessionID && ask.id) permissionsRef.current.set(ask.sessionID, ask);
+            }
+            showPermission(activeRef.current);
+          })
+          .catch(() => {});
 
         if (!disposed) setBooting(false);
       }
@@ -399,6 +483,7 @@ export function useOpencode() {
     const r = await client.session.create({ body: {} });
     const s = r.data as Session;
     localStorage.setItem(LAST_KEY, s.id);
+    activeRef.current = s.id;
     setSessions((prev) => [s, ...prev]);
     setActiveId(s.id);
     store.clearStashes();
@@ -483,10 +568,12 @@ export function useOpencode() {
   const abort = useCallback(async () => {
     if (!activeId) return;
     tracker.reset(activeId);
-    // an aborted turn drops its pending ask — the server discards the
-    // request with the run, so don't leave a popup pointing at a corpse
+    // an aborted turn drops its pending asks — the server discards the
+    // requests with the run, so don't leave popups pointing at corpses
     questionsRef.current.delete(activeId);
     setQuestion((cur) => (cur?.sessionID === activeId ? null : cur));
+    permissionsRef.current.delete(activeId);
+    setPermission((cur) => (cur?.sessionID === activeId ? null : cur));
     const { client } = await opencode();
     await client.session.abort({ path: { id: activeId } }).catch(() => {});
   }, [activeId]);
@@ -495,6 +582,7 @@ export function useOpencode() {
     async (response: "once" | "always" | "reject") => {
       if (!permission) return;
       const perm = permission;
+      permissionsRef.current.delete(perm.sessionID);
       setPermission(null);
       const { client } = await opencode();
       await client
@@ -670,6 +758,7 @@ export function useOpencode() {
       setSessions((prev) => prev.filter((s) => s.id !== id));
       store.remove(id);
       questionsRef.current.delete(id);
+      permissionsRef.current.delete(id);
       tracker.reset(id);
       clearDraft(id);
       if (activeRef.current === id) {
@@ -677,6 +766,7 @@ export function useOpencode() {
         store.clearStashes();
         setMsgs([]);
         setQuestion(null);
+        setPermission(null);
       }
     },
     [],
@@ -692,6 +782,7 @@ export function useOpencode() {
     for (const id of ids) {
       store.remove(id);
       questionsRef.current.delete(id);
+      permissionsRef.current.delete(id);
       tracker.reset(id);
       clearDraft(id);
     }
@@ -699,6 +790,7 @@ export function useOpencode() {
     store.clearStashes();
     setMsgs([]);
     setQuestion(null);
+    setPermission(null);
   }, [store, tracker]);
 
   // the active session's busy state, derived from the per-session set
