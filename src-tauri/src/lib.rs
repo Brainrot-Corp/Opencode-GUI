@@ -388,6 +388,80 @@ fn set_tray_reset(app: tauri::AppHandle, enabled: bool) {
     }
 }
 
+fn spawn_new_instance() {
+    let exe = match std::env::current_exe() {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("spawn_new_instance: current_exe failed: {e}");
+            debug_log(format!("spawn_new_instance current_exe failed: {e}"));
+            return;
+        }
+    };
+    let mut cmd = Command::new(&exe);
+    cmd.arg("--new-instance");
+    #[cfg(all(windows, not(debug_assertions)))]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    match cmd.spawn() {
+        Ok(_) => {
+            debug_log(format!("spawn_new_instance ok: {}", exe.display()));
+        }
+        Err(e) => {
+            eprintln!("spawn_new_instance spawn failed: {e}");
+            debug_log(format!("spawn_new_instance spawn failed: {e}"));
+        }
+    }
+}
+
+#[cfg(windows)]
+fn apply_jumplist(_app: &tauri::AppHandle) {
+    // JumpList for the pinned taskbar icon: adds "Open new window" and "Quit"
+    // via Tasks. Uses jumplist_win (thin wrapper over windows::Win32::UI::Shell).
+    // Failure is non-fatal — tray menu remains the fallback.
+    let exe = match std::env::current_exe() {
+        Ok(p) => p.to_string_lossy().into_owned(),
+        Err(_) => return,
+    };
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| unsafe {
+        // Ensure COM is initialized on the calling thread; harmless if already done.
+        let _ = windows::Win32::System::Com::CoInitializeEx(None, windows::Win32::System::Com::COINIT_APARTMENTTHREADED);
+        use jumplist_win::{JumpList, JumpListCategoryCustom, JumpListCategoryType, JumpListItemLink};
+        // Use Task category so entries appear under "Tasks" in JumpList.
+        let mut jl = JumpList::new();
+        let mut task_cat = JumpListCategoryCustom::new(JumpListCategoryType::Task, None);
+        task_cat.jump_list_category.set_visible(true);
+
+        // Open new window — launches with --new-instance to bypass single-instance mutex.
+        let new_link = JumpListItemLink::new(
+            Some(vec!["--new-instance".to_string()]),
+            "Open new window".to_string(),
+            Some(exe.clone()),
+            Some(exe.clone()),
+            0,
+        );
+        task_cat.jump_list_category.items.push(Box::new(new_link));
+
+        // Quit — launches with --quit which the primary handles via single-instance callback.
+        let quit_link = JumpListItemLink::new(
+            Some(vec!["--quit".to_string()]),
+            "Quit OpenCode".to_string(),
+            Some(exe.clone()),
+            Some(exe.clone()),
+            0,
+        );
+        task_cat.jump_list_category.items.push(Box::new(quit_link));
+
+        jl.add_category(task_cat);
+        jl.update();
+    }));
+}
+
+#[cfg(not(windows))]
+fn apply_jumplist(_app: &tauri::AppHandle) {}
+
 // logical width/height of the main window as declared in tauri.conf.json —
 // the single source of truth for the tray-reopen reset
 fn default_size(app: &tauri::AppHandle) -> (f64, f64) {
@@ -823,7 +897,12 @@ fn resize_cursor() -> Option<serde_json::Value> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let builder = tauri::Builder::default()
+    // --new-instance bypasses the single-instance mutex so an explicit
+    // "Open new window" can spawn a second independent process. All other
+    // second launches go through the single-instance callback and restore
+    // the existing window (left-click on pinned taskbar).
+    let is_new_instance = std::env::args().any(|a| a == "--new-instance");
+    let mut builder = tauri::Builder::default()
         // remembers window size/position across launches — but never
         // visibility: the window is created hidden ("visible": false) and
         // shown explicitly in setup once the launch resize has run on it
@@ -840,7 +919,22 @@ pub fn run() {
             None,
         ))
         // native folder picker for the workspace setting
-        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_dialog::init());
+    if !is_new_instance {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            if args.iter().any(|a| a == "--new-instance") {
+                // Should not happen via normal single-instance path because
+                // --new-instance launches bypass registration; handle defensively
+                // by spawning a new process anyway.
+                spawn_new_instance();
+            } else if args.iter().any(|a| a == "--quit") {
+                app.exit(0);
+            } else {
+                show_main(app);
+            }
+        }));
+    }
+    let builder = builder
         .invoke_handler(tauri::generate_handler![
             server_url,
             os_glass,
@@ -902,8 +996,12 @@ pub fn run() {
 
     // global hotkeys, work system-wide.
     // If a combo is already taken (PowerToys Run, etc.), warn and continue
-    // instead of panicking Ã¢â‚¬â€ tray click still works as fallback.
-    let builder = match tauri_plugin_global_shortcut::Builder::new()
+    // instead of panicking — tray click still works as fallback.
+    // Second instance can't own the same global hotkey (first holds Alt+Space) — skip to avoid panic at build()
+    let builder = if is_new_instance {
+        builder
+    } else {
+        match tauri_plugin_global_shortcut::Builder::new()
         .with_handler(|app, shortcut, event| {
             // Windows auto-repeats held hotkeys (WM_HOTKEY ~33ms apart after
             // ~500ms hold) — act only on FRESH presses: ones where this key
@@ -953,19 +1051,24 @@ pub fn run() {
             eprintln!("global shortcut Alt+Space unavailable: {e}");
             builder
         }
+        }
     };
 
     builder
         .setup(|app| {
-            // system tray: left click toggles visibility, right click menu
+            // system tray: left click toggles visibility, right click menu.
+            // Both tray and pinned taskbar JumpList expose "Open new window"
+            // and "Quit" so the two surfaces stay consistent.
             use tauri::{
-                menu::{Menu, MenuItem},
+                menu::{Menu, MenuItem, PredefinedMenuItem},
                 tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
             };
 
             let show = MenuItem::with_id(app, "show", "Show/Hide OpenCode GUI", true, None::<&str>)?;
+            let new_win = MenuItem::with_id(app, "new-instance", "Open new window", true, None::<&str>)?;
+            let sep = PredefinedMenuItem::separator(app)?;
             let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&show, &quit])?;
+            let menu = Menu::with_items(app, &[&show, &new_win, &sep, &quit])?;
 
             TrayIconBuilder::with_id("main")
                 .icon(app.default_window_icon().unwrap().clone())
@@ -974,6 +1077,7 @@ pub fn run() {
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "show" => toggle_main(app),
+                    "new-instance" => spawn_new_instance(),
                     "quit" => app.exit(0),
                     _ => {}
                 })
@@ -989,6 +1093,9 @@ pub fn run() {
                     }
                 })
                 .build(app)?;
+
+            // Pinned taskbar JumpList — mirrors tray: "Open new window" + "Quit"
+            apply_jumplist(app.handle());
 
             // don't wait for the sidecar to bind — hand out the URL
             // immediately; the frontend renders on templates and polls
