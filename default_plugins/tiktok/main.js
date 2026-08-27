@@ -50,6 +50,24 @@ function save(state){
   try{ window.dispatchEvent(new CustomEvent("oc:tiktok:changed")); }catch{}
 }
 function equal(a,b){ try{ return JSON.stringify(a)===JSON.stringify(b);}catch{return false;} }
+function uiScale(api){
+  try{
+    const s = api?.settings?.()?.uiScale;
+    if(typeof s==="number" && s>0.4 && s<3) return s;
+  }catch{}
+  try{
+    const raw = localStorage.getItem("oc.settings");
+    if(raw){
+      const p = JSON.parse(raw);
+      if(typeof p.uiScale==="number" && p.uiScale>0.4 && p.uiScale<3) return p.uiScale;
+    }
+  }catch{}
+  return 1;
+}
+function scaleRect(rect, s){
+  if(!s || s===1) return rect;
+  return { x: rect.x * s, y: rect.y * s, w: rect.w * s, h: rect.h * s };
+}
 
 export default function activate(api){
   const { h, useState, useEffect, useRef } = api;
@@ -159,6 +177,7 @@ export default function activate(api){
       const { open, geom, glass } = state;
       // prefer DOM-measured hole rect (correct header/border) — falls back to computed geom
       const r = holeBounds(geom);
+      const rs = scaleRect(r, uiScale(api));
       const geomChanged = !lastGeom.current || !equal(geom, lastGeom.current);
       const glassChanged = lastGlass.current === null || glass !== lastGlass.current;
 
@@ -169,13 +188,13 @@ export default function activate(api){
         // ensure hole is laid out before measuring — rAF if panel not yet measured
         if(!panelRef.current?.querySelector(".tiktok-hole")?.getBoundingClientRect()?.width){
           requestAnimationFrame(()=>{
-            const rr = holeBounds(geom);
+            const rr = scaleRect(holeBounds(geom), uiScale(api));
             api.invoke("tiktok_open", { url: TIKTOK_URL, x: rr.x, y: rr.y, w: rr.w, h: rr.h }).then(()=>{
               if(!glass) api.invoke("tiktok_set_glass", { enabled:false }).catch(()=>{});
             }).catch(()=>{});
           });
         } else {
-          api.invoke("tiktok_open", { url: TIKTOK_URL, x: r.x, y: r.y, w: r.w, h: r.h }).then(()=>{
+          api.invoke("tiktok_open", { url: TIKTOK_URL, x: rs.x, y: rs.y, w: rs.w, h: rs.h }).then(()=>{
             // init script auto-injects glass; if user disabled, remove it
             if(!glass) api.invoke("tiktok_set_glass", { enabled:false }).catch(()=>{});
           }).catch(()=>{});
@@ -187,7 +206,7 @@ export default function activate(api){
         api.invoke("tiktok_close").catch(()=>{});
       } else if(open && lastOpen.current && geomChanged){
         lastGeom.current = geom;
-        api.invoke("tiktok_set_bounds", { x: r.x, y: r.y, w: r.w, h: r.h }).catch(()=>{});
+        api.invoke("tiktok_set_bounds", { x: rs.x, y: rs.y, w: rs.w, h: rs.h }).catch(()=>{});
       } else if(open && glassChanged){
         lastGlass.current = glass;
         api.invoke("tiktok_set_glass", { enabled: !!glass }).catch(()=>{});
@@ -220,6 +239,24 @@ export default function activate(api){
       window.addEventListener("resize", onResize);
       return ()=> window.removeEventListener("resize", onResize);
     }, [state.open]);
+    // re-apply bounds when menu uiScale changes — child webview is native and not auto-zoomed
+    useEffect(()=>{
+      if(!state.open) return;
+      let lastScale = uiScale(api);
+      const tick = ()=>{
+        const s = uiScale(api);
+        if(s !== lastScale){
+          lastScale = s;
+          const r = scaleRect(holeBounds(state.geom), s);
+          api.invoke("tiktok_set_bounds", { x:r.x, y:r.y, w:r.w, h:r.h }).catch(()=>{});
+        }
+      };
+      const iv = setInterval(tick, 350);
+      window.addEventListener("resize", tick);
+      const onStorage = (e)=>{ if(e.key==="oc.settings") tick(); };
+      window.addEventListener("storage", onStorage);
+      return ()=>{ clearInterval(iv); window.removeEventListener("resize", tick); window.removeEventListener("storage", onStorage); };
+    }, [state.open, state.geom.x, state.geom.y, state.geom.w, state.geom.h]);
 
     // Escape closes
     useEffect(()=>{
@@ -265,7 +302,7 @@ export default function activate(api){
         raf=0;
         el.style.left=last.x+"px";
         el.style.top=last.y+"px";
-        const r=webviewRect({x:last.x, y:last.y, w:g0.w, h:g0.h});
+        const r=scaleRect(webviewRect({x:last.x, y:last.y, w:g0.w, h:g0.h}), uiScale(api));
         api.invoke("tiktok_set_bounds", { x:r.x, y:r.y, w:r.w, h:r.h }).catch(()=>{});
       };
       const move=(ev)=>{
@@ -277,7 +314,7 @@ export default function activate(api){
       const up=()=>{
         if(raf) cancelAnimationFrame(raf);
         el.style.left=last.x+"px"; el.style.top=last.y+"px";
-        const r=webviewRect({x:last.x, y:last.y, w:g0.w, h:g0.h});
+        const r=scaleRect(webviewRect({x:last.x, y:last.y, w:g0.w, h:g0.h}), uiScale(api));
         api.invoke("tiktok_set_bounds", { x:r.x, y:r.y, w:r.w, h:r.h }).catch(()=>{});
         setState(s=>{
           if(s.geom.x===last.x && s.geom.y===last.y) return s;
@@ -307,7 +344,7 @@ export default function activate(api){
         raf=0;
         el.style.left=last.x+"px"; el.style.top=last.y+"px";
         el.style.width=last.w+"px"; el.style.height=last.h+"px";
-        const r=webviewRect(last);
+        const r=scaleRect(webviewRect(last), uiScale(api));
         api.invoke("tiktok_set_bounds", { x:r.x, y:r.y, w:r.w, h:r.h }).catch(()=>{});
       };
       const move=(ev)=>{
@@ -325,7 +362,7 @@ export default function activate(api){
         if(raf) cancelAnimationFrame(raf);
         el.style.left=last.x+"px"; el.style.top=last.y+"px";
         el.style.width=last.w+"px"; el.style.height=last.h+"px";
-        const r=webviewRect(last);
+        const r=scaleRect(webviewRect(last), uiScale(api));
         api.invoke("tiktok_set_bounds", { x:r.x, y:r.y, w:r.w, h:r.h }).catch(()=>{});
         setState(s=>{
           if(equal(s.geom,last)) return s;
