@@ -8,6 +8,7 @@ import { createElement, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { stripComments } from "./themes";
 import { setPluginLexicon } from "./voiceLexicon";
+import { playSound as hostPlaySound } from "./sounds";
 
 export type PluginApi = {
   id: string;
@@ -18,6 +19,7 @@ export type PluginApi = {
   useRef: typeof useRef;
   // the live oc.settings blob (persisted synchronously on every change)
   settings: () => Record<string, unknown>;
+  playSound: (kind: string) => void;
 };
 
 export type PluginExt = {
@@ -179,6 +181,9 @@ export async function loadPlugins(): Promise<LoadedPlugin[]> {
           } catch {
             return {};
           }
+        },
+        playSound: (kind: string) => {
+          try { (hostPlaySound as unknown as (k: string) => void)(kind as never); } catch {}
         },
       };
       const raw = typeof mod.default === "function" ? await mod.default(api) : null;

@@ -4,17 +4,19 @@
   display: flex;
   flex-direction: column;
   gap: 6px;
-  margin: 6px 8px 0 6px;
+  margin: 6px 6px 0 6px;
   padding: 10px;
   border: 1px solid var(--line);
   border-radius: 4px;
   background: color-mix(in srgb, var(--accent) calc(0.05 * 100%), transparent);
-  backdrop-filter: blur(14px);
+  /* keep glass tint but kill the second blur — sidebar already blurs (14px), double blur caused banding when streaming/hover */
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 .sp-head {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 6px;
   font-family: var(--sans);
   font-size: 11px;
   font-weight: 600;
@@ -24,8 +26,9 @@
 }
 .sp-head i { font-size: 12px; color: var(--accent); }
 .sp-head .sp-dot {
-  width: 7px; height: 7px; border-radius: 50%; margin-left: auto;
+  width: 7px; height: 7px; border-radius: 50%;
   background: var(--text-faint);
+  flex-shrink: 0;
 }
 .sp-head .sp-dot.on { background: var(--accent); box-shadow: 0 0 8px var(--accent-glow); }
 .sp-head .sp-dot.warn { background: var(--danger); }
@@ -60,24 +63,27 @@
   min-width: 32px; text-align: center;
 }
 .sp-bar {
-  flex: 1; height: 3px; border-radius: 0;
+  flex: 1; height: 3px; border-radius: 2px;
   background: color-mix(in srgb, var(--text-faint) calc(35 * 1%), transparent);
-  position: relative; overflow: hidden; cursor: pointer;
+  position: relative; overflow: visible; cursor: pointer;
 }
 .sp-fill {
-  height: 100%; background: var(--text-dim);
-  transition: width .15s linear, background .15s;
+  height: 100%; background: var(--text-dim); border-radius: 2px;
+  transition: background .15s;
 }
 #sp-progress:hover .sp-fill { background: var(--accent); }
 .sp-range {
   position: absolute; inset: -6px 0; width: 100%; height: 15px;
-  opacity: 0; cursor: pointer; margin: 0;
+  opacity: 0; cursor: pointer; margin: 0; z-index: 2;
 }
+.sp-vol .sp-range { inset: -8px 0; height: 19px; }
 #sp-progress:hover .sp-grabber { opacity: 1; }
+.sp-vol:hover .sp-grabber { opacity: 1; }
+.sp-vol .sp-grabber { opacity: 0; }
 .sp-grabber {
-  position: absolute; top: 50%; width: 12px; height: 12px; margin-top: -6px; margin-left: -6px;
-  border-radius: 50%; background: var(--accent); border: 2px solid var(--bg);
-  box-shadow: 0 0 6px var(--accent-glow); opacity: 0; transition: opacity .15s; pointer-events: none;
+  position: absolute; top: 50%; width: 14px; height: 14px; margin-top: -7px; margin-left: -7px;
+  border-radius: 50%; background: white; border: 2px solid var(--bg);
+  box-shadow: 0 0 6px rgba(0,0,0,0.25); opacity: 0; transition: opacity .15s; pointer-events: none;
 }
 
 .sp-row {
@@ -96,9 +102,13 @@
   top: 50%; left: 50%; transform: translate(-50%,-50%); background: var(--bg); border-radius: 50%;
   width: 10px; height: 10px; line-height: 10px; text-align: center; color: var(--accent);
 }
-.sp-vol { display: flex; align-items: center; gap: 6px; margin-top: 6px; }
+.sp-vol { display: flex; align-items: center; gap: 8px; margin-top: 6px; background: transparent; border: none; box-shadow: none; padding: 0; }
 .sp-vol i { font-size: 11px; color: var(--text-faint); width: 12px; text-align: center; }
-.sp-vol input { flex: 1; accent-color: var(--accent); height: 3px; }
+.sp-vol input { flex: 1; accent-color: var(--accent); height: 3px; background: transparent; border: none; outline: none; box-shadow: none; }
+.sp-vol input::-webkit-slider-runnable-track { height: 3px; border: none; background: color-mix(in srgb, var(--text-faint) 35%, transparent); border-radius: 2px; }
+.sp-vol input::-moz-range-track { height: 3px; border: none; background: color-mix(in srgb, var(--text-faint) 35%, transparent); border-radius: 2px; }
+.sp-vol input::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%; background: white; border: 2px solid var(--bg); box-shadow: 0 0 4px rgba(0,0,0,0.25); margin-top: -5.5px; }
+.sp-vol input::-moz-range-thumb { width: 14px; height: 14px; border-radius: 50%; background: white; border: 2px solid var(--bg); box-shadow: 0 0 4px rgba(0,0,0,0.25); }
 
 .sp-empty { font-family: var(--sans); font-size: 11px; color: var(--text-faint); text-align: center; padding: 6px 0; }
 .sp-err { font-family: var(--mono); font-size: 10px; color: var(--danger); white-space: pre-wrap; word-break: break-word; border-left: 2px solid var(--danger); padding: 4px 6px; background: rgba(224,143,143,.07); }

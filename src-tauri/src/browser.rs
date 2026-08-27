@@ -219,12 +219,23 @@ pub async fn open_external(url: String) -> Result<(), String> {
     parse_http(&url)?;
     #[cfg(windows)]
     {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;        std::process::Command::new("cmd")
-            .args(["/c", "start", "", &url])
-            .creation_flags(CREATE_NO_WINDOW)
-            .spawn()
-            .map_err(|e| e.to_string())?;
+        // `cmd /c start` needs careful quoting for `&` in query strings, and
+        // `explorer` opens File Explorer on some setups. `rundll32` delegates
+        // to the shell's FileProtocolHandler which opens the default browser
+        // and passes the full URL (including `&`) as a single argument.
+        // Fall back to PowerShell `Start-Process` if rundll32 is unavailable.
+        let r = std::process::Command::new("rundll32")
+            .args(["url.dll,FileProtocolHandler", &url])
+            .spawn();
+        if r.is_err() {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+            std::process::Command::new("powershell")
+                .args(["-NoProfile", "-Command", &format!("Start-Process \"{}\"", url.replace('"', "\"\""))])
+                .creation_flags(CREATE_NO_WINDOW)
+                .spawn()
+                .map_err(|e| e.to_string())?;
+        }
     }
     #[cfg(not(windows))]
     {

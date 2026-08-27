@@ -162,7 +162,12 @@ async fn http_json(
         req = req.header(k.as_str(), v.as_str());
     }
     if let Some(b) = body {
-        req = req.header("Content-Type", "application/json").body(b);
+        let has_ct = headers.keys().any(|k| k.eq_ignore_ascii_case("content-type"));
+        // Don't default to application/json for empty bodies (411 Length Required on Spotify PUT/POST with no body)
+        if !has_ct && !b.is_empty() {
+            req = req.header("Content-Type", "application/json");
+        }
+        req = req.body(b);
     }
     let resp = req.send().await.map_err(|e| format!("unreachable: {e}"))?;
     let status = resp.status().as_u16();
