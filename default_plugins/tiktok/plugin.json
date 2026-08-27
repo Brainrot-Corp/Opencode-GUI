@@ -1,6 +1,6 @@
 {
   "id": "tiktok",
   "name": "TikTok",
-  "version": "1.2.0",
+  "version": "1.2.5",
   "description": "Floating TikTok webview — draggable, resizable, TikTok-only, persistent login"
 }
