@@ -47,8 +47,8 @@ export default function ChatPage() {
     effectiveMode,
     colorsFor,
   } = useSettings();
-  // runtime plugins — voice intents, settings sections, sidebar widgets, error banner
-  const { plugins, exts, sections: pluginSections, sidebarWidgets, error: pluginError, toggleEnabled, removeDisabled } = usePlugins();
+  // runtime plugins — voice intents, settings sections, sidebar/titlebar widgets, overlays, error banner
+  const { plugins, exts, sections: pluginSections, sidebarWidgets, titlebarItems, overlays, error: pluginError, toggleEnabled, removeDisabled } = usePlugins();
   // spoken replies / narration / debrief — the whole piper voice pipeline
   const { talking, debriefing, announce, pauseSpeech } = useSpeech(
     { msgs: oc.msgs, busy: oc.busy, permission: oc.permission, providers: oc.providers },
@@ -622,6 +622,16 @@ export default function ChatPage() {
           onModeChange={(m) => update({ mode: m })}
           talking={talking}
           debriefing={debriefing}
+          titlebarExtras={
+            titlebarItems.length ? (
+              <>
+                {titlebarItems.map((w) => {
+                  const C = w.Titlebar!;
+                  return C ? <C key={w.id} settings={settings} updatePlugin={(patch) => updatePlugin(w.id, patch)} /> : null;
+                })}
+              </>
+            ) : undefined
+          }
         />
         {onboardOpen && (
           <Onboarding
@@ -841,6 +851,10 @@ export default function ChatPage() {
           <DiffPanel sessionId={oc.activeId} onClose={() => setDiffOpen(false)} />
         )}
         <FileEditorHost />
+        {overlays.map((w) => {
+          const C = w.Overlay!;
+          return C ? <C key={w.id} settings={settings} updatePlugin={(patch) => updatePlugin(w.id, patch)} /> : null;
+        })}
       </div>
     </>
   );

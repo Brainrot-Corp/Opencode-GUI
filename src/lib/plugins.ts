@@ -45,6 +45,16 @@ export type PluginExt = {
     settings: Record<string, any>;
     updatePlugin: (patch: Record<string, unknown>) => void;
   }) => React.ReactElement | null;
+  // React component rendered as a titlebar icon (before Settings gear)
+  Titlebar?: (props: {
+    settings: Record<string, any>;
+    updatePlugin: (patch: Record<string, unknown>) => void;
+  }) => React.ReactElement | null;
+  // React component rendered as a floating overlay (portal sibling to FileEditorHost)
+  Overlay?: (props: {
+    settings: Record<string, any>;
+    updatePlugin: (patch: Record<string, unknown>) => void;
+  }) => React.ReactElement | null;
   // documentation rows appended to the Info dialog's tabs, grouped under the
   // plugin name — same [label, description] shape the built-in groups use
   info?: {

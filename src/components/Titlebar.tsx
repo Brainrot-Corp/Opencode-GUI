@@ -22,6 +22,7 @@ export default function Titlebar({
   modes,
   talking,
   debriefing,
+  titlebarExtras,
 }: {
   pinned?: boolean;
   onTogglePin?: () => void;
@@ -38,6 +39,8 @@ export default function Titlebar({
   // TTS queue draining / audio audible — show the speaking indicator
   talking?: boolean;
   debriefing?: boolean;
+  // plugin-provided titlebar icons (e.g. Notepad) rendered before Settings
+  titlebarExtras?: React.ReactNode;
 }) {
   // invisible drag bar: when a dialog/drawer scrim covers the titlebar, its
   // presses would normally die on the dim layer. This capture listener
@@ -129,6 +132,7 @@ export default function Titlebar({
           <em>Speaking</em>
           <i className="debrief-dot" aria-hidden="true" />
         </button>
+        {titlebarExtras}
         <span className="ctrl-sep" />
         <button className="icon-btn" data-tip="Settings" onClick={() => onOpenSettings?.()}>
           <i className="fa-solid fa-gear" />

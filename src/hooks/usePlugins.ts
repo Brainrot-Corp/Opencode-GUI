@@ -86,6 +86,8 @@ export function usePlugins() {
   const exts = plugins.flatMap((p) => (p.disabled ? [] : p.ext?.parse ? [p.ext] : []));
   const sections = plugins.flatMap((p) => (p.disabled ? [] : p.ext?.Settings ? [p.ext] : []));
   const sidebarWidgets = plugins.flatMap((p) => (p.disabled ? [] : p.ext?.Sidebar ? [p.ext] : []));
+  const titlebarItems = plugins.flatMap((p) => (p.disabled ? [] : p.ext?.Titlebar ? [p.ext] : []));
+  const overlays = plugins.flatMap((p) => (p.disabled ? [] : p.ext?.Overlay ? [p.ext] : []));
 
-  return { plugins, exts, sections, sidebarWidgets, error, reload, toggleEnabled, removeDisabled };
+  return { plugins, exts, sections, sidebarWidgets, titlebarItems, overlays, error, reload, toggleEnabled, removeDisabled };
 }
