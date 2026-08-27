@@ -30,10 +30,43 @@ export default function TooltipLayer() {
       Math.max(r.left + r.width / 2 - tb.width / 2, PAD),
       Math.max(PAD, window.innerWidth - tb.width - PAD),
     );
-    let y = r.bottom + 7;
-    if (y + tb.height > window.innerHeight - PAD && r.top - 7 - tb.height >= PAD) {
+    // TikTok's floating webview is a native HWND above the main window —
+    // any DOM tooltip overlapping its rect is hidden. Force header tips
+    // above and auto-flip if overlap would occur. `data-tip-top` opts in.
+    const forceTop = el.hasAttribute("data-tip-top");
+    const isTiktokHeader = !!el.closest(".tiktok-head");
+    let y: number;
+    if (forceTop || isTiktokHeader) {
       y = r.top - 7 - tb.height;
+      // if not enough space above, fall back below only if it wouldn't hit webview
+      if (y < PAD && r.bottom + 7 + tb.height < window.innerHeight - PAD) {
+        // check would-below overlap TikTok webview
+        const belowY = r.bottom + 7;
+        let overlaps = false;
+        try {
+          const raw = localStorage.getItem("oc.tiktok");
+          if (raw) {
+            const p = JSON.parse(raw);
+            const g = p.geom;
+            if (g && typeof g.x === "number") {
+              const INSET = 6, headerH = 36;
+              const wx = g.x + INSET, wy = g.y + headerH + INSET, ww = g.w - INSET * 2, wh = g.h - headerH - INSET * 2;
+              const tipRect = { left: x, top: belowY, right: x + tb.width, bottom: belowY + tb.height };
+              const webRect = { left: wx, top: wy, right: wx + ww, bottom: wy + wh };
+              overlaps = !(tipRect.right < webRect.left || tipRect.left > webRect.right || tipRect.bottom < webRect.top || tipRect.top > webRect.bottom);
+            }
+          }
+        } catch {}
+        if (!overlaps) y = belowY;
+      }
+    } else {
+      y = r.bottom + 7;
+      if (y + tb.height > window.innerHeight - PAD && r.top - 7 - tb.height >= PAD) {
+        y = r.top - 7 - tb.height;
+      }
     }
+    // final clamp
+    y = Math.max(PAD, Math.min(y, window.innerHeight - tb.height - PAD));
     setPos({ x, y });
     setTip((p) => (p && (p.x !== x || p.y !== y) ? { ...p, x, y } : p));
   }, [tip]);
@@ -55,6 +88,14 @@ export default function TooltipLayer() {
     const over = (e: MouseEvent) => {
       const el = (e.target as HTMLElement).closest?.("[data-tip]") as HTMLElement | null;
       if (!el) {
+        setTip(null);
+        cursorMode.current = false;
+        return;
+      }
+      // TikTok's native HWND sits above the main webview — any DOM tip
+      // overlapping its rect is hidden behind the black page. Use native
+      // `title` for those header buttons (OS tooltip is TOPMOST).
+      if (el.closest(".tiktok-head")) {
         setTip(null);
         cursorMode.current = false;
         return;
