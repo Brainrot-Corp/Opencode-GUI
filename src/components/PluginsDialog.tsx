@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import Dialog from "./Dialog";
+import PluginSettingsDialog from "./PluginSettingsDialog";
 import type { LoadedPlugin } from "../lib/plugins";
 import { isNewer } from "../lib/plugins";
+import type { AppSettings } from "../hooks/useSettings";
 import {
   loadPluginsCatalog,
   fetchPluginFiles,
@@ -20,12 +22,16 @@ export default function PluginsDialog({
   plugins,
   onToggle,
   onRemoved,
+  settings,
+  updatePlugin,
 }: {
   open: boolean;
   onClose: () => void;
   plugins: LoadedPlugin[];
   onToggle: (id: string, enabled: boolean) => void;
   onRemoved: (id: string) => void;
+  settings?: AppSettings;
+  updatePlugin?: (id: string, patch: Record<string, unknown>) => void;
 }) {
   const [tab, setTab] = useState<"installed" | "browse">("installed");
   const [confirmId, setConfirmId] = useState<string | null>(null);
@@ -42,6 +48,7 @@ export default function PluginsDialog({
   const [url, setUrl] = useState("");
   const [urlBusy, setUrlBusy] = useState(false);
   const [urlErr, setUrlErr] = useState("");
+  const [settingsId, setSettingsId] = useState<string | null>(null);
 
   async function handleDelete(p: LoadedPlugin) {
     if (confirmId !== p.dir) {
@@ -95,6 +102,10 @@ export default function PluginsDialog({
     if (catalog !== null || catLoading) return;
     void loadCatalog(false);
   }, [open, tab, catalog, catLoading]);
+
+  useEffect(() => {
+    if (!open) setSettingsId(null);
+  }, [open]);
 
   async function handleInstall(entry: PluginCatalogEntry) {
     setInstalling(entry.id);
@@ -176,8 +187,11 @@ export default function PluginsDialog({
 
   if (!open) return null;
 
+  const activeSettingsPlugin = settingsId ? plugins.find((x) => x.id === settingsId || x.dir === settingsId) ?? null : null;
+
   return (
-    <Dialog
+    <>
+      <Dialog
       title="Plugins"
       onClose={onClose}
       top
@@ -302,6 +316,29 @@ export default function PluginsDialog({
                         >
                           <span className="knob" />
                         </button>
+                        {p.disabled ? (
+                          <button
+                            type="button"
+                            className="reset-btn"
+                            data-tip="Enable to configure"
+                            disabled
+                            aria-disabled="true"
+                          >
+                            <i className="fa-solid fa-gear" />
+                            Settings
+                          </button>
+                        ) : p.ext?.Settings ? (
+                          <button
+                            type="button"
+                            className="reset-btn"
+                            data-tip={`${p.name} settings`}
+                            disabled={isRemoving || busy}
+                            onClick={() => setSettingsId(p.id)}
+                          >
+                            <i className="fa-solid fa-gear" />
+                            Settings
+                          </button>
+                        ) : null}
                         <button
                           type="button"
                           className={`reset-btn danger-btn${isConfirm ? " armed" : ""}`}
@@ -395,6 +432,8 @@ export default function PluginsDialog({
                 const installed = !!inst;
                 const busy = installing === e.id;
                 const needsUpdate = installed && isNewer(inst?.version, e.version);
+                const isConfirm = inst ? confirmId === inst.dir : false;
+                const isRemoving = inst ? removing === inst.dir : false;
                 return (
                   <div key={e.id} className={`plugin-row${installed && !needsUpdate ? " disabled" : ""}`} style={{ opacity: installed && !needsUpdate ? 0.9 : 1, borderStyle: installed && !needsUpdate ? "solid" : needsUpdate ? "solid" : undefined, borderColor: needsUpdate ? "color-mix(in srgb, var(--accent) 22%, var(--line))" : undefined }}>
                     <div className="plugin-info">
@@ -412,13 +451,25 @@ export default function PluginsDialog({
                       <button
                         type="button"
                         className="reset-btn"
-                        disabled={busy}
+                        disabled={busy || isRemoving}
                         data-tip={needsUpdate ? `Update ${inst?.version ?? ""} → ${e.version}` : installed ? "Reinstall / update from catalog" : "Install from catalog"}
                         onClick={() => void handleInstall(e)}
                       >
                         <i className={`fa-solid ${busy ? "fa-spinner fa-spin" : needsUpdate ? "fa-arrows-rotate" : installed ? "fa-arrows-rotate" : "fa-download"}`} />
                         {busy ? "Installing…" : needsUpdate ? "Update" : installed ? "Reinstall" : "Install"}
                       </button>
+                      {installed && inst && (
+                        <button
+                          type="button"
+                          className={`reset-btn danger-btn${isConfirm ? " armed" : ""}`}
+                          data-tip={isConfirm ? "Click again to confirm delete" : "Uninstall plugin"}
+                          disabled={isRemoving || busy}
+                          onClick={() => void handleDelete(inst)}
+                        >
+                          <i className={`fa-solid ${isConfirm ? "fa-triangle-exclamation" : "fa-trash-can"}`} />
+                          {isConfirm ? "Confirm" : isRemoving ? "Removing…" : "Uninstall"}
+                        </button>
+                      )}
                     </div>
                   </div>
                 );
@@ -435,5 +486,14 @@ export default function PluginsDialog({
         Plugins live in <code>%USERPROFILE%\.config\.opencode-gui\plugins\</code> next to <code>themes.json</code>. Toggle disables without deleting — files stay on disk and hot-reload when you enable again. Delete removes the folder permanently.
       </p>
     </Dialog>
+      {settings && updatePlugin && activeSettingsPlugin?.ext?.Settings && (
+        <PluginSettingsDialog
+          plugin={activeSettingsPlugin}
+          settings={settings}
+          updatePlugin={updatePlugin}
+          onClose={() => setSettingsId(null)}
+        />
+      )}
+    </>
   );
 }

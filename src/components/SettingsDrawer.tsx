@@ -6,7 +6,6 @@ import { useUpdater as useUpdaterInternal } from "../hooks/useUpdater";
 import type { ThemeMeta } from "../lib/themes";
 import type { SoundPrefs } from "../lib/sounds";
 import type { CmdEntry } from "../hooks/useOpencode";
-import type { PluginExt } from "../lib/plugins";
 import { applyWorkspace, pickWorkspace } from "../lib/workspace";
 import { splitModel } from "../lib/models";
 import { UI_SCALES } from "../lib/uiScale";
@@ -37,7 +36,6 @@ export default function SettingsDrawer({
   effectiveMode,
   providers,
   commands,
-  pluginSections,
   pluginDocs,
   plugins,
   onTogglePlugin,
@@ -63,10 +61,8 @@ export default function SettingsDrawer({
   providers?: ProviderGroup[];
   // live command registry — Info dialog's Commands tab
   commands?: CmdEntry[];
-  // plugin-provided setting sections, in load order
-  pluginSections?: PluginExt[];
   // plugin documentation rows for the Info dialog
-  pluginDocs?: { name: string; info: NonNullable<PluginExt["info"]> }[];
+  pluginDocs?: { name: string; info: NonNullable<import("../lib/plugins").PluginExt["info"]> }[];
   plugins?: LoadedPlugin[];
   onTogglePlugin?: (id: string, enabled: boolean) => void;
   onRemoveDisabled?: (id: string) => void;
@@ -430,18 +426,6 @@ export default function SettingsDrawer({
             </button>
           </div>
 
-          {pluginSections?.map((p) => {
-            const Section = p.Settings;
-            return Section ? (
-              <Section
-                key={p.id}
-                open={open}
-                settings={settings}
-                updatePlugin={(patch: Record<string, unknown>) => updatePlugin(p.id, patch)}
-              />
-            ) : null;
-          })}
-
           <AppearanceSettings
             themes={themes}
             themeId={settings.theme}
@@ -590,6 +574,8 @@ export default function SettingsDrawer({
           plugins={plugins ?? []}
           onToggle={(id, enabled) => onTogglePlugin?.(id, enabled)}
           onRemoved={(id) => onRemoveDisabled?.(id)}
+          settings={settings}
+          updatePlugin={updatePlugin}
         />
     </>
   );
