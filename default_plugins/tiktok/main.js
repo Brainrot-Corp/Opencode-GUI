@@ -104,34 +104,37 @@ export default function activate(api){
       return ()=>{ try{ un && un(); }catch{} };
     },[]);
 
-    // open/close the child webview based on state.open + geom
+    // open/close the child webview based on state.open + geom — no save here (persistence is explicit in drag/resize/close handlers)
     const lastOpen = useRef(state.open);
+    const lastGeom = useRef(state.geom);
     useEffect(()=>{
       const { open, geom } = state;
-      // rect for the CONTENT area (header excluded)
       const x = geom.x;
       const y = geom.y + headerH;
       const w = geom.w;
       const h = Math.max(120, geom.h - headerH);
+      const geomChanged = !equal(geom, lastGeom.current);
 
       if(open && !lastOpen.current){
         lastOpen.current = true;
+        lastGeom.current = geom;
         api.invoke("tiktok_open", { url: TIKTOK_URL, x, y, w, h }).catch(()=>{});
       } else if(!open && lastOpen.current){
         lastOpen.current = false;
+        lastGeom.current = geom;
         api.invoke("tiktok_close").catch(()=>{});
-      } else if(open && lastOpen.current){
-        // geom changed while open — update bounds
+      } else if(open && lastOpen.current && geomChanged){
+        lastGeom.current = geom;
         api.invoke("tiktok_set_bounds", { x, y, w, h }).catch(()=>{});
+      } else {
+        lastGeom.current = geom;
       }
-      // persist
-      save(state);
     }, [state.open, state.geom.x, state.geom.y, state.geom.w, state.geom.h]);
 
     // ensure close on unmount
     useEffect(()=> ()=>{ if(lastOpen.current) api.invoke("tiktok_close").catch(()=>{}); }, []);
 
-    // keep webview aligned on window resize (main window resize)
+    // keep webview aligned on window resize (main window resize) — clamp panel inside viewport
     useEffect(()=>{
       if(!state.open) return;
       const onResize = ()=>{
@@ -144,14 +147,8 @@ export default function activate(api){
           const nh = clamp(g.h, MIN_H, Math.min(MAX_H, vh - 8));
           if(nx===g.x && ny===g.y && nw===g.w && nh===g.h) return s;
           const next = { ...s, geom:{x:nx, y:ny, w:nw, h:nh} };
+          save(next);
           return next;
-        });
-        // bounds update will be triggered by geom effect above
-        // also nudge after layout
-        requestAnimationFrame(()=>{
-          const s = load();
-          const x = s.geom.x, y = s.geom.y + headerH, w=s.geom.w, h=Math.max(120,s.geom.h-headerH);
-          api.invoke("tiktok_set_bounds", { x, y, w, h }).catch(()=>{});
         });
       };
       window.addEventListener("resize", onResize);
