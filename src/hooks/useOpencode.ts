@@ -19,7 +19,7 @@ import {
   type DialogState,
 } from "../lib/slashCommands";
 import { useProviders } from "./useProviders";
-import { clearDraft } from "../lib/drafts";
+import { clearDraft, setDraft } from "../lib/drafts";
 import type { Msg, OpenCodeEvent, PermAsk, ProviderGroup, Attachment, QuestionAsk, Cmd } from "../types";
 
 // re-exported: composer + command dialog import the type from here
@@ -162,7 +162,7 @@ export function useOpencode() {
     // most recently created first; helper sessions (summary/debrief/commit
     // gen) are dropped — live-tracked ids plus title-marked crash orphans
     const list = ((r.data ?? []) as Session[])
-      .filter((s) => !hiddenSessions.has(s.id) && s.title !== HIDDEN_TITLE);
+      .filter((s) => !hiddenSessions.has(s.id) && s.title !== HIDDEN_TITLE && !(s as any).parentID);
     const out = applyOverrides(list);
     setSessions(out);
     return out;
@@ -368,11 +368,26 @@ export function useOpencode() {
         case "session.next.compaction.ended":
           if (p.sessionID) markCompacting(p.sessionID, false);
           break;
+        case "session.created": {
+          const s = p.info as Session | undefined;
+          if (!s?.id) break;
+          if ((s as any).parentID) break;
+          if (hiddenSessions.has(s.id) || s.title === HIDDEN_TITLE) break;
+          const overrides = getTitleOverrides();
+          const patched = overrides[s.id] ? { ...s, title: overrides[s.id] } : s;
+          setSessions((prev) => {
+            if (prev.some((x) => x.id === patched.id)) return prev;
+            return applyOverrides([...prev, patched]);
+          });
+          break;
+        }
         case "session.updated": {
           // server-side metadata changes — auto-generated titles after the
           // first reply, pin/archive flags — must reach the sidebar live
           const s = p.info as Session | undefined;
           if (!s?.id) break;
+          if ((s as any).parentID) break;
+          if (hiddenSessions.has(s.id) || s.title === HIDDEN_TITLE) break;
           const overrides = getTitleOverrides();
           const pinned = getPinned();
           const patched = overrides[s.id] ? { ...s, title: overrides[s.id] } : s;
@@ -716,12 +731,42 @@ export function useOpencode() {
     async (messageID: string) => {
       const id = activeRef.current;
       if (!id) return;
+      // capture text of the rewound segment to paste into composer input
+      let pasteText = "";
+      try {
+        const all = store.cached(id) ?? msgs;
+        const idx = all.findIndex((m: any) => m.info?.id === messageID);
+        if (idx >= 0) {
+          const after = all.slice(idx + 1);
+          const userAfter = after.filter((m: any) => m.info?.role === "user");
+          const extract = (m: any): string => {
+            const parts: any[] = m.parts ?? [];
+            return parts
+              .filter((p: any) => p.type === "text" && typeof p.text === "string")
+              .map((p: any) => p.text.trim())
+              .filter(Boolean)
+              .join("\n");
+          };
+          if (userAfter.length) {
+            pasteText = userAfter.map(extract).filter(Boolean).join("\n\n");
+          } else {
+            // no later user messages — use the target message itself for editing
+            const target = all[idx];
+            if (target?.info?.role === "user") pasteText = extract(target);
+          }
+        }
+      } catch {}
       const { client } = await opencode();
       await client.session.revert({ path: { id }, body: { messageID } }).catch(() => {});
       await refreshSessions().catch(() => {});
       await openSession(id).catch(() => {});
+      if (pasteText) {
+        // persist to drafts so it survives reloads, and notify composer via event
+        try { setDraft(id, pasteText); } catch {}
+        window.dispatchEvent(new CustomEvent("oc:rewind-input", { detail: pasteText }));
+      }
     },
-    [refreshSessions, openSession],
+    [refreshSessions, openSession, msgs],
   );
 
   const unrevert = useCallback(async () => {

@@ -296,6 +296,26 @@ export default function Composer({
     };
   });
 
+  // rewind: paste the cut-off conversation into the input for editing
+  useEffect(() => {
+    const onRewind = (e: Event) => {
+      const text = (e as CustomEvent<string>).detail ?? "";
+      if (!text) return;
+      setInput(text);
+      playSound("type");
+      // focus and move caret to end
+      requestAnimationFrame(() => {
+        const el = inputRef.current;
+        if (!el) return;
+        el.focus();
+        const len = text.length;
+        try { el.selectionStart = el.selectionEnd = len; } catch {}
+      });
+    };
+    window.addEventListener("oc:rewind-input", onRewind);
+    return () => window.removeEventListener("oc:rewind-input", onRewind);
+  }, []);
+
   // ONE keyboard brain for the composer: a fresh closure every render, so
   // every surface (model menu, slash suggestions, agent Tab-cycle, send)
   // routes off the same state — no per-handler desync.
