@@ -32,6 +32,7 @@ export function useGlobalShortcuts({
   onToggleTerm,
   onToggleSidebar,
   onOpenWorkspace,
+  onNewInstance,
 }: {
   settings: AppSettings;
   update: (patch: Partial<AppSettings>) => void;
@@ -55,6 +56,8 @@ export function useGlobalShortcuts({
   onToggleSidebar?: () => void;
   // Ctrl+O opens the workspace picker (same as Browse button)
   onOpenWorkspace?: () => void;
+  // Ctrl+Shift+N opens a new window (second instance)
+  onNewInstance?: () => void;
 }) {
   // double-Escape stop gesture — armed by the first free Escape (the stop
   // button surfaces the window as a draining countdown ring), landed by the
@@ -262,6 +265,19 @@ export function useGlobalShortcuts({
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
   }, [onOpenWorkspace]);
+
+  // Ctrl+Shift+N opens a new window — in-app only, same as tray "Open new window"
+  useEffect(() => {
+    if (!onNewInstance) return;
+    const key = (e: KeyboardEvent) => {
+      if (!e.ctrlKey || !e.shiftKey || e.altKey || e.repeat) return;
+      if (e.key.toLowerCase() !== "n") return;
+      e.preventDefault();
+      onNewInstance();
+    };
+    window.addEventListener("keydown", key);
+    return () => window.removeEventListener("keydown", key);
+  }, [onNewInstance]);
 
   // Rust emits visibility://changed on tray click / Alt+Space / tray menu
   useEffect(() => {

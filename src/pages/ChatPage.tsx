@@ -186,6 +186,7 @@ export default function ChatPage() {
     onToggleTerm: () => setTermOpen((v) => !v),
     onToggleSidebar: toggleSidebar,
     onOpenWorkspace: () => void pickWorkspace(),
+    onNewInstance: () => void invoke("spawn_new_instance"),
   });
 
   // spoken rendering of a voice act — used to read embedded commands back
