@@ -173,8 +173,12 @@ export default function Composer({
     if (!el) return;
     const max = Math.round(window.innerHeight * 0.5);
     el.style.height = "auto";
-    // floor at the single-line rest height so the box never sits below it
-    el.style.height = `${Math.max(46, Math.min(el.scrollHeight, max))}px`;
+    // border is 1px top+bottom inside border-box, scrollHeight excludes it → +2 avoids 1px overflow that shows a scrollbar on one line
+    const border = el.offsetHeight - el.clientHeight;
+    const h = Math.max(46, Math.min(el.scrollHeight + border, max));
+    el.style.height = `${h}px`;
+    // single line (or any fits) → no scrollbar at all; only scroll when capped at max
+    el.style.overflowY = el.scrollHeight + border > max ? "auto" : "hidden";
   }, [input]);
 
   // keep highlight overlay scroll in sync — onScroll alone misses auto-grow

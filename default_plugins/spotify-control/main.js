@@ -160,6 +160,9 @@ export default function activate(api) {
     const [busy, setBusy] = useState(false);
     const [status, setStatus] = useState("idle");
     const [authUrl, setAuthUrl] = useState("");
+    const [collapsed, setCollapsed] = useState(() => {
+      try { return localStorage.getItem("oc.settings.spotify.collapsed") !== "0"; } catch { return true; }
+    });
 
     useEffect(() => {
       if (!open) return;
@@ -278,17 +281,25 @@ export default function activate(api) {
     }
 
     const dot = status === "connected" ? "on" : status === "expired" || status.includes("401") ? "warn" : "";
-    const hint = status === "connected" ? "Connected" : status === "no-device" ? "No active device" : status === "expired" ? "Token expired — refresh or re-auth" : status === "idle" ? "Not connected" : status;
+    const hint = status === "connected" ? "Connecté" : status === "no-device" ? "Aucun appareil" : status === "expired" ? "Expiré" : status === "idle" ? "Non connecté" : status;
+    const toggle = () => setCollapsed((v) => {
+      const nv = !v;
+      try { localStorage.setItem("oc.settings.spotify.collapsed", nv ? "1" : "0"); } catch {}
+      try { api.playSound(nv ? "collapse" : "expand"); } catch {}
+      return nv;
+    });
 
     return h("div", { className: "sound-box spotify-box" },
-      h("div", { className: "sound-box-head" },
+      h("div", { className: "sound-box-head", onClick: toggle, style: { cursor: "pointer" }, "data-tip": collapsed ? "Expand" : "Collapse" },
         h("i", { className: "fa-brands fa-spotify setting-icon", style: { color: "var(--accent)" } }),
         h("span", null, "Spotify"),
         h("span", { style: { display: "inline-flex", alignItems: "center", gap: "6px", marginLeft: "auto" } },
           h("span", { className: `sp-dot ${dot}`, style: { width: "8px", height: "8px", display: "inline-block", borderRadius: "50%", background: dot === "on" ? "var(--accent)" : dot === "warn" ? "var(--danger)" : "var(--text-faint)", boxShadow: dot === "on" ? "0 0 6px var(--accent-glow)" : "none" } }),
-          h("span", { className: "mono-hint" }, hint)
+          h("span", { className: "mono-hint" }, hint),
+          h("i", { className: `fa-solid ${collapsed ? "fa-chevron-down" : "fa-chevron-up"}`, style: { fontSize: "10px", color: "var(--text-faint)", marginLeft: "6px" } })
         )
       ),
+      collapsed ? null : h("div", null,
       h("div", { className: "mono-hint sp-hint", style: { padding: "6px 10px", borderBottom: "1px solid var(--line)" } },
         "Client ID from developer.spotify.com/dashboard → your app → Redirect URI must include ", h("code", null, REDIRECT), ". Premium needed for controls."
       ),
@@ -354,6 +365,7 @@ export default function activate(api) {
       ),
       err ? h("div", { className: "voice-err", style: { margin: "0 10px 8px" } }, err) : null,
       h("div", { className: "mono-hint sp-hint" }, "After Authorize, Spotify redirects to ", h("code", null, REDIRECT), " which will fail to load — copy the address bar URL and paste it above. Tokens stored in localStorage (oc.settings.plugins.spotify-control).")
+      )
     );
   }
 

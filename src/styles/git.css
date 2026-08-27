@@ -6,6 +6,13 @@
   flex-direction: column;
   padding: 6px 8px 6px 6px;
 }
+.git-panel.dragging .gp-body {
+  transition: none;
+}
+body.gp-resizing,
+body.gp-resizing * {
+  cursor: row-resize !important;
+}
 
 /* collapsed strip: branch + ahead/behind + change badge */
 .gp-head {
@@ -83,14 +90,38 @@
   margin-left: auto;
 }
 
-/* expanded body */
+/* drag handle — horizontal twin of .sb-resize / .term-resize */
+.gp-resize {
+  position: relative;
+  height: 6px;
+  flex-shrink: 0;
+  margin: -2px 0 2px;
+  cursor: row-resize;
+}
+.gp-resize::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 2px;
+  height: 2px;
+  background: transparent;
+  transition: background 0.25s var(--ease), box-shadow 0.3s var(--ease);
+}
+.gp-resize:hover::before,
+.git-panel.dragging .gp-resize::before {
+  background: color-mix(in srgb, var(--accent) calc(0.45 * 100%), transparent);
+  box-shadow: 0 0 10px var(--accent-glow);
+}
+
+/* expanded body — height is controlled inline (draggable), overflow scrolls */
 .gp-body {
   display: flex;
   flex-direction: column;
   gap: 6px;
   margin-top: 6px;
-  max-height: 300px;
   overflow-y: auto;
+  min-height: 0;
 }
 
 /* commit message row: input + AI generate button */
@@ -221,6 +252,42 @@
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--text-faint);
+}
+.gp-sect-toggle {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 4px 2px 2px;
+  border: none;
+  border-radius: 3px;
+  background: none;
+  cursor: pointer;
+  font: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  color: inherit;
+  transition: color 0.15s, background 0.15s;
+}
+.gp-sect-toggle:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) calc(0.06 * 100%), transparent);
+}
+.gp-sect-chev {
+  width: 10px;
+  font-size: 8px;
+  color: var(--text-faint);
+  transition: color 0.15s;
+}
+.gp-sect-toggle:hover .gp-sect-chev {
+  color: var(--accent);
+}
+.gp-sect-count {
+  font-weight: 400;
+  letter-spacing: 0.04em;
+  color: var(--text-faint);
+  opacity: 0.9;
 }
 .gp-sect-acts {
   display: flex;

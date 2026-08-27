@@ -76,6 +76,9 @@ export default function activate(api) {
     const conf = confOf(settings);
     const [status, setStatus] = useState("idle");
     const [err, setErr] = useState("");
+    const [collapsed, setCollapsed] = useState(() => {
+      try { return localStorage.getItem("oc.settings.discord.collapsed") === "1"; } catch { return true; }
+    });
 
     useEffect(() => {
       if (!open) return;
@@ -96,16 +99,24 @@ export default function activate(api) {
     const set = (patch) => updatePlugin({ ...conf, ...patch });
     const st = statusLabel(status);
     const dotColor = status === "connected" ? "var(--accent)" : status === "disconnected" ? "var(--danger)" : "var(--text-faint)";
+    const toggle = () => setCollapsed((v) => {
+      const nv = !v;
+      try { localStorage.setItem("oc.settings.discord.collapsed", nv ? "1" : "0"); } catch {}
+      try { api.playSound(nv ? "collapse" : "expand"); } catch {}
+      return nv;
+    });
 
     return h("div", { className: "sound-box" },
-      h("div", { className: "sound-box-head" },
+      h("div", { className: "sound-box-head", onClick: toggle, style: { cursor: "pointer" }, "data-tip": collapsed ? "Expand" : "Collapse" },
         h("i", { className: "fa-brands fa-discord setting-icon" }),
         h("span", null, "Discord Presence"),
         h("span", { style: { display: "inline-flex", alignItems: "center", gap: "6px", marginLeft: "auto" } },
           h("span", { style: { width: "8px", height: "8px", background: dotColor, display: "inline-block", boxShadow: status === "connected" ? "0 0 6px var(--accent-glow)" : "none" } }),
-          h("span", { className: "mono-hint" }, st)
+          h("span", { className: "mono-hint" }, st),
+          h("i", { className: `fa-solid ${collapsed ? "fa-chevron-down" : "fa-chevron-up"}`, style: { fontSize: "10px", color: "var(--text-faint)", marginLeft: "6px" } })
         )
       ),
+      collapsed ? null : h("div", null,
 
       h("div", { className: "mono-hint discord-hint", style: { padding: "6px 10px", borderBottom: "1px solid var(--line)" } },
         "Activé via le gestionnaire de plugins (puzzle). Désactive le plugin là-bas pour couper la présence."
@@ -204,6 +215,7 @@ export default function activate(api) {
       err ? h("div", { className: "voice-err" }, err) : null,
       h("div", { className: "mono-hint discord-hint" },
         "Discord Desktop doit être lancé + Paramètres Discord → Activité → Afficher l'activité activé. Si tu veux une image, uploade-la dans le Dev Portal (Rich Presence → Art Assets) avec la même clé que Large image."
+      )
       )
     );
   }

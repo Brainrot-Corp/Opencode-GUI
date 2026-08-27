@@ -4,9 +4,16 @@ import { invoke } from "@tauri-apps/api/core";
 import { getDirectory, opencode, tempSession, dropSession, withDeadline } from "../api";
 import { splitModel } from "../lib/models";
 import { extLang } from "../lib/syntax";
+import { playSound } from "../lib/sounds";
 import Dialog from "./Dialog";
 import { DiffLines } from "./DiffPanel";
 import "../styles/git.css";
+
+const GH_KEY = "oc.git.h";
+const GH_MIN = 120;
+const GH_DEFAULT = 220;
+const clampH = (h: number) =>
+  Math.min(Math.max(GH_MIN, Math.floor(h)), Math.floor(window.innerHeight * 0.6));
 
 type GitFile = { path: string; x: string; y: string };
 type GitStatus = {
@@ -61,6 +68,58 @@ export default function GitPanel() {
   const [gen, setGen] = useState(false); // AI message in flight
   const [diff, setDiff] = useState<{ path: string; patch: string; staged: boolean } | null>(null);
   const dir = useRef(getDirectory());
+  const [gh, setGh] = useState(() => clampH(Number(localStorage.getItem(GH_KEY)) || GH_DEFAULT));
+  const [dragging, setDragging] = useState(false);
+  useEffect(() => {
+    localStorage.setItem(GH_KEY, String(gh));
+  }, [gh]);
+  const [stagedCollapsed, setStagedCollapsed] = useState(
+    () => localStorage.getItem("oc.git.stagedCollapsed") === "1",
+  );
+  const [changesCollapsed, setChangesCollapsed] = useState(
+    () => localStorage.getItem("oc.git.changesCollapsed") === "1",
+  );
+  useEffect(() => {
+    localStorage.setItem("oc.git.stagedCollapsed", stagedCollapsed ? "1" : "0");
+  }, [stagedCollapsed]);
+  useEffect(() => {
+    localStorage.setItem("oc.git.changesCollapsed", changesCollapsed ? "1" : "0");
+  }, [changesCollapsed]);
+  const startResize = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      const startY = e.clientY;
+      const startH = gh;
+      let lastTick = 0;
+      setDragging(true);
+      document.body.classList.add("gp-resizing");
+      document.body.style.userSelect = "none";
+      const move = (ev: MouseEvent) => {
+        setGh(clampH(startH + (startY - ev.clientY)));
+        const now = performance.now();
+        if (now - lastTick > 70) {
+          lastTick = now;
+          playSound("resize");
+        }
+      };
+      const up = () => {
+        setDragging(false);
+        document.body.classList.remove("gp-resizing");
+        document.body.style.userSelect = "";
+        window.removeEventListener("mousemove", move);
+        window.removeEventListener("mouseup", up);
+        window.removeEventListener("blur", up);
+      };
+      window.addEventListener("mousemove", move);
+      window.addEventListener("mouseup", up);
+      window.addEventListener("blur", up);
+    },
+    [gh],
+  );
+  const resetSize = useCallback(() => {
+    setGh(GH_DEFAULT);
+    playSound("click");
+  }, []);
 
   const refresh = useCallback(async () => {
     try {
@@ -359,7 +418,15 @@ export default function GitPanel() {
   };
 
   return (
-    <div className="git-panel">
+    <div className={`git-panel${dragging ? " dragging" : ""}`}>
+      {open && (
+        <div
+          className="gp-resize"
+          data-tip="Drag to resize · double-click to reset"
+          onMouseDown={startResize}
+          onDoubleClick={resetSize}
+        />
+      )}
       <button className="gp-head" onClick={toggleOpen} data-tip={open ? "Collapse git" : "Expand git"}>
         <i className={`fa-solid fa-chevron-${open ? "down" : "right"} gp-chev`} />
         <i className="fa-solid fa-code-branch" />
@@ -378,7 +445,7 @@ export default function GitPanel() {
       </button>
 
       {open && (
-        <div className="gp-body">
+        <div className="gp-body" style={{ height: gh }}>
           <div className="gp-msgrow">
             <input
               className="gp-msg"
@@ -437,7 +504,15 @@ export default function GitPanel() {
           {staged.length > 0 && (
             <>
               <div className="gp-sect">
-                <span>Staged</span>
+                <button
+                  className="gp-sect-toggle"
+                  onClick={() => setStagedCollapsed((v) => !v)}
+                  data-tip={stagedCollapsed ? "Expand staged" : "Collapse staged"}
+                >
+                  <i className={`fa-solid fa-chevron-${stagedCollapsed ? "right" : "down"} gp-sect-chev`} />
+                  <span>Staged</span>
+                  <span className="gp-sect-count">{staged.length}</span>
+                </button>
                 <button
                   className="gp-sact"
                   data-tip="Unstage all"
@@ -448,11 +523,19 @@ export default function GitPanel() {
                   Unstage all
                 </button>
               </div>
-              {staged.map((f) => row(f, true))}
+              {!stagedCollapsed && staged.map((f) => row(f, true))}
             </>
           )}
           <div className="gp-sect">
-            <span>Changes</span>
+            <button
+              className="gp-sect-toggle"
+              onClick={() => setChangesCollapsed((v) => !v)}
+              data-tip={changesCollapsed ? "Expand changes" : "Collapse changes"}
+            >
+              <i className={`fa-solid fa-chevron-${changesCollapsed ? "right" : "down"} gp-sect-chev`} />
+              <span>Changes</span>
+              {!!changes.length && <span className="gp-sect-count">{changes.length}</span>}
+            </button>
             <span className="gp-sect-acts">
               {!!changes.length && (
                 <>
@@ -501,8 +584,12 @@ export default function GitPanel() {
               )}
             </span>
           </div>
-          {changes.length === 0 && <div className="gp-empty">Working tree clean</div>}
-          {changes.map((f) => row(f, false))}
+          {!changesCollapsed && (
+            <>
+              {changes.length === 0 && <div className="gp-empty">Working tree clean</div>}
+              {changes.map((f) => row(f, false))}
+            </>
+          )}
         </div>
       )}
 

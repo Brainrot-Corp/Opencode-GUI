@@ -447,7 +447,10 @@
   overflow-wrap: break-word;
   word-break: break-word;
   tab-size: 4;
-  scrollbar-gutter: stable;
+  overflow-x: hidden;
+  overflow-y: hidden;
+  scrollbar-gutter: auto;
+  scrollbar-width: thin;
 }
 
 /* live highlight overlay — a synced copy of the draft painted BEHIND the

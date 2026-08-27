@@ -435,13 +435,16 @@ const REGIONS = [
 export default function activate(api) {
   const { h, useState, useEffect } = api;
 
-  // Settings › Lights — same markup/classes as the original built-in panel
+  // Settings › Lights — collapsible bar keeps just the head (lights + status)
   function Settings({ open, settings, updatePlugin }) {
     const tuya = confOf(settings);
     const set = (patch) => updatePlugin({ ...tuya, ...patch });
     const [found, setFound] = useState(null);
     const [err, setErr] = useState("");
     const [busy, setBusy] = useState(false);
+    const [collapsed, setCollapsed] = useState(() => {
+      try { return localStorage.getItem("oc.settings.lights.collapsed") !== "0"; } catch { return true; }
+    });
 
     // stale device cache when the credentials change
     useEffect(() => {
@@ -461,13 +464,23 @@ export default function activate(api) {
       }
     }
 
+    const st = confReady(tuya) ? (err ? "error — see below" : found ? `${found.length} light(s)` : "ready") : "not configured";
+    const toggle = () => setCollapsed((v) => {
+      const nv = !v;
+      try { localStorage.setItem("oc.settings.lights.collapsed", nv ? "1" : "0"); } catch {}
+      try { api.playSound(nv ? "collapse" : "expand"); } catch {}
+      return nv;
+    });
     return h("div", { className: "sound-box" },
-      h("div", { className: "sound-box-head" },
+      h("div", { className: "sound-box-head", onClick: toggle, style: { cursor: "pointer" }, "data-tip": collapsed ? "Expand" : "Collapse" },
         h("i", { className: "fa-solid fa-lightbulb setting-icon" }),
         h("span", null, "Lights"),
-        h("span", { className: "mono-hint" },
-          confReady(tuya) ? (err ? "error — see below" : found ? `${found.length} light(s)` : "ready") : "not configured"),
+        h("span", { style: { display: "inline-flex", alignItems: "center", gap: "6px", marginLeft: "auto" } },
+          h("span", { className: "mono-hint" }, st),
+          h("i", { className: `fa-solid ${collapsed ? "fa-chevron-down" : "fa-chevron-up"}`, style: { fontSize: "10px", color: "var(--text-faint)", marginLeft: "6px" } })
+        )
       ),
+      collapsed ? null : h("div", null,
       h("div", { className: "setting-row", style: { borderTop: "none", paddingBottom: 0 } },
         h("div", { className: "setting-info" },
           h("i", { className: "fa-solid fa-key setting-icon" }),
@@ -529,6 +542,7 @@ export default function activate(api) {
             ),
           )
         : null,
+      )
     );
   }
 
