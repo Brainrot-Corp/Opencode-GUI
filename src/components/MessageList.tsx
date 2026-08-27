@@ -1,4 +1,5 @@
 import { memo, useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
@@ -430,11 +431,13 @@ export default function MessageList({
       >
         <i className="fa-solid fa-arrow-down" />
       </button>
-      {lightbox && (
-        <div className="img-lightbox" onClick={() => setLightbox(null)} role="dialog" aria-label="Image preview">
-          <img src={lightbox} alt="" onClick={() => setLightbox(null)} />
-        </div>
-      )}
+      {lightbox &&
+        createPortal(
+          <div className="img-lightbox" onClick={() => setLightbox(null)} role="dialog" aria-label="Image preview">
+            <img src={lightbox} alt="" onClick={() => setLightbox(null)} />
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }

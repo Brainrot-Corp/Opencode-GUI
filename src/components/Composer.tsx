@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import type { Attachment, ProviderGroup } from "../types";
 import { prettySize, iconFor } from "../lib/attachments";
 import type { CmdEntry } from "../hooks/useOpencode";
@@ -728,11 +729,13 @@ export default function Composer({
                   </button>
                 )}
               </div>
-      {preview && (
-        <div className="img-lightbox" onClick={() => setPreview(null)} role="dialog" aria-label="Image preview">
-          <img src={preview} alt="" onClick={() => setPreview(null)} />
-        </div>
-      )}
+      {preview &&
+        createPortal(
+          <div className="img-lightbox" onClick={() => setPreview(null)} role="dialog" aria-label="Image preview">
+            <img src={preview} alt="" onClick={() => setPreview(null)} />
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }
