@@ -8,6 +8,7 @@ import { detectLang, escPlain, hlHtml, insertFenced, looksLikeCode } from "../li
 import ModelMenu, { type ModelEntry } from "./ModelMenu";
 import SlashMenu from "./SlashMenu";
 import { playSound } from "../lib/sounds";
+import { getDraft, setDraft } from "../lib/drafts";
 import "../styles/composer.css";
 
 // rebuild the draft as HTML for the highlight layer behind the textarea:
@@ -103,10 +104,11 @@ export default function Composer({
   variantSel,
   usage,
   caps,
-   voicePhase,
+  voicePhase,
   voiceStreaming,
   voiceError,
   onVoiceToggle,
+  sessionId,
 }: {
   busy: boolean;
   // double-Escape stop gesture armed — the stop button shows its countdown
@@ -137,8 +139,9 @@ export default function Composer({
   voiceStreaming?: boolean;
   voiceError?: string;
   onVoiceToggle?: () => void;
+  sessionId?: string;
 }) {
-  const [input, setInput] = useState("");
+  const [input, setInput] = useState(() => getDraft(sessionId ?? ""));
   const [open, setOpen] = useState(false);
   const [hi, setHi] = useState(-1); // keyboard highlight index
   const [hiCmd, setHiCmd] = useState(0); // slash-menu highlight
@@ -189,6 +192,25 @@ export default function Composer({
       hlRef.current.scrollLeft = inputRef.current.scrollLeft;
     }
   }, [input, markup]);
+
+  // per-session draft: input is restored when returning to a session
+  const suppressSaveRef = useRef(false);
+  const sidRef = useRef(sessionId);
+  useEffect(() => {
+    if (sessionId === sidRef.current) return;
+    sidRef.current = sessionId;
+    suppressSaveRef.current = true;
+    setInput(getDraft(sessionId ?? ""));
+    // next tick allow saving again — avoids saving old input under new sid
+    queueMicrotask(() => {
+      suppressSaveRef.current = false;
+    });
+  }, [sessionId]);
+  useEffect(() => {
+    if (suppressSaveRef.current) return;
+    if (!sessionId) return;
+    setDraft(sessionId, input);
+  }, [input, sessionId]);
 
   const attach = useAttachments();
 

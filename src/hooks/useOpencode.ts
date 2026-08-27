@@ -19,6 +19,7 @@ import {
   type DialogState,
 } from "../lib/slashCommands";
 import { useProviders } from "./useProviders";
+import { clearDraft } from "../lib/drafts";
 import type { Msg, OpenCodeEvent, PermAsk, ProviderGroup, Attachment, QuestionAsk, Cmd } from "../types";
 
 // re-exported: composer + command dialog import the type from here
@@ -275,6 +276,7 @@ export function useOpencode() {
           if (delId) {
             store.remove(delId);
             tracker.reset(delId);
+            clearDraft(delId);
           }
           refreshSessions().catch(() => {});
           break;
@@ -659,6 +661,7 @@ export function useOpencode() {
       store.remove(id);
       questionsRef.current.delete(id);
       tracker.reset(id);
+      clearDraft(id);
       if (activeRef.current === id) {
         setActiveId("");
         store.clearStashes();
@@ -680,6 +683,7 @@ export function useOpencode() {
       store.remove(id);
       questionsRef.current.delete(id);
       tracker.reset(id);
+      clearDraft(id);
     }
     setActiveId("");
     store.clearStashes();

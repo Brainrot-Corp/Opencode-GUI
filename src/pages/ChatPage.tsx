@@ -808,6 +808,7 @@ export default function ChatPage() {
                   voiceStreaming={voice.streaming}
                   voiceError={voice.error}
                   onVoiceToggle={voice.toggle}
+                  sessionId={oc.activeId}
                 />
               </>
             )}
