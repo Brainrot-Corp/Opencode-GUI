@@ -1,0 +1,18 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  // Copy this file to your Roblox project's root as `opencode.jsonc`
+  // Guards: timeout 5000ms prevents hang if Studio not running; project-local avoids cost in non-Roblox workspaces
+  // Default uses safe wrapper at %USERPROFILE%\.config\opencode\roblox-mcp-safe.bat (survives Roblox version hash changes, exits 0 if missing)
+  "mcp": {
+    "Roblox_Studio": {
+      "type": "local",
+      "command": ["cmd.exe", "/c", "%USERPROFILE%\\.config\\opencode\\roblox-mcp-safe.bat"],
+      "enabled": true,
+      "timeout": 5000
+    }
+  }
+}
+// Alternative 1 — direct official (has hardcoded version hash, breaks after Studio updates):
+// "command": ["cmd.exe", "/c", "%LOCALAPPDATA%\\Roblox\\mcp.bat"]
+// Alternative 2 — portable copy (copy scripts/roblox-mcp-safe.bat into your project's scripts/):
+// "command": ["cmd.exe", "/c", "scripts\\roblox-mcp-safe.bat"]
