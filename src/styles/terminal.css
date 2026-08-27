@@ -21,28 +21,46 @@
   transition: none;
 }
 
-/* drag handle — horizontal twin of .sb-resize: invisible hit zone with a
-   transparent-at-rest 2px sash that lights up on hover/drag */
+/* drag handle — horizontal twin of .sb-resize: faint resting sash + centered
+   grip icon so affordance is discoverable without hover */
 .term-resize {
   position: relative;
-  height: 6px;
+  height: 10px;
   flex-shrink: 0;
   cursor: row-resize;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 .term-resize::before {
   content: "";
   position: absolute;
   left: 0;
   right: 0;
-  top: 2px;
+  top: 4px;
   height: 2px;
-  background: transparent;
+  background: color-mix(in srgb, var(--accent) calc(0.14 * 100%), transparent);
   transition: background 0.25s var(--ease), box-shadow 0.3s var(--ease);
+}
+.term-resize i {
+  position: relative;
+  z-index: 1;
+  font-size: 9px;
+  color: var(--text-faint);
+  opacity: 0.5;
+  pointer-events: none;
+  transition: color 0.2s var(--ease), opacity 0.2s var(--ease), text-shadow 0.3s var(--ease);
 }
 .term-resize:hover::before,
 .term-dock.dragging .term-resize::before {
   background: color-mix(in srgb, var(--accent) calc(0.45 * 100%), transparent);
   box-shadow: 0 0 10px var(--accent-glow);
+}
+.term-resize:hover i,
+.term-dock.dragging .term-resize i {
+  color: var(--accent);
+  opacity: 1;
+  text-shadow: 0 0 8px var(--accent-glow);
 }
 
 .term-head {

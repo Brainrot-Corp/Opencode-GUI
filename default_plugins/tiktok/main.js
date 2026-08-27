@@ -23,7 +23,7 @@ function webviewRect(geom){
 function defaultGeom(){
   const w = DEF_W, h = DEF_H;
   const x = Math.max(8, Math.floor((window.innerWidth - w) / 2));
-  const y = Math.max(8, Math.floor((window.innerHeight - h) / 2 - 10));
+  const y = Math.max(8, Math.floor((window.innerHeight - h) / 2));
   return { x, y, w, h };
 }
 
@@ -114,14 +114,14 @@ export default function activate(api){
     },[]);
 
     // open/close the child webview based on state.open + geom — no save here (persistence is explicit in drag/resize/close handlers)
-    const lastOpen = useRef(state.open);
-    const lastGeom = useRef(state.geom);
-    const lastGlass = useRef(state.glass);
+    const lastOpen = useRef(false);
+    const lastGeom = useRef(null);
+    const lastGlass = useRef(null);
     useEffect(()=>{
       const { open, geom, glass } = state;
       const r = webviewRect(geom);
-      const geomChanged = !equal(geom, lastGeom.current);
-      const glassChanged = glass !== lastGlass.current;
+      const geomChanged = !lastGeom.current || !equal(geom, lastGeom.current);
+      const glassChanged = lastGlass.current === null || glass !== lastGlass.current;
 
       if(open && !lastOpen.current){
         lastOpen.current = true;

@@ -441,7 +441,9 @@ export default function TerminalPanel({
         data-tip="Drag to resize · double-click to reset"
         onMouseDown={startResize}
         onDoubleClick={resetSize}
-      />
+      >
+        <i className="fa-solid fa-grip-lines" aria-hidden="true" />
+      </div>
       <div
         className="term-head"
         onDoubleClick={(e) => {
