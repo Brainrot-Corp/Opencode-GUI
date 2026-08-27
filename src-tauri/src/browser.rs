@@ -17,7 +17,28 @@ pub struct Browser {
 #[derive(Default)]
 pub struct BrowserState(pub Mutex<Option<Browser>>);
 
+pub struct FloatingBrowser {
+    webview: Webview<Wry>,
+    rect: (f64, f64, f64, f64), // x,y,w,h logical
+    gen: u64,
+}
+
+#[derive(Default)]
+pub struct FloatingState(pub Mutex<Option<FloatingBrowser>>);
+
 static GEN: AtomicU64 = AtomicU64::new(0);
+static FLOAT_GEN: AtomicU64 = AtomicU64::new(0);
+
+// TikTok-only allowlist — host must be tiktok.com or subdomain, plus cdn for assets
+fn tiktok_allowed(url: &Url) -> bool {
+    let host = url.host_str().unwrap_or("").to_ascii_lowercase();
+    host == "tiktok.com" || host.ends_with(".tiktok.com")
+        || host == "tiktokcdn.com" || host.ends_with(".tiktokcdn.com")
+        || host == "musical.ly" || host.ends_with(".musical.ly")
+}
+fn is_tiktok_url(s: &str) -> bool {
+    s.parse::<Url>().map(|u| tiktok_allowed(&u)).unwrap_or(false)
+}
 
 // LOCK DISCIPLINE: every command here is async (sync commands run on the
 // MAIN thread, and add_child/navigate/close block waiting on it — holding
@@ -500,6 +521,127 @@ pub async fn window_app(name: String, action: String) -> Result<String, String> 
     } else {
         Ok(proc_name)
     }
+}
+
+// ----------- TikTok floating webview (persistent, tiktok-only) -----------
+
+fn spawn_floating_poll(app: AppHandle, gen: u64) {
+    std::thread::spawn(move || loop {
+        std::thread::sleep(Duration::from_millis(500));
+        let wv = {
+            let state = app.state::<FloatingState>();
+            let Ok(guard) = state.0.lock() else { return };
+            let Some(b) = guard.as_ref() else { return };
+            if b.gen != gen { return; }
+            b.webview.clone()
+        };
+        let Ok(url) = wv.url() else { continue };
+        let s = url.to_string();
+        // if navigation escaped tiktok, snap back to tiktok.com
+        if !is_tiktok_url(&s) {
+            if let Ok(fallback) = "https://www.tiktok.com".parse::<Url>() {
+                let _ = wv.navigate(fallback);
+            }
+            let _ = app.emit("tiktok://blocked", serde_json::json!({ "url": s }));
+            continue;
+        }
+        let _ = app.emit("tiktok://nav", serde_json::json!({ "url": s }));
+    });
+}
+
+#[tauri::command]
+pub async fn tiktok_open(
+    app: AppHandle,
+    window: WebviewWindow<Wry>,
+    state: State<'_, FloatingState>,
+    url: String,
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+) -> Result<(), String> {
+    let parsed = parse_http(&url)?;
+    if !tiktok_allowed(&parsed) {
+        return Err("only tiktok.com urls are allowed".into());
+    }
+    // already open — just navigate + move
+    let existing = state.0.lock().unwrap().as_ref().map(|b| b.webview.clone());
+    if let Some(wv) = existing {
+        wv.navigate(parsed).map_err(|e| e.to_string())?;
+        let _ = wv.set_bounds(tauri::Rect {
+            position: LogicalPosition::new(x, y).into(),
+            size: LogicalSize::new(w, h).into(),
+        });
+        if let Some(b) = state.0.lock().unwrap().as_mut() {
+            b.rect = (x, y, w, h);
+        }
+        return Ok(());
+    }
+    let win = window.as_ref().window();
+    let gen = FLOAT_GEN.fetch_add(1, Ordering::Relaxed);
+    // persistent session (not incognito) so TikTok login survives restarts
+    let webview = win
+        .add_child(
+            WebviewBuilder::new("tiktok", WebviewUrl::External(parsed.clone())),
+            LogicalPosition::new(x, y),
+            LogicalSize::new(w, h),
+        )
+        .map_err(|e| e.to_string())?;
+    let mut guard = state.0.lock().unwrap();
+    if guard.is_some() {
+        drop(guard);
+        let _ = webview.close();
+        return Ok(());
+    }
+    *guard = Some(FloatingBrowser { webview, rect: (x, y, w, h), gen });
+    drop(guard);
+    spawn_floating_poll(app.clone(), gen);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn tiktok_close(state: State<'_, FloatingState>) -> Result<(), String> {
+    let wv = state.0.lock().unwrap().take().map(|b| b.webview);
+    if let Some(wv) = wv {
+        let _ = wv.close();
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn tiktok_set_bounds(
+    state: State<'_, FloatingState>,
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+) -> Result<(), String> {
+    let wv = {
+        let mut guard = state.0.lock().unwrap();
+        let Some(b) = guard.as_mut() else { return Ok(()) };
+        b.rect = (x, y, w, h);
+        b.webview.clone()
+    };
+    wv.set_bounds(tauri::Rect {
+        position: LogicalPosition::new(x, y).into(),
+        size: LogicalSize::new(w, h).into(),
+    }).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn tiktok_navigate(state: State<'_, FloatingState>, url: String) -> Result<(), String> {
+    let parsed = parse_http(&url)?;
+    if !tiktok_allowed(&parsed) {
+        return Err("only tiktok.com urls are allowed".into());
+    }
+    let wv = {
+        let guard = state.0.lock().unwrap();
+        guard.as_ref().map(|b| b.webview.clone())
+    };
+    if let Some(wv) = wv {
+        wv.navigate(parsed).map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 
 // re-fit the child webview under the browser bar whenever the main window

@@ -8,7 +8,8 @@ use tauri::{Manager, RunEvent, State, WindowEvent};
 
 mod browser;
 use browser::{browser_back, browser_close, browser_forward, browser_navigate, browser_open,
-    browser_reload, open_app, open_external, window_app};
+    browser_reload, open_app, open_external, tiktok_close, tiktok_navigate, tiktok_open,
+    tiktok_set_bounds, window_app};
 
 mod voice;
 use voice::{install_bin_finalize, install_model_finalize, install_piper_bin, install_tts_voice_part, 
@@ -1136,6 +1137,10 @@ pub fn run() {
             browser_navigate,
             browser_reload,
             browser_close,
+            tiktok_open,
+            tiktok_close,
+            tiktok_set_bounds,
+            tiktok_navigate,
               open_external,
               open_app,
               window_app,
@@ -1378,6 +1383,7 @@ pub fn run() {
             };
             app.manage(state);
             app.manage(browser::BrowserState::default());
+            app.manage(browser::FloatingState::default());
             app.manage(PtyState::default());
             app.manage(DiscordState::default());
             update::cleanup_old();

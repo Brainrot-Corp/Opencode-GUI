@@ -1,0 +1,76 @@
+/* tiktok — floating glass panel, inherits notepad drag/resize pattern */
+.tiktok-panel{
+  position:fixed;
+  z-index:40;
+  display:flex;
+  flex-direction:column;
+  background:var(--surface);
+  border:1px solid color-mix(in srgb, var(--accent) 22%, var(--line));
+  box-shadow:0 24px 64px -24px var(--accent-glow);
+  backdrop-filter:blur(8px);
+  -webkit-backdrop-filter:blur(8px);
+  will-change:transform;
+  contain:layout style paint;
+  transform:translateZ(0);
+  overflow:hidden;
+}
+.tiktok-head{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  padding:6px 8px;
+  border-bottom:1px solid var(--line);
+  cursor:grab;
+  user-select:none;
+  flex-shrink:0;
+}
+.tiktok-head:active{cursor:grabbing}
+.tiktok-head-title{
+  font-family:var(--sans);
+  font-size:11px;
+  font-weight:600;
+  letter-spacing:0.08em;
+  text-transform:uppercase;
+  color:var(--text-faint);
+  pointer-events:none;
+  display:inline-flex;
+  align-items:center;
+  gap:6px;
+}
+.tiktok-toolbar{
+  display:flex;
+  align-items:center;
+  gap:4px;
+}
+.tiktok-body{
+  flex:1;
+  min-height:0;
+  background:var(--inset-bg);
+  position:relative;
+}
+/* content area is a hole for the Tauri child webview — keep it empty */
+.tiktok-hole{
+  position:absolute;
+  inset:0;
+  background:transparent;
+}
+.tiktok-hint{
+  position:absolute;
+  inset:0;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  font-family:var(--sans);
+  font-size:11px;
+  color:var(--text-faint);
+  background:var(--inset-bg);
+}
+.tiktok-handle{position:absolute; background:transparent; z-index:1}
+.tiktok-handle.n{top:-3px; left:6px; right:6px; height:6px; cursor:ns-resize}
+.tiktok-handle.s{bottom:-3px; left:6px; right:6px; height:6px; cursor:ns-resize}
+.tiktok-handle.e{top:6px; right:-3px; bottom:6px; width:6px; cursor:ew-resize}
+.tiktok-handle.w{top:6px; left:-3px; bottom:6px; width:6px; cursor:ew-resize}
+.tiktok-handle.nw{top:-3px; left:-3px; width:10px; height:10px; cursor:nwse-resize}
+.tiktok-handle.ne{top:-3px; right:-3px; width:10px; height:10px; cursor:nesw-resize}
+.tiktok-handle.sw{bottom:-3px; left:-3px; width:10px; height:10px; cursor:nwse-resize}
+.tiktok-handle.se{bottom:-3px; right:-3px; width:10px; height:10px; cursor:nwse-resize}
