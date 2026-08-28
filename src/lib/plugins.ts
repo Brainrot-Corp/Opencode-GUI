@@ -61,6 +61,14 @@ export type PluginExt = {
     voice?: [string, string][];
     keys?: [string, string][];
   };
+  // slash commands contributed by the plugin — surfaced in the composer's
+  // autocomplete and dispatched without hitting the server
+  slash?: {
+    name: string;
+    description: string;
+    takesArgs?: boolean;
+    handle: (args: string) => Promise<string | void> | string | void;
+  }[];
 };
 
 export type LoadedPlugin = {
@@ -161,7 +169,15 @@ export function removeDisabledId(id: string): void {
   if (set.delete(id)) localStorage.setItem(DISABLED_KEY, JSON.stringify([...set]));
 }
 
-// assets of the last load — active resources keyed by dir so a single
+// slash registry — aggregated from loaded plugins for handleSlash/buildCmdList
+let slashStore: { name: string; description: string; takesArgs?: boolean; handle: (args: string) => Promise<string | void> | string | void }[] = [];
+export function getPluginSlash() { return slashStore; }
+function setSlashFrom(plugins: LoadedPlugin[]) {
+  slashStore = plugins.flatMap((p) => (p.disabled ? [] : p.ext?.slash ?? []));
+  try { window.dispatchEvent(new CustomEvent("oc:plugin-slash", { detail: slashStore.map((s) => s.name) })); } catch {}
+}
+
+ // assets of the last load — active resources keyed by dir so a single
 // plugin can be unloaded without touching the others (disable/delete).
 // Each entry may hold a blob URL (main.js) and/or an injected style.
 const active = new Map<string, { url?: string; style?: HTMLStyleElement }>();
@@ -260,6 +276,7 @@ export async function loadPlugins(): Promise<LoadedPlugin[]> {
     lastScan.set(d.dir, { manifest: d.manifest, main: d.main, css: d.css });
   }
   setPluginLexicon(out.flatMap((p) => (p.disabled ? [] : p.ext?.lexicon ?? [])));
+  setSlashFrom(out);
   return out;
 }
 
@@ -370,5 +387,6 @@ export async function syncPluginsIncremental(prev: LoadedPlugin[]): Promise<Load
     }
   }
   setPluginLexicon(next.flatMap((p) => (p.disabled ? [] : p.ext?.lexicon ?? [])));
+  setSlashFrom(next);
   return next;
 }

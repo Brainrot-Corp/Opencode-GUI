@@ -32,6 +32,7 @@ export type SlashCtx = {
   defaultModel: string;
   modelVariants: string[];
   commands: Cmd[];
+  pluginSlash?: { name: string; description: string; takesArgs?: boolean; handle: (args: string) => Promise<string | void> | string | void }[];
   undoTarget: string;
   revertId: string;
   isBusy: (id: string) => boolean;
@@ -163,6 +164,19 @@ export async function handleSlash(text: string, ctx: SlashCtx): Promise<boolean>
         return true;
     }
 
+    // plugin-contributed slash commands (client-side, no server round-trip)
+    const plug = ctx.pluginSlash?.find((c) => c.name === name);
+    if (plug) {
+      try {
+        const out = await plug.handle(args ?? "");
+        if (out) ctx.setError(String(out));
+        else if (out === "") {/* silent success */}
+      } catch (e) {
+        ctx.setError(String(e));
+      }
+      return true;
+    }
+
     // server registry: custom + plugin + skill commands
     const reg = ctx.commands.find((c) => c.name === name);
     if (reg) {
@@ -195,6 +209,7 @@ export function buildCmdList(
     agentSel: string;
     modelVariants: string[];
     variantSel: string;
+    pluginSlash?: { name: string; description: string; takesArgs?: boolean }[];
   },
 ): CmdEntry[] {
   const { agentSel, agents, modelVariants, variantSel } = opts;
@@ -242,6 +257,14 @@ export function buildCmdList(
       source: c.source ?? "command",
       takesArgs: (c.hints ?? []).some((h) => h.includes("ARGUMENTS")) || /\$ARGUMENTS/.test(c.template ?? ""),
     }));
-  return [...builtins, ...reg];
+  const plug: CmdEntry[] = [...(opts.pluginSlash ?? [])]
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .map((c) => ({
+      name: c.name,
+      description: c.description ?? "",
+      source: "plugin",
+      takesArgs: !!c.takesArgs,
+    }));
+  return [...builtins, ...reg, ...plug];
 }
 
