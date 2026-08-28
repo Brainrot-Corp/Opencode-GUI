@@ -3,6 +3,7 @@
 
 export type HotkeyId =
   | "toggleSidebar"
+  | "openSettings"
   | "micToggle"
   | "openWorkspace"
   | "newWindow"
@@ -21,6 +22,7 @@ export type HotkeysMap = Record<HotkeyId, string | null>;
 
 export const DEFAULT_HOTKEYS: HotkeysMap = {
   toggleSidebar: "Ctrl+B",
+  openSettings: "Ctrl+,",
   micToggle: "Ctrl+M",
   openWorkspace: "Ctrl+O",
   newWindow: "Ctrl+Shift+N",
@@ -38,6 +40,7 @@ export const DEFAULT_HOTKEYS: HotkeysMap = {
 
 export const HOTKEY_META: Record<HotkeyId, { group: string; desc: string }> = {
   toggleSidebar: { group: "In the app", desc: "toggle sidebar" },
+  openSettings: { group: "In the app", desc: "open settings" },
   micToggle: { group: "In the app", desc: "mic on/off" },
   openWorkspace: { group: "In the app", desc: "open workspace" },
   newWindow: { group: "In the app", desc: "open new window" },
@@ -56,6 +59,7 @@ export const HOTKEY_META: Record<HotkeyId, { group: string; desc: string }> = {
 // order used in the Help dialog (mirrors the former KEYS list)
 export const HOTKEY_ORDER: HotkeyId[] = [
   "toggleSidebar",
+  "openSettings",
   "micToggle",
   "openWorkspace",
   "newWindow",
@@ -210,15 +214,20 @@ export function matchesEvent(e: KeyboardEvent, binding: string | null): boolean 
   if (keyToken === "Escape") return ek === "Escape";
   if (keyToken === "Enter") return ek === "Enter";
   if (keyToken.length === 1 && /^[A-Z0-9]$/.test(keyToken)) {
-    // letter/digit: allow key or code
+    // letter/digit: e.key (typed char) is authoritative for any printable ASCII
+    // char (letters, digits AND punctuation). Physical-code fallback only for
+    // non-ASCII e.key (IME/Cyrillic) — code is layout-dependent, so it must not
+    // match while a real ASCII char was typed (AZERTY: KeyZ types "w", KeyM types ",")
     if (ek.length === 1 && ek.toUpperCase() === keyToken) return true;
-    if (code === "Key" + keyToken) return true;
+    const ascii = ek.length === 1 && (c => c >= 0x20 && c <= 0x7e)(ek.charCodeAt(0));
+    if (!ascii && code === "Key" + keyToken) return true;
     if (code === "Digit" + keyToken) return true;
     if (code === "Numpad" + keyToken) return true;
     return false;
   }
   if (keyToken.length === 1) {
     // symbol single char
+    if (keyToken === ",") return ek === "," || code === "Comma";
     return ek === keyToken || (keyToken === "=" && (ek === "+" || ek === "="));
   }
   // fallback case-insensitive

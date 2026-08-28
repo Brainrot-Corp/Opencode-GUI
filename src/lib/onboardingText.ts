@@ -47,7 +47,7 @@ const en: ObCopy = {
   steps: ["Hello", "Look", "System", "Voice"],
   hello: "Hi! A few quick picks and you're ready to go.",
   body: "Everything here can be changed later in Settings.",
-  hotkeys: "Alt+Space toggles the window anywhere · Ctrl+M mic · Ctrl+/ settings",
+  hotkeys: "Alt+Space toggles the window anywhere · Ctrl+M mic · Ctrl+, settings",
   lookTitle: "Make it yours",
   lookDesc: "Pick a color scheme — themes live in ~/.config/.opencode-gui/themes.json and hot-reload.",
   themeDesc: "Interface color scheme",
@@ -94,7 +94,7 @@ const de: ObCopy = {
   steps: ["Hallo", "Aussehen", "System", "Sprache"],
   hello: "Hallo! Ein paar schnelle Auswahlen und du bist bereit.",
   body: "Alles hier lässt sich später in den Einstellungen ändern.",
-  hotkeys: "Alt+Space blendet das Fenster ein/aus · Strg+M Mikrofon · Strg+/ Einstellungen",
+  hotkeys: "Alt+Space blendet das Fenster ein/aus · Strg+M Mikrofon · Strg+, Einstellungen",
   lookTitle: "Mach es zu deinem",
   lookDesc:
     "Wähle ein Farbschema — Themes liegen in ~/.config/.opencode-gui/themes.json und laden sofort neu.",
@@ -143,7 +143,7 @@ const fr: ObCopy = {
   steps: ["Bonjour", "Apparence", "Système", "Voix"],
   hello: "Salut ! Quelques choix rapides et vous êtes prêt.",
   body: "Tout est modifiable plus tard dans les paramètres.",
-  hotkeys: "Alt+Espace affiche/cache la fenêtre · Ctrl+M micro · Ctrl+/ réglages",
+  hotkeys: "Alt+Espace affiche/cache la fenêtre · Ctrl+M micro · Ctrl+, réglages",
   lookTitle: "Personnalisez-le",
   lookDesc:
     "Choisissez une palette — les thèmes vivent dans ~/.config/.opencode-gui/themes.json et se rechargent à chaud.",
@@ -192,7 +192,7 @@ const es: ObCopy = {
   steps: ["Hola", "Apariencia", "Sistema", "Voz"],
   hello: "¡Hola! Unas pocas elecciones rápidas y listo.",
   body: "Todo se puede cambiar después en Ajustes.",
-  hotkeys: "Alt+Espacio muestra/oculta la ventana · Ctrl+M micrófono · Ctrl+/ ajustes",
+  hotkeys: "Alt+Espacio muestra/oculta la ventana · Ctrl+M micrófono · Ctrl+, ajustes",
   lookTitle: "Hazlo tuyo",
   lookDesc:
     "Elige una paleta — los temas viven en ~/.config/.opencode-gui/themes.json y se recargan al instante.",
@@ -241,7 +241,7 @@ const zh: ObCopy = {
   steps: ["你好", "外观", "系统", "语音"],
   hello: "你好！几个快速选择就可以开始使用了。",
   body: "这里的所有内容以后都可以在设置中修改。",
-  hotkeys: "Alt+空格 切换窗口 · Ctrl+M 麦克风 · Ctrl+/ 设置",
+  hotkeys: "Alt+空格 切换窗口 · Ctrl+M 麦克风 · Ctrl+, 设置",
   lookTitle: "个性化",
   lookDesc:
     "选择配色方案 — 主题位于 ~/.config/.opencode-gui/themes.json，改动即时生效。",
