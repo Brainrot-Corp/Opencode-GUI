@@ -266,6 +266,11 @@ export default function Composer({
     setDraft(sessionId, input);
   }, [input, sessionId]);
 
+  // discord presence — typing indicator (app-launch timer lives in plugin)
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent("oc:composer-draft", { detail: input.trim().length > 0 }));
+  }, [input]);
+
   // history for undo/redo of line ops (cut etc.) — also covers typing
   const prevInputRef = useRef(input);
   useEffect(() => {

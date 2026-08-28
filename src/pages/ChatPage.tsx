@@ -62,12 +62,18 @@ export default function ChatPage() {
   );
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [diffOpen, setDiffOpen] = useState(false);
-  // file > diff > busy > idle — discord plugin reads editingFile/diffOpen for {status}
+  // discord plugin reads this for {status} — file > diff > permission/question > compacting > busy > typing > idle
   const [editingFile, setEditingFile] = useState("");
+  const [composerHasText, setComposerHasText] = useState(false);
   useEffect(() => {
     const onFileEdit = (ev: Event) => setEditingFile((ev as CustomEvent<{ path?: string }>).detail?.path || "");
     window.addEventListener("oc:file-editor", onFileEdit);
     return () => window.removeEventListener("oc:file-editor", onFileEdit);
+  }, []);
+  useEffect(() => {
+    const onDraft = (ev: Event) => setComposerHasText(!!(ev as CustomEvent<boolean>).detail);
+    window.addEventListener("oc:composer-draft", onDraft);
+    return () => window.removeEventListener("oc:composer-draft", onDraft);
   }, []);
   // presence live snapshot for plugins (discord etc.) — always mirrored to window
   useEffect(() => {
@@ -82,8 +88,12 @@ export default function ChatPage() {
       sessionTitle: oc.sessions.find((s) => s.id === oc.activeId)?.title || "",
       editingFile,
       diffOpen,
+      hasPermission: !!oc.permission,
+      hasQuestion: !!oc.question,
+      compacting: !!oc.compacting,
+      isTyping: composerHasText,
     };
-  }, [settings.workspace, oc.modelSel, oc.defaultModel, oc.busy, oc.activeId, oc.sessions, editingFile, diffOpen]);
+  }, [settings.workspace, oc.modelSel, oc.defaultModel, oc.busy, oc.activeId, oc.sessions, editingFile, diffOpen, oc.permission, oc.question, oc.compacting, composerHasText]);
   // terminal dock visibility (height + instances live inside TerminalPanel — survives hide/show)
   const [termOpen, setTermOpen] = useState(
     () => localStorage.getItem("oc.term.open") === "1",

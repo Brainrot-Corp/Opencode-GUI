@@ -7,22 +7,23 @@
 // Config : oc.settings.plugins["discord-rich-presence"] {
 //   clientId: string (défaut 1542215270972784804)
 //   detailsTpl: string (défaut "Opencode GUI")
-//   stateTpl: string (défaut "{workspace} · {model} · {status}")
+//   stateTpl: string (défaut "Working on: {workspace} • {status}")
 //   largeImage: string (défaut "" = pas d'image, sinon "opencode-logo" si uploadée)
 //   largeTextTpl: string (défaut "{workspace}")
 // }
 //
 // Live snapshot lu depuis window.__presence (mis à jour par ChatPage) :
-//   {workspace, workspaceName, model, busy, sessionId, sessionTitle, editingFile, diffOpen}
-//   {status} priority: file > diff > busy > idle
+//   {workspace, workspaceName, model, busy, sessionId, sessionTitle, editingFile, diffOpen, hasPermission, hasQuestion, compacting, isTyping}
+//   {status} priority: file > diff > permission/question > compacting > busy > typing > idle
+//   Timer: app launch → close (sessionStorage, survives reloads/HMR within same launch)
 
 const ID = "discord-rich-presence";
 const DEFAULT_ID = "1542215270972784804";
 
 const DEF = {
   clientId: DEFAULT_ID,
-  detailsTpl: "{workspace}",
-  stateTpl: "{status}",
+  detailsTpl: "Opencode GUI",
+  stateTpl: "Working on: {workspace} \u2022 {status}",
   largeImage: "",
   largeTextTpl: "{workspace}",
 };
@@ -66,6 +67,10 @@ function readPresence() {
     sessionTitle: p.sessionTitle || "",
     editingFile: p.editingFile || "",
     diffOpen: !!p.diffOpen,
+    hasPermission: !!p.hasPermission,
+    hasQuestion: !!p.hasQuestion,
+    compacting: !!p.compacting,
+    isTyping: !!p.isTyping,
   };
 }
 
@@ -175,7 +180,7 @@ export default function activate(api) {
           h("input", {
             className: "discord-in",
             value: conf.stateTpl,
-            placeholder: "{workspace} · {model} · {status}",
+            placeholder: "Working on: {workspace} \u2022 {status}",
             spellCheck: false,
             onChange: (e) => set({ stateTpl: e.target.value }),
           })
@@ -221,28 +226,50 @@ export default function activate(api) {
   }
 
   // background presence loop — always active when plugin loaded (host enabled)
+  // app-launch timer: one timestamp for the whole app lifetime, survives
+  // workspace reloads / HMR via sessionStorage + window.__discordAppStart
+  function getAppStartTs() {
+    try {
+      const w = typeof window !== "undefined" ? window : {};
+      if (w.__discordAppStart) return w.__discordAppStart;
+      const k = "oc.discord.appStart";
+      let v = null;
+      try { v = sessionStorage.getItem(k); } catch {}
+      if (v) {
+        const n = parseInt(v, 10);
+        if (n > 0 && n * 1000 < Date.now() + 10000) {
+          w.__discordAppStart = n;
+          return n;
+        }
+      }
+      const now = Math.floor(Date.now() / 1000);
+      try { sessionStorage.setItem(k, String(now)); } catch {}
+      w.__discordAppStart = now;
+      return now;
+    } catch { return Math.floor(Date.now() / 1000); }
+  }
   let timer = null;
   let lastKey = "";
-  let startTs = Math.floor(Date.now() / 1000);
-  let lastSession = "";
+  const startTs = getAppStartTs();
   let lastErrAt = 0;
 
   function tick() {
     try {
       const conf = confOf(api.settings());
       const live = readPresence();
-      if (live.sessionId && live.sessionId !== lastSession) {
-        lastSession = live.sessionId;
-        startTs = Math.floor(Date.now() / 1000);
-      }
       const wsName = live.workspaceName;
       const workspaceDisp = wsName || "No workspace";
       const modelDisp = live.model || "—";
-      // file > diff > busy > idle
+      // file > diff > permission/question > compacting > busy > typing > idle
       let statusDisp = "Idle";
       if (live.editingFile) statusDisp = `Editing: ${basename(live.editingFile)}`;
       else if (live.diffOpen) statusDisp = "Reviewing diff";
+      else if (live.hasPermission && live.hasQuestion) statusDisp = "Awaiting input";
+      else if (live.hasPermission) statusDisp = "Awaiting approval";
+      else if (live.hasQuestion) statusDisp = "Awaiting answer";
+      else if (live.compacting) statusDisp = "Compacting…";
       else if (live.busy) statusDisp = "Generating…";
+      else if (live.isTyping) statusDisp = "Typing…";
 
       const details = renderTpl(conf.detailsTpl, { workspace: workspaceDisp, model: modelDisp, status: statusDisp });
       const state = renderTpl(conf.stateTpl, { workspace: workspaceDisp, model: modelDisp, status: statusDisp });
