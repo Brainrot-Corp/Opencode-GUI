@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { enable, isEnabled, disable } from "@tauri-apps/plugin-autostart";
 import type { AppSettings, ColorSet } from "../hooks/useSettings";
@@ -82,35 +82,6 @@ export default function SettingsDrawer({
   // preference and reload into the first-launch wizard
   const [confirmClean, setConfirmClean] = useState(false);
   const upd = updProp ?? useUpdaterInternal();
-  // debug reinstall: RightControl held while left-clicking Check treats
-  // the latest release as an update even if version == current
-  const rightCtrlHeld = useRef(false);
-  useEffect(() => {
-    const isRightCtrl = (e: KeyboardEvent) =>
-      e.code === "ControlRight" || (e.key === "Control" && e.location === 2);
-    const down = (e: KeyboardEvent) => {
-      if (isRightCtrl(e)) rightCtrlHeld.current = true;
-    };
-    const up = (e: KeyboardEvent) => {
-      if (isRightCtrl(e)) rightCtrlHeld.current = false;
-      // generic Control up without location (some WebView2 builds) — clear to avoid stuck
-      else if (e.key === "Control" && e.code === "") rightCtrlHeld.current = false;
-    };
-    const clear = () => { rightCtrlHeld.current = false; };
-    window.addEventListener("keydown", down);
-    window.addEventListener("keyup", up);
-    window.addEventListener("blur", clear);
-    // capture phase — global shortcuts may stopPropagation
-    window.addEventListener("keydown", down, true);
-    window.addEventListener("keyup", up, true);
-    return () => {
-      window.removeEventListener("keydown", down);
-      window.removeEventListener("keyup", up);
-      window.removeEventListener("blur", clear);
-      window.removeEventListener("keydown", down, true);
-      window.removeEventListener("keyup", up, true);
-    };
-  }, []);
 
   async function cleanState() {
     if (!confirmClean) {
@@ -555,16 +526,15 @@ export default function SettingsDrawer({
                     type="button"
                     className="reset-btn"
                     disabled={upd.busy}
-                    data-tip="RightCtrl+Click to reinstall current version (debug)"
-                    onClick={async () => {
-                      const forceCurrent = rightCtrlHeld.current;
+                    data-tip="Alt+Shift+Click to reinstall current version (debug)"
+                    onClick={async (e) => {
+                      const forceCurrent = e.altKey && e.shiftKey;
                       if (forceCurrent) {
                         localStorage.removeItem("oc.update.dismissed");
                         window.dispatchEvent(new CustomEvent("oc:update-force"));
                       }
                       await upd.check(true, forceCurrent);
                       if (forceCurrent) {
-                        // ensure prompt isn't still considered dismissed (ChatPage state)
                         localStorage.removeItem("oc.update.dismissed");
                         window.dispatchEvent(new CustomEvent("oc:update-force"));
                       }

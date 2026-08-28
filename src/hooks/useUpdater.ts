@@ -40,7 +40,7 @@ export function useUpdater() {
   // 1h cooldown cache is only for the silent launch check, so a just-fixed
   // release can't be hidden by a stale cached "no update"
   // forceCurrent=true treats the latest GitHub release as an update even if
-  // version == current — debug path for reinstall testing (RightCtrl+Click Check)
+  // version == current — debug path for reinstall testing (Alt+Shift+Click Check)
   const check = useCallback(async (force = false, forceCurrent = false): Promise<void> => {
     setBusy(true);
     setErr("");
