@@ -13,6 +13,8 @@ export default function Sidebar({
   activeId,
   busyIds,
   compactingIds,
+  attentionIds,
+  attentionKinds,
   queueCounts,
   collapsed,
   loading,
@@ -33,6 +35,8 @@ export default function Sidebar({
   activeId: string;
   busyIds?: Set<string>;
   compactingIds?: Set<string>;
+  attentionIds?: Set<string>;
+  attentionKinds?: Record<string, "permission" | "question" | "both">;
   queueCounts?: Record<string, number>;
   width: number;
   collapsed: boolean;
@@ -101,6 +105,15 @@ export default function Sidebar({
             <button className="icon-btn sb-expand">
               <i className="fa-solid fa-angles-right" />
             </button>
+            {!!attentionIds?.size && (
+              <span
+                className="sb-attention-badge"
+                data-tip={`${attentionIds.size} session${attentionIds.size > 1 ? "s" : ""} need${attentionIds.size === 1 ? "s" : ""} your attention — click to show`}
+                aria-label="Attention needed"
+              >
+                {attentionIds.size > 1 ? attentionIds.size : <i className="fa-solid fa-bell" />}
+              </span>
+            )}
             {/* keep sidebars mounted when collapsed so voice git + spotify poll don't die */}
             <div style={{ display: "none" }}>
               <GitPanel />
@@ -183,10 +196,12 @@ export default function Sidebar({
                 sessions.map((s) => {
                   const pinned = !!isPinned?.(s.id);
                   const busy = !!busyIds?.has(s.id);
+                  const needsAttention = !!attentionIds?.has(s.id);
+                  const attentionKind = attentionKinds?.[s.id] ?? (needsAttention ? "permission" : undefined);
                   return (
                   <div
                     key={s.id}
-                    className={`session-row ${s.id === activeId ? "active" : ""}${pinned ? " pinned" : ""}`}
+                    className={`session-row ${s.id === activeId ? "active" : ""}${pinned ? " pinned" : ""}${needsAttention ? ` attention attention-${attentionKind ?? "permission"}` : ""}`}
                     // middle-click anywhere on the row deletes instantly,
                     // no confirmation — preventDefault kills autoscroll
                     onMouseDown={(e) => {
@@ -244,6 +259,28 @@ export default function Sidebar({
                     {busy && <span className="row-busy" />}
                     {compactingIds?.has(s.id) && (
                       <span className="row-compacting" data-tip="Compacting context" />
+                    )}
+                    {needsAttention && (
+                      <span
+                        className={`row-attention ${attentionKind ?? ""}`}
+                        data-tip={
+                          attentionKind === "question"
+                            ? "Question needs your answer — click to respond"
+                            : attentionKind === "permission"
+                            ? "Permission needs approval — click to respond"
+                            : "Needs your attention — click to respond"
+                        }
+                      >
+                        <i
+                          className={`fa-solid ${
+                            attentionKind === "question"
+                              ? "fa-circle-question"
+                              : attentionKind === "permission"
+                              ? "fa-shield-halved"
+                              : "fa-triangle-exclamation"
+                          }`}
+                        />
+                      </span>
                     )}
                     {!!queueCounts?.[s.id] && (
                       <span className="row-queued" data-tip={`${queueCounts[s.id]} queued`}>

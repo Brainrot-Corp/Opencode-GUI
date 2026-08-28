@@ -42,6 +42,9 @@ export function useOpencode() {
   const [question, setQuestion] = useState<QuestionAsk | null>(null);
   const permissionsRef = useRef<Map<string, PermAsk>>(new Map());
   const [permission, setPermission] = useState<PermAsk | null>(null);
+  // sidebar attention: which sessions need a click (permission or question)
+  const [attentionIds, setAttentionIds] = useState<Set<string>>(new Set());
+  const [attentionKinds, setAttentionKinds] = useState<Record<string, "permission" | "question" | "both">>({});
   const [commands, setCommands] = useState<Cmd[]>([]);
   const [agents, setAgents] = useState<{ name: string; mode: string }[]>([]);
   const [agentSel, setAgentSel] = useState("");
@@ -109,6 +112,45 @@ export function useOpencode() {
     if (sid !== activeRef.current) return;
     setPermission(permissionsRef.current.get(sid) ?? null);
   };
+
+  // sidebar attention sync — drives per-session icon + collapsed badge
+  const syncAttention = useCallback((sid: string) => {
+    if (!sid) return;
+    const hasPerm = permissionsRef.current.has(sid);
+    const hasQ = questionsRef.current.has(sid);
+    const kind = hasPerm && hasQ ? ("both" as const) : hasPerm ? ("permission" as const) : hasQ ? ("question" as const) : null;
+    setAttentionIds((prev) => {
+      const has = prev.has(sid);
+      if (!!kind === has) return prev;
+      const next = new Set(prev);
+      if (kind) next.add(sid);
+      else next.delete(sid);
+      return next;
+    });
+    setAttentionKinds((prev) => {
+      if (!kind) {
+        if (!(sid in prev)) return prev;
+        const { [sid]: _omit, ...rest } = prev as Record<string, unknown>;
+        return rest as Record<string, "permission" | "question" | "both">;
+      }
+      if (prev[sid] === kind) return prev;
+      return { ...prev, [sid]: kind };
+    });
+  }, []);
+  const clearAttention = useCallback((sid: string) => {
+    if (!sid) return;
+    setAttentionIds((prev) => {
+      if (!prev.has(sid)) return prev;
+      const next = new Set(prev);
+      next.delete(sid);
+      return next;
+    });
+    setAttentionKinds((prev) => {
+      if (!(sid in prev)) return prev;
+      const { [sid]: _omit, ...rest } = prev as Record<string, unknown>;
+      return rest as Record<string, "permission" | "question" | "both">;
+    });
+  }, []);
 
   const markCompacting = useCallback((sid: string, on: boolean) => {
     if (!sid) return;
@@ -290,10 +332,9 @@ export function useOpencode() {
               (p.permission ?? p.action ?? p.type ?? "permission"),
           };
           permissionsRef.current.set(p.sessionID, ask);
-          if (p.sessionID === activeRef.current) {
-            setPermission(ask);
-            playSound("reply");
-          }
+          syncAttention(p.sessionID);
+          playSound("attention");
+          if (p.sessionID === activeRef.current) setPermission(ask);
           break;
         }
         case "permission.updated": {
@@ -305,6 +346,7 @@ export function useOpencode() {
           };
           if (!ask.sessionID || !ask.id) break;
           permissionsRef.current.set(ask.sessionID, ask);
+          syncAttention(ask.sessionID);
           if (ask.sessionID === activeRef.current) setPermission(ask);
           break;
         }
@@ -312,12 +354,16 @@ export function useOpencode() {
         case "permission.v2.replied": {
           const pid = p.permissionID ?? p.requestID ?? p.id;
           const sid = p.sessionID;
+          const affected = new Set<string>();
           if (pid) {
             for (const [s, perm] of [...permissionsRef.current])
-              if (perm.id === pid) permissionsRef.current.delete(s);
+              if (perm.id === pid) { permissionsRef.current.delete(s); affected.add(s); }
           } else if (sid) {
+            if (permissionsRef.current.has(sid)) affected.add(sid);
             permissionsRef.current.delete(sid);
           }
+          for (const s of affected) syncAttention(s);
+          if (!affected.size && sid) syncAttention(sid);
           setPermission((cur) =>
             cur && (cur.id === pid || (sid && cur.sessionID === sid)) ? null : cur,
           );
@@ -333,10 +379,9 @@ export function useOpencode() {
           };
           if (!ask.sessionID || !ask.id) break;
           questionsRef.current.set(p.sessionID, ask);
-          if (p.sessionID === activeRef.current) {
-            setQuestion(ask);
-            playSound("reply");
-          }
+          syncAttention(p.sessionID);
+          playSound("attention");
+          if (p.sessionID === activeRef.current) setQuestion(ask);
           break;
         }
         case "question.replied":
@@ -344,14 +389,18 @@ export function useOpencode() {
         case "question.rejected":
         case "question.v2.rejected": {
           const qid = p.requestID ?? p.id;
+          const affected = new Set<string>();
           if (qid) {
             for (const [sid, q] of [...questionsRef.current])
-              if (q.id === qid) questionsRef.current.delete(sid);
+              if (q.id === qid) { questionsRef.current.delete(sid); affected.add(sid); }
             setQuestion((cur) => (cur && cur.id === qid ? null : cur));
           } else if (p.sessionID) {
+            if (questionsRef.current.has(p.sessionID)) affected.add(p.sessionID);
             questionsRef.current.delete(p.sessionID);
             setQuestion((cur) => (cur && cur.sessionID === p.sessionID ? null : cur));
           }
+          for (const s of affected) syncAttention(s);
+          if (!affected.size && p.sessionID) syncAttention(p.sessionID);
           break;
         }
         case "session.idle":
@@ -418,6 +467,7 @@ export function useOpencode() {
             clearDraft(delId);
             questionsRef.current.delete(delId);
             permissionsRef.current.delete(delId);
+            clearAttention(delId);
             if (delId === activeRef.current) {
               setQuestion(null);
               setPermission(null);
@@ -509,7 +559,9 @@ export function useOpencode() {
           .then((r) => r.json())
           .then((list: QuestionAsk[]) => {
             if (disposed) return;
-            for (const q of list ?? []) questionsRef.current.set(q.sessionID, q);
+            const touched = new Set<string>();
+            for (const q of list ?? []) if (q.sessionID) { questionsRef.current.set(q.sessionID, q); touched.add(q.sessionID); }
+            for (const sid of touched) syncAttention(sid);
             showQuestion(activeRef.current);
           })
           .catch(() => {});
@@ -519,6 +571,7 @@ export function useOpencode() {
           .then((list: any) => {
             if (disposed || !list) return;
             const arr = Array.isArray(list) ? list : Array.isArray(list?.data) ? list.data : [];
+            const touched = new Set<string>();
             for (const p of arr) {
               const ask: PermAsk = {
                 id: p.id,
@@ -526,8 +579,9 @@ export function useOpencode() {
                 type: p.permission ?? p.type ?? "permission",
                 title: p.metadata?.command ?? p.metadata?.title ?? p.title ?? p.type ?? "permission",
               };
-              if (ask.sessionID && ask.id) permissionsRef.current.set(ask.sessionID, ask);
+              if (ask.sessionID && ask.id) { permissionsRef.current.set(ask.sessionID, ask); touched.add(ask.sessionID); }
             }
+            for (const sid of touched) syncAttention(sid);
             showPermission(activeRef.current);
           })
           .catch(() => {});
@@ -537,6 +591,7 @@ export function useOpencode() {
           .then((res: any) => {
             if (disposed || !res) return;
             const arr = Array.isArray(res) ? res : Array.isArray(res?.data) ? res.data : [];
+            const touched = new Set<string>();
             for (const p of arr) {
               const ask: PermAsk = {
                 id: p.id,
@@ -544,8 +599,9 @@ export function useOpencode() {
                 type: p.permission ?? p.action ?? p.type ?? "permission",
                 title: p.metadata?.command ?? p.metadata?.title ?? (p.patterns ?? []).join(", ") ?? "permission",
               };
-              if (ask.sessionID && ask.id) permissionsRef.current.set(ask.sessionID, ask);
+              if (ask.sessionID && ask.id) { permissionsRef.current.set(ask.sessionID, ask); touched.add(ask.sessionID); }
             }
+            for (const sid of touched) syncAttention(sid);
             showPermission(activeRef.current);
           })
           .catch(() => {});
@@ -574,6 +630,14 @@ export function useOpencode() {
     window.addEventListener("focus", onFocus);
     return () => window.removeEventListener("focus", onFocus);
   }, [refreshCommands, prov.loadProviders]);
+
+  // periodic nudge while any session needs attention — pop every 10s until acted on
+  // ponytail: nudge interval tuning lives here
+  useEffect(() => {
+    if (attentionIds.size === 0) return;
+    const id = window.setInterval(() => playSound("attention"), 10_000);
+    return () => clearInterval(id);
+  }, [attentionIds.size]);
 
   const newSession = useCallback(async () => {
     const { client } = await opencode();
@@ -677,9 +741,10 @@ export function useOpencode() {
     setQuestion((cur) => (cur?.sessionID === activeId ? null : cur));
     permissionsRef.current.delete(activeId);
     setPermission((cur) => (cur?.sessionID === activeId ? null : cur));
+    clearAttention(activeId);
     const { client } = await opencode();
     await client.session.abort({ path: { id: activeId } }).catch(() => {});
-  }, [activeId, markCompacting]);
+  }, [activeId, markCompacting, clearAttention]);
 
   const respondToPermission = useCallback(
     async (response: "once" | "always" | "reject") => {
@@ -687,6 +752,7 @@ export function useOpencode() {
       const perm = permission;
       permissionsRef.current.delete(perm.sessionID);
       setPermission(null);
+      syncAttention(perm.sessionID);
       const { client } = await opencode();
       await client
         .postSessionIdPermissionsPermissionId({
@@ -695,7 +761,7 @@ export function useOpencode() {
         })
         .catch((e) => setError(String(e)));
     },
-    [permission],
+    [permission, syncAttention],
   );
 
   const answerQuestion = useCallback(
@@ -704,6 +770,7 @@ export function useOpencode() {
       const ask = question;
       setQuestion(null);
       questionsRef.current.delete(ask.sessionID);
+      syncAttention(ask.sessionID);
       playSound("send");
       try {
         const r = await serverFetch(`/question/${ask.id}/reply`, {
@@ -716,7 +783,7 @@ export function useOpencode() {
         setError(String(e));
       }
     },
-    [question],
+    [question, syncAttention],
   );
 
   const rejectQuestion = useCallback(async () => {
@@ -724,8 +791,9 @@ export function useOpencode() {
     const ask = question;
     setQuestion(null);
     questionsRef.current.delete(ask.sessionID);
+    syncAttention(ask.sessionID);
     await serverFetch(`/question/${ask.id}/reject`, { method: "POST" }).catch(() => {});
-  }, [question]);
+  }, [question, syncAttention]);
 
   // session.revert cuts the conversation after the given message;
   // the active session's revert marker tells us where (and that) we rewound
@@ -892,6 +960,7 @@ export function useOpencode() {
       store.remove(id);
       questionsRef.current.delete(id);
       permissionsRef.current.delete(id);
+      clearAttention(id);
       markCompacting(id, false);
       tracker.reset(id);
       clearDraft(id);
@@ -903,7 +972,7 @@ export function useOpencode() {
         setPermission(null);
       }
     },
-    [markCompacting],
+    [markCompacting, clearAttention],
   );
 
   const renameSession = useCallback(async (id: string, title: string) => {
@@ -967,6 +1036,7 @@ export function useOpencode() {
       store.remove(id);
       questionsRef.current.delete(id);
       permissionsRef.current.delete(id);
+      clearAttention(id);
       markCompacting(id, false);
       tracker.reset(id);
       clearDraft(id);
@@ -977,7 +1047,7 @@ export function useOpencode() {
     setQuestion(null);
     setPermission(null);
     setCompactingIds(new Set());
-  }, [store, tracker, markCompacting]);
+  }, [store, tracker, markCompacting, clearAttention]);
 
   // the active session's busy/compacting state, derived from per-session sets
   const busy = busyIds.has(activeId);
@@ -990,6 +1060,8 @@ export function useOpencode() {
     sessions,
     busyIds,
     compactingIds,
+    attentionIds,
+    attentionKinds,
     compacting,
     defaultModel: prov.defaultModel,
     activeId,

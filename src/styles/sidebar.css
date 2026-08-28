@@ -372,3 +372,98 @@ body.resizing * {
   outline: none;
   border-radius: 0;
 }
+
+/* needs-attention: permission / question — distinct icon per kind */
+.row-attention {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  align-self: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 3px;
+  font-size: 11px;
+  border: 1px solid transparent;
+  animation: attention-pop 0.34s var(--ease), attention-pulse 1.35s ease-in-out 0.34s infinite;
+}
+.row-attention.question {
+  color: var(--accent-bright);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 32%, transparent);
+  box-shadow: 0 0 10px -4px var(--accent-glow);
+}
+.row-attention.permission {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+  border-color: color-mix(in srgb, var(--danger) 28%, transparent);
+  box-shadow: 0 0 10px -4px color-mix(in srgb, var(--danger) 45%, transparent);
+}
+.row-attention.both {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 16%, transparent);
+  border-color: color-mix(in srgb, var(--danger) 34%, transparent);
+  box-shadow: 0 0 12px -4px color-mix(in srgb, var(--danger) 55%, transparent);
+}
+.session-row.attention {
+  border-color: color-mix(in srgb, var(--accent) 22%, transparent);
+  background: color-mix(in srgb, var(--accent) 0.06, transparent);
+}
+.session-row.attention-permission,
+.session-row.attention-both {
+  border-color: color-mix(in srgb, var(--danger) 22%, transparent);
+}
+@keyframes attention-pop {
+  0% { transform: scale(0.6); opacity: 0; }
+  60% { transform: scale(1.18); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+@keyframes attention-pulse {
+  0%, 100% { transform: scale(1); filter: brightness(1); }
+  50% { transform: scale(1.06); filter: brightness(1.15); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .row-attention {
+    animation: none;
+  }
+}
+
+/* collapsed rail badge — shows when any session needs attention */
+.sidebar.collapsed {
+  position: relative;
+}
+.sb-attention-badge {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--danger) 85%, var(--accent));
+  color: #0a1116;
+  font-family: var(--sans);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  box-shadow: 0 0 10px var(--accent-glow), 0 2px 8px rgba(0,0,0,0.5);
+  border: 1px solid rgba(255,255,255,0.2);
+  animation: attention-badge-pulse 1.4s ease-in-out infinite;
+  pointer-events: none;
+  z-index: 2;
+}
+.sb-attention-badge i {
+  font-size: 9px;
+}
+@keyframes attention-badge-pulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.08); opacity: 0.92; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sb-attention-badge {
+    animation: none;
+  }
+}

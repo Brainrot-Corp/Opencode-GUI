@@ -16,7 +16,8 @@ export type SoundKind =
   | "maximize"
   | "close"
   | "click"
-  | "working";
+  | "working"
+  | "attention";
 
 export type SoundPrefs = {
   show: boolean;
@@ -30,6 +31,7 @@ export type SoundPrefs = {
   close: boolean;
   click: boolean;
   working: boolean;
+  attention: boolean;
   volume: number; // 0..1 master
 };
 
@@ -45,6 +47,7 @@ let prefs: SoundPrefs = {
   close: true,
   click: true,
   working: true,
+  attention: true,
   volume: 0.6,
 };
 
@@ -99,6 +102,7 @@ const KIND_TOGGLE: Record<SoundKind, Exclude<keyof SoundPrefs, "volume">> = {
   close: "close",
   click: "click",
   working: "working",
+  attention: "attention",
 };
 
 export function playSound(kind: SoundKind) {
@@ -153,6 +157,12 @@ export function playSound(kind: SoundKind) {
       // soft low double-pulse — a heartbeat "still working", not an alert
       tone(494, 440, 0.16, v * 0.7);
       tone(392, 349, 0.22, v * 0.55, 0.18);
+      break;
+    case "attention":
+      // bright bubble pop — distinct from reply bell, grabs focus for permission/question
+      // ponytail: pop tuning — short high chirp + low thud overtone
+      tone(1850, 720, 0.07, v * 1.0);
+      tone(2600, 1400, 0.05, v * 0.45, 0.01);
       break;
   }
 }

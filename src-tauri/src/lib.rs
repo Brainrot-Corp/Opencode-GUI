@@ -860,6 +860,9 @@ mod wininput {
 //   2. posted WM_MOUSEMOVEs — nudge hover tracking as a cheap first pass
 //   3. a REAL SendInput cursor wiggle (+1px/-1px) — genuine OS-level moves
 //      that re-run Chromium's hit testing, equivalent to the repairing click
+//   4. delayed SetForegroundWindow/SetFocus retries — WebView2 keyboard input
+//      stays dead until the HWND truly owns foreground; the first set_focus
+//      can land before show() settles (Alt+Space) or not at all (Alt+Tab).
 #[cfg(windows)]
 fn unpoison_input(app: &tauri::AppHandle) {
     let hwnd = match app.get_webview_window("main").map(|w| w.hwnd()) {
@@ -870,7 +873,14 @@ fn unpoison_input(app: &tauri::AppHandle) {
     std::thread::spawn(move || {
         // let the show settle before poking at input state
         std::thread::sleep(std::time::Duration::from_millis(60));
+        let app2 = app.clone();
         let _ = app.run_on_main_thread(move || unsafe {
+            // ensure OS focus — first retry (covers show() settling)
+            if let Some(w) = app2.get_webview_window("main") {
+                if !window_focused(&w) {
+                    let _ = w.set_focus();
+                }
+            }
             use wininput::*;
             EnumChildWindows(hwnd, pump_cancelmode, 0);
             let mut pt = Point { x: 0, y: 0 };
@@ -889,6 +899,23 @@ fn unpoison_input(app: &tauri::AppHandle) {
                 EnumChildWindows(hwnd, pump_mousemove, 0);
             });
         }
+        // second focus retry — by now the window is definitely visible; if we
+        // still don't own foreground (Alt+Space race) force it once more so
+        // WebView2 delivers WM_KEYDOWN to its child without needing a click
+        std::thread::sleep(std::time::Duration::from_millis(70));
+        let app3 = app.clone();
+        let _ = app.run_on_main_thread(move || {
+            if let Some(w) = app3.get_webview_window("main") {
+                if !window_focused(&w) {
+                    let _ = w.set_focus();
+                } else {
+                    // even when focused, a second set_focus nudges WebView2's
+                    // internal focus from the outer HWND to the webview child
+                    // in cases where mouse capture was stuck
+                    let _ = w.set_focus();
+                }
+            }
+        });
     });
 }
 

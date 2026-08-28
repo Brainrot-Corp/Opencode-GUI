@@ -33,6 +33,7 @@ export default function SoundsSettings({
           ["close", "fa-xmark", "Close window"],
           ["send", "fa-paper-plane", "Message sent"],
           ["reply", "fa-bell", "Reply finished"],
+          ["attention", "fa-circle-exclamation", "Needs attention"],
           ["type", "fa-keyboard", "Typing"],
           ["resize", "fa-arrows-left-right", "Resizing"],
           ["panels", "fa-table-columns", "Panels & menus"],

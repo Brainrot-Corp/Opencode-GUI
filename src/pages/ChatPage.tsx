@@ -680,6 +680,8 @@ export default function ChatPage() {
             activeId={oc.activeId}
             busyIds={oc.busyIds}
             compactingIds={oc.compactingIds}
+            attentionIds={oc.attentionIds}
+            attentionKinds={oc.attentionKinds}
             queueCounts={oc.queueCounts}
             width={sbW}
             collapsed={sbClosed}

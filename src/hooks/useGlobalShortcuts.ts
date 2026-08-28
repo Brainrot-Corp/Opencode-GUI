@@ -290,6 +290,130 @@ export function useGlobalShortcuts({
     return () => un?.();
   }, []);
 
+  // Alt+Tab / Alt+Space returning leaves WebView2 without DOM focus: window
+  // has OS focus but document.hasFocus() is false or activeElement is body, so
+  // every window `keydown` keybind (Ctrl+B etc.) stops firing until a click.
+  // Rescue: remember the last focused element on blur, then on any window
+  // re-activation (DOM focus, Tauri focus, visibility show) re-assert it.
+  useEffect(() => {
+    const savedRef = { current: null as HTMLElement | null };
+    const saveFocus = () => {
+      const ae = document.activeElement as HTMLElement | null;
+      if (ae && ae !== document.body && document.contains(ae)) {
+        // don't remember transient menu items that will be unmounted
+        if (ae.closest(".ctx-menu, .cmd-menu, .model-menu")) return;
+        savedRef.current = ae;
+      }
+    };
+
+    const rescueFocus = () => {
+      // let the OS focus settle before poking the DOM (Alt+Tab posts focus async)
+      requestAnimationFrame(() => {
+        window.setTimeout(() => {
+          // visible dialog/drawer/menu owns focus — don't steal to composer
+          const overlay = document.querySelector(
+            ".dlg-scrim, .drawer-scrim.open, .ctx-menu, .cmd-menu, .model-menu",
+          ) as HTMLElement | null;
+          if (overlay) {
+            if (!overlay.contains(document.activeElement)) {
+              const focusable = overlay.querySelector(
+                "button, [href], input, select, textarea, [tabindex]:not([tabindex=\"-1\"])",
+              ) as HTMLElement | null;
+              // ensure DOM can receive keydowns even if overlay has no focusable
+              window.focus();
+              focusable?.focus({ preventScroll: true } as any);
+              if (document.hasFocus()) return;
+            } else {
+              // re-assert existing overlay focus so WebView2 re-routes keys
+              (document.activeElement as HTMLElement | null)?.focus?.({ preventScroll: true } as any);
+              window.focus();
+              return;
+            }
+          }
+
+          const ae = document.activeElement as HTMLElement | null;
+          const saved = savedRef.current;
+
+          // try saved element first (usually the composer textarea)
+          if (saved && document.contains(saved) && saved !== document.body) {
+            window.focus();
+            try {
+              saved.focus({ preventScroll: true } as any);
+            } catch {}
+            if (document.hasFocus() && document.activeElement === saved) return;
+            // xterm / non-input saved targets may not take DOM focus — fall through
+          }
+
+          // current element still there but WebView2 lost its route — re-focus it
+          if (ae && ae !== document.body && document.contains(ae)) {
+            window.focus();
+            try {
+              ae.focus({ preventScroll: true } as any);
+            } catch {}
+            if (document.hasFocus()) return;
+          }
+
+          // fallback: composer → file editor → body. Any focused element inside
+          // the document re-enables window `keydown` bubbling for global shortcuts.
+          const fallback =
+            (document.querySelector(".composer textarea") as HTMLElement | null) ||
+            (document.querySelector(".fe-ta") as HTMLElement | null) ||
+            (document.querySelector(".term-mount") as HTMLElement | null) ||
+            document.body;
+          window.focus();
+          try {
+            fallback?.focus({ preventScroll: true } as any);
+          } catch {}
+          // last resort: ensure body is focusable so window keydowns fire
+          if (!document.hasFocus() && document.body) {
+            if (!document.body.hasAttribute("tabindex")) document.body.setAttribute("tabindex", "-1");
+            document.body.focus({ preventScroll: true } as any);
+            window.focus();
+          }
+        }, 20);
+      });
+    };
+
+    // DOM blur saves, DOM focus rescues (Alt+Tab without hide)
+    const onBlur = () => saveFocus();
+    const onFocus = () => rescueFocus();
+    window.addEventListener("blur", onBlur);
+    window.addEventListener("focus", onFocus);
+
+    // Tauri window focus (more reliable than DOM after hide/show) + visibility show (Alt+Space / tray)
+    let unWin: (() => void) | undefined;
+    let unVis: (() => void) | undefined;
+    // dynamic import avoids hard failure if window api missing in tests
+    void import("@tauri-apps/api/window")
+      .then(({ getCurrentWindow }) => {
+        try {
+          const win = getCurrentWindow();
+          win.onFocusChanged(({ payload: focused }) => {
+            if (focused) rescueFocus();
+            else saveFocus();
+          }).then((f) => {
+            unWin = f;
+          }).catch(() => {});
+        } catch {}
+      })
+      .catch(() => {});
+    void listen<boolean>("visibility://changed", (e) => {
+      if (e.payload) rescueFocus();
+      else saveFocus();
+    })
+      .then((f) => {
+        unVis = f;
+      })
+      .catch(() => {});
+
+    return () => {
+      window.removeEventListener("blur", onBlur);
+      window.removeEventListener("focus", onFocus);
+      unWin?.();
+      unVis?.();
+    };
+  }, []);
+
   // slash-command UI handoffs (/themes /scheme)
   useEffect(() => {
     const themes = () => {
