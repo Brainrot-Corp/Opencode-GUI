@@ -2,6 +2,7 @@
 // Dock survives hide/show (height collapse) — shells keep running. Right side shows
 // instance list with hover reload/kill (2-click kill), collapsed to icon strip.
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { playSound } from "../lib/sounds";
 import { fetchTerminalProfiles, useTerminalProfiles, type TerminalProfile } from "../hooks/useTerminalProfiles";
@@ -10,7 +11,7 @@ import DropdownPortal from "./DropdownPortal";
 import "../styles/terminal.css";
 
 const H_KEY = "oc.term.h";
-const H_MIN = 120;
+const H_MIN = 160;
 const H_DEFAULT = 240;
 const SIDE_KEY = "oc.term.sideCollapsed";
 const SIDE_W_KEY = "oc.term.sideW";
@@ -79,8 +80,17 @@ export default function TerminalPanel({
   });
   const [sideResizing, setSideResizing] = useState(false);
   const [maxErr, setMaxErr] = useState("");
+  // auto-collapse side on narrow viewports on first mount so cols stay readable
+  // CSS @media (max-width:720px) is the runtime safety net for resizes
+  useEffect(() => {
+    if (window.innerWidth < 720 && localStorage.getItem(SIDE_KEY) !== "1") {
+      setSideCollapsed(true);
+    }
+  }, []);
   const { profiles } = useTerminalProfiles();
   const [addMenuOpen, setAddMenuOpen] = useState(false);
+  const [switchMenu, setSwitchMenu] = useState<{ id: number; x: number; y: number } | null>(null);
+  const switchMenuRef = useRef<HTMLDivElement>(null);
   // prevent height transition on first paint — avoids flash open→close on app launch
   const [mounted, setMounted] = useState(false);
   useEffect(() => {
@@ -99,28 +109,36 @@ export default function TerminalPanel({
       if (raw) {
         const arr = JSON.parse(raw) as PersistedInst[];
         if (Array.isArray(arr) && arr.length > 0 && arr.length <= 8) {
-          let maxId = 0;
-          let maxGen = 0;
-          for (const a of arr) {
-            if (a.id > maxId) maxId = a.id;
-            if (a.gen > maxGen) maxGen = a.gen;
+          // validate shape — discard corrupted entries instead of crashing
+          const valid = arr.filter((a) => a && typeof a === "object" && Number.isInteger((a as any).id) && (a as any).id > 0 && Number.isInteger((a as any).gen) && (a as any).gen > 0);
+          if (valid.length > 0 && valid.length === arr.length) {
+            let maxId = 0;
+            let maxGen = 0;
+            for (const a of valid) {
+              if (a.id > maxId) maxId = a.id;
+              if (a.gen > maxGen) maxGen = a.gen;
+            }
+            nextIdRef.current = maxId + 1;
+            genCounterRef.current = maxGen + 1;
+            return valid.map((a) => ({
+              id: a.id,
+              gen: a.gen,
+              cwd: typeof a.cwd === "string" ? a.cwd : "",
+              title: typeof a.title === "string" ? a.title : `Terminal ${a.id}`,
+              dead: false,
+              err: "",
+              shell: typeof a.shell === "string" ? a.shell : undefined,
+              args: Array.isArray(a.args) ? a.args : undefined,
+              shellName: typeof a.shellName === "string" ? a.shellName : undefined,
+            }));
+          } else if (valid.length > 0) {
+            console.warn(`[term] persisted instances partially invalid: ${arr.length - valid.length} discarded`);
           }
-          nextIdRef.current = maxId + 1;
-          genCounterRef.current = maxGen + 1;
-          return arr.map((a) => ({
-            id: a.id,
-            gen: a.gen,
-            cwd: a.cwd || "",
-            title: a.title || `Terminal ${a.id}`,
-            dead: false,
-            err: "",
-            shell: a.shell,
-            args: a.args,
-            shellName: a.shellName,
-          }));
         }
       }
-    } catch {}
+    } catch (e) {
+      console.warn("[term] failed to load persisted instances", e);
+    }
     // fresh: one terminal seeded
     const id = 1;
     const gen = 1;
@@ -130,8 +148,9 @@ export default function TerminalPanel({
   });
 
   const [activeId, setActiveId] = useState<number>(() => {
-    const saved = Number(localStorage.getItem(ACTIVE_KEY) || 0);
-    if (saved) return saved;
+    const raw = localStorage.getItem(ACTIVE_KEY) || "";
+    const n = Number(raw);
+    if (Number.isInteger(n) && n > 0) return n;
     return terms[0]?.id ?? 1;
   });
 
@@ -157,6 +176,22 @@ export default function TerminalPanel({
       document.removeEventListener("keydown", onKey);
     };
   }, [addMenuOpen]);
+
+  // shell-switch menu: outside click + Escape closes, fetch profiles if needed
+  useEffect(() => {
+    if (!switchMenu) return;
+    if (!profiles.length) void fetchTerminalProfiles().catch(() => {});
+    const onDown = (e: Event) => {
+      if (!switchMenuRef.current?.contains(e.target as Node)) setSwitchMenu(null);
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setSwitchMenu(null); };
+    document.addEventListener("pointerdown", onDown, true);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("pointerdown", onDown, true);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [switchMenu, profiles.length]);
 
   const resolveProfile = useCallback((profileId: string | null | undefined): { path?: string; args?: string[]; name?: string } | null => {
     if (!profileId) return null;
@@ -199,7 +234,9 @@ export default function TerminalPanel({
     try {
       const arr: PersistedInst[] = terms.map((t) => ({ id: t.id, gen: t.gen, cwd: t.cwd, title: t.title, shell: t.shell, args: t.args, shellName: t.shellName }));
       localStorage.setItem(INST_KEY, JSON.stringify(arr));
-    } catch {}
+    } catch (e) {
+      console.warn("[term] failed to persist instances (quota?)", e);
+    }
   }, [terms]);
   useEffect(() => { localStorage.setItem(H_KEY, String(h)); }, [h]);
 
@@ -217,26 +254,33 @@ export default function TerminalPanel({
   }, []);
 
   const addTerm = useCallback((profileId?: string | null) => {
-    if (terms.length >= 8) {
+    let createdId: number | null = null;
+    let didAdd = false;
+    setTerms((prev) => {
+      if (prev.length >= 8) return prev;
+      const id = nextIdRef.current++;
+      const gen = genCounterRef.current++;
+      const cwd = workspaceRef.current ?? "";
+      const pid = profileId !== undefined ? profileId : (terminal?.defaultProfileId ?? null);
+      const resolved = resolveProfile(pid);
+      const entry: TermEntry = {
+        id, gen, title: `Terminal ${id}`, cwd, dead: false, err: "",
+        shell: resolved?.path, args: resolved?.args, shellName: resolved?.name ?? (pid ? undefined : "System default"),
+      };
+      createdId = id;
+      didAdd = true;
+      return [...prev, entry];
+    });
+    if (!didAdd) {
       setMaxErr("max 8 terminals");
       window.setTimeout(() => setMaxErr(""), 2500);
       playSound("click");
       return;
     }
-    const id = nextIdRef.current++;
-    const gen = genCounterRef.current++;
-    const cwd = workspaceRef.current ?? "";
-    const pid = profileId !== undefined ? profileId : (terminal?.defaultProfileId ?? null);
-    const resolved = resolveProfile(pid);
-    const entry: TermEntry = {
-      id, gen, title: `Terminal ${id}`, cwd, dead: false, err: "",
-      shell: resolved?.path, args: resolved?.args, shellName: resolved?.name ?? (pid ? undefined : "System default"),
-    };
-    setTerms((prev) => [...prev, entry]);
-    setActiveId(id);
+    if (createdId !== null) setActiveId(createdId);
     playSound("click");
     setAddMenuOpen(false);
-  }, [terms.length, terminal?.defaultProfileId, resolveProfile]);
+  }, [terminal?.defaultProfileId, resolveProfile]);
 
   const reloadTerm = useCallback(async (id: number) => {
     const t = terms.find((x) => x.id === id);
@@ -510,15 +554,7 @@ export default function TerminalPanel({
                 onClick={() => setActiveId(t.id)}
                 onContextMenu={(e) => {
                   e.preventDefault();
-                  // quick switch via context menu: cycle through shell picker for this term
-                  // For now show add menu re-purposed — user can change shell via reload with new shell
-                  // We expose a simple prompt via the add menu: reuse addMenuOpen logic with switch
-                  // Instead implement inline: if user right-clicks, open a small switch menu
-                  const pid = prompt(`Switch shell for Terminal ${t.id} — enter profile id (empty = default). Available: ${profiles.map(p=>p.id).join(", ")} ${terminal?.customShells.map(c=>c.id).join(", ")}`);
-                  if (pid !== null) {
-                    const trimmed = pid.trim();
-                    void changeTermShell(t.id, trimmed || null);
-                  }
+                  setSwitchMenu({ id: t.id, x: e.clientX, y: e.clientY });
                 }}
                 data-tip={sideCollapsed ? `${t.title}${t.shellName ? " — " + t.shellName : ""}${t.cwd ? " — " + t.cwd : ""}${t.dead ? " (exited)" : ""}` : undefined}
                 title={t.shellName ? `${t.title} — ${t.shellName}` : t.title}
@@ -564,6 +600,63 @@ export default function TerminalPanel({
           {!sideCollapsed && terms.length >= 8 && <div className="term-side-hint">max 8 reached</div>}
         </div>
       </div>
+      {switchMenu && createPortal(
+        <div
+          ref={switchMenuRef}
+          className="term-add-menu"
+          style={{ position: "fixed", left: Math.min(switchMenu.x, window.innerWidth - 260), top: Math.min(switchMenu.y, window.innerHeight - 200), zIndex: 101, maxHeight: "min(360px, 60vh)" }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="term-add-group">Switch shell — Terminal {switchMenu.id}</div>
+          <button className="term-add-item" onClick={() => { const id = switchMenu.id; setSwitchMenu(null); void changeTermShell(id, null); }}><i className="fa-solid fa-terminal" /> System default (PowerShell)</button>
+          {(() => {
+            const groups: Record<string, TerminalProfile[]> = { probe: [], wsl: [], wt: [] };
+            for (const p of profiles) {
+              if (p.source === "wsl") groups.wsl.push(p);
+              else if (p.source === "wt") groups.wt.push(p);
+              else groups.probe.push(p);
+            }
+            const customs = terminal?.customShells ?? [];
+            return (
+              <>
+                {groups.probe.length > 0 && (
+                  <>
+                    <div className="term-add-group">Installed shells</div>
+                    {groups.probe.map((p) => (
+                      <button key={p.id} className="term-add-item" onClick={() => { const id = switchMenu.id; const pid = p.id; setSwitchMenu(null); void changeTermShell(id, pid); }}><i className="fa-solid fa-terminal" /> {p.name}</button>
+                    ))}
+                  </>
+                )}
+                {groups.wsl.length > 0 && (
+                  <>
+                    <div className="term-add-group">WSL</div>
+                    {groups.wsl.map((p) => (
+                      <button key={p.id} className="term-add-item" onClick={() => { const id = switchMenu.id; const pid = p.id; setSwitchMenu(null); void changeTermShell(id, pid); }}><i className="fa-solid fa-cube" /> {p.name}</button>
+                    ))}
+                  </>
+                )}
+                {groups.wt.length > 0 && (
+                  <>
+                    <div className="term-add-group">Windows Terminal</div>
+                    {groups.wt.map((p) => (
+                      <button key={p.id} className="term-add-item" onClick={() => { const id = switchMenu.id; const pid = p.id; setSwitchMenu(null); void changeTermShell(id, pid); }}><i className="fa-solid fa-window-restore" /> {p.name}</button>
+                    ))}
+                  </>
+                )}
+                {customs.length > 0 && (
+                  <>
+                    <div className="term-add-group">Custom</div>
+                    {customs.map((c) => (
+                      <button key={c.id} className="term-add-item" onClick={() => { const id = switchMenu.id; const pid = c.id; setSwitchMenu(null); void changeTermShell(id, pid); }}><i className="fa-solid fa-wrench" /> {c.name}</button>
+                    ))}
+                  </>
+                )}
+              </>
+            );
+          })()}
+        </div>,
+        document.body,
+      )}
     </div>
   );
 }

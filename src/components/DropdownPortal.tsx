@@ -30,11 +30,17 @@ export default function DropdownPortal({
       return;
     }
     const a = anchor.current;
-    if (!a) return;
+    if (!a) {
+      setStyle(null);
+      return;
+    }
 
     const place = () => {
       const r = a.getBoundingClientRect();
-      if (r.width === 0 && r.height === 0) return;
+      if (r.width === 0 && r.height === 0) {
+        setStyle(null);
+        return;
+      }
       const vw = window.innerWidth;
       const vh = window.innerHeight;
       let dir = prefer;

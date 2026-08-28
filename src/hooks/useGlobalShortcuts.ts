@@ -179,8 +179,12 @@ export function useGlobalShortcuts({
   }, [busy, clearStopArmed]);
 
   // suppress the raw browser right-click menu (desktop app, not a page)
+  // exception: xterm needs its native menu for copy/paste (Ctrl+Shift+C/V fallback)
   useEffect(() => {
-    const ctx = (e: MouseEvent) => e.preventDefault();
+    const ctx = (e: MouseEvent) => {
+      if ((e.target as HTMLElement)?.closest?.(".xterm, .term-mount, .term-body")) return;
+      e.preventDefault();
+    };
     document.addEventListener("contextmenu", ctx);
     return () => document.removeEventListener("contextmenu", ctx);
   }, []);

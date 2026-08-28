@@ -10,6 +10,8 @@ export default function SelectionMenu() {
       // let session/file rows handle their own menu first
       const target = e.target as HTMLElement | null;
       if (!target) return;
+      // terminal owns its own selection/clipboard — don't overlay the generic menu
+      if (target.closest?.(".term-dock, .term-mount, .xterm")) return;
       if (target.closest?.(".session-row")) return;
       if (target.closest?.(".ft-row")) return;
       // if already inside context menu, ignore

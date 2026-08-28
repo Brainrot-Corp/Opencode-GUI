@@ -22,6 +22,13 @@ import { useProviders } from "./useProviders";
 import { clearDraft, setDraft } from "../lib/drafts";
 import type { Msg, OpenCodeEvent, PermAsk, ProviderGroup, Attachment, QuestionAsk, Cmd } from "../types";
 
+// per-session agent memory + shared global agent (mirrors useProviders model logic)
+const SESSION_AGENTS_KEY = "oc.sessionAgents";
+const LAST_AGENT_KEY = "oc.lastAgent";
+function isAgentReachable(name: string, list: { name: string }[]): boolean {
+  return !!name && list.some((a) => a.name === name);
+}
+
 // re-exported: composer + command dialog import the type from here
 export type { CmdEntry } from "../lib/slashCommands";
 
@@ -48,6 +55,17 @@ export function useOpencode() {
   const [commands, setCommands] = useState<Cmd[]>([]);
   const [agents, setAgents] = useState<{ name: string; mode: string }[]>([]);
   const [agentSel, setAgentSel] = useState("");
+  // per-session agent memory: only entries that were EXPLICITLY picked for
+  // that session get stored; everything else follows the global selection.
+  // keyed by session id -> agent name. boot-load prunes vanished agents
+  const [sessionAgents, setSessionAgents] = useState<Record<string, string>>(() => {
+    try {
+      const raw = JSON.parse(localStorage.getItem(SESSION_AGENTS_KEY) ?? "{}");
+      return raw && typeof raw === "object" ? raw : {};
+    } catch {
+      return {};
+    }
+  });
   const [dialog, setDialog] = useState<DialogState>(null);
   const [queueCounts, setQueueCounts] = useState<Record<string, number>>({});
   const [live, setLive] = useState(false);
@@ -102,6 +120,101 @@ export function useOpencode() {
     });
   }
   const tracker = trackerRef.current;
+
+  // ---- per-session agent memory (mirrors useProviders model logic) ----
+  // shared last hand-picked agent — visible to every window/instance via localStorage
+  // only real selections persist — never wipe stored one with ""
+  useEffect(() => {
+    if (agentSel) {
+      try {
+        localStorage.setItem(LAST_AGENT_KEY, agentSel);
+      } catch {}
+    }
+  }, [agentSel]);
+
+  // live sync: another window picked an agent -> reflect here unless active session has its own remembered agent
+  useEffect(() => {
+    const onStorage = (e: StorageEvent) => {
+      if (e.key !== LAST_AGENT_KEY || !e.newValue) return;
+      if (!agents.length) return;
+      if (!isAgentReachable(e.newValue, agents)) return;
+      const remembered = sessionAgents[activeId];
+      if (remembered && isAgentReachable(remembered, agents)) return;
+      setAgentSel((cur) => (cur === e.newValue! ? cur : e.newValue!));
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, [agents, activeId, sessionAgents]);
+
+  // persist the session->agent map
+  useEffect(() => {
+    try {
+      localStorage.setItem(SESSION_AGENTS_KEY, JSON.stringify(sessionAgents));
+    } catch {}
+  }, [sessionAgents]);
+
+  const rememberAgentSession = useCallback((sid: string, value: string) => {
+    if (!sid) return;
+    setSessionAgents((prev) => {
+      if (!value) {
+        if (!(sid in prev)) return prev;
+        const next = { ...prev };
+        delete next[sid];
+        return next;
+      }
+      if (prev[sid] === value) return prev;
+      return { ...prev, [sid]: value };
+    });
+  }, []);
+  void rememberAgentSession;
+
+  // session switch (or agents arriving late): re-apply the active session's remembered agent
+  // when it exists and is still reachable; otherwise fall back to shared global last agent
+  useEffect(() => {
+    if (!activeId) return;
+    if (!agents.length) return;
+    const remembered = sessionAgents[activeId];
+    if (remembered) {
+      if (isAgentReachable(remembered, agents)) {
+        setAgentSel((cur) => (cur === remembered ? cur : remembered));
+        return;
+      }
+      // stale — agent vanished: drop per-session pin
+      setSessionAgents((prev) => {
+        if (!(activeId in prev)) return prev;
+        const next = { ...prev };
+        delete next[activeId];
+        return next;
+      });
+    }
+    let global: string | null = null;
+    try {
+      global = localStorage.getItem(LAST_AGENT_KEY);
+    } catch {}
+    if (global && isAgentReachable(global, agents)) {
+      setAgentSel((cur) => (cur === global ? cur : global));
+    }
+  }, [activeId, agents, sessionAgents]);
+
+  // prune vanished agents from the map + global
+  useEffect(() => {
+    if (!agents.length) return;
+    setSessionAgents((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      for (const [sid, name] of Object.entries(prev)) {
+        if (!isAgentReachable(name, agents)) {
+          delete next[sid];
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+    try {
+      const g = localStorage.getItem(LAST_AGENT_KEY);
+      if (g && !isAgentReachable(g, agents)) localStorage.removeItem(LAST_AGENT_KEY);
+    } catch {}
+  }, [agents]);
 
   // mirror the active session's pending asks (if any) into state
   const showQuestion = (sid: string) => {
@@ -860,9 +973,21 @@ export function useOpencode() {
     if (!agents.length) return;
     const cur = agentSel || agents[0].name;
     const i = agents.findIndex((a) => a.name === cur);
-    setAgentSel(agents[(i + 1) % agents.length].name);
+    const next = agents[(i + 1) % agents.length].name;
+    rememberAgentSession(activeRef.current, next);
+    setAgentSel(next);
     playSound("click");
-  }, [agents, agentSel]);
+  }, [agents, agentSel, rememberAgentSession]);
+
+  // direct pick (mirrors selectModel) — remembers per-session and globally
+  const selectAgent = useCallback(
+    (v: string) => {
+      rememberAgentSession(activeRef.current, v);
+      setAgentSel(v);
+    },
+    [rememberAgentSession],
+  );
+  void selectAgent;
 
   // picker entry: applies the choice globally AND remembers it for the
   // session it was made in (so switching back re-applies it)
@@ -1119,6 +1244,7 @@ export function useOpencode() {
     closeDialog: () => setDialog(null),
     agents,
     agentSel,
+    setAgentSel: selectAgent,
     cycleAgent,
     cycleVariant: prov.cycleVariant,
     variantSel: prov.variantSel,

@@ -28,7 +28,7 @@ type GitStatus = {
 
 const CLEAN: GitStatus = { repo: false, branch: "", ahead: 0, behind: 0, files: [] };
 
-const base = (p: string) => p.slice(p.lastIndexOf("/") + 1);
+const base = (p: string) => p.replace(/\/$/, "").slice(p.replace(/\/$/, "").lastIndexOf("/") + 1);
 
 // secondary model + commitBody from the settings blob — read at click time
 function secondaryModel(): string {

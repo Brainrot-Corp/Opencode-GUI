@@ -99,7 +99,7 @@ fn parse_status(out: &str) -> GitStatus {
 
 #[tauri::command]
 pub async fn git_status(dir: String) -> Result<GitStatus, String> {
-    match run(&dir, &["status", "--porcelain=v1", "-b", "--untracked-files=normal"]) {
+    match run(&dir, &["status", "--porcelain=v1", "-b", "--untracked-files=all"]) {
         Ok(out) => Ok(parse_status(&out)),
         // not a repo / git missing — quiet state for the panel, not an error
         Err(_) => Ok(GitStatus {
