@@ -10,13 +10,11 @@ import { UI_SCALES } from "../lib/uiScale";
 import ThemeSelect from "./ThemeSelect";
 import SecondaryModelPicker from "./SecondaryModelPicker";
 import VoicesDialog from "./VoicesDialog";
-import PluginsDialog from "./PluginsDialog";
 import Onboarding from "./Onboarding";
 import AppearanceSettings from "./AppearanceSettings";
 import SoundsSettings from "./SoundsSettings";
 import InfoDialog from "./InfoDialog";
 import type { ProviderGroup } from "../types";
-import type { LoadedPlugin } from "../lib/plugins";
 import "../styles/settings.css";
 
 export default function SettingsDrawer({
@@ -24,7 +22,6 @@ export default function SettingsDrawer({
   onClose,
   settings,
   update,
-  updatePlugin,
   updateSounds,
   updateColors,
   resetColors,
@@ -35,17 +32,12 @@ export default function SettingsDrawer({
   providers,
   commands,
   pluginDocs,
-  plugins,
-  onTogglePlugin,
-  onRemoveDisabled,
   upd: updProp,
 }: {
   open: boolean;
   onClose: () => void;
   settings: AppSettings;
   update: (patch: Partial<AppSettings>) => void;
-  // patch the calling plugin's own config blob (curried per section below)
-  updatePlugin: (id: string, patch: Record<string, unknown>) => void;
   updateSounds: (patch: Partial<SoundPrefs>) => void;
   updateColors: (patch: Partial<ColorSet>) => void;
   resetColors: () => void;
@@ -60,9 +52,6 @@ export default function SettingsDrawer({
   commands?: CmdEntry[];
   // plugin documentation rows for the Info dialog
   pluginDocs?: { name: string; info: NonNullable<import("../lib/plugins").PluginExt["info"]> }[];
-  plugins?: LoadedPlugin[];
-  onTogglePlugin?: (id: string, enabled: boolean) => void;
-  onRemoveDisabled?: (id: string) => void;
   upd?: ReturnType<typeof useUpdaterInternal>;
 }) {
   // custom themes have no stored color entry yet — cyan's shared base is the
@@ -71,7 +60,6 @@ export default function SettingsDrawer({
   const [autoLaunch, setAutoLaunch] = useState<boolean | null>(null);
   const [infoOpen, setInfoOpen] = useState(false);
   const [voiceOpen, setVoiceOpen] = useState(false);
-  const [pluginsOpen, setPluginsOpen] = useState(false);
   // first-launch setup can be replayed from here any time
   const [wizOpen, setWizOpen] = useState(false);
   // clean state: two-click confirm, then wipe voice installs + every oc.*
@@ -167,9 +155,6 @@ export default function SettingsDrawer({
           <div className="color-controls">
             <button className="icon-btn" data-tip="Run setup again" onClick={() => setWizOpen(true)}>
               <i className="fa-solid fa-wand-magic-sparkles" />
-            </button>
-            <button className="icon-btn" data-tip="Plugins" onClick={() => setPluginsOpen(true)}>
-              <i className="fa-solid fa-puzzle-piece" />
             </button>
             <button className="icon-btn" data-tip="Voice, commands & hotkeys" onClick={() => setInfoOpen(true)}>
               <i className="fa-solid fa-circle-info" />
@@ -622,15 +607,6 @@ export default function SettingsDrawer({
           onClose={() => setVoiceOpen(false)}
           settings={settings}
           update={update}
-        />
-        <PluginsDialog
-          open={pluginsOpen}
-          onClose={() => setPluginsOpen(false)}
-          plugins={plugins ?? []}
-          onToggle={(id, enabled) => onTogglePlugin?.(id, enabled)}
-          onRemoved={(id) => onRemoveDisabled?.(id)}
-          settings={settings}
-          updatePlugin={updatePlugin}
         />
     </>
   );

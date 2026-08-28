@@ -12,6 +12,7 @@ import UpdatePrompt from "../components/UpdatePrompt";
 import { useUpdater } from "../hooks/useUpdater";
 import TooltipLayer from "../components/TooltipLayer";
 import DiffPanel from "../components/DiffPanel";
+import PluginsDialog from "../components/PluginsDialog";
 
 // heavy panels → code-split: only fetched when opened (DiffPanel is NOT lazy:
 // GitPanel + ToolBlock statically import it, so a dynamic import wouldn't split)
@@ -61,6 +62,7 @@ export default function ChatPage() {
     settings,
   );
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [pluginsOpen, setPluginsOpen] = useState(false);
   const [diffOpen, setDiffOpen] = useState(false);
   // discord plugin reads this for {status} — file > diff > permission/question > compacting > busy > typing > working > idle
   const [editingFile, setEditingFile] = useState("");
@@ -833,6 +835,7 @@ export default function ChatPage() {
           onTogglePin={() => update({ alwaysOnTop: !settings.alwaysOnTop })}
           closeOnX={settings.closeOnX}
           onOpenSettings={openSettings}
+          onOpenPlugins={() => setPluginsOpen(true)}
           themes={themes}
           theme={settings.theme}
           onThemeChange={(t) => update({ theme: t })}
@@ -886,7 +889,6 @@ export default function ChatPage() {
             onClose={closeSettings}
             settings={settings}
             update={update}
-            updatePlugin={updatePlugin}
             updateSounds={updateSounds}
             updateColors={updateColors}
             resetColors={resetColors}
@@ -895,11 +897,17 @@ export default function ChatPage() {
             modes={activeModes}
             effectiveMode={effectiveMode}
             pluginDocs={pluginDocs}
-            plugins={plugins}
-            onTogglePlugin={toggleEnabled}
-            onRemoveDisabled={removeDisabled}
           />
         </Suspense>
+        <PluginsDialog
+          open={pluginsOpen}
+          onClose={() => setPluginsOpen(false)}
+          plugins={plugins}
+          onToggle={(id, enabled) => toggleEnabled(id, enabled)}
+          onRemoved={(id) => removeDisabled(id)}
+          settings={settings}
+          updatePlugin={updatePlugin}
+        />
         <div
           className={`layout${resizing ? " no-anim" : ""}`}
           style={

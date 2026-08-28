@@ -6,8 +6,8 @@
 //
 // Config : oc.settings.plugins["discord-rich-presence"] {
 //   clientId: string (défaut 1542215270972784804)
-//   detailsTpl: string (défaut "Opencode GUI")
-//   stateTpl: string (défaut "Working on: {workspace} • {status}")
+//   detailsTpl: string (défaut "{workspace}")
+//   stateTpl: string (défaut "{status}")
 //   largeImage: string (défaut "" = pas d'image, sinon "opencode-logo" si uploadée)
 //   largeTextTpl: string (défaut "{workspace}")
 // }
@@ -22,15 +22,23 @@ const DEFAULT_ID = "1542215270972784804";
 
 const DEF = {
   clientId: DEFAULT_ID,
-  detailsTpl: "Opencode GUI",
-  stateTpl: "Working on: {workspace} \u2022 {status}",
+  detailsTpl: "{workspace}",
+  stateTpl: "{status}",
   largeImage: "",
   largeTextTpl: "{workspace}",
 };
 
 function confOf(settings) {
   const cur = settings && settings.plugins && settings.plugins[ID];
-  if (cur && typeof cur === "object") return { ...DEF, ...cur };
+  if (cur && typeof cur === "object") {
+    const merged = { ...DEF, ...cur };
+    // migrate old combined default ("Opencode GUI" + "Working on: {workspace} • {status}") → split
+    if (cur.detailsTpl === "Opencode GUI" && typeof cur.stateTpl === "string" && cur.stateTpl.includes("Working on:")) {
+      merged.detailsTpl = DEF.detailsTpl;
+      merged.stateTpl = DEF.stateTpl;
+    }
+    return merged;
+  }
   return { ...DEF };
 }
 
@@ -154,14 +162,14 @@ export default function activate(api) {
           h("i", { className: "fa-solid fa-heading setting-icon" }),
           h("div", null,
             h("div", { className: "setting-name" }, "Details"),
-            h("div", { className: "setting-desc" }, "Ligne 1 — ex: Opencode GUI")
+            h("div", { className: "setting-desc mono-hint" }, "Variables: {workspace} {model} {status} — défaut {workspace}")
           )
         ),
         h("div", { className: "color-controls", style: { flexBasis: "100%", marginLeft: "30px" } },
           h("input", {
             className: "discord-in",
             value: conf.detailsTpl,
-            placeholder: "Opencode GUI",
+            placeholder: "{workspace}",
             spellCheck: false,
             onChange: (e) => set({ detailsTpl: e.target.value }),
           })
@@ -174,14 +182,14 @@ export default function activate(api) {
           h("i", { className: "fa-solid fa-align-left setting-icon" }),
           h("div", null,
             h("div", { className: "setting-name" }, "State"),
-            h("div", { className: "setting-desc mono-hint" }, "Variables: {workspace} {model} {status}")
+            h("div", { className: "setting-desc mono-hint" }, "Variables: {workspace} {model} {status} — défaut {status}")
           )
         ),
         h("div", { className: "color-controls", style: { flexBasis: "100%", marginLeft: "30px" } },
           h("input", {
             className: "discord-in",
             value: conf.stateTpl,
-            placeholder: "Working on: {workspace} \u2022 {status}",
+            placeholder: "{status}",
             spellCheck: false,
             onChange: (e) => set({ stateTpl: e.target.value }),
           })

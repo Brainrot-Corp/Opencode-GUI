@@ -14,6 +14,7 @@ export default function Titlebar({
   onTogglePin,
   closeOnX,
   onOpenSettings,
+  onOpenPlugins,
   themes,
   theme,
   onThemeChange,
@@ -29,6 +30,7 @@ export default function Titlebar({
   // true = the X button really quits instead of hiding to tray
   closeOnX?: boolean;
   onOpenSettings?: () => void;
+  onOpenPlugins?: () => void;
   themes?: ThemeMeta[];
   theme?: string;
   onThemeChange?: (t: string) => void;
@@ -134,6 +136,9 @@ export default function Titlebar({
         </button>
         {titlebarExtras}
         <span className="ctrl-sep" />
+        <button className="icon-btn" data-tip="Plugins" onClick={() => onOpenPlugins?.()}>
+          <i className="fa-solid fa-puzzle-piece" />
+        </button>
         <button className="icon-btn" data-tip="Settings" onClick={() => onOpenSettings?.()}>
           <i className="fa-solid fa-gear" />
         </button>
