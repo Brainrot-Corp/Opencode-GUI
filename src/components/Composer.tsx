@@ -6,6 +6,7 @@ import type { CmdEntry } from "../hooks/useOpencode";
 import { splitModel } from "../lib/models";
 import { useAttachments } from "../hooks/useAttachments";
 import { detectLang, escPlain, hlHtml, insertFenced, looksLikeCode } from "../lib/syntax";
+import { handleComposerKeys } from "../lib/editorKeys";
 import ModelMenu, { type ModelEntry } from "./ModelMenu";
 import SlashMenu from "./SlashMenu";
 import { playSound } from "../lib/sounds";
@@ -152,6 +153,11 @@ export default function Composer({
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const hlRef = useRef<HTMLDivElement>(null);
+  const historyRef = useRef<string[]>([]);
+  const futureRef = useRef<string[]>([]);
+  const isUndoRedoRef = useRef(false);
+  const inputRef2 = useRef(input);
+  inputRef2.current = input;
 
   // live highlight layer: rebuilt synchronously. Plain text bypasses the
   // overlay entirely (hasCode gate) so many newlines never drift; code
@@ -214,6 +220,61 @@ export default function Composer({
     if (!sessionId) return;
     setDraft(sessionId, input);
   }, [input, sessionId]);
+
+  // history for undo/redo of line ops (cut etc.) — also covers typing
+  const prevInputRef = useRef(input);
+  useEffect(() => {
+    if (isUndoRedoRef.current) {
+      prevInputRef.current = input;
+      return;
+    }
+    if (prevInputRef.current === input) return;
+    if (suppressSaveRef.current) {
+      prevInputRef.current = input;
+      historyRef.current = [];
+      futureRef.current = [];
+      return;
+    }
+    historyRef.current.push(prevInputRef.current);
+    if (historyRef.current.length > 200) historyRef.current.shift();
+    futureRef.current = [];
+    prevInputRef.current = input;
+  }, [input]);
+
+  const undoComposer = () => {
+    const h = historyRef.current;
+    if (!h.length) return false;
+    const prev = h.pop()!;
+    futureRef.current.push(inputRef2.current);
+    isUndoRedoRef.current = true;
+    setInput(prev);
+    requestAnimationFrame(() => {
+      isUndoRedoRef.current = false;
+      const ta = inputRef.current;
+      if (ta) {
+        ta.focus();
+        try { const p = Math.min(ta.selectionStart ?? 0, prev.length); ta.setSelectionRange(p, p); } catch {}
+      }
+    });
+    return true;
+  };
+  const redoComposer = () => {
+    const f = futureRef.current;
+    if (!f.length) return false;
+    const next = f.pop()!;
+    historyRef.current.push(inputRef2.current);
+    isUndoRedoRef.current = true;
+    setInput(next);
+    requestAnimationFrame(() => {
+      isUndoRedoRef.current = false;
+      const ta = inputRef.current;
+      if (ta) {
+        ta.focus();
+        try { const p = Math.min(ta.selectionStart ?? 0, next.length); ta.setSelectionRange(p, p); } catch {}
+      }
+    });
+    return true;
+  };
 
   const attach = useAttachments();
   const [preview, setPreview] = useState<string | null>(null);
@@ -752,6 +813,20 @@ export default function Composer({
                     }
                   }}
                   onKeyDown={(e) => {
+                    const el = e.currentTarget as HTMLTextAreaElement;
+                    const isMod = e.ctrlKey || e.metaKey;
+                    const k = e.key.toLowerCase();
+                    if (isMod && !e.altKey && k === "z" && !e.shiftKey) {
+                      e.preventDefault();
+                      undoComposer();
+                      return;
+                    }
+                    if (isMod && !e.altKey && (k === "y" || (k === "z" && e.shiftKey))) {
+                      e.preventDefault();
+                      redoComposer();
+                      return;
+                    }
+                    if (handleComposerKeys(e, el, input, setInput)) return;
                     // typing sounds only — all key ROUTING (menus, send,
                     // agent cycle) lives in the single global handler
                     if (!e.ctrlKey && !e.metaKey && !e.altKey) {

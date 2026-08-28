@@ -10,6 +10,7 @@ import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { opencode } from "../api";
 import { extLang, hlHtml } from "../lib/syntax";
+import { handleEditorKeys } from "../lib/editorKeys";
 import Dialog from "./Dialog";
 import "../styles/file-editor.css";
 
@@ -51,6 +52,11 @@ export default function FileEditor({
   const draftRef = useRef(draft);
   draftRef.current = draft;
   const savingRef = useRef(false);
+  // undo/redo for programmatic line ops (cut, delete, move, etc.) — native
+  // textarea history is lost for controlled value, so we keep our own
+  const historyRef = useRef<string[]>([]);
+  const futureRef = useRef<string[]>([]);
+  const isUndoRedoRef = useRef(false);
 
   const dirty = saved !== null && draft !== saved;
   const editable = !binary && !error && saved !== null;
@@ -74,6 +80,8 @@ export default function FileEditor({
       const text = fc?.content ?? "";
       setSaved(text);
       setDraft(text);
+      historyRef.current = [];
+      futureRef.current = [];
       setStaleDisk(null);
       setError("");
     } catch (e) {
@@ -83,6 +91,8 @@ export default function FileEditor({
 
   useEffect(() => {
     void load();
+    historyRef.current = [];
+    futureRef.current = [];
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [path]);
 
@@ -262,8 +272,58 @@ export default function FileEditor({
   };
 
   const applyEdit = (text: string) => {
+    if (text === draftRef.current) return;
+    if (!isUndoRedoRef.current) {
+      historyRef.current.push(draftRef.current);
+      if (historyRef.current.length > 200) historyRef.current.shift();
+      futureRef.current = [];
+    }
     setDraft(text);
     setStatus("");
+  };
+
+  const undo = () => {
+    const h = historyRef.current;
+    if (!h.length) return false;
+    const prev = h.pop()!;
+    futureRef.current.push(draftRef.current);
+    isUndoRedoRef.current = true;
+    setDraft(prev);
+    setStatus("");
+    requestAnimationFrame(() => {
+      isUndoRedoRef.current = false;
+      const ta = taRef.current;
+      if (ta) {
+        ta.focus();
+        try {
+          const pos = Math.min(ta.selectionStart ?? 0, prev.length);
+          ta.setSelectionRange(pos, pos);
+        } catch {}
+      }
+    });
+    return true;
+  };
+
+  const redo = () => {
+    const f = futureRef.current;
+    if (!f.length) return false;
+    const next = f.pop()!;
+    historyRef.current.push(draftRef.current);
+    isUndoRedoRef.current = true;
+    setDraft(next);
+    setStatus("");
+    requestAnimationFrame(() => {
+      isUndoRedoRef.current = false;
+      const ta = taRef.current;
+      if (ta) {
+        ta.focus();
+        try {
+          const pos = Math.min(ta.selectionStart ?? 0, next.length);
+          ta.setSelectionRange(pos, pos);
+        } catch {}
+      }
+    });
+    return true;
   };
 
   const replaceCurrent = () => {
@@ -285,9 +345,22 @@ export default function FileEditor({
     applyEdit(e.target.value);
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    const ta = e.currentTarget;
+    const isMod = e.ctrlKey || e.metaKey;
+    const k = e.key.toLowerCase();
+    if (isMod && !e.altKey && k === "z" && !e.shiftKey) {
+      e.preventDefault();
+      undo();
+      return;
+    }
+    if (isMod && !e.altKey && (k === "y" || (k === "z" && e.shiftKey))) {
+      e.preventDefault();
+      redo();
+      return;
+    }
+    if (handleEditorKeys(e, ta, draft, applyEdit, { path, allowInsert: true })) return;
     if (e.key === "Tab") {
       e.preventDefault();
-      const ta = e.currentTarget;
       const s = ta.selectionStart;
       const en = ta.selectionEnd;
       applyEdit(draft.slice(0, s) + "  " + draft.slice(en));

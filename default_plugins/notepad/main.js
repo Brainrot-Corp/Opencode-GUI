@@ -48,6 +48,130 @@ function save(state, notify=true){
 // fast compare to avoid feedback loops
 function equal(a,b){ try{ return JSON.stringify(a)===JSON.stringify(b); }catch{ return false; } }
 
+// ---- VS Code line ops (mirrors src/lib/editorKeys.ts) — plain JS copy for the plugin sandbox ----
+function npGetLineAt(text, pos){
+  const p = Math.max(0, Math.min(pos, text.length));
+  const start = text.lastIndexOf("\n", p - 1) + 1;
+  const nl = text.indexOf("\n", p);
+  const end = nl === -1 ? text.length : nl;
+  const endWithNl = nl === -1 ? text.length : nl + 1;
+  return { start, end, endWithNl };
+}
+function npGetBlockRange(text, a, b){
+  const lo = Math.min(a,b), hi = Math.max(a,b);
+  if(lo===hi){ const r=npGetLineAt(text,lo); return { start:r.start, end:r.end, endWithNl:r.endWithNl }; }
+  const r0=npGetLineAt(text,lo);
+  const r1=npGetLineAt(text, hi-1);
+  return { start:r0.start, end:r1.end, endWithNl:r1.endWithNl };
+}
+function npCopyToClipboard(text){
+  try{
+    if(navigator.clipboard&&navigator.clipboard.writeText){ void navigator.clipboard.writeText(text); return; }
+  }catch{}
+  try{
+    const ta=document.createElement("textarea");
+    ta.value=text; ta.style.position="fixed"; ta.style.opacity="0";
+    document.body.appendChild(ta); ta.select();
+    document.execCommand("copy"); ta.remove();
+  }catch{}
+}
+function npOpCopyLine(text,pos){ const {start,endWithNl}=npGetLineAt(text,pos); return text.slice(start,endWithNl); }
+function npOpCutLine(text,pos){ const {start,endWithNl}=npGetLineAt(text,pos); return { text:text.slice(0,start)+text.slice(endWithNl), caret:start }; }
+function npOpDeleteLine(text,a,b){
+  const {start,endWithNl}=npGetBlockRange(text,a,b);
+  if(start===0&&endWithNl===text.length) return { text:"", caret:0 };
+  return { text:text.slice(0,start)+text.slice(endWithNl), caret:Math.min(start,text.length) };
+}
+function npOpDuplicate(text,a,b,dir){
+  const {start,end,endWithNl}=npGetBlockRange(text,a,b);
+  const hasNl=endWithNl>end;
+  const block=hasNl?text.slice(start,endWithNl):text.slice(start,end);
+  if(!block) return { text, caret:a };
+  if(!hasNl){
+    if(dir==="down"){
+      const nt=text.slice(0,end)+"\n"+block+text.slice(end);
+      const caret=end+1+(a-start);
+      return { text:nt, caret };
+    } else {
+      const nt=text.slice(0,start)+block+"\n"+text.slice(start);
+      const caret=start+(a-start);
+      return { text:nt, caret };
+    }
+  }
+  if(dir==="down"){
+    const nt=text.slice(0,endWithNl)+block+text.slice(endWithNl);
+    const caret=endWithNl + (a - start);
+    return { text:nt, caret };
+  } else {
+    const nt=text.slice(0,start)+block+text.slice(start);
+    const caret=start + (a - start);
+    return { text:nt, caret };
+  }
+}
+function npOpMoveLine(text,a,b,dir){
+  const {start,end}=npGetBlockRange(text,a,b);
+  const startLine=(text.slice(0,start).match(/\n/g)||[]).length;
+  const endLine=(text.slice(0,end).match(/\n/g)||[]).length;
+  const lines=text.split("\n");
+  const count=endLine-startLine+1;
+  if(dir==="down"){
+    if(endLine>=lines.length-1) return null;
+    const nextLine=lines[endLine+1];
+    const block=lines.splice(startLine,count);
+    lines.splice(startLine+1,0,...block);
+    const nt=lines.join("\n");
+    const caret=a + nextLine.length + 1;
+    return { text:nt, caret:Math.min(caret,nt.length) };
+  } else {
+    if(startLine===0) return null;
+    const prevLine=lines[startLine-1];
+    const block=lines.splice(startLine,count);
+    lines.splice(startLine-1,0,...block);
+    const nt=lines.join("\n");
+    const caret=a - (prevLine.length + 1);
+    return { text:nt, caret:Math.max(0,caret) };
+  }
+}
+function npOpSelectLine(text,pos){ const {start,end}=npGetLineAt(text,pos); return { start,end }; }
+function npOpInsertLine(text,pos,dir){
+  const {start,endWithNl}=npGetLineAt(text,pos);
+  if(dir==="below"){
+    const insAt=endWithNl;
+    return { text:text.slice(0,insAt)+"\n"+text.slice(insAt), caret:insAt };
+  } else {
+    return { text:text.slice(0,start)+"\n"+text.slice(start), caret:start };
+  }
+}
+function npOpToggleComment(text,a,b){
+  const {start,endWithNl}=npGetBlockRange(text,a,b);
+  const block=text.slice(start,endWithNl);
+  const hasNl=block.endsWith("\n");
+  const lines=block.split("\n");
+  const raw=hasNl?lines.slice(0,-1):lines;
+  const prefix="//";
+  const nonEmpty=raw.filter(l=>l.trim().length>0);
+  const all=nonEmpty.length>0 && nonEmpty.every(l=>l.trimStart().startsWith(prefix));
+  const out=raw.map(l=>{
+    if(l.trim().length===0) return l;
+    const indentLen=l.length-l.trimStart().length;
+    const indent=l.slice(0,indentLen);
+    const rest=l.slice(indentLen);
+    if(all){
+      if(rest.startsWith(prefix+" ")) return indent+rest.slice(prefix.length+1);
+      if(rest.startsWith(prefix)) return indent+rest.slice(prefix.length);
+      return l;
+    } else {
+      return indent+prefix+" "+rest;
+    }
+  });
+  let newBlock=out.join("\n");
+  if(hasNl) newBlock+="\n";
+  const nt=text.slice(0,start)+newBlock+text.slice(endWithNl);
+  const caret=Math.min(start,nt.length);
+  const selEnd=caret + newBlock.length - (hasNl?1:0);
+  return { text:nt, caret, selEnd };
+}
+
 export default function activate(api){
   const { h, useState, useEffect, useRef } = api;
 
@@ -85,6 +209,9 @@ export default function activate(api){
     // debounce content writes — typing stays in React state, localStorage after idle
     const saveTimer = useRef(0);
     const pendingRef = useRef(null);
+    const historyRef = useRef([]);
+    const futureRef = useRef([]);
+    const isUndoRedoRef = useRef(false);
 
     // sync from external toggle / other panel instance / storage — ignore if equal to avoid feedback loop
     useEffect(()=>{
@@ -168,12 +295,143 @@ export default function activate(api){
     const active = state.tabs.find(t=>t.id===state.activeId) || state.tabs[0];
     const geom = state.geom;
 
-    const setActive = (id)=> apply(s=> ({...s, activeId:id}), true);
+    const setActive = (id)=> {
+      // switching tabs resets undo history for the tab
+      historyRef.current = [];
+      futureRef.current = [];
+      apply(s=> ({...s, activeId:id}), true);
+    };
 
-    const updateContent = (v)=> apply(s=>{
-      const tabs = s.tabs.map(t=> t.id===s.activeId ? {...t, content:v} : t);
-      return {...s, tabs};
-    }, false);
+    const updateContent = (v)=> {
+      const cur = stateRef.current.tabs.find(t=>t.id===stateRef.current.activeId)?.content ?? "";
+      if (!isUndoRedoRef.current && v !== cur) {
+        historyRef.current.push(cur);
+        if (historyRef.current.length > 200) historyRef.current.shift();
+        futureRef.current = [];
+      }
+      apply(s=>{
+        const tabs = s.tabs.map(t=> t.id===s.activeId ? {...t, content:v} : t);
+        return {...s, tabs};
+      }, false);
+    };
+
+    const undoNotepad = ()=>{
+      const h = historyRef.current;
+      if (!h.length) return false;
+      const cur = stateRef.current.tabs.find(t=>t.id===stateRef.current.activeId)?.content ?? "";
+      const prev = h.pop();
+      futureRef.current.push(cur);
+      isUndoRedoRef.current = true;
+      updateContent(prev);
+      requestAnimationFrame(()=>{
+        isUndoRedoRef.current = false;
+        const ta = taRef.current;
+        if (ta) {
+          ta.focus();
+          try { const p = Math.min(ta.selectionStart ?? 0, prev.length); ta.setSelectionRange(p,p); } catch {}
+        }
+      });
+      return true;
+    };
+    const redoNotepad = ()=>{
+      const f = futureRef.current;
+      if (!f.length) return false;
+      const cur = stateRef.current.tabs.find(t=>t.id===stateRef.current.activeId)?.content ?? "";
+      const next = f.pop();
+      historyRef.current.push(cur);
+      isUndoRedoRef.current = true;
+      updateContent(next);
+      requestAnimationFrame(()=>{
+        isUndoRedoRef.current = false;
+        const ta = taRef.current;
+        if (ta) {
+          ta.focus();
+          try { const p = Math.min(ta.selectionStart ?? 0, next.length); ta.setSelectionRange(p,p); } catch {}
+        }
+      });
+      return true;
+    };
+
+    const onNotepadKeyDown = (e)=>{
+      const ta = e.currentTarget;
+      const text = ta.value;
+      const hasSel = ta.selectionStart !== ta.selectionEnd;
+      const pos = ta.selectionStart ?? 0;
+      const selEnd = ta.selectionEnd ?? 0;
+      const ctrl = e.ctrlKey || e.metaKey;
+      const key = e.key;
+      const code = e.code;
+      if(ctrl && !e.altKey && key.toLowerCase()==="z" && !e.shiftKey){
+        e.preventDefault();
+        undoNotepad();
+        return;
+      }
+      if(ctrl && !e.altKey && (key.toLowerCase()==="y" || (key.toLowerCase()==="z" && e.shiftKey))){
+        e.preventDefault();
+        redoNotepad();
+        return;
+      }
+      // Ctrl+C copy line when no selection
+      if(ctrl && !e.altKey && !e.shiftKey && key.toLowerCase()==="c" && !hasSel){
+        const line = npOpCopyLine(text, pos);
+        if(line!=null){ e.preventDefault(); npCopyToClipboard(line); return; }
+      }
+      if(ctrl && !e.altKey && !e.shiftKey && key.toLowerCase()==="x" && !hasSel){
+        const line=npOpCopyLine(text,pos);
+        const cut=npOpCutLine(text,pos);
+        e.preventDefault();
+        if(line) npCopyToClipboard(line);
+        updateContent(cut.text);
+        requestAnimationFrame(()=>{ try{ ta.setSelectionRange(cut.caret, cut.caret);}catch{} });
+        return;
+      }
+      if(ctrl && e.shiftKey && !e.altKey && key.toLowerCase()==="k"){
+        e.preventDefault();
+        const r=npOpDeleteLine(text, ta.selectionStart??0, ta.selectionEnd??0);
+        updateContent(r.text);
+        requestAnimationFrame(()=>{ try{ ta.setSelectionRange(r.caret,r.caret);}catch{} });
+        return;
+      }
+      if(ctrl && !e.altKey && !e.shiftKey && key.toLowerCase()==="l"){
+        e.preventDefault();
+        const {start,end}=npOpSelectLine(text,pos);
+        requestAnimationFrame(()=>{ try{ ta.setSelectionRange(start,end);}catch{} });
+        return;
+      }
+      const isSlash = key==="/" || code==="Slash" || code==="NumpadDivide";
+      if(ctrl && !e.altKey && !e.shiftKey && isSlash){
+        e.preventDefault();
+        const r=npOpToggleComment(text, ta.selectionStart??0, ta.selectionEnd??0);
+        updateContent(r.text);
+        requestAnimationFrame(()=>{ try{ ta.setSelectionRange(r.caret, r.selEnd);}catch{} });
+        return;
+      }
+      if(e.altKey && !ctrl && (key==="ArrowUp" || key==="ArrowDown")){
+        e.preventDefault();
+        const isDup=e.shiftKey;
+        if(isDup){
+          const dir=key==="ArrowUp"?"up":"down";
+          const r=npOpDuplicate(text, ta.selectionStart??0, ta.selectionEnd??0, dir);
+          updateContent(r.text);
+          requestAnimationFrame(()=>{ try{ ta.setSelectionRange(r.caret,r.caret);}catch{} });
+        } else {
+          const dir=key==="ArrowUp"?"up":"down";
+          const r=npOpMoveLine(text, ta.selectionStart??0, ta.selectionEnd??0, dir);
+          if(!r) return;
+          updateContent(r.text);
+          requestAnimationFrame(()=>{ try{ ta.setSelectionRange(r.caret,r.caret);}catch{} });
+        }
+        return;
+      }
+      if(ctrl && key==="Enter"){
+        e.preventDefault();
+        const dir=e.shiftKey?"above":"below";
+        const r=npOpInsertLine(text,pos,dir);
+        updateContent(r.text);
+        requestAnimationFrame(()=>{ try{ ta.setSelectionRange(r.caret,r.caret);}catch{} });
+        return;
+      }
+    };
 
     const addTab = ()=>{
       const id = uid();
@@ -373,7 +631,8 @@ export default function activate(api){
           value: active ? active.content : "",
           placeholder:"Scratch notes…",
           spellCheck:false,
-          onChange:(e)=> updateContent(e.target.value)
+          onChange:(e)=> updateContent(e.target.value),
+          onKeyDown: onNotepadKeyDown
         })
       ),
       h("div", { className:"notepad-handle n", onMouseDown:onResizeStart("n") }),
@@ -390,6 +649,15 @@ export default function activate(api){
   return {
     Titlebar: TitlebarBtn,
     Overlay: Overlay,
-    info:{ keys:[["Notepad (Titlebar)","Toggle floating notepad (sticky-note icon) — Titlebar only"]] }
+    info:{ keys:[
+      ["Notepad (Titlebar)","Toggle floating notepad (sticky-note icon) — Titlebar only"],
+      ["Ctrl+C / Ctrl+X (no selection)","Copy / cut current line"],
+      ["Ctrl+Shift+K","Delete line"],
+      ["Alt+↑ / Alt+↓","Move line up / down"],
+      ["Shift+Alt+↑ / Shift+Alt+↓","Duplicate line up / down"],
+      ["Ctrl+/","Toggle line comment (//)"],
+      ["Ctrl+L","Select line"],
+      ["Ctrl+Enter / Ctrl+Shift+Enter","Insert line below / above"],
+    ] }
   };
 }

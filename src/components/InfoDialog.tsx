@@ -91,6 +91,21 @@ const KEYS: Group[] = [
     [
       ["/ + ↑↓ Tab Enter Esc", "slash-command autocomplete"],
       ["↑↓ · Home/End", "navigate the model menu"],
+      ["Ctrl+C / Ctrl+X (no selection)", "copy / cut current line (Enter still sends)"],
+    ],
+  ],
+  [
+    "Editor — File Editor & Notepad",
+    [
+      ["Ctrl+C / Ctrl+X (no selection)", "copy / cut current line"],
+      ["Ctrl+Shift+K", "delete line"],
+      ["Alt+↑ / Alt+↓", "move line up / down"],
+      ["Shift+Alt+↑ / Shift+Alt+↓", "duplicate line up / down"],
+      ["Ctrl+/", "toggle line comment (per file type: //, #, <!-- -->, /* */)"],
+      ["Ctrl+L", "select line"],
+      ["Ctrl+Enter / Ctrl+Shift+Enter", "insert line below / above"],
+      ["Tab", "indent (File Editor & Notepad) — 2 spaces"],
+      ["Ctrl+S / Ctrl+F", "save / find (File Editor)"],
     ],
   ],
 ];
