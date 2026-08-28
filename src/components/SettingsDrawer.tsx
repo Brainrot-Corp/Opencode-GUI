@@ -81,9 +81,12 @@ export default function SettingsDrawer({
     void fetchTerminalProfiles().catch(() => {});
   }, [open, termProfiles.length]);
 
-  const [debugLocalPath, setDebugLocalPath] = useState("");
+  const [debugLocalPath, setDebugLocalPath] = useState(() => {
+    try { return localStorage.getItem("oc.debugLocalPath") ?? ""; } catch { return ""; }
+  });
   const [debugLocalErr, setDebugLocalErr] = useState("");
   const [debugLocalBusy, setDebugLocalBusy] = useState(false);
+  useEffect(() => { try { localStorage.setItem("oc.debugLocalPath", debugLocalPath); } catch {} }, [debugLocalPath]);
   async function handleDebugLocal() {
     const folder = debugLocalPath.trim();
     if (!folder) return;
