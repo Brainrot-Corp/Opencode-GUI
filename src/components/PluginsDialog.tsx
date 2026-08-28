@@ -256,10 +256,18 @@ export default function PluginsDialog({
                   <i className="fa-solid fa-download" /> Update all
                 </button>
               )}
-              <label className="mono-hint" data-tip="When on, plugins update automatically as soon as a newer version is found" style={{ display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer", userSelect: "none", whiteSpace: "nowrap" }}>
-                <input type="checkbox" checked={!!autoUpdateEnabled} onChange={(e) => onToggleAutoUpdate?.(e.target.checked)} style={{ accentColor: "var(--accent)" }} />
-                Auto-update
-              </label>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 8, userSelect: "none", whiteSpace: "nowrap" }} data-tip="When on, plugins update automatically as soon as a newer version is found">
+                <span className="mono-hint">Auto-update</span>
+                <button
+                  type="button"
+                  className={`toggle${autoUpdateEnabled ? " on" : ""}`}
+                  aria-pressed={!!autoUpdateEnabled}
+                  aria-label="Auto-update plugins"
+                  onClick={() => onToggleAutoUpdate?.(!autoUpdateEnabled)}
+                >
+                  <span className="knob" />
+                </button>
+              </span>
               <button
                 type="button"
                 className="reset-btn"
