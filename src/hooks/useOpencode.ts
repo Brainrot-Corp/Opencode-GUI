@@ -1017,13 +1017,33 @@ export function useOpencode() {
   const forkFrom = useCallback(async (messageID: string) => {
     const id = activeRef.current;
     if (!id) return;
+    let pasteText = "";
+    try {
+      const all = store.cached(id) ?? msgs;
+      const target = all.find((m: any) => m.info?.id === messageID);
+      if (target) {
+        const parts: any[] = (target as any).parts ?? [];
+        pasteText = parts
+          .filter((p: any) => p.type === "text" && typeof p.text === "string")
+          .map((p: any) => p.text.trim())
+          .filter(Boolean)
+          .join("\n");
+      }
+    } catch {}
     const { client } = await opencode();
     const r: any = await (client.session as any).fork({ path: { id }, body: { messageID } });
     const s = r.data as Session;
+    if (pasteText) {
+      try { setDraft(s.id, pasteText); } catch {}
+    }
     await refreshSessions();
     await openSession(s.id);
+    if (pasteText) {
+      try { setDraft(s.id, pasteText); } catch {}
+      window.dispatchEvent(new CustomEvent("oc:rewind-input", { detail: pasteText }));
+    }
     return s.id;
-  }, [refreshSessions, openSession]);
+  }, [refreshSessions, openSession, msgs]);
 
   const togglePin = useCallback((id: string) => {
     try {
