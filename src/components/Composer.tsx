@@ -447,7 +447,7 @@ export default function Composer({
           c.name.toLowerCase().includes(q) ||
           c.description.toLowerCase().includes(q),
       )
-      .slice(0, 12);
+      .slice(0, 24);
   }, [slashQ, commands]);
   const cmdOpen = slashQ !== null && !cmdClosed && cmdEntries.length > 0;
   useEffect(() => {

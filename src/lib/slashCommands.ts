@@ -91,6 +91,18 @@ export async function handleSlash(text: string, ctx: SlashCtx): Promise<boolean>
       return true;
   }
 
+  // plugin slash — client-side, no session required (Tuya etc. works globally)
+  const plug = ctx.pluginSlash?.find((c) => c.name === name);
+  if (plug) {
+    try {
+      const out = await plug.handle(args ?? "");
+      if (out) ctx.setError(String(out));
+    } catch (e) {
+      ctx.setError(String(e));
+    }
+    return true;
+  }
+
   const id = ctx.activeId;
 
   if (id) {
@@ -162,19 +174,6 @@ export async function handleSlash(text: string, ctx: SlashCtx): Promise<boolean>
       case "agents":
         ctx.cycleAgent();
         return true;
-    }
-
-    // plugin-contributed slash commands (client-side, no server round-trip)
-    const plug = ctx.pluginSlash?.find((c) => c.name === name);
-    if (plug) {
-      try {
-        const out = await plug.handle(args ?? "");
-        if (out) ctx.setError(String(out));
-        else if (out === "") {/* silent success */}
-      } catch (e) {
-        ctx.setError(String(e));
-      }
-      return true;
     }
 
     // server registry: custom + plugin + skill commands

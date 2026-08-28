@@ -79,12 +79,9 @@ export function useOpencode() {
     });
   }, []);
   const [commands, setCommands] = useState<Cmd[]>([]);
-  const [slashTick, setSlashTick] = useState(0);
-  useEffect(() => {
-    const h = () => setSlashTick((x) => x + 1);
-    window.addEventListener("oc:plugin-slash", h);
-    return () => window.removeEventListener("oc:plugin-slash", h);
-  }, []);
+  // plugin slash commands are aggregated in src/lib/plugins.ts slashStore;
+  // cmdList is built from that store directly each render so autocomplete
+  // never goes stale even if the oc:plugin-slash event fires before mount.
   const [agents, setAgents] = useState<{ name: string; mode: string }[]>([]);
   const [agentSel, setAgentSel] = useState("");
   // per-session agent memory: only entries that were EXPLICITLY picked for
@@ -1253,18 +1250,15 @@ export function useOpencode() {
     ],
   );
 
-  const cmdList = useMemo<CmdEntry[]>(
-    () =>
-      buildCmdList(commands, {
-        agents,
-        agentSel,
-        modelVariants: prov.modelVariants,
-        variantSel: prov.variantSel,
-        pluginSlash: getPluginSlash(),
-      }),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [commands, agents, agentSel, prov.modelVariants, prov.variantSel, slashTick],
-  );
+  // recompute every render — pluginSlash is external mutable state, so memo
+  // deps would be fragile (event race). List is small, no perf concern.
+  const cmdList = buildCmdList(commands, {
+    agents,
+    agentSel,
+    modelVariants: prov.modelVariants,
+    variantSel: prov.variantSel,
+    pluginSlash: getPluginSlash(),
+  });
 
   const removeSession = useCallback(
     async (id: string) => {

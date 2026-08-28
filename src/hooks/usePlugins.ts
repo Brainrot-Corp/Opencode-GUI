@@ -11,9 +11,9 @@ import {
   enablePlugin,
   unloadPluginResources,
   syncPluginsIncremental,
+  syncPluginVocabAndSlash,
   type LoadedPlugin,
 } from "../lib/plugins";
-import { setPluginLexicon } from "../lib/voiceLexicon";
 
 export function usePlugins() {
   const [plugins, setPlugins] = useState<LoadedPlugin[]>([]);
@@ -98,7 +98,7 @@ export function usePlugins() {
           const next = prev.map((p) =>
             p.id === id || p.dir === id ? { ...p, disabled: true, ext: null, error: "" } : p,
           );
-          setPluginLexicon(next.flatMap((p) => (p.disabled ? [] : p.ext?.lexicon ?? [])));
+          syncPluginVocabAndSlash(next);
           prevRef.current = new Map(next.map((p) => [p.id, p] as const));
           const errs = next.filter((p) => p.error);
           setError(errs.length ? errs.map((p) => `${p.name}: ${p.error}`).join(" · ") : "");
@@ -121,7 +121,7 @@ export function usePlugins() {
             } else {
               next = [...prev, p];
             }
-            setPluginLexicon(next.flatMap((x) => (x.disabled ? [] : x.ext?.lexicon ?? [])));
+            syncPluginVocabAndSlash(next);
             prevRef.current = new Map(next.map((x) => [x.id, x] as const));
             const errs = next.filter((x) => x.error);
             setError(errs.length ? errs.map((x) => `${x.name}: ${x.error}`).join(" · ") : "");

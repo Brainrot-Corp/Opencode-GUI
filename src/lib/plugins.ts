@@ -172,9 +172,13 @@ export function removeDisabledId(id: string): void {
 // slash registry — aggregated from loaded plugins for handleSlash/buildCmdList
 let slashStore: { name: string; description: string; takesArgs?: boolean; handle: (args: string) => Promise<string | void> | string | void }[] = [];
 export function getPluginSlash() { return slashStore; }
-function setSlashFrom(plugins: LoadedPlugin[]) {
+export function setSlashFrom(plugins: LoadedPlugin[]) {
   slashStore = plugins.flatMap((p) => (p.disabled ? [] : p.ext?.slash ?? []));
   try { window.dispatchEvent(new CustomEvent("oc:plugin-slash", { detail: slashStore.map((s) => s.name) })); } catch {}
+}
+export function syncPluginVocabAndSlash(plugins: LoadedPlugin[]) {
+  setPluginLexicon(plugins.flatMap((p) => (p.disabled ? [] : p.ext?.lexicon ?? [])));
+  setSlashFrom(plugins);
 }
 
  // assets of the last load — active resources keyed by dir so a single
