@@ -922,6 +922,86 @@ fn unpoison_input(app: &tauri::AppHandle) {
 #[cfg(not(windows))]
 fn unpoison_input(_app: &tauri::AppHandle) {}
 
+// Alt+Tab / taskbar / tray reactivation leaves keyboard input dead until a
+// click. Root cause (tauri#15624): with the `unstable` feature the main
+// webview is built as a child webview, so wry never attaches its parent
+// subclass (WM_SETFOCUS -> MoveFocus) — and on reactivation focus can land
+// directly on the WebView2 child HWND, so the top-level never sees
+// WM_SETFOCUS and no repair runs. Fixed upstream in tauri#15625 / wry#1755,
+// not yet released (tauri 2.11.5 is current) — this is that fix, app-side:
+// subclass the top-level for WM_ACTIVATE and re-seed the controller with
+// MoveFocus(PROGRAMMATIC). The MoveFocus must be DEFERRED via a posted
+// message: issued synchronously inside WM_ACTIVATE it gets overwritten when
+// Windows subsequently restores focus to the webview child. WA_INACTIVE is
+// skipped so only activation edges re-seed; the posted message cannot
+// re-enter WM_ACTIVATE, so no focus loop.
+#[cfg(windows)]
+mod webfocus {
+    use webview2_com::Microsoft::Web::WebView2::Win32::{
+        ICoreWebView2Controller, COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC,
+    };
+
+    const WM_ACTIVATE: u32 = 0x0006;
+    const WA_INACTIVE: u16 = 0;
+    // WM_APP range — nothing else in this app uses it for the main window
+    const MSG_REFOCUS: u32 = 0x8000 + 0x5043; // WM_APP + 'PC'
+    const SUBCLASS_ID: usize = 0x0C47; // 'OC'
+
+    type LRESULT = isize;
+    type SubclassProc = unsafe extern "system" fn(
+        hwnd: isize,
+        msg: u32,
+        wparam: usize,
+        lparam: isize,
+        id: usize,
+        data: usize,
+    ) -> LRESULT;
+
+    extern "system" {
+        fn SetWindowSubclass(hwnd: isize, proc: SubclassProc, id: usize, data: usize) -> i32;
+        fn DefSubclassProc(hwnd: isize, msg: u32, wparam: usize, lparam: isize) -> LRESULT;
+        fn PostMessageW(hwnd: isize, msg: u32, wparam: usize, lparam: isize) -> i32;
+    }
+
+    unsafe extern "system" fn proc(
+        hwnd: isize,
+        msg: u32,
+        wparam: usize,
+        lparam: isize,
+        _id: usize,
+        data: usize,
+    ) -> LRESULT {
+        if msg == WM_ACTIVATE {
+            // let normal activation routing run first...
+            let r = DefSubclassProc(hwnd, msg, wparam, lparam);
+            if (wparam as u16) != WA_INACTIVE {
+                PostMessageW(hwnd, MSG_REFOCUS, 0, 0);
+            }
+            return r;
+        }
+        if msg == MSG_REFOCUS {
+            let controller = data as *mut ICoreWebView2Controller;
+            if !controller.is_null() {
+                let _ = (*controller).MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC);
+            }
+        }
+        DefSubclassProc(hwnd, msg, wparam, lparam)
+    }
+
+    // attach on the main thread once the main window exists; the controller
+    // is handed to the subclass and lives as long as the window
+    pub fn install(window: &tauri::WebviewWindow) {
+        let Ok(hwnd) = window.hwnd() else { return };
+        let h = hwnd.0 as isize;
+        let _ = window.with_webview(move |wv| {
+            let data = Box::into_raw(Box::new(wv.controller())) as usize;
+            unsafe {
+                SetWindowSubclass(h, proc, SUBCLASS_ID, data);
+            }
+        });
+    }
+}
+
 // snap the main window back to the size declared in tauri.conf.json — shared
 // by the tray-reopen reset and the launch reset ("Keep window size" off)
 fn apply_default_size(app: &tauri::AppHandle) {
@@ -1569,6 +1649,9 @@ pub fn run() {
                     if let Ok(hwnd) = w.hwnd() {
                         write_last_focused(app.handle(), hwnd.0 as isize);
                     }
+                    // keyboard-focus repair across reactivation (alt-tab /
+                    // taskbar / tray) — see webfocus module docs
+                    webfocus::install(&w);
                 }
             }
 

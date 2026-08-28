@@ -2772,6 +2772,7 @@ dependencies = [
  "tauri-plugin-global-shortcut",
  "tauri-plugin-single-instance",
  "tauri-plugin-window-state",
+ "webview2-com",
  "window-vibrancy",
  "windows 0.58.0",
  "winreg 0.52.0",
