@@ -1,6 +1,0 @@
-{
-  "id": "tuya-curtains-control",
-  "name": "Curtains (deprecated)",
-  "version": "2.0.0",
-  "description": "Deprecated — merged into tuya-lights-control v2 (now Tuya). Remove this folder; install/update default_plugins/tuya-lights-control instead."
-}
