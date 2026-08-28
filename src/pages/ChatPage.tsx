@@ -27,7 +27,7 @@ import { useGlobalShortcuts } from "../hooks/useGlobalShortcuts";
 import { useVoice } from "../hooks/useVoice";
 import { routeVoice, routerInput, type VoiceAct } from "../lib/voiceRouter";
 import { ensureDict } from "../lib/dictWords";
-import { pickWorkspace } from "../lib/workspace";
+import { pickWorkspace, getLastWorkspace, getAllWorkspaces } from "../lib/workspace";
 import { playSound } from "../lib/sounds";
 import { useSpeech } from "../hooks/useSpeech";
 import { matchesEvent } from "../lib/hotkeys";
@@ -244,7 +244,15 @@ export default function ChatPage() {
     onToggleSettings: toggleSettings,
     onOpenWorkspace: () => void pickWorkspace(),
     onNewInstance: () => void invoke("spawn_new_instance"),
-    onNewSession: () => void oc.newSession(),
+    onNewSession: () => {
+      const last = getLastWorkspace();
+      if (last) {
+        const all = getAllWorkspaces();
+        const exists = all.some((d) => d.toLowerCase() === last.toLowerCase());
+        if (exists) { void (oc as any).newSession(last); return; }
+      }
+      void (oc as any).newSession();
+    },
   });
 
   // spoken rendering of a voice act — used to read embedded commands back

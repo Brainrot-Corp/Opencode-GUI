@@ -14,6 +14,7 @@ import {
 import { playSound } from "../lib/sounds";
 import { createSessionStore } from "../lib/sessionStore";
 import { splitModel } from "../lib/models";
+import { touchWorkspace } from "../lib/workspace";
 import { createBusyTracker } from "../lib/busyTracker";
 import {
   buildCmdList,
@@ -469,6 +470,8 @@ export function useOpencode() {
 
   const openSession = useCallback(async (id: string) => {
     localStorage.setItem(LAST_KEY, id);
+    const dirForOpen = sessionDirRef.current.get(id);
+    if (dirForOpen) touchWorkspace(dirForOpen);
     activeRef.current = id;
     setActiveId(id);
     setPermission(permissionsRef.current.get(id) ?? null);
@@ -476,7 +479,7 @@ export function useOpencode() {
     const cached = store.cached(id);
     setMsgs(cached ? [...cached] : []);
     const seq = store.beginFetch(id);
-    const dirFor = sessionDirRef.current.get(id) ?? getDirectory();
+    const dirFor = dirForOpen ?? getDirectory();
     const { client } = dirFor ? await opencodeFor(dirFor) : await opencode();
     const r = await (client.session as any).messages({ path: { id } });
     if (store.isStale(id, seq)) return;
@@ -908,6 +911,7 @@ export function useOpencode() {
 
   const newSession = useCallback(async (dir?: string) => {
     const effDir = (dir ?? getDirectory()).trim();
+    touchWorkspace(effDir);
     const { client } = effDir ? await opencodeFor(effDir) : await opencode();
     const r = await (client.session as any).create({ body: {} });
     const s = r.data as Session;
@@ -1255,6 +1259,7 @@ export function useOpencode() {
   const removeSession = useCallback(
     async (id: string) => {
       const dirFor = sessionDirRef.current.get(id) ?? getDirectory();
+      if (dirFor) touchWorkspace(dirFor);
       const { client } = dirFor ? await opencodeFor(dirFor) : await opencode();
       await (client.session as any).delete({ path: { id } }).catch(() => {});
       sessionDirRef.current.delete(id);
@@ -1364,6 +1369,7 @@ export function useOpencode() {
   const isPinned = useCallback((id: string) => getPinned().has(id), []);
 
   const clearSessionsFor = useCallback(async (dir: string) => {
+    if (dir) touchWorkspace(dir);
     const norm = (dir ?? "").toLowerCase();
     const ids = sessionsRef.current
       .filter((s) => (sessionDirRef.current.get(s.id) ?? "").toLowerCase() === norm)

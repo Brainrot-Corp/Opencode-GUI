@@ -3,6 +3,27 @@ import { invoke } from "@tauri-apps/api/core";
 import { getDirectory, setDirectory } from "../api";
 
 const MAX_EXTRA = 5;
+const LAST_WS_KEY = "oc.lastWorkspace";
+
+export function getLastWorkspace(): string | null {
+  try {
+    const v = localStorage.getItem(LAST_WS_KEY);
+    if (typeof v === "string" && v) return v;
+    return null;
+  } catch { return null; }
+}
+export function touchWorkspace(dir: string) {
+  if (typeof dir !== "string") return;
+  const t = dir.trim();
+  try {
+    if (!t) {
+      localStorage.removeItem(LAST_WS_KEY);
+    } else {
+      localStorage.setItem(LAST_WS_KEY, t);
+    }
+    window.dispatchEvent(new CustomEvent("oc:last-workspace-changed", { detail: t }));
+  } catch {}
+}
 
 function readExtras(): string[] {
   try {
@@ -68,6 +89,7 @@ export async function pickExtraWorkspace(atIndex?: number) {
 // persist + apply a workspace switch; full webview reload rebuilds
 // sessions/messages/events for the new directory
 export async function applyWorkspace(path: string) {
+  touchWorkspace(path);
   setDirectory(path);
   try {
     const raw = JSON.parse(localStorage.getItem("oc.settings") ?? "{}");

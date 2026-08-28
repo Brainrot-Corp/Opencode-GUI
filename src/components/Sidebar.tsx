@@ -6,7 +6,7 @@ import { playSound } from "../lib/sounds";
 import { useContextMenu } from "../hooks/useContextMenu";
 import { clipboardWrite } from "../lib/clipboard";
 import { opencode, getDirectory } from "../api";
-import { addWorkspace, removeWorkspace, reorderWorkspaces } from "../lib/workspace";
+import { addWorkspace, removeWorkspace, reorderWorkspaces, touchWorkspace } from "../lib/workspace";
 import FileTree from "./FileTree";
 import GitPanel from "./GitPanel";
 import "../styles/sidebar.css";
@@ -267,6 +267,7 @@ export default function Sidebar({
   const toggleWs = (dir: string) => {
     const next = { ...wsCollapsed, [dir]: !wsCollapsed[dir] };
     setWsCollapsedState(next); setWsCollapsed(next);
+    touchWorkspace(dir);
   };
 
   const startRename = (s: Session) => {
