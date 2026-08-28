@@ -411,26 +411,37 @@ export default function activate(api) {
           h("button", { type: "button", className: "reset-btn", onClick: () => { try { navigator.clipboard.writeText(authUrl); } catch {} } }, h("i", { className: "fa-solid fa-copy" }), "Copy")
         )
       ) : null,
-      h("div", { className: "setting-row", style: { borderTop: "none", paddingTop: 0 } },
+      h("div", { className: "setting-row" },
         h("div", { className: "setting-info" },
-          h("i", { className: "fa-solid fa-sliders setting-icon" }),
+          h("i", { className: "fa-solid fa-backward-step setting-icon" }),
           h("div", null,
-            h("div", { className: "setting-name" }, "Options"),
-            h("div", { className: "setting-desc mono-hint" }, "Previous restarts track if >3s, URI vs URL")
+            h("div", { className: "setting-name" }, "Previous restarts track"),
+            h("div", { className: "setting-desc mono-hint" }, "If >3s into track, Previous seeks to start")
           )
-        )
-      ),
-      h("div", { className: "color-controls", style: { padding: "0 10px 8px", display: "flex", gap: "10px", flexWrap: "wrap" } },
-        h("label", { className: "mono-hint", style: { display: "flex", alignItems: "center", gap: "6px", cursor: "pointer" } },
-          h("input", { type: "checkbox", checked: !!conf.previousButtonRestartsTrack, onChange: (e) => set({ previousButtonRestartsTrack: e.target.checked }) }),
-          "Prev restarts if >3s"
         ),
-        h("label", { className: "mono-hint", style: { display: "flex", alignItems: "center", gap: "6px", cursor: "pointer" } },
-          h("input", { type: "checkbox", checked: !!conf.useSpotifyUris, onChange: (e) => set({ useSpotifyUris: e.target.checked }) }),
-          "Use spotify: URIs"
-        )
+        h("button", {
+          type: "button",
+          className: `toggle${conf.previousButtonRestartsTrack ? " on" : ""}`,
+          "aria-pressed": !!conf.previousButtonRestartsTrack,
+          onClick: () => set({ previousButtonRestartsTrack: !conf.previousButtonRestartsTrack })
+        }, h("span", { className: "knob" }))
       ),
-      h("div", { className: "setting-row", style: { borderTop: "1px solid var(--line)", marginTop: "4px" } },
+      h("div", { className: "setting-row" },
+        h("div", { className: "setting-info" },
+          h("i", { className: "fa-solid fa-link setting-icon" }),
+          h("div", null,
+            h("div", { className: "setting-name" }, "Use Spotify URIs"),
+            h("div", { className: "setting-desc mono-hint" }, "Open spotify: URIs instead of https:// links")
+          )
+        ),
+        h("button", {
+          type: "button",
+          className: `toggle${conf.useSpotifyUris ? " on" : ""}`,
+          "aria-pressed": !!conf.useSpotifyUris,
+          onClick: () => set({ useSpotifyUris: !conf.useSpotifyUris })
+        }, h("span", { className: "knob" }))
+      ),
+      h("div", { className: "setting-row" },
         h("div", { className: "setting-info" },
           h("i", { className: "fa-solid fa-microphone-lines setting-icon" }),
           h("div", null,
