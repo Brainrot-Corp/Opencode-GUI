@@ -643,6 +643,50 @@
   color: var(--text);
 }
 
+/* user-answered summary — same card+chip language as q-view, plus a glass
+   banner shell so the injected "User has answered..." line reads like a tool
+   answer instead of a raw mono dump */
+.msg .q-answered {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  background: color-mix(in srgb, var(--accent) calc(0.06 * 100%), transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) calc(0.18 * 100%), transparent);
+  border-left: 2px solid color-mix(in srgb, var(--accent) calc(0.5 * 100%), transparent);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+.msg .q-answered-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--accent-bright);
+}
+.msg .q-answered-head i {
+  font-size: 10px;
+  color: var(--accent);
+  text-shadow: 0 0 7px var(--accent-glow);
+}
+.msg .q-answered-count {
+  margin-left: auto;
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  color: var(--text-faint);
+  text-transform: none;
+}
+.msg .q-answered-foot {
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: var(--text-faint);
+  border-top: 1px solid var(--line);
+  padding-top: 6px;
+  margin-top: 2px;
+}
+
 /* todowrite checklist */
 .msg .todo-view {
   display: flex;

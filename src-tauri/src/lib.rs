@@ -1717,11 +1717,11 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|_app_handle, event| {
-            // track last focused HWND for system-wide hotkeys across multiple instances
-            // + restore WebView2 keyboard focus after Alt+Tab / taskbar activation
-            // (Alt+Tab doesn't go through show_main/unpoison, so do a lightweight
-            // version here). Mouse wiggle is intentionally NOT repeated — only
-            // keyboard focus.
+            // track last focused HWND for system-wide hotkeys across multiple
+            // instances. Keyboard-focus repair on reactivation lives in the
+            // webfocus subclass (WM_ACTIVATE → MoveFocus) — a per-event repair
+            // thread here re-activated the window on every Focused edge and
+            // fed itself into a focus-stealing loop that crashed the app.
             #[cfg(windows)]
             if let RunEvent::WindowEvent {
                 label,
@@ -1733,30 +1733,6 @@ pub fn run() {
                     if let Some(w) = _app_handle.get_webview_window("main") {
                         if let Ok(hwnd) = w.hwnd() {
                             write_last_focused(_app_handle, hwnd.0 as isize);
-                            // lightweight keyboard restore for Alt+Tab — don't wait
-                            // for JS window.focus which WebView2 may swallow
-                            let ap = _app_handle.clone();
-                            let hwnd_isize = hwnd.0 as isize;
-                            std::thread::spawn(move || {
-                                std::thread::sleep(std::time::Duration::from_millis(20));
-                                use tauri::Emitter;
-                                let _ = ap.emit("focus://restore", ());
-                                let ap2 = ap.clone();
-                                let _ = ap.run_on_main_thread(move || {
-                                    // outer + deepest Chrome_WidgetWin
-                                    wininput::focus_webview(hwnd_isize);
-                                    // also nudge DOM via eval in case frontend
-                                    // listener hasn't attached yet
-                                    if let Some(w2) = ap2.get_webview_window("main") {
-                                        let _ = w2.eval(
-                                            "try{ window.focus(); var a=document.activeElement; if(!a||a===document.body){ var f=document.querySelector('.composer textarea')||document.querySelector('.fe-ta'); if(f) f.focus({preventScroll:true}); else { if(!document.body.hasAttribute('tabindex')) document.body.setAttribute('tabindex','-1'); document.body.focus({preventScroll:true}); } window.focus(); } }catch(e){}",
-                                        );
-                                    }
-                                });
-                                // second emit for frontend rescue that debounces 20ms
-                                std::thread::sleep(std::time::Duration::from_millis(80));
-                                let _ = ap.emit("focus://restore", ());
-                            });
                         }
                     }
                 }

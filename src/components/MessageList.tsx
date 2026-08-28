@@ -9,6 +9,49 @@ import { iconFor } from "../lib/attachments";
 import ToolBlock from "./ToolBlock";
 import "../styles/chat.css";
 
+// "User has answered your questions: "q"="a", ... . You can now continue ..."
+// appears as a synthetic text part after the question tool is answered —
+// render it with the same card+chip language as the ask (q-view/q-card)
+// instead of a raw mono dump. Pairs are extracted via the quoted "q"="a" shape.
+function parseAnsweredSummary(text: string): { q: string; a: string }[] | null {
+  if (!text.trim().startsWith("User has answered your questions:")) return null;
+  const pairs: { q: string; a: string }[] = [];
+  const re = /"([^"]+)"\s*=\s*"([^"]+)"/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text))) pairs.push({ q: m[1], a: m[2] });
+  return pairs.length ? pairs : null;
+}
+
+function AnsweredSummary({ text }: { text: string }) {
+  const pairs = parseAnsweredSummary(text);
+  if (!pairs) return null;
+  return (
+    <div className="q-answered">
+      <div className="q-answered-head mono">
+        <i className="fa-solid fa-circle-check" />
+        User answers
+        <span className="q-answered-count">
+          {pairs.length} {pairs.length === 1 ? "answer" : "answers"}
+        </span>
+      </div>
+      <div className="q-view" style={{ padding: 0 }}>
+        {pairs.map((p, i) => (
+          <div key={i} className="q-card">
+            <div className="q-text">{p.q}</div>
+            <div className="q-opts">
+              <span className="q-chip on">
+                <i className="fa-solid fa-check" />
+                {p.a}
+              </span>
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="q-answered-foot mono">You can now continue with the user&apos;s answers in mind.</div>
+    </div>
+  );
+}
+
 // fenced code block with a fast copy button — textContent is read at click
 // time so highlight spans / inline markup can never corrupt the copied source
 function CodePre(props: React.HTMLAttributes<HTMLPreElement> & { node?: unknown }) {
@@ -112,6 +155,7 @@ function renderPart(
   if (part.type === "text") {
     const t = (part as any).text ?? "";
     if (!t.trim()) return null;
+    if (parseAnsweredSummary(t)) return <AnsweredSummary key={key} text={t} />;
     return (
       <Markdown key={key} remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]} components={mdComponents}>
         {t}

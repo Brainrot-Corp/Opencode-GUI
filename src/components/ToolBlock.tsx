@@ -97,6 +97,15 @@ function cleanForCopy(tool: string, out: string): string {
 
 // answered question block — questions as cards, chosen answers as chips.
 // any shape mismatch falls back to the raw <pre> rendering
+function summaryPairs(out: string): { q: string; a: string }[] | null {
+  if (!out.trim().includes("User has answered your questions:")) return null;
+  const pairs: { q: string; a: string }[] = [];
+  const re = /"([^"]+)"\s*=\s*"([^"]+)"/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(out))) pairs.push({ q: m[1], a: m[2] });
+  return pairs.length ? pairs : null;
+}
+
 function QuestionView({ t }: { t: any }) {
   const qs: QuestionInfo[] = Array.isArray(t.state?.input?.questions)
     ? t.state.input.questions
@@ -107,6 +116,20 @@ function QuestionView({ t }: { t: any }) {
     if (Array.isArray(out) && out.every((a) => Array.isArray(a))) answers = out;
   } catch {
     answers = null;
+  }
+  // fallback: answered summary injected as text ("User has answered...") — synthesize answers by question text
+  if (!answers) {
+    const pairs = summaryPairs(t.state?.output ?? "");
+    if (pairs) {
+      answers = qs.map((q) => {
+        const hit = pairs.find((p) => p.q === q.question);
+        return hit ? [hit.a] : [];
+      });
+      // if none matched (historic shape drift), at least map by order
+      if (answers.every((a) => !a.length) && pairs.length === qs.length) {
+        answers = pairs.map((p) => [p.a]);
+      }
+    }
   }
   if (!qs.length) return null;
 
@@ -146,10 +169,11 @@ function QuestionView({ t }: { t: any }) {
 function QuestionAnswered(t: any): boolean {
   try {
     const parsed = JSON.parse(t.state?.output ?? "");
-    return Array.isArray(parsed) && parsed.length > 0;
+    if (Array.isArray(parsed) && parsed.length > 0) return true;
   } catch {
-    return false;
+    // ignore
   }
+  return !!summaryPairs(t.state?.output ?? "");
 }
 
 // todo checklist — live list from the tool's input, history fallback from its
