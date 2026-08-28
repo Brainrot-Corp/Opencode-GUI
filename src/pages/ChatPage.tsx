@@ -99,33 +99,6 @@ export default function ChatPage() {
   const [updDismissed, setUpdDismissed] = useState(
     () => localStorage.getItem("oc.update.dismissed") || "",
   );
-  const [debugUpdateForced, setDebugUpdateForced] = useState(false);
-  // RightCtrl+Click Check clears dismissed — keep React state in sync even
-  // though SettingsDrawer writes localStorage directly (different component)
-  useEffect(() => {
-    const clear = () => setUpdDismissed("");
-    window.addEventListener("oc:update-force", clear);
-    // also sync on focus/storage in case another window cleared it
-    const onStorage = () => setUpdDismissed(localStorage.getItem("oc.update.dismissed") || "");
-    window.addEventListener("storage", onStorage);
-    window.addEventListener("focus", onStorage);
-    return () => {
-      window.removeEventListener("oc:update-force", clear);
-      window.removeEventListener("storage", onStorage);
-      window.removeEventListener("focus", onStorage);
-    };
-  }, []);
-  // If check with forceCurrent sets latest to same version as running,
-  // auto-clear dismissed so UpdatePrompt actually shows (otherwise
-  // "RightCtrl+Click doesn't trigger the update window")
-  useEffect(() => {
-    if (upd.latest && upd.ver && upd.latest.version === upd.ver) {
-      if (localStorage.getItem("oc.update.dismissed") === upd.ver) {
-        localStorage.removeItem("oc.update.dismissed");
-        setUpdDismissed("");
-      }
-    }
-  }, [upd.latest, upd.ver]);
 
   const [sbW, setSbW] = useState(() => {
     const w = Number(localStorage.getItem(SB_W_KEY)) || 248;
@@ -590,28 +563,15 @@ export default function ChatPage() {
     setSettingsOpen(false);
   }
 
-  const debugUpdateInfo = debugUpdateForced
-    ? {
-        version: "9.9.9",
-        notes: "Debug preview — this is how the update prompt looks. No download will start.",
-        url: "",
-        sha256: "",
-      }
-    : null;
-
   const showUpdatePrompt =
     !onboardOpen &&
-    (!!debugUpdateInfo ||
-      (settings.updateNotifications && !!upd.latest && upd.latest.version !== updDismissed));
+    settings.updateNotifications &&
+    !!upd.latest &&
+    upd.latest.version !== updDismissed;
 
-  const promptInfo = debugUpdateInfo ?? upd.latest;
+  const promptInfo = upd.latest;
 
   function handleUpdateDismiss(disable: boolean) {
-    if (debugUpdateForced) {
-      setDebugUpdateForced(false);
-      if (disable) update({ updateNotifications: false });
-      return;
-    }
     if (disable) {
       update({ updateNotifications: false });
     } else if (upd.latest) {
@@ -619,16 +579,6 @@ export default function ChatPage() {
       setUpdDismissed(upd.latest.version);
     } else {
       setUpdDismissed("1");
-    }
-  }
-
-  function handleDebugUpdate() {
-    if (upd.latest) {
-      localStorage.removeItem("oc.update.dismissed");
-      setUpdDismissed("");
-      setDebugUpdateForced(false);
-    } else {
-      setDebugUpdateForced(true);
     }
   }
 
@@ -681,27 +631,20 @@ export default function ChatPage() {
             />
           </Suspense>
         )}
-        {(showUpdatePrompt || debugUpdateForced) && promptInfo && (
+        {showUpdatePrompt && promptInfo && (
           <UpdatePrompt
             info={promptInfo}
             curVer={upd.ver}
             busy={upd.busy}
             downloading={upd.downloading}
             err={upd.err}
-            onUpdate={() => {
-              if (debugUpdateForced && !upd.latest) {
-                setDebugUpdateForced(false);
-                return;
-              }
-              void upd.install();
-            }}
+            onUpdate={() => void upd.install()}
             onDismiss={handleUpdateDismiss}
           />
         )}
         <Suspense fallback={null}>
           <SettingsDrawer
             upd={upd}
-            onDebugUpdate={handleDebugUpdate}
             open={settingsOpen}
             providers={oc.providers}
             commands={oc.cmdList}

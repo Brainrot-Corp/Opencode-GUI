@@ -103,6 +103,74 @@ pub async fn update_download(url: String, sha256: String, version: String) -> Re
     Ok(())
 }
 
+// debug: stage a local folder containing opencode-gui.exe (and optionally
+// opencode.exe) as an update. Folder can be a direct file path to the exe
+// as well — we normalize to its parent. Version defaults to "debug-local"
+// if empty. Verifies the exe exists and stages it under %TEMP%\oc-update.
+#[tauri::command]
+pub fn update_stage_local(folder: String, version: String) -> Result<(), String> {
+    let raw = folder.trim();
+    if raw.is_empty() {
+        return Err("empty folder path".into());
+    }
+    let mut src_dir = PathBuf::from(raw);
+    // allow direct file path to exe (user pastes exe path instead of folder)
+    if src_dir.is_file() {
+        if let Some(parent) = src_dir.parent() {
+            src_dir = parent.to_owned();
+        }
+    }
+    if !src_dir.is_dir() {
+        return Err(format!("not a folder: {}", src_dir.display()));
+    }
+    // find opencode-gui.exe case-insensitively inside folder (tolerate wrapper)
+    let mut gui_src: Option<PathBuf> = None;
+    let mut sidecar_src: Option<PathBuf> = None;
+    for entry in std::fs::read_dir(&src_dir).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let p = entry.path();
+        if !p.is_file() {
+            continue;
+        }
+        if let Some(name) = p.file_name().and_then(|n| n.to_str()) {
+            if name.eq_ignore_ascii_case("opencode-gui.exe") {
+                gui_src = Some(p);
+            } else if name.eq_ignore_ascii_case("opencode.exe") {
+                sidecar_src = Some(p);
+            }
+        }
+    }
+    let gui_src = gui_src.ok_or_else(|| format!("{} missing opencode-gui.exe", src_dir.display()))?;
+    let ver = if version.trim().is_empty() {
+        "debug-local".to_string()
+    } else {
+        version.trim().to_string()
+    };
+    let dir = staging_dir(&ver);
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    std::fs::copy(&gui_src, dir.join("opencode-gui.exe")).map_err(|e| e.to_string())?;
+    if let Some(side) = sidecar_src {
+        let _ = std::fs::copy(&side, dir.join("opencode.exe"));
+    } else {
+        // fallback: reuse current sidecar so swap doesn't leave it missing
+        if let Ok(cur) = std::env::current_exe() {
+            if let Some(exe_dir) = cur.parent() {
+                let cur_side = exe_dir.join("opencode.exe");
+                if cur_side.exists() {
+                    let _ = std::fs::copy(&cur_side, dir.join("opencode.exe"));
+                }
+            }
+        }
+    }
+    // ensure at least gui exists (we just copied)
+    if !dir.join("opencode-gui.exe").exists() {
+        return Err("staging failed".into());
+    }
+    *STAGED.lock().unwrap_or_else(|e| e.into_inner()) = Some(dir);
+    Ok(())
+}
+
 // arm the staged update and exit — the RunEvent::Exit handler does the swap
 // and relaunches the new exe
 #[tauri::command]

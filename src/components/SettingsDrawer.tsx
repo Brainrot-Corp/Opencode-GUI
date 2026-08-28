@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { enable, isEnabled, disable } from "@tauri-apps/plugin-autostart";
 import type { AppSettings, ColorSet } from "../hooks/useSettings";
 import { useUpdater as useUpdaterInternal } from "../hooks/useUpdater";
 import type { ThemeMeta } from "../lib/themes";
@@ -41,7 +40,6 @@ export default function SettingsDrawer({
   onTogglePlugin,
   onRemoveDisabled,
   upd: updProp,
-  onDebugUpdate,
 }: {
   open: boolean;
   onClose: () => void;
@@ -67,7 +65,6 @@ export default function SettingsDrawer({
   onTogglePlugin?: (id: string, enabled: boolean) => void;
   onRemoveDisabled?: (id: string) => void;
   upd?: ReturnType<typeof useUpdaterInternal>;
-  onDebugUpdate?: () => void;
 }) {
   // custom themes have no stored color entry yet — cyan's shared base is the
   // starting point until the user overrides it
@@ -82,6 +79,23 @@ export default function SettingsDrawer({
   // preference and reload into the first-launch wizard
   const [confirmClean, setConfirmClean] = useState(false);
   const upd = updProp ?? useUpdaterInternal();
+
+  const [debugLocalPath, setDebugLocalPath] = useState("");
+  const [debugLocalErr, setDebugLocalErr] = useState("");
+  const [debugLocalBusy, setDebugLocalBusy] = useState(false);
+  async function handleDebugLocal() {
+    const folder = debugLocalPath.trim();
+    if (!folder) return;
+    setDebugLocalErr("");
+    setDebugLocalBusy(true);
+    try {
+      await invoke("update_stage_local", { folder, version: "debug-local" });
+      await invoke("update_install", {});
+    } catch (e) {
+      setDebugLocalErr(String(e));
+      setDebugLocalBusy(false);
+    }
+  }
 
   async function cleanState() {
     if (!confirmClean) {
@@ -98,7 +112,7 @@ export default function SettingsDrawer({
 
   useEffect(() => {
     if (!open) return;
-    isEnabled()
+    invoke<boolean>("autostart_is_enabled")
       .then(setAutoLaunch)
       .catch(() => setAutoLaunch(false));
   }, [open]);
@@ -123,14 +137,19 @@ export default function SettingsDrawer({
   async function toggleAutoLaunch() {
     try {
       if (autoLaunch) {
-        await disable();
+        await invoke("autostart_disable");
         setAutoLaunch(false);
       } else {
-        await enable();
-        setAutoLaunch(true);
+        await invoke("autostart_enable");
+        // verify it actually stuck — registry writes can be virtualized
+        const ok = await invoke<boolean>("autostart_is_enabled").catch(() => true);
+        setAutoLaunch(ok);
       }
-    } catch {
-      setAutoLaunch((v) => (v === null ? false : !v));
+    } catch (e) {
+      // surface error in console and keep toggle in sync with reality
+      try { console.error("[autostart]", e); } catch {}
+      const cur = await invoke<boolean>("autostart_is_enabled").catch(() => false);
+      setAutoLaunch(cur);
     }
   }
 
@@ -526,19 +545,7 @@ export default function SettingsDrawer({
                     type="button"
                     className="reset-btn"
                     disabled={upd.busy}
-                    data-tip="Alt+Shift+Click to reinstall current version (debug)"
-                    onClick={async (e) => {
-                      const forceCurrent = e.altKey && e.shiftKey;
-                      if (forceCurrent) {
-                        localStorage.removeItem("oc.update.dismissed");
-                        window.dispatchEvent(new CustomEvent("oc:update-force"));
-                      }
-                      await upd.check(true, forceCurrent);
-                      if (forceCurrent) {
-                        localStorage.removeItem("oc.update.dismissed");
-                        window.dispatchEvent(new CustomEvent("oc:update-force"));
-                      }
-                    }}
+                    onClick={() => void upd.check(true)}
                   >
                     <i className="fa-solid fa-magnifying-glass" />
                     Check
@@ -569,18 +576,36 @@ export default function SettingsDrawer({
               </button>
             </div>
 
-            <div className="setting-row setting-row--muted">
+            <div className="setting-row setting-row--muted" style={{ flexDirection: "column", alignItems: "stretch", gap: "6px" }}>
               <div className="setting-info">
-                <i className="fa-solid fa-bug setting-icon" />
+                <i className="fa-solid fa-folder-open setting-icon" />
                 <div>
-                  <div className="setting-name">Debug update prompt</div>
-                  <div className="setting-desc">Preview the launch update dialog</div>
+                  <div className="setting-name">Debug local build</div>
+                  <div className="setting-desc">Folder containing opencode-gui.exe — stages it and restarts (tests swap/relaunch without GitHub)</div>
                 </div>
               </div>
-              <button type="button" className="reset-btn" onClick={() => onDebugUpdate?.()}>
-                <i className="fa-solid fa-eye" />
-                Show
-              </button>
+              <div className="color-controls" style={{ display: "flex", gap: "6px", width: "100%" }}>
+                <input
+                  className="discord-in"
+                  style={{ flex: 1, minWidth: 0 }}
+                  placeholder="C:\path\to\folder"
+                  value={debugLocalPath}
+                  onChange={(e) => setDebugLocalPath(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter" && debugLocalPath.trim() && !debugLocalBusy) void handleDebugLocal(); }}
+                  spellCheck={false}
+                />
+                <button
+                  type="button"
+                  className="reset-btn"
+                  disabled={!debugLocalPath.trim() || debugLocalBusy}
+                  data-tip="Stage local opencode-gui.exe and restart"
+                  onClick={() => void handleDebugLocal()}
+                >
+                  <i className={`fa-solid ${debugLocalBusy ? "fa-spinner fa-spin" : "fa-floppy-disk"}`} />
+                  {debugLocalBusy ? "..." : "Use local"}
+                </button>
+              </div>
+              {debugLocalErr && <div className="voice-err mono-hint" style={{ marginTop: "4px" }}>{debugLocalErr}</div>}
             </div>
           </section>
 

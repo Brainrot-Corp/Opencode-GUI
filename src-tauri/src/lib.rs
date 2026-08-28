@@ -26,7 +26,10 @@ mod discord;
 use discord::{discord_clear, discord_close, discord_set, discord_status, DiscordState};
 
 mod update;
-use update::{apply_on_exit, build_flavor, update_download, update_install};
+use update::{apply_on_exit, build_flavor, update_download, update_install, update_stage_local};
+
+mod autostart;
+use autostart::{autostart_disable, autostart_enable, autostart_is_enabled};
 
 struct ServerState {
     port: u16,
@@ -1289,7 +1292,11 @@ pub fn run() {
             pty_kill,
             update_download,
             update_install,
+            update_stage_local,
             build_flavor,
+            autostart_is_enabled,
+            autostart_enable,
+            autostart_disable,
             set_tray_reset,
             hide_to_tray,
             spawn_new_instance,
