@@ -235,8 +235,9 @@ export default function activate(api) {
   }
 
   // background presence loop — always active when plugin loaded (host enabled)
-  // app-launch timer: one timestamp for the whole app lifetime, survives
-  // workspace reloads / HMR via sessionStorage + window.__discordAppStart
+  // app-launch timer: authoritative in Rust (DiscordState.start_ts, process lifetime
+  // survives webview reloads/HMR). JS keeps sessionStorage + window mirror for
+  // instant first tick, then syncs to Rust via discord_get_start_ts.
   function getAppStartTs() {
     try {
       const w = typeof window !== "undefined" ? window : {};
@@ -259,8 +260,24 @@ export default function activate(api) {
   }
   let timer = null;
   let lastKey = "";
-  const startTs = getAppStartTs();
+  let startTs = getAppStartTs();
   let lastErrAt = 0;
+  // sync to Rust authoritative start_ts (survives reloads/HMR, process lifetime)
+  try {
+    api.invoke("discord_get_start_ts").then((ts) => {
+      const n = Number(ts);
+      if (n > 0 && n !== startTs) {
+        startTs = n;
+        try {
+          const w = typeof window !== "undefined" ? window : {};
+          w.__discordAppStart = n;
+          try { sessionStorage.setItem("oc.discord.appStart", String(n)); } catch {}
+        } catch {}
+        lastKey = "";
+        tick();
+      }
+    }).catch(() => {});
+  } catch {}
 
   function tick() {
     try {

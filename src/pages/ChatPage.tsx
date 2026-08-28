@@ -32,8 +32,8 @@ import { playSound } from "../lib/sounds";
 import { useSpeech } from "../hooks/useSpeech";
 import { matchesEvent } from "../lib/hotkeys";
 import { usePlugins } from "../hooks/usePlugins";
-import { loadPluginsCatalog, type PluginCatalogEntry } from "../lib/pluginsCatalog";
-import { isNewer } from "../lib/plugins";
+import { loadPluginsCatalog, fetchPluginFiles, pluginRawUrl, type PluginCatalogEntry } from "../lib/pluginsCatalog";
+import { isNewer, getAutoUpdateEnabled, setAutoUpdateEnabled } from "../lib/plugins";
 import { ContextMenuProvider } from "../hooks/useContextMenu";
 import SelectionMenu from "../components/SelectionMenu";
 import { getFindTarget, setFindTarget, targetFromElement } from "../lib/findContext";
@@ -68,6 +68,7 @@ export default function ChatPage() {
   const [pluginCatalog, setPluginCatalog] = useState<PluginCatalogEntry[] | null>(null);
   const [catalogLoading, setCatalogLoading] = useState(false);
   const [catalogError, setCatalogError] = useState("");
+  const [autoUpdateEnabled, setAutoUpdateEnabledState] = useState(() => getAutoUpdateEnabled());
   const [diffOpen, setDiffOpen] = useState(false);
   // discord plugin reads this for {status} — file > diff > permission/question > compacting > busy > typing > working > idle
   const [editingFile, setEditingFile] = useState("");
@@ -448,6 +449,56 @@ export default function ChatPage() {
       return isNewer(p.version, cat?.version);
     });
   }, [pluginCatalog, plugins]);
+
+  const toggleAutoUpdate = useCallback((v: boolean) => {
+    setAutoUpdateEnabled(v);
+    setAutoUpdateEnabledState(v);
+  }, []);
+
+  // keep auto-update flag in sync across tabs / dialog-owned writes
+  useEffect(() => {
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === "oc.plugins.autoUpdate") setAutoUpdateEnabledState(e.newValue === "1");
+    };
+    const onCustom = (e: Event) => setAutoUpdateEnabledState(!!(e as CustomEvent).detail);
+    window.addEventListener("storage", onStorage);
+    window.addEventListener("oc:plugins-autoupdate", onCustom as EventListener);
+    return () => {
+      window.removeEventListener("storage", onStorage);
+      window.removeEventListener("oc:plugins-autoupdate", onCustom as EventListener);
+    };
+  }, []);
+
+  // auto-update: when enabled, install newer catalog versions immediately
+  const autoUpdatingRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (!autoUpdateEnabled || !pluginCatalog?.length || !plugins.length || catalogLoading) return;
+    const byId = new Map(pluginCatalog.map((c) => [c.id, c] as const));
+    const toUpdate = plugins.filter((p) => {
+      if (p.disabled) return false;
+      const cat = byId.get(p.id) ?? byId.get(p.dir) ?? pluginCatalog.find((c) => c.id === p.id || c.id === p.dir);
+      return isNewer(p.version, cat?.version);
+    });
+    if (!toUpdate.length) return;
+    const pending = toUpdate.filter((p) => !autoUpdatingRef.current.has(p.id));
+    if (!pending.length) return;
+    void (async () => {
+      for (const p of pending) {
+        autoUpdatingRef.current.add(p.id);
+        try {
+          const entry = pluginCatalog.find((c) => c.id === p.id || c.id === p.dir);
+          if (!entry) continue;
+          const base = pluginRawUrl(entry.id, "").replace(/\/$/, "");
+          const { manifest, main, css } = await fetchPluginFiles(base);
+          await invoke("plugin_install_files", { dir: entry.id, manifest, main, css });
+        } catch (e) {
+          console.warn("[plugins auto-update] failed", p.id, e);
+        } finally {
+          autoUpdatingRef.current.delete(p.id);
+        }
+      }
+    })();
+  }, [autoUpdateEnabled, pluginCatalog, plugins, catalogLoading]);
   // debug transcript mode (Settings › Voice): last few utterance audits
   const [vdbg, setVdbg] = useState<string[]>([]);
   const dbgPush = useCallback(
@@ -956,6 +1007,8 @@ export default function ChatPage() {
           catalogLoading={catalogLoading}
           catalogError={catalogError}
           onRefreshCatalog={refreshCatalog}
+          autoUpdateEnabled={autoUpdateEnabled}
+          onToggleAutoUpdate={toggleAutoUpdate}
         />
         <div
           className={`layout${resizing ? " no-anim" : ""}`}

@@ -116,6 +116,23 @@ export function isNewer(installed: string | undefined, catalog: string | undefin
 // disabled persistence — localStorage `oc.plugins.disabled` (string[] of ids)
 const DISABLED_KEY = "oc.plugins.disabled";
 
+export const AUTO_UPDATE_KEY = "oc.plugins.autoUpdate";
+
+export function getAutoUpdateEnabled(): boolean {
+  try {
+    return localStorage.getItem(AUTO_UPDATE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+export function setAutoUpdateEnabled(v: boolean): void {
+  try {
+    localStorage.setItem(AUTO_UPDATE_KEY, v ? "1" : "0");
+    window.dispatchEvent(new CustomEvent("oc:plugins-autoupdate", { detail: v }));
+  } catch {}
+}
+
 export function getDisabledIds(): Set<string> {
   try {
     const raw = localStorage.getItem(DISABLED_KEY);

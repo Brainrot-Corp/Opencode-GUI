@@ -27,6 +27,8 @@ export default function PluginsDialog({
   catalogLoading,
   catalogError,
   onRefreshCatalog,
+  autoUpdateEnabled,
+  onToggleAutoUpdate,
 }: {
   open: boolean;
   onClose: () => void;
@@ -39,6 +41,8 @@ export default function PluginsDialog({
   catalogLoading?: boolean;
   catalogError?: string;
   onRefreshCatalog?: (force?: boolean) => Promise<unknown>;
+  autoUpdateEnabled?: boolean;
+  onToggleAutoUpdate?: (v: boolean) => void;
 }) {
   const [tab, setTab] = useState<"installed" | "browse">("installed");
   const [confirmKey, setConfirmKey] = useState<string | null>(null);
@@ -234,6 +238,40 @@ export default function PluginsDialog({
 
       {tab === "installed" ? (
         <>
+          <div className="browse-search" style={{ padding: "2px 0 0" }}>
+            <div className="model-search-wrap">
+              <i className={`fa-solid ${catLoading ? "fa-spinner fa-spin" : "fa-arrows-rotate"}`} style={{ color: updateCount ? "var(--accent)" : undefined }} />
+              <span className="mono-hint" style={{ flex: 1 }}>
+                {catLoading ? "Checking for updates…" : updateCount ? `${updateCount} update${updateCount === 1 ? "" : "s"} available` : catalog ? "All plugins up to date" : "Checking catalog…"}
+              </span>
+              {updateCount > 0 && plugins.length > 0 && (
+                <button
+                  type="button"
+                  className="reset-btn"
+                  disabled={!!installing || catLoading}
+                  onClick={async () => {
+                    for (const p of plugins.filter((x) => hasUpdate(x.id))) await handleUpdate(p);
+                  }}
+                >
+                  <i className="fa-solid fa-download" /> Update all
+                </button>
+              )}
+              <label className="mono-hint" data-tip="When on, plugins update automatically as soon as a newer version is found" style={{ display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer", userSelect: "none", whiteSpace: "nowrap" }}>
+                <input type="checkbox" checked={!!autoUpdateEnabled} onChange={(e) => onToggleAutoUpdate?.(e.target.checked)} style={{ accentColor: "var(--accent)" }} />
+                Auto-update
+              </label>
+              <button
+                type="button"
+                className="reset-btn"
+                data-tip="Force refresh catalog (bypass 12h cache)"
+                disabled={catLoading}
+                onClick={() => refreshCatalog(true)}
+              >
+                <i className={`fa-solid ${catLoading ? "fa-spinner fa-spin" : "fa-arrows-rotate"}`} />
+                Refresh
+              </button>
+            </div>
+          </div>
           {plugins.length === 0 ? (
             <div className="plugins-empty">
               <i className="fa-solid fa-puzzle-piece plugins-empty-icon" />
@@ -258,36 +296,6 @@ export default function PluginsDialog({
             </div>
           ) : (
             <>
-              <div className="browse-search" style={{ padding: "2px 0 0" }}>
-                <div className="model-search-wrap">
-                  <i className={`fa-solid ${catLoading ? "fa-spinner fa-spin" : "fa-arrows-rotate"}`} style={{ color: updateCount ? "var(--accent)" : undefined }} />
-                  <span className="mono-hint" style={{ flex: 1 }}>
-                    {catLoading ? "Checking for updates…" : updateCount ? `${updateCount} update${updateCount === 1 ? "" : "s"} available` : catalog ? "All plugins up to date" : "Checking catalog…"}
-                  </span>
-                  {updateCount > 0 && (
-                    <button
-                      type="button"
-                      className="reset-btn"
-                      disabled={!!installing || catLoading}
-                      onClick={async () => {
-                        for (const p of plugins.filter((x) => hasUpdate(x.id))) await handleUpdate(p);
-                      }}
-                    >
-                      <i className="fa-solid fa-download" /> Update all
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    className="reset-btn"
-                    data-tip="Force refresh catalog (bypass 12h cache)"
-                    disabled={catLoading}
-                    onClick={() => refreshCatalog(true)}
-                  >
-                    <i className={`fa-solid ${catLoading ? "fa-spinner fa-spin" : "fa-arrows-rotate"}`} />
-                    Refresh
-                  </button>
-                </div>
-              </div>
               {catalog != null && !catalog.length && !catLoading ? <div className="voice-err">No plugins found — check connection and try refresh</div> : catErr ? <div className="voice-err">{catErr}</div> : null}
               <div className="plugins-list">
                 {plugins.map((p) => {

@@ -26,7 +26,9 @@ mod terminals;
 use terminals::list_terminals;
 
 mod discord;
-use discord::{discord_clear, discord_close, discord_set, discord_status, DiscordState};
+use discord::{
+    discord_clear, discord_close, discord_get_start_ts, discord_set, discord_status, DiscordState,
+};
 
 mod update;
 use update::{apply_on_exit, build_flavor, update_download, update_install, update_stage_local};
@@ -1475,6 +1477,7 @@ pub fn run() {
             plugin_install_files,
             plugins_scan,
             discord_set,
+            discord_get_start_ts,
             discord_clear,
             discord_close,
             discord_status,

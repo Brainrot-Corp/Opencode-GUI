@@ -401,7 +401,7 @@ export default function Sidebar({
                   const extraIdx = i - 1;
                   return (
                     <div key={`ft-${dir || "__cwd"}`} data-ws-header>
-                      {dropHint(isPrimary ? 0 : extraIdx)}
+                      {!isPrimary && dropHint(extraIdx)}
                       <div className="gp-sect ws-head ws-head--large" role="button" tabIndex={0} draggable={!isPrimary} onDragStart={() => { if (!isPrimary) setDragReorder(extraIdx); }} onDragEnd={() => { setDragReorder(null); setDropIndex(null); }} onClick={() => toggleWs(dir)} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggleWs(dir); } }} data-tip={dir || "Server cwd"} style={!isPrimary ? { cursor: "grab" } : undefined}>
                         <span className="gp-sect-toggle ws-toggle--large"><i className={`fa-solid fa-chevron-${isCollapsed ? "right" : "down"} gp-sect-chev`} /><i className="fa-solid fa-folder" style={{ fontSize: 13, color: "var(--accent)", opacity: 0.9 }} /><span className="ws-title mono" style={{ maxWidth: 140, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{baseName(dir)}</span><span className="gp-sect-count">{dir ? "" : ""}</span></span>
                         <span className="gp-sect-acts ws-acts--large" onClick={(e) => e.stopPropagation()}>
@@ -438,7 +438,7 @@ export default function Sidebar({
                   const clearArmed = clearConfirm === dir;
                   return (
                     <div key={`ch-${dir || "__cwd"}`} data-ws-header>
-                      {dropHint(isPrimary ? 0 : extraIdx)}
+                      {!isPrimary && dropHint(extraIdx)}
                       <div className="gp-sect ws-head ws-head--large" role="button" tabIndex={0} draggable={!isPrimary} onDragStart={() => { if (!isPrimary) setDragReorder(extraIdx); }} onDragEnd={() => { setDragReorder(null); setDropIndex(null); }} onClick={() => toggleWs(dir)} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggleWs(dir); } }} data-tip={dir || "Server cwd"} style={!isPrimary ? { cursor: "grab" } : undefined}>
                         <span className="gp-sect-toggle ws-toggle--large"><i className={`fa-solid fa-chevron-${isCollapsed ? "right" : "down"} gp-sect-chev`} /><i className="fa-solid fa-folder" style={{ fontSize: 13, color: "var(--accent)", opacity: 0.9 }} /><span className="ws-title mono" style={{ maxWidth: 140, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{baseName(dir)}</span><span className="gp-sect-count">{list.length}</span></span>
                         <span className="gp-sect-acts ws-acts--large" onClick={(e) => e.stopPropagation()}>

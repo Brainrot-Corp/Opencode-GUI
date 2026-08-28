@@ -7,6 +7,7 @@ pub struct DiscordState {
     pub client: Mutex<Option<DiscordIpcClient>>,
     pub client_id: Mutex<String>,
     pub connected: Mutex<bool>,
+    pub start_ts: Mutex<Option<i64>>,
 }
 
 impl DiscordState {
@@ -28,8 +29,31 @@ impl Default for DiscordState {
             client: Mutex::new(None),
             client_id: Mutex::new(String::new()),
             connected: Mutex::new(false),
+            start_ts: Mutex::new(None),
         }
     }
+}
+
+fn get_or_init_start_ts(state: &DiscordState) -> i64 {
+    if let Ok(g) = state.start_ts.lock() {
+        if let Some(ts) = *g {
+            return ts;
+        }
+    }
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    if let Ok(mut g) = state.start_ts.lock() {
+        if g.is_none() && now > 0 {
+            *g = Some(now);
+            return now;
+        }
+        if let Some(ts) = *g {
+            return ts;
+        }
+    }
+    now
 }
 
 fn truncate128(s: &str) -> String {
@@ -158,9 +182,19 @@ pub fn discord_set(
             act = act.assets(assets);
         }
 
+        // authoritative timer: process-lifetime start_ts, survives webview reloads/HMR
+        // JS-provided start_ts is ignored except to seed the first value if we have none
         if let Some(ts) = start_ts {
-            act = act.timestamps(activity::Timestamps::new().start(ts));
+            if ts > 0 {
+                if let Ok(mut g) = state.start_ts.lock() {
+                    if g.is_none() {
+                        *g = Some(ts);
+                    }
+                }
+            }
         }
+        let effective_ts = get_or_init_start_ts(&state);
+        act = act.timestamps(activity::Timestamps::new().start(effective_ts));
 
         match cli.set_activity(act) {
             Ok(_) => return Ok(()),
@@ -207,6 +241,11 @@ pub fn discord_status(state: tauri::State<DiscordState>) -> String {
     } else {
         "idle".to_string()
     }
+}
+
+#[tauri::command]
+pub fn discord_get_start_ts(state: tauri::State<DiscordState>) -> i64 {
+    get_or_init_start_ts(&state)
 }
 
 #[tauri::command]

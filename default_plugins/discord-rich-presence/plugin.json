@@ -1,6 +1,6 @@
 {
   "id": "discord-rich-presence",
   "name": "Discord Presence",
-  "version": "1.1.1",
+  "version": "1.1.5",
   "description": "Rich Presence Discord — affiche workspace, modèle et statut dans Discord tant que l'app est ouverte"
 }
