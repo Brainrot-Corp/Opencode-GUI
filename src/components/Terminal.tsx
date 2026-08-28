@@ -252,6 +252,31 @@ export default function TerminalPanel({
 
   const activeTerm = terms.find((t) => t.id === activeId);
 
+  // Ctrl+Tab / Ctrl+Shift+Tab when focus is inside the terminal dock → cycle terminals
+  // (sessions list uses the same chord globally; when the terminal has focus we steal it)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!e.ctrlKey || e.altKey || e.key !== "Tab") return;
+      const target = e.target as HTMLElement | null;
+      const ae = document.activeElement as HTMLElement | null;
+      const inTerm = !!target?.closest?.(".term-dock") || !!ae?.closest?.(".term-dock");
+      if (!inTerm || !open || terms.length <= 1) return;
+      e.preventDefault();
+      e.stopPropagation();
+      // also block the global session cycler (bubble listener on window)
+      (e as any).stopImmediatePropagation?.();
+      const dir: 1 | -1 = e.shiftKey ? -1 : 1;
+      const idx = terms.findIndex((t) => t.id === activeId);
+      if (idx === -1) return;
+      const nextIdx = (idx + dir + terms.length) % terms.length;
+      const nextId = terms[nextIdx].id;
+      setActiveId(nextId);
+      playSound("click");
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [open, terms, activeId]);
+
   return (
     <div className={`term-dock${open ? "" : " closed"}${dragging ? " dragging" : ""}`} style={{ height: open ? h : 0 }}>
       <div className="term-resize" data-tip="Drag to resize · double-click to reset" onMouseDown={startResize} onDoubleClick={resetSize}>
