@@ -202,6 +202,12 @@ export default function Sidebar({
                   <div
                     key={s.id}
                     className={`session-row ${s.id === activeId ? "active" : ""}${pinned ? " pinned" : ""}${needsAttention ? ` attention attention-${attentionKind ?? "permission"}` : ""}`}
+                    onDoubleClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      if (renaming === s.id) setRenaming(null);
+                      else startRename(s);
+                    }}
                     // middle-click anywhere on the row deletes instantly,
                     // no confirmation — preventDefault kills autoscroll
                     onMouseDown={(e) => {
@@ -243,6 +249,7 @@ export default function Sidebar({
                           if (e.key === "Enter") { e.preventDefault(); commitRename(); }
                           else if (e.key === "Escape") { e.preventDefault(); setRenaming(null); }
                         }}
+                        onDoubleClick={(e) => e.stopPropagation()}
                         onBlur={commitRename}
                         spellCheck={false}
                       />

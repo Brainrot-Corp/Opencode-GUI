@@ -50,8 +50,6 @@ export default function TerminalPanel({
     return Math.min(Math.max(SIDE_W_MIN, v), SIDE_W_MAX);
   });
   const [sideResizing, setSideResizing] = useState(false);
-  const [armedId, setArmedId] = useState<number | null>(null);
-  const armedTimer = useRef(0);
   const [maxErr, setMaxErr] = useState("");
 
   const nextIdRef = useRef(1);
@@ -167,16 +165,6 @@ export default function TerminalPanel({
   }, [terms]);
 
   const killTerm = useCallback(async (id: number) => {
-    if (armedId !== id) {
-      setArmedId(id);
-      playSound("click");
-      window.clearTimeout(armedTimer.current);
-      armedTimer.current = window.setTimeout(() => setArmedId(null), 1000) as unknown as number;
-      return;
-    }
-    // armed → confirm kill
-    window.clearTimeout(armedTimer.current);
-    setArmedId(null);
     const t = terms.find((x) => x.id === id);
     if (t) {
       await invoke("pty_kill", { id, gen: t.gen }).catch(() => {});
@@ -196,7 +184,7 @@ export default function TerminalPanel({
       }
       return next;
     });
-  }, [armedId, terms, activeId, onClose]);
+  }, [terms, activeId, onClose]);
 
   // vertical resize handle (same as single-terminal version)
   const startResize = useCallback((e: React.MouseEvent) => {
@@ -283,11 +271,11 @@ export default function TerminalPanel({
               <i className="fa-solid fa-rotate" />
             </button>
             <button
-              className={`icon-btn term-btn${armedId === activeTerm.id ? " danger" : ""}`}
-              data-tip={armedId === activeTerm.id ? "Click again to kill" : "Kill active terminal"}
+              className="icon-btn term-btn"
+              data-tip="Kill active terminal"
               onClick={() => void killTerm(activeTerm.id)}
             >
-              <i className={`fa-solid ${armedId === activeTerm.id ? "fa-check" : "fa-trash-can"}`} />
+              <i className="fa-solid fa-trash-can" />
             </button>
           </>
         )}
@@ -333,8 +321,8 @@ export default function TerminalPanel({
             {terms.map((t) => (
               <div
                 key={t.id}
-                className={`term-inst-row${t.id === activeId ? " active" : ""}${armedId === t.id ? " armed" : ""}${t.dead ? " dead" : ""}`}
-                onClick={() => { if (armedId !== t.id) setActiveId(t.id); }}
+                className={`term-inst-row${t.id === activeId ? " active" : ""}${t.dead ? " dead" : ""}`}
+                onClick={() => setActiveId(t.id)}
                 data-tip={sideCollapsed ? `${t.title}${t.cwd ? " — " + t.cwd : ""}${t.dead ? " (exited)" : ""}` : undefined}
               >
                 <i className="fa-solid fa-terminal term-inst-ico" />
@@ -354,11 +342,11 @@ export default function TerminalPanel({
                         <i className="fa-solid fa-rotate" />
                       </button>
                       <button
-                        className={`icon-btn term-btn small${armedId === t.id ? " danger" : " close"}`}
-                        data-tip={armedId === t.id ? "Click again to kill" : "Kill terminal"}
+                        className="icon-btn term-btn small close"
+                        data-tip="Kill terminal"
                         onClick={(e) => { e.stopPropagation(); void killTerm(t.id); }}
                       >
-                        <i className={`fa-solid ${armedId === t.id ? "fa-check" : "fa-trash-can"}`} />
+                        <i className="fa-solid fa-trash-can" />
                       </button>
                     </span>
                   </>
