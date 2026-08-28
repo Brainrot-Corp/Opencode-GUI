@@ -70,6 +70,8 @@ export type AppSettings = {
   ttsSpeed: number;
   // secondary model for commit messages, debriefs & long-answer summaries ("provider/model", "" = off)
   secondaryModel: string;
+  // include optional body in AI commit messages (subject + bullet body)
+  commitBody: boolean;
   // show the update-available prompt on launch (Settings → Updates still works when off)
   updateNotifications: boolean;
   // opaque per-plugin config blobs — each plugin validates its own shape
@@ -109,6 +111,7 @@ const DEFAULTS: AppSettings = {
   ttsVol: 1,
   ttsSpeed: 1,
   secondaryModel: "",
+  commitBody: false,
   updateNotifications: true,
   plugins: {},
 };
@@ -232,6 +235,7 @@ export function useSettings() {
         ttsVol: num(p.ttsVol, DEFAULTS.ttsVol, 0, 1),
         ttsSpeed: num(p.ttsSpeed, DEFAULTS.ttsSpeed, 0.5, 2),
         secondaryModel: typeof p.secondaryModel === "string" ? p.secondaryModel : "",
+        commitBody: !!p.commitBody,
         updateNotifications: p.updateNotifications === false ? false : true,
         plugins:
           p.plugins && typeof p.plugins === "object" && !Array.isArray(p.plugins)

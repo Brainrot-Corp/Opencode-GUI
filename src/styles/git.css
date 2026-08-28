@@ -139,7 +139,12 @@ body.gp-resizing * {
   color: var(--text);
   font-family: var(--sans);
   font-size: 12px;
+  line-height: 1.4;
   outline: none;
+  resize: vertical;
+  min-height: 32px;
+  max-height: 96px;
+  overflow-y: auto;
   transition: border-color 0.2s, box-shadow 0.3s;
 }
 .gp-msg::placeholder {
@@ -154,8 +159,7 @@ body.gp-resizing * {
 .gp-gen {
   position: absolute;
   right: 4px;
-  top: 50%;
-  transform: translateY(-50%);
+  top: 8px;
   width: 24px;
   height: 24px;
   border: none;

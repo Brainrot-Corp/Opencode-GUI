@@ -135,7 +135,16 @@ pub async fn git_discard(dir: String, paths: Vec<String>) -> Result<(), String> 
 
 #[tauri::command]
 pub async fn git_commit(dir: String, message: String) -> Result<String, String> {
-    run(&dir, &["commit", "-m", &message])
+    // body opt-in sends "subject\n\nbody" — pass as two -m to preserve paragraph
+    let trimmed = message.trim();
+    if let Some(idx) = trimmed.find("\n\n") {
+        let (subject, body) = trimmed.split_at(idx);
+        let body = body.trim();
+        if !body.is_empty() {
+            return run(&dir, &["commit", "-m", subject.trim(), "-m", body]);
+        }
+    }
+    run(&dir, &["commit", "-m", trimmed])
 }
 
 #[tauri::command]
@@ -155,11 +164,17 @@ pub async fn git_diff(dir: String, path: String, staged: bool) -> Result<String,
     if staged {
         args.push("--cached");
     }
+    args.push("-U1");
     if !path.is_empty() {
         args.push("--");
         args.push(&path);
     }
     run(&dir, &args)
+}
+
+#[tauri::command]
+pub async fn git_diff_stat(dir: String) -> Result<String, String> {
+    run(&dir, &["diff", "--cached", "--stat", "--no-color"])
 }
 
 #[tauri::command]

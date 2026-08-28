@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
-import { getDirectory, opencode, tempSession, dropSession, withDeadline } from "../api";
+import { getDirectory, opencode, tempSession, dropSession } from "../api";
 import { splitModel } from "../lib/models";
 import { extLang } from "../lib/syntax";
 import { playSound } from "../lib/sounds";
+import { heuristicCommit } from "../lib/commitHeuristic";
+import { buildCommitPrompt, cleanCommitMessage } from "../lib/commitPrompt";
 import Dialog from "./Dialog";
 import { DiffLines } from "./DiffPanel";
 import "../styles/git.css";
@@ -28,8 +30,7 @@ const CLEAN: GitStatus = { repo: false, branch: "", ahead: 0, behind: 0, files: 
 
 const base = (p: string) => p.slice(p.lastIndexOf("/") + 1);
 
-// secondary model from the settings blob — read at click time so
-// drawer edits apply without remounting (same pattern as api.ts workspace)
+// secondary model + commitBody from the settings blob — read at click time
 function secondaryModel(): string {
   try {
     const v = JSON.parse(localStorage.getItem("oc.settings") ?? "{}").secondaryModel;
@@ -38,13 +39,61 @@ function secondaryModel(): string {
     return "";
   }
 }
+function commitBodyEnabled(): boolean {
+  try {
+    return !!JSON.parse(localStorage.getItem("oc.settings") ?? "{}").commitBody;
+  } catch {
+    return false;
+  }
+}
+function cachedVariant(sel: string): string | undefined {
+  try {
+    const m = JSON.parse(localStorage.getItem("oc.variants") ?? "{}");
+    const v = m?.[sel];
+    if (typeof v === "string" && v) return v;
+  } catch {}
+  return undefined;
+}
+async function variantFast(client: any, providerID: string, modelID: string, fallback?: string): Promise<string | undefined> {
+  if (fallback) return fallback;
+  // quick probe with deadline 700ms — don't block prompt on it
+  try {
+    const pr: any = await Promise.race([
+      client.config.providers(),
+      new Promise((_, rej) => setTimeout(() => rej(new Error("variant timeout")), 700)),
+    ]);
+    const prov = (pr.data?.providers ?? []).find((p: any) => p.id === providerID);
+    const vars = Object.keys(prov?.models?.[modelID]?.variants ?? {});
+    if (vars.includes("low")) return "low";
+    if (vars.includes("minimal")) return "minimal";
+    if (vars.includes("fast")) return "fast";
+  } catch {}
+  return undefined;
+}
 
 // staged = index column meaningful; changes = worktree column or untracked
 const stagedOf = (files: GitFile[]) => files.filter((f) => f.x !== " " && f.x !== "?");
 const changedOf = (files: GitFile[]) => files.filter((f) => f.y !== " ");
 
+  // keep body toggle reactive without prop drilling — poll localStorage
+function useCommitBody(): boolean {
+  const [v, setV] = useState(() => commitBodyEnabled());
+  useEffect(() => {
+    const sync = () => setV(commitBodyEnabled());
+    window.addEventListener("storage", sync);
+    window.addEventListener("focus", sync);
+    const id = window.setInterval(sync, 1000);
+    return () => {
+      window.removeEventListener("storage", sync);
+      window.removeEventListener("focus", sync);
+      window.clearInterval(id);
+    };
+  }, []);
+  return v;
+}
+
 // status letter → css tint class (VS Code-style: M/T amber, A green,
-// D red, untracked green-U, conflicts purple, renames blue, rest dim)
+ // D red, untracked green-U, conflicts purple, renames blue, rest dim)
 const xcls = (l: string) =>
   l === "M" || l === "T"
     ? "mod"
@@ -67,6 +116,7 @@ export default function GitPanel() {
   const [confirmPath, setConfirmPath] = useState(""); // discard two-step
   const [gen, setGen] = useState(false); // AI message in flight
   const [diff, setDiff] = useState<{ path: string; patch: string; staged: boolean } | null>(null);
+  const bodyOpt = useCommitBody();
   const dir = useRef(getDirectory());
   const [gh, setGh] = useState(() => clampH(Number(localStorage.getItem(GH_KEY)) || GH_DEFAULT));
   const [dragging, setDragging] = useState(false);
@@ -180,88 +230,110 @@ export default function GitPanel() {
     return () => clearTimeout(t);
   }, [pushed]);
 
-  // AI commit message: hidden temp session on the configured model —
-  // created, prompted (sync), deleted; never touches the sidebar list.
-  // Resolves to the message (also placed in the input) or "" on failure —
-  // voice "commit" chains it straight into git_commit
+  // AI commit message: instant heuristic fill + streaming AI upgrade.
+  // Heuristic shows in <50ms; AI via promptAsync poll fills the textarea
+  // progressively (target 5s). Voice "commit" chains it straight into git_commit.
   const genMessage = async (): Promise<string> => {
-    const model = secondaryModel();
-    if (!model) {
-      // nothing configured — jump straight to the settings drawer
-      window.dispatchEvent(new Event("oc:settings"));
-      setErr("Pick a Secondary model in Settings.");
-      return "";
-    }
     if (gen || busy || !staged.length) return "";
+    const model = secondaryModel();
+    const includeBody = commitBodyEnabled();
     setGen(true);
     setErr("");
+    // capture staged snapshot for this run
+    const stagedSnap = [...staged];
+    const branchSnap = st.branch;
+    let heuristicFallback = heuristicCommit({ staged: stagedSnap, branch: branchSnap });
     try {
-      const diff = await invoke<string>("git_diff", { dir: dir.current, path: "", staged: true });
-      if (!diff.trim()) {
+      // parallel: diff + stat + log (stat/log are cheap, diff may be large)
+      const [diffRaw, statRaw, logRaw] = await Promise.all([
+        invoke<string>("git_diff", { dir: dir.current, path: "", staged: true }).catch(() => ""),
+        invoke<string>("git_diff_stat", { dir: dir.current }).catch(() => ""),
+        invoke<string>("git_log", { dir: dir.current }).catch(() => ""),
+      ]);
+      if (!diffRaw.trim() && !statRaw.trim()) {
         setErr("Staged diff is empty.");
         return "";
       }
+      // heuristic fills instantly — user sees a message immediately
+      const heuristic = heuristicCommit({ staged: stagedSnap, stat: statRaw, diff: diffRaw.slice(0, 4000), branch: branchSnap });
+      heuristicFallback = heuristic;
+      setMsg(heuristic);
+
+      if (!model) {
+        // no AI configured — heuristic is the result (quality local fallback)
+        return heuristic;
+      }
+
       const { client } = await opencode();
+      const [providerID, modelID] = splitModel(model);
+      const cached = cachedVariant(model);
+      // don't block on providers probe — race 700ms
+      const variant = await variantFast(client, providerID, modelID, cached);
+
+      const promptText = buildCommitPrompt({
+        staged: stagedSnap.map((f) => ({ path: f.path, x: f.x })),
+        branch: branchSnap,
+        stat: statRaw,
+        diff: diffRaw,
+        log: logRaw,
+        includeBody,
+      });
+
       const sid = await tempSession();
+      let best = heuristic;
+      let streamed = "";
       try {
-        const [providerID, modelID] = splitModel(model);
-        // secondary tasks use low thinking effort if the model supports it
-        let variant: string | undefined;
-        try {
-          const pr: any = await client.config.providers();
-          const prov = (pr.data?.providers ?? []).find((p: any) => p.id === providerID);
-          const vars = Object.keys(prov?.models?.[modelID]?.variants ?? {});
-          if (vars.includes("low")) variant = "low";
-          else if (vars.includes("minimal")) variant = "minimal";
-          else if (vars.includes("fast")) variant = "fast";
-        } catch {}
-        const r = await withDeadline(
-          client.session.prompt({
-            path: { id: sid },
-            body: {
-              parts: [
-                {
-                  type: "text",
-                  text:
-                    "You generate git commit messages. Study the staged diff below and " +
-                    "produce exactly one commit subject line for it.\n\n" +
-                    "Rules:\n" +
-                    "- Conventional Commit style when the change type is clear " +
-                    "(feat:/fix:/refactor:/docs:/chore:/test:/perf:); plain otherwise\n" +
-                    "- Imperative mood, present tense (\"add\", never \"added\" or \"adds\")\n" +
-                    "- Maximum 72 characters, no trailing period\n" +
-                    "- Cover the single most significant change; ignore incidental churn\n" +
-                    "- No quotation marks, backticks, or markdown formatting\n\n" +
-                    "Reply with the message only — no preamble, explanation, or code fences.\n\n" +
-                    "Staged diff:\n" +
-                    diff.slice(0, 12000),
-                },
-              ],
-              model: { providerID, modelID },
-              ...(variant ? { variant } : {}),
-            },
-          }),
-          120_000,
-          "Commit message",
-        );
-        const parts: any[] = ((r.data as any)?.parts ?? []) as any[];
-        const text = parts
-          .filter((p) => p.type === "text")
-          .map((p) => p.text ?? "")
-          .join("")
-          .trim();
-        if (text) {
-          setMsg(text);
-          return text;
+        await client.session.promptAsync({
+          path: { id: sid },
+          body: {
+            parts: [{ type: "text", text: promptText }],
+            model: { providerID, modelID },
+            ...(variant ? { variant } : {}),
+          },
+        } as any);
+
+        // poll session messages for progressive fill (perceived streaming)
+        const start = Date.now();
+        const deadline = 60000; // hard cap; 4× previous (15s→60s) for quality
+        while (Date.now() - start < deadline) {
+          await new Promise((r) => setTimeout(r, 260));
+          try {
+            const r: any = await client.session.messages({ path: { id: sid } });
+            const list: any[] = (r.data ?? []) as any[];
+            const assistants = list.filter((m: any) => m.info?.role === "assistant");
+            const last = assistants[assistants.length - 1];
+            if (!last) continue;
+            const parts: any[] = (last.parts ?? []) as any[];
+            const raw = parts.filter((p: any) => p.type === "text").map((p: any) => p.text ?? "").join("").trim();
+            if (!raw) continue;
+            const cleaned = cleanCommitMessage(raw, includeBody);
+            if (cleaned && cleaned !== streamed) {
+              streamed = cleaned;
+              best = cleaned;
+              setMsg(cleaned); // progressively fills the textarea
+            }
+            if (last.info?.time?.completed) break;
+            // early exit if we already have a good subject within 5s
+            if (streamed && Date.now() - start > 5000 && last.info?.time?.completed) break;
+          } catch {
+            // transient fetch error — keep polling
+          }
         }
-        setErr("Model returned no message.");
-        return "";
+
+        if (!streamed) {
+          // no AI delta arrived — keep heuristic, surface hint
+          setErr("AI slow — using heuristic. Edit or retry.");
+          return heuristic;
+        }
+        return best;
       } finally {
         await dropSession(sid);
       }
     } catch (e) {
-      setErr(String(e).replace(/^Error:\s*/, ""));
-      return "";
+      const m = String(e).replace(/^Error:\s*/, "");
+      setErr(m);
+      // keep heuristic in box so voice commit can proceed
+      return heuristicFallback;
     } finally {
       setGen(false);
     }
@@ -447,20 +519,37 @@ export default function GitPanel() {
       {open && (
         <div className="gp-body" style={{ height: gh }}>
           <div className="gp-msgrow">
-            <input
+            <textarea
               className="gp-msg"
-              placeholder={`Message (${staged.length} staged)`}
+              placeholder={
+                bodyOpt
+                  ? `Message + body (${staged.length} staged) — Ctrl+Enter to commit`
+                  : `Message (${staged.length} staged)`
+              }
               value={msg}
+              rows={bodyOpt || msg.includes("\n") ? 3 : 1}
               onChange={(e) => setMsg(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && canCommit && commit(false)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  if (bodyOpt) {
+                    if ((e.ctrlKey || e.metaKey) && canCommit) {
+                      e.preventDefault();
+                      commit(false);
+                    }
+                  } else if (canCommit) {
+                    e.preventDefault();
+                    commit(false);
+                  }
+                }
+              }}
               disabled={busy}
             />
             <button
               className={`gp-gen${gen ? " spinning" : ""}`}
               data-tip={
                 secondaryModel()
-                  ? `Generate message (${secondaryModel()})`
-                  : "Pick a Secondary model in Settings"
+                  ? `Generate message (${secondaryModel()})${bodyOpt ? " + body" : ""}`
+                  : "Heuristic only — pick a Secondary model for AI"
               }
               disabled={gen || busy || !staged.length}
               onClick={genMsg}

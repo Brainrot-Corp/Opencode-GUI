@@ -372,6 +372,23 @@ export default function SettingsDrawer({
                 />
               </div>
             </div>
+            <div className="setting-row">
+              <div className="setting-info">
+                <i className="fa-solid fa-align-left setting-icon" />
+                <div>
+                  <div className="setting-name">Commit body</div>
+                  <div className="setting-desc">AI commit messages include a bullet body</div>
+                </div>
+              </div>
+              <button
+                type="button"
+                className={`toggle${settings.commitBody ? " on" : ""}`}
+                aria-pressed={settings.commitBody}
+                onClick={() => update({ commitBody: !settings.commitBody })}
+              >
+                <span className="knob" />
+              </button>
+            </div>
           </section>
 
           {/* ── Window & System ── */}
