@@ -41,7 +41,7 @@ export default function PluginsDialog({
   onRefreshCatalog?: (force?: boolean) => Promise<unknown>;
 }) {
   const [tab, setTab] = useState<"installed" | "browse">("installed");
-  const [confirmId, setConfirmId] = useState<string | null>(null);
+  const [confirmKey, setConfirmKey] = useState<string | null>(null);
   const [removing, setRemoving] = useState<string | null>(null);
   const [err, setErr] = useState("");
 
@@ -56,10 +56,15 @@ export default function PluginsDialog({
   const [urlErr, setUrlErr] = useState("");
   const [settingsId, setSettingsId] = useState<string | null>(null);
 
+  function armConfirm(key: string) {
+    setConfirmKey(key);
+    setTimeout(() => setConfirmKey((v) => (v === key ? null : v)), 4000);
+  }
+
   async function handleDelete(p: LoadedPlugin) {
-    if (confirmId !== p.dir) {
-      setConfirmId(p.dir);
-      setTimeout(() => setConfirmId((v) => (v === p.dir ? null : v)), 4000);
+    const key = `${p.dir}:delete`;
+    if (confirmKey !== key) {
+      armConfirm(key);
       return;
     }
     setRemoving(p.dir);
@@ -78,12 +83,27 @@ export default function PluginsDialog({
       await invoke("plugin_remove", { dir: p.dir });
       onRemoved(p.id);
       if (p.id !== p.dir) onRemoved(p.dir);
-      setConfirmId(null);
+      setConfirmKey(null);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
       setRemoving(null);
     }
+  }
+
+  async function handleReinstall(p: LoadedPlugin) {
+    const key = `${p.dir}:reinstall`;
+    if (confirmKey !== key) {
+      armConfirm(key);
+      return;
+    }
+    setConfirmKey(null);
+    const entry = catalog?.find((c) => c.id === p.id || c.id === p.dir);
+    if (!entry) {
+      setErr(`No catalog entry for ${p.id} — try Refresh or Install from URL`);
+      return;
+    }
+    await handleInstall(entry);
   }
 
   function refreshCatalog(force = false) {
@@ -272,11 +292,14 @@ export default function PluginsDialog({
               <div className="plugins-list">
                 {plugins.map((p) => {
                   const enabled = !p.disabled;
-                  const isConfirm = confirmId === p.dir;
                   const isRemoving = removing === p.dir;
                   const needsUpdate = hasUpdate(p.id);
                   const catEntry = catalog?.find((c) => c.id === p.id || c.id === p.dir);
                   const busy = installing === p.id || installing === p.dir;
+                  const reinstallKey = `${p.dir}:reinstall`;
+                  const deleteKey = `${p.dir}:delete`;
+                  const isReinstallArmed = confirmKey === reinstallKey;
+                  const isDeleteArmed = confirmKey === deleteKey;
                   return (
                     <div key={p.dir} className={`plugin-row${p.disabled ? " disabled" : ""}`}>
                       <div className="plugin-info">
@@ -341,16 +364,28 @@ export default function PluginsDialog({
                             Settings
                           </button>
                         ) : null}
-                        <button
-                          type="button"
-                          className={`reset-btn danger-btn${isConfirm ? " armed" : ""}`}
-                          data-tip={isConfirm ? "Click again to confirm delete" : "Delete plugin folder"}
-                          disabled={isRemoving || busy}
-                          onClick={() => void handleDelete(p)}
-                        >
-                          <i className={`fa-solid ${isConfirm ? "fa-triangle-exclamation" : "fa-trash-can"}`} />
-                          {isConfirm ? "Confirm" : "Delete"}
-                        </button>
+                        <div className="split-btn" aria-label="Reinstall or delete">
+                          <button
+                            type="button"
+                            className={`split-half reinstall${isReinstallArmed ? " armed" : ""}`}
+                            data-tip={isReinstallArmed ? "Click again to confirm reinstall" : "Reinstall from catalog"}
+                            disabled={isRemoving || busy}
+                            onClick={() => void handleReinstall(p)}
+                          >
+                            <i className={`fa-solid ${isReinstallArmed ? "fa-triangle-exclamation" : busy ? "fa-spinner fa-spin" : "fa-rotate"}`} />
+                            <span className="split-label">{isReinstallArmed ? "Confirm" : busy ? "…" : "Reinstall"}</span>
+                          </button>
+                          <button
+                            type="button"
+                            className={`split-half delete${isDeleteArmed ? " armed" : ""}`}
+                            data-tip={isDeleteArmed ? "Click again to confirm delete" : "Delete plugin folder"}
+                            disabled={isRemoving || busy}
+                            onClick={() => void handleDelete(p)}
+                          >
+                            <i className={`fa-solid ${isDeleteArmed ? "fa-triangle-exclamation" : "fa-trash-can"}`} />
+                            <span className="split-label">{isDeleteArmed ? "Confirm" : isRemoving ? "…" : "Delete"}</span>
+                          </button>
+                        </div>
                       </div>
                     </div>
                   );

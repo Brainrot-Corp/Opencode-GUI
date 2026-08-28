@@ -2,9 +2,6 @@ import { useEffect } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { invoke } from "@tauri-apps/api/core";
 import { playSound } from "../lib/sounds";
-import type { Mode } from "../hooks/useSettings";
-import type { ThemeMeta } from "../lib/themes";
-import ThemeSelect from "./ThemeSelect";
 
 // titlebar height — keep in sync with layout.css
 const TB_H = 42;
@@ -16,12 +13,6 @@ export default function Titlebar({
   onOpenSettings,
   onOpenPlugins,
   hasPluginUpdate,
-  themes,
-  theme,
-  onThemeChange,
-  mode,
-  onModeChange,
-  modes,
   talking,
   debriefing,
   titlebarExtras,
@@ -33,13 +24,6 @@ export default function Titlebar({
   onOpenSettings?: () => void;
   onOpenPlugins?: () => void;
   hasPluginUpdate?: boolean;
-  themes?: ThemeMeta[];
-  theme?: string;
-  onThemeChange?: (t: string) => void;
-  mode?: Mode;
-  onModeChange?: (m: Mode) => void;
-  // variations the active theme provides — hidden toggle when only one
-  modes?: Mode[];
   // TTS queue draining / audio audible — show the speaking indicator
   talking?: boolean;
   debriefing?: boolean;
@@ -102,25 +86,18 @@ export default function Titlebar({
         <span>OpenCode</span>
       </div>
       <div className="win-controls">
+        {titlebarExtras}
+        <button className="icon-btn" data-tip={hasPluginUpdate ? "Plugins — updates available" : "Plugins"} onClick={() => onOpenPlugins?.()}>
+          <i className="fa-solid fa-puzzle-piece" />
+          {hasPluginUpdate && <span className="plugin-update-dot" aria-hidden="true" />}
+        </button>
+        <span className="ctrl-sep" />
         {debriefing && (
           <span className="debrief-indicator" data-tip="Debrief in progress — preparing summary">
             <i className="fa-solid fa-spinner fa-spin" aria-hidden="true" />
             <em>Debriefing</em>
             <i className="debrief-dot" aria-hidden="true" />
           </span>
-        )}
-        <ThemeSelect themes={themes ?? []} value={theme ?? "cyan"} onChange={(t) => onThemeChange?.(t)} />
-        {(!modes || modes.length > 1) && (
-          <button
-            className="icon-btn"
-            data-tip={mode === "light" ? "Switch to dark mode" : "Switch to light mode"}
-            onClick={() => {
-              playSound("click");
-              onModeChange?.(mode === "light" ? "dark" : "light");
-            }}
-          >
-            <i className={`fa-solid ${mode === "light" ? "fa-moon" : "fa-regular fa-sun"}`} />
-          </button>
         )}
         <button
           className={`debrief-indicator speech-indicator${talking ? "" : " idle"}`}
@@ -136,12 +113,7 @@ export default function Titlebar({
           <em>Speaking</em>
           <i className="debrief-dot" aria-hidden="true" />
         </button>
-        {titlebarExtras}
         <span className="ctrl-sep" />
-        <button className="icon-btn" data-tip={hasPluginUpdate ? "Plugins — updates available" : "Plugins"} onClick={() => onOpenPlugins?.()}>
-          <i className="fa-solid fa-puzzle-piece" />
-          {hasPluginUpdate && <span className="plugin-update-dot" aria-hidden="true" />}
-        </button>
         <button className="icon-btn" data-tip="Settings" onClick={() => onOpenSettings?.()}>
           <i className="fa-solid fa-gear" />
         </button>

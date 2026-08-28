@@ -117,3 +117,108 @@
   padding: 0 2px;
   line-height: 1.5;
 }
+
+/* diagonal split reinstall / delete — icon-only at rest, expands to icon+text, sibling hidden */
+.split-btn {
+  position: relative;
+  width: 84px;
+  height: 26px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  overflow: hidden;
+  flex-shrink: 0;
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+.split-half {
+  position: absolute;
+  inset: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  font-family: var(--sans);
+  font-size: 11px;
+  line-height: 1;
+  border: none;
+  cursor: pointer;
+  transition: clip-path 220ms var(--ease), background 180ms var(--ease), color 180ms var(--ease), opacity 140ms var(--ease), padding 180ms var(--ease), z-index 0s;
+  padding: 0;
+  color: var(--text-dim);
+  background: transparent;
+}
+.split-half:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.split-half.reinstall {
+  clip-path: polygon(0 0, 58% 0, 42% 100%, 0 100%);
+  justify-content: flex-start;
+  padding-left: 10px;
+}
+.split-half.delete {
+  clip-path: polygon(58% 0, 100% 0, 100% 100%, 42% 100%);
+  justify-content: flex-end;
+  padding-right: 10px;
+}
+.split-half.reinstall:hover:not(:disabled),
+.split-half.reinstall.armed {
+  clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%);
+  z-index: 2;
+  justify-content: center;
+  padding-left: 0;
+  padding-right: 0;
+}
+.split-half.delete:hover:not(:disabled),
+.split-half.delete.armed {
+  clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%);
+  z-index: 2;
+  justify-content: center;
+  padding-left: 0;
+  padding-right: 0;
+}
+.split-half.reinstall:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--accent-bright);
+}
+.split-half.delete:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  color: var(--danger);
+}
+.split-half.reinstall.armed {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent-bright);
+}
+.split-half.delete.armed {
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+  color: var(--danger);
+}
+.split-half i {
+  font-size: 10px;
+  flex-shrink: 0;
+}
+/* label — hidden at rest (icon only), revealed when its half is hovered/armed */
+.split-label {
+  white-space: nowrap;
+  overflow: hidden;
+  max-width: 0;
+  opacity: 0;
+  transition: max-width 200ms var(--ease), opacity 140ms var(--ease);
+}
+.split-half:hover:not(:disabled) .split-label,
+.split-half.armed .split-label {
+  max-width: 72px;
+  opacity: 1;
+}
+/* hide the non-expanded sibling entirely to avoid overlap */
+.split-btn:has(> .reinstall:hover:not(:disabled)) > .delete,
+.split-btn:has(> .reinstall.armed) > .delete {
+  opacity: 0;
+  pointer-events: none;
+  visibility: hidden;
+}
+.split-btn:has(> .delete:hover:not(:disabled)) > .reinstall,
+.split-btn:has(> .delete.armed) > .reinstall {
+  opacity: 0;
+  pointer-events: none;
+  visibility: hidden;
+}

@@ -884,11 +884,6 @@ export default function ChatPage() {
           onOpenSettings={openSettings}
           onOpenPlugins={() => setPluginsOpen(true)}
           hasPluginUpdate={hasPluginUpdate}
-          themes={themes}
-          theme={settings.theme}
-          onThemeChange={(t) => update({ theme: t })}
-          mode={effectiveMode}
-          onModeChange={(m) => update({ mode: m })}
           talking={talking}
           debriefing={debriefing}
           titlebarExtras={

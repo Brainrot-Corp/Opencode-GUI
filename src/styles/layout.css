@@ -157,7 +157,11 @@
   box-shadow: none;
 }
 
-/* debrief indicator — right side of titlebar, next to win-controls */
+/* debrief indicator — right side of titlebar, next to win-controls
+   each indicator owns its clip zone (overflow hidden); text is collapsed
+   to 0 and only the hovered zone expands, so the two never overlap.
+   solid bg (not var(--accent-dim) translucent) so expanded text occludes
+   the neighbor instead of showing through */
 .debrief-indicator {
   display: inline-flex;
   align-items: center;
@@ -165,8 +169,8 @@
   height: 22px;
   padding: 0 8px 0 7px;
   margin-right: 6px;
-  background: var(--accent-dim);
-  border: 1px solid color-mix(in srgb, var(--accent) 18%, transparent);
+  background: color-mix(in srgb, var(--accent) 16%, rgb(var(--chrome-rgb)));
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, rgb(var(--chrome-rgb)));
   box-shadow: 0 0 12px var(--accent-glow);
   color: var(--accent-bright);
   font-family: var(--mono);
@@ -174,14 +178,34 @@
   letter-spacing: 0.06em;
   text-transform: uppercase;
   user-select: none;
+  overflow: hidden;
+  contain: paint;
+  max-width: 100%;
+  flex-shrink: 0;
+  position: relative;
+}
+.debrief-indicator:hover {
+  z-index: 1;
 }
 .debrief-indicator i.fa-spinner {
   font-size: 11px;
   opacity: 0.9;
+  flex-shrink: 0;
 }
 .debrief-indicator em {
   font-style: normal;
   font-weight: 600;
+  max-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  opacity: 0;
+  flex-shrink: 1;
+  transition: max-width 0.22s var(--ease), opacity 0.16s var(--ease);
+}
+.debrief-indicator:hover em,
+.debrief-indicator:focus-visible em {
+  max-width: 90px;
+  opacity: 1;
 }
 .debrief-dot {
   width: 6px;
@@ -203,32 +227,45 @@ button.debrief-indicator {
   font-size: 9px;
   line-height: 1;
   border-radius: 4px;
+  overflow: hidden;
+  contain: paint;
+  position: relative;
+  background: color-mix(in srgb, var(--accent) 16%, rgb(var(--chrome-rgb)));
+  border-color: color-mix(in srgb, var(--accent) 22%, rgb(var(--chrome-rgb)));
 }
 button.debrief-indicator i {
   font-size: 9px;
   line-height: 1;
+  flex-shrink: 0;
 }
 button.debrief-indicator .debrief-dot {
   width: 5px;
   height: 5px;
+  flex-shrink: 0;
 }
 button.debrief-indicator:hover {
-  background: color-mix(in srgb, var(--danger) 22%, transparent);
-  border-color: color-mix(in srgb, var(--danger) 40%, transparent);
+  z-index: 1;
+  background: color-mix(in srgb, var(--danger) 22%, rgb(var(--chrome-rgb)));
+  border-color: color-mix(in srgb, var(--danger) 40%, rgb(var(--chrome-rgb)));
   color: var(--danger);
+}
+button.debrief-indicator:hover em,
+button.debrief-indicator:focus-visible em {
+  max-width: 70px;
+  opacity: 1;
 }
 
 /* speech idle — same slot so nothing shifts, greyed out and inert */
 button.debrief-indicator.idle {
   cursor: default;
-  background: rgba(255, 255, 255, 0.04);
-  border-color: var(--line);
+  background: rgb(var(--chrome-rgb));
+  border-color: var(--line-strong);
   box-shadow: none;
   color: var(--text-faint);
 }
 button.debrief-indicator.idle:hover {
-  background: rgba(255, 255, 255, 0.04);
-  border-color: var(--line);
+  background: rgb(var(--chrome-rgb));
+  border-color: var(--line-strong);
   color: var(--text-faint);
 }
 button.debrief-indicator.idle .debrief-dot {
