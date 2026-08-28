@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
-import { newer, releaseVersion } from "../lib/version";
+import { releaseVersion } from "../lib/version";
 
 const REPO = "Brainrot-Corp/Opencode-GUI";
 // releases attach two portable zips (win10 = noglass build, win11 = default
@@ -87,7 +87,8 @@ export function useUpdater() {
       let info: UpdateInfo | null = null;
       if (asset && digest.startsWith("sha256:")) {
         const sha256 = digest.slice(7);
-        if (newer(version, cur) && sha256) {
+        const curNorm = releaseVersion(cur);
+        if (version && sha256 && version !== curNorm) {
           info = {
             version,
             notes: String(j.body ?? ""),
