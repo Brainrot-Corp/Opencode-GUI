@@ -62,6 +62,7 @@
   height: 100%;
 }
 .icon-btn {
+  position: relative;
   width: 40px;
   height: 32px;
   margin-right: 4px;
@@ -74,6 +75,18 @@
   cursor: pointer;
   color: var(--text-faint);
   transition: color 0.25s var(--ease), background 0.25s var(--ease), box-shadow 0.35s var(--ease);
+}
+.plugin-update-dot {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--danger);
+  box-shadow: 0 0 6px rgba(224, 143, 143, 0.75);
+  border: 1px solid rgba(12, 17, 22, 0.85);
+  pointer-events: none;
 }
 .icon-btn i {
   font-size: 14px;

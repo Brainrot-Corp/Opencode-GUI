@@ -15,6 +15,7 @@ export default function Titlebar({
   closeOnX,
   onOpenSettings,
   onOpenPlugins,
+  hasPluginUpdate,
   themes,
   theme,
   onThemeChange,
@@ -31,6 +32,7 @@ export default function Titlebar({
   closeOnX?: boolean;
   onOpenSettings?: () => void;
   onOpenPlugins?: () => void;
+  hasPluginUpdate?: boolean;
   themes?: ThemeMeta[];
   theme?: string;
   onThemeChange?: (t: string) => void;
@@ -136,8 +138,9 @@ export default function Titlebar({
         </button>
         {titlebarExtras}
         <span className="ctrl-sep" />
-        <button className="icon-btn" data-tip="Plugins" onClick={() => onOpenPlugins?.()}>
+        <button className="icon-btn" data-tip={hasPluginUpdate ? "Plugins — updates available" : "Plugins"} onClick={() => onOpenPlugins?.()}>
           <i className="fa-solid fa-puzzle-piece" />
+          {hasPluginUpdate && <span className="plugin-update-dot" aria-hidden="true" />}
         </button>
         <button className="icon-btn" data-tip="Settings" onClick={() => onOpenSettings?.()}>
           <i className="fa-solid fa-gear" />
