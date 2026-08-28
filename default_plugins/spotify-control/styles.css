@@ -116,21 +116,37 @@
 .spotify-box .discord-in { font-size: 11px; }
 .sp-hint { line-height: 1.4; padding: 4px 2px; }
 
-/* lyrics floating window — glass + draggable like notepad, timestamp-synced */
+/* lyrics floating window — opaque animated gradient (theme + light/dark aware) */
 .lyrics-panel{
   position:fixed;
   z-index:40;
   display:flex;
   flex-direction:column;
-  background:var(--surface);
+  background: linear-gradient(135deg,
+    rgb(var(--chrome-rgb)),
+    color-mix(in srgb, var(--accent) 18%, rgb(var(--chrome-rgb))),
+    color-mix(in srgb, var(--accent) 28%, rgb(var(--chrome-rgb))),
+    color-mix(in srgb, var(--accent) 14%, rgb(var(--chrome-rgb))),
+    rgb(var(--chrome-rgb))
+  );
+  background-size: 300% 300%;
+  animation: lyricsGradient 12s ease infinite;
   border:1px solid color-mix(in srgb, var(--accent) 22%, var(--line));
-  box-shadow:0 24px 64px -24px var(--accent-glow);
-  backdrop-filter:blur(8px);
-  -webkit-backdrop-filter:blur(8px);
+  box-shadow:0 24px 64px -24px var(--accent-glow), 0 8px 24px -12px rgba(0,0,0,0.45);
+  backdrop-filter:none;
+  -webkit-backdrop-filter:none;
   will-change:transform;
   contain:layout style paint;
   transform:translateZ(0);
   overflow:hidden;
+}
+@keyframes lyricsGradient{
+  0%{ background-position: 0% 50%; }
+  50%{ background-position: 100% 50%; }
+  100%{ background-position: 0% 50%; }
+}
+@media (prefers-reduced-motion: reduce){
+  .lyrics-panel{ animation: none; }
 }
 .lyrics-head{
   display:flex;
