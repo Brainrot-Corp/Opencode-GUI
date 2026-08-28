@@ -156,3 +156,109 @@
 .linklike:hover {
   text-decoration: underline;
 }
+
+/* Hotkeys rebind — glass pills (InfoDialog keys tab) */
+.cmd-row.hk-row {
+  align-items: center;
+}
+.hk-sub {
+  font-size: 10px;
+  font-weight: 400;
+  letter-spacing: 0.02em;
+  color: var(--text-faint);
+}
+.hk-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border: 1px solid var(--line);
+  background: var(--inset-bg);
+  border-radius: 4px;
+  font-size: 11.5px;
+  line-height: 1;
+  color: var(--text);
+  cursor: pointer;
+  transition: border-color 0.15s var(--ease), background 0.15s var(--ease), box-shadow 0.2s var(--ease), color 0.15s var(--ease);
+  max-width: 220px;
+  overflow: hidden;
+}
+.hk-pill:hover {
+  border-color: color-mix(in srgb, var(--accent) calc(0.35 * 100%), transparent);
+  background: color-mix(in srgb, var(--accent) calc(0.06 * 100%), var(--inset-bg));
+}
+.hk-pill.fixed {
+  cursor: default;
+  color: var(--text-dim);
+}
+.hk-pill.fixed:hover {
+  border-color: var(--line);
+  background: var(--inset-bg);
+}
+.hk-pill.rec {
+  border-color: color-mix(in srgb, var(--accent) calc(0.55 * 100%), transparent);
+  background: color-mix(in srgb, var(--accent) calc(0.10 * 100%), var(--inset-bg));
+  color: var(--accent-bright);
+  box-shadow: 0 0 14px -6px var(--accent-glow);
+  animation: hk-rec 1.1s ease-in-out infinite;
+}
+@keyframes hk-rec {
+  50% { box-shadow: 0 0 18px -4px var(--accent-glow); }
+}
+.hk-pill.off {
+  color: var(--text-faint);
+  border-style: dashed;
+  opacity: 0.75;
+}
+.hk-key {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.hk-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 6px var(--accent-glow);
+  flex: none;
+}
+.cmd-row.hk-row.conflict .hk-pill {
+  border-color: color-mix(in srgb, var(--danger) calc(0.45 * 100%), transparent);
+  box-shadow: 0 0 10px -6px color-mix(in srgb, var(--danger) 35%, transparent);
+}
+.hk-warn {
+  color: var(--danger);
+  font-size: 10px;
+  margin-left: 4px;
+}
+.hk-desc {
+  flex: 1;
+  min-width: 0;
+}
+.hk-reset {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 22px;
+  border: 1px solid var(--line);
+  background: var(--inset-bg);
+  border-radius: 4px;
+  color: var(--text-faint);
+  cursor: pointer;
+  flex: none;
+  transition: color 0.15s var(--ease), border-color 0.15s var(--ease), background 0.15s var(--ease);
+}
+.hk-reset:hover {
+  color: var(--accent-bright);
+  border-color: color-mix(in srgb, var(--accent) calc(0.35 * 100%), transparent);
+  background: color-mix(in srgb, var(--accent) calc(0.06 * 100%), var(--inset-bg));
+}
+.hk-actions {
+  display: flex;
+  justify-content: flex-end;
+  padding: 4px 2px 2px;
+}
+.cmd-row.hk-row.static {
+  opacity: 0.95;
+}

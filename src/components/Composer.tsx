@@ -8,6 +8,7 @@ import { useAttachments } from "../hooks/useAttachments";
 import { detectLang, escPlain, hlHtml, insertFenced, looksLikeCode } from "../lib/syntax";
 import { handleComposerKeys } from "../lib/editorKeys";
 import { findMatches, highlightFindInHtml } from "../lib/find";
+import { matchesEvent } from "../lib/hotkeys";
 import ModelMenu, { type ModelEntry } from "./ModelMenu";
 import SlashMenu from "./SlashMenu";
 import { playSound } from "../lib/sounds";
@@ -114,6 +115,7 @@ export default function Composer({
   voiceError,
   onVoiceToggle,
   sessionId,
+  cycleAgentHotkey,
 }: {
   busy: boolean;
   // double-Escape stop gesture armed — the stop button shows its countdown
@@ -145,6 +147,7 @@ export default function Composer({
   voiceError?: string;
   onVoiceToggle?: () => void;
   sessionId?: string;
+  cycleAgentHotkey?: string | null;
 }) {
   const [input, setInput] = useState(() => getDraft(sessionId ?? ""));
   const [open, setOpen] = useState(false);
@@ -599,19 +602,20 @@ export default function Composer({
         return;
       }
 
-      // --- Tab cycles the agent when no suggestion UI is up;
-      //     real form fields keep Tab's focus behavior ---
-      if (
-        e.key === "Tab" &&
-        !e.ctrlKey &&
-        !e.altKey &&
-        !e.metaKey &&
-        !e.shiftKey
-      ) {
-        const t = e.target as HTMLElement | null;
-        if (t && (t.tagName === "INPUT" || t.tagName === "SELECT" || t.isContentEditable)) return;
-        e.preventDefault();
-        onCycleAgent?.();
+      // --- cycleAgent hotkey — default Tab ---
+      if (onCycleAgent) {
+        const b = cycleAgentHotkey ?? "Tab";
+        const should = b ? matchesEvent(e as any, b) : e.key === "Tab" && !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey;
+        if (should) {
+          const t = e.target as HTMLElement | null;
+          if (t && (t.tagName === "INPUT" || t.tagName === "SELECT" || t.isContentEditable)) {
+            // allow native tab in inputs/selects unless rebind is explicitly that
+            if (b === "Tab") return;
+          }
+          e.preventDefault();
+          onCycleAgent();
+          return;
+        }
       }
     };
     window.addEventListener("keydown", onKey);
