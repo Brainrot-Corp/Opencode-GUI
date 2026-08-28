@@ -632,16 +632,18 @@ export default function Composer({
               ) : (
                 <i className={`fa-solid ${iconFor(a.mime)} attach-icon`} />
               )}
-              <span className="attach-name">{a.filename}</span>
-              <span className="attach-size">{prettySize(a.size)}</span>
-              <button
-                type="button"
-                className="attach-x"
-                data-tip="Remove attachment"
-                onClick={() => attach.removeFile(a.id)}
-              >
-                <i className="fa-solid fa-xmark" />
-              </button>
+              <div className="attach-meta">
+                <span className="attach-name">{a.filename}</span>
+                <span className="attach-size">{prettySize(a.size)}</span>
+                <button
+                  type="button"
+                  className="attach-x"
+                  data-tip="Remove attachment"
+                  onClick={() => attach.removeFile(a.id)}
+                >
+                  <i className="fa-solid fa-xmark" />
+                </button>
+              </div>
               {a.status === "reading" && (
                 <i className="attach-bar" style={{ width: `${Math.round(a.progress * 100)}%` }} />
               )}

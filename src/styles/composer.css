@@ -649,10 +649,11 @@
 .attach-chip {
   position: relative;
   display: flex;
-  align-items: center;
-  gap: 6px;
-  max-width: 320px;
-  padding: 4px 6px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
+  max-width: 148px;
+  padding: 5px;
   background: var(--inset-bg);
   border: 1px solid var(--line);
   border-radius: 4px;
@@ -662,7 +663,7 @@
   overflow: hidden;
 }
 .attach-chip img {
-  width: 96px;
+  width: 138px;
   height: 96px;
   object-fit: contain;
   border-radius: 3px;
@@ -672,11 +673,27 @@
   cursor: zoom-in;
 }
 .attach-icon {
+  display: grid;
+  place-items: center;
+  width: 138px;
+  height: 96px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 3px;
   color: var(--accent);
-  font-size: 13px;
+  font-size: 22px;
   text-shadow: 0 0 7px var(--accent-glow);
 }
+.attach-meta {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  width: 100%;
+  padding-top: 4px;
+}
 .attach-name {
+  flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -716,9 +733,9 @@
   background: var(--accent);
   box-shadow: 0 0 6px var(--accent-glow);
 }
-.attach-chip.reading .attach-name,
-.attach-chip.reading .attach-size,
-.attach-chip.reading img {
+.attach-chip.reading .attach-meta,
+.attach-chip.reading img,
+.attach-chip.reading .attach-icon {
   opacity: 0.55;
 }
 .composer-note {
