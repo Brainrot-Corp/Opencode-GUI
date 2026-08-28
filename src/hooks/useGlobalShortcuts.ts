@@ -192,6 +192,27 @@ export function useGlobalShortcuts({
     return () => document.removeEventListener("contextmenu", ctx);
   }, []);
 
+  // suppress Chromium/WebView2 native downloads popup on Ctrl+J when focus is
+  // NOT inside an input/textarea/contenteditable or the terminal. This is the
+  // "unfocused" case from the request — inputs and terminal already consume or
+  // intentionally handle Ctrl+J, so we only block the unfocused path here as a
+  // fallback for any code path that didn't already preventDefault.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key.toLowerCase() !== "j" || !e.ctrlKey || e.altKey || e.shiftKey || e.metaKey) return;
+      const t = e.target as HTMLElement | null;
+      const ae = document.activeElement as HTMLElement | null;
+      const inTerm = !!t?.closest?.(".term-dock") || !!ae?.closest?.(".term-dock") || !!t?.closest?.(".xterm") || !!ae?.closest?.(".xterm");
+      const inInput = !!t?.closest?.("input, textarea, [contenteditable=\"true\"], [contenteditable=\"\"]") || !!ae?.closest?.("input, textarea, [contenteditable=\"true\"], [contenteditable=\"\"]");
+      if (inTerm || inInput) return;
+      e.preventDefault();
+      e.stopPropagation();
+      (e as any).stopImmediatePropagation?.();
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, []);
+
   // Pin on top — rebindable (default Ctrl+P)
   useEffect(() => {
     const binding = settings.hotkeys.pinOnTop;

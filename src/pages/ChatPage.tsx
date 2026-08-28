@@ -1071,7 +1071,7 @@ export default function ChatPage() {
                     Press Ctrl+W again to close this session
                   </div>
                 )}
-                {oc.permission && (
+                {oc.permission && ((oc as any).securityMode ?? "user") === "user" && (
                   <PermissionBar permission={oc.permission} onRespond={oc.respondToPermission} />
                 )}
                 {oc.question && (
@@ -1117,6 +1117,8 @@ export default function ChatPage() {
                   onCycleVariant={oc.cycleVariant}
                   hasVariants={oc.modelVariants.length > 0}
                   variantSel={oc.variantSel}
+                  securityMode={(oc as any).securityMode ?? "user"}
+                  onCycleSecurity={(oc as any).cycleSecurityMode}
                   usage={oc.sessionUsage}
                   caps={oc.modelCaps}
                   voicePhase={voice.phase}

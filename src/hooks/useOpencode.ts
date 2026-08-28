@@ -55,6 +55,26 @@ export function useOpencode() {
   // sidebar attention: which sessions need a click (permission or question)
   const [attentionIds, setAttentionIds] = useState<Set<string>>(new Set());
   const [attentionKinds, setAttentionKinds] = useState<Record<string, "permission" | "question" | "both">>({});
+  // security mode: how permissions are handled — persisted globally
+  type SecurityMode = "full" | "user" | "restricted";
+  const SECURITY_KEY = "oc.securityMode";
+  const [securityMode, setSecurityMode] = useState<SecurityMode>(() => {
+    try {
+      const v = localStorage.getItem(SECURITY_KEY);
+      if (v === "full" || v === "restricted" || v === "user") return v;
+    } catch {}
+    return "user";
+  });
+  const securityModeRef = useRef<SecurityMode>(securityMode);
+  useEffect(() => { securityModeRef.current = securityMode; }, [securityMode]);
+  useEffect(() => { try { localStorage.setItem(SECURITY_KEY, securityMode); } catch {} }, [securityMode]);
+  const cycleSecurityMode = useCallback(() => {
+    setSecurityMode((cur) => {
+      const next: SecurityMode = cur === "user" ? "restricted" : cur === "restricted" ? "full" : "user";
+      playSound("click");
+      return next;
+    });
+  }, []);
   const [commands, setCommands] = useState<Cmd[]>([]);
   const [agents, setAgents] = useState<{ name: string; mode: string }[]>([]);
   const [agentSel, setAgentSel] = useState("");
@@ -266,6 +286,44 @@ export function useOpencode() {
       const { [sid]: _omit, ...rest } = prev as Record<string, unknown>;
       return rest as Record<string, "permission" | "question" | "both">;
     });
+  }, []);
+
+  // auto permission responder — fires POST without showing the bar
+  const autoRespondPermission = useCallback(async (ask: PermAsk, response: "always" | "reject") => {
+    const dirFor = sessionDirRef.current.get(ask.sessionID) ?? getDirectory();
+    try {
+      const { client } = dirFor ? await opencodeFor(dirFor) : await opencode();
+      await (client as any).postSessionIdPermissionsPermissionId({
+        path: { id: ask.sessionID, permissionID: ask.id },
+        body: { response },
+      });
+    } catch (e) {
+      setError(String(e));
+    }
+  }, []);
+
+  // when security mode leaves "user", flush any already-pending asks
+  useEffect(() => {
+    if (securityMode === "user") return;
+    const response: "always" | "reject" = securityMode === "full" ? "always" : "reject";
+    for (const ask of [...permissionsRef.current.values()]) {
+      permissionsRef.current.delete(ask.sessionID);
+      syncAttention(ask.sessionID);
+      void autoRespondPermission(ask, response);
+    }
+    setPermission(null);
+  }, [securityMode, autoRespondPermission, syncAttention]);
+
+  // cross-window sync
+  useEffect(() => {
+    const onStorage = (e: StorageEvent) => {
+      if (e.key !== SECURITY_KEY || !e.newValue) return;
+      if (e.newValue === "full" || e.newValue === "user" || e.newValue === "restricted") {
+        setSecurityMode(e.newValue as SecurityMode);
+      }
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
   }, []);
 
   const markCompacting = useCallback((sid: string, on: boolean) => {
@@ -496,6 +554,15 @@ export function useOpencode() {
               (p.patterns ?? []).join(", ") ||
               (p.permission ?? p.action ?? p.type ?? "permission"),
           };
+          const mode = securityModeRef.current;
+          if (mode === "full") {
+            void autoRespondPermission(ask, "always");
+            break;
+          }
+          if (mode === "restricted") {
+            void autoRespondPermission(ask, "reject");
+            break;
+          }
           permissionsRef.current.set(p.sessionID, ask);
           syncAttention(p.sessionID);
           playSound("attention");
@@ -510,6 +577,15 @@ export function useOpencode() {
             title: p.title ?? p.type ?? p.permission ?? "permission",
           };
           if (!ask.sessionID || !ask.id) break;
+          const mode2 = securityModeRef.current;
+          if (mode2 === "full") {
+            void autoRespondPermission(ask, "always");
+            break;
+          }
+          if (mode2 === "restricted") {
+            void autoRespondPermission(ask, "reject");
+            break;
+          }
           permissionsRef.current.set(ask.sessionID, ask);
           syncAttention(ask.sessionID);
           if (ask.sessionID === activeRef.current) setPermission(ask);
@@ -746,23 +822,40 @@ export function useOpencode() {
           })
           .catch(() => {});
         // same for permissions — best-effort (endpoint may not exist in older server)
+        const handleBootPerms = (arr: any[]) => {
+          const mode = securityModeRef.current;
+          if (mode === "full" || mode === "restricted") {
+            const resp: "always" | "reject" = mode === "full" ? "always" : "reject";
+            for (const p of arr) {
+              const ask: PermAsk = {
+                id: p.id,
+                sessionID: p.sessionID,
+                type: p.permission ?? p.type ?? p.action ?? "permission",
+                title: p.metadata?.command ?? p.metadata?.title ?? p.title ?? p.type ?? "permission",
+              };
+              if (ask.sessionID && ask.id) void autoRespondPermission(ask, resp);
+            }
+            return;
+          }
+          const touched = new Set<string>();
+          for (const p of arr) {
+            const ask: PermAsk = {
+              id: p.id,
+              sessionID: p.sessionID,
+              type: p.permission ?? p.type ?? "permission",
+              title: p.metadata?.command ?? p.metadata?.title ?? p.title ?? p.type ?? "permission",
+            };
+            if (ask.sessionID && ask.id) { permissionsRef.current.set(ask.sessionID, ask); touched.add(ask.sessionID); }
+          }
+          for (const sid of touched) syncAttention(sid);
+          showPermission(activeRef.current);
+        };
         serverFetch("/permission")
           .then((r) => (r.ok ? r.json() : null))
           .then((list: any) => {
             if (disposed || !list) return;
             const arr = Array.isArray(list) ? list : Array.isArray(list?.data) ? list.data : [];
-            const touched = new Set<string>();
-            for (const p of arr) {
-              const ask: PermAsk = {
-                id: p.id,
-                sessionID: p.sessionID,
-                type: p.permission ?? p.type ?? "permission",
-                title: p.metadata?.command ?? p.metadata?.title ?? p.title ?? p.type ?? "permission",
-              };
-              if (ask.sessionID && ask.id) { permissionsRef.current.set(ask.sessionID, ask); touched.add(ask.sessionID); }
-            }
-            for (const sid of touched) syncAttention(sid);
-            showPermission(activeRef.current);
+            handleBootPerms(arr);
           })
           .catch(() => {});
         // v2 permission request list fallback
@@ -771,18 +864,7 @@ export function useOpencode() {
           .then((res: any) => {
             if (disposed || !res) return;
             const arr = Array.isArray(res) ? res : Array.isArray(res?.data) ? res.data : [];
-            const touched = new Set<string>();
-            for (const p of arr) {
-              const ask: PermAsk = {
-                id: p.id,
-                sessionID: p.sessionID,
-                type: p.permission ?? p.action ?? p.type ?? "permission",
-                title: p.metadata?.command ?? p.metadata?.title ?? (p.patterns ?? []).join(", ") ?? "permission",
-              };
-              if (ask.sessionID && ask.id) { permissionsRef.current.set(ask.sessionID, ask); touched.add(ask.sessionID); }
-            }
-            for (const sid of touched) syncAttention(sid);
-            showPermission(activeRef.current);
+            handleBootPerms(arr);
           })
           .catch(() => {});
 
@@ -1390,6 +1472,8 @@ export function useOpencode() {
     sessionUsage,
     abort,
     respondToPermission,
+    securityMode,
+    cycleSecurityMode,
     removeSession,
     renameSession,
     duplicateSession,

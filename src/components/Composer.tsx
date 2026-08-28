@@ -108,6 +108,8 @@ export default function Composer({
   onCycleVariant,
   hasVariants,
   variantSel,
+  securityMode,
+  onCycleSecurity,
   usage,
   caps,
   voicePhase,
@@ -140,6 +142,8 @@ export default function Composer({
   onCycleVariant?: () => void;
   hasVariants?: boolean;
   variantSel?: string;
+  securityMode?: "full" | "user" | "restricted";
+  onCycleSecurity?: () => void;
   caps?: { attachment?: boolean; input?: string[] };
   usage?: { cost: number; tokens: number };
   voicePhase?: "idle" | "recording" | "transcribing";
@@ -859,6 +863,29 @@ export default function Composer({
             {variantSel || "default"}
           </button>
         )}
+        <button
+          type="button"
+          className={`agent-chip security-chip sec-${securityMode ?? "user"}`}
+          data-tip={
+            securityMode === "full"
+              ? "Full control — no permission prompts (auto-allow)"
+              : securityMode === "restricted"
+                ? "Restricted — auto-deny permission requests"
+                : "User mode — classic allow once / always prompts — click to cycle"
+          }
+          onClick={() => onCycleSecurity?.()}
+        >
+          <i
+            className={`fa-solid ${
+              securityMode === "full"
+                ? "fa-bolt"
+                : securityMode === "restricted"
+                  ? "fa-lock"
+                  : "fa-user-shield"
+            }`}
+          />
+          {securityMode === "full" ? "Full" : securityMode === "restricted" ? "Restricted" : "User"}
+        </button>
         {usage && usage.tokens > 0 && (
           <span
             className="agent-chip usage-chip"

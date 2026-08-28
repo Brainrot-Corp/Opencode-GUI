@@ -440,14 +440,28 @@ export default function TerminalPanel({
   }, [open, terms, activeId]);
 
   // Ctrl+J → hide (when focused in terminal, focus chat) / reopen (when hidden)
+  // Also suppresses the WebView2/Chromium native downloads popup (Ctrl+J) when
+  // focus is NOT in an input/terminal — i.e. unfocused case. Inputs/terminals
+  // already consume the event; the early returns below must still preventDefault
+  // so the native window never appears on unfocused presses.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key.toLowerCase() !== "j" || !e.ctrlKey || e.altKey || e.shiftKey || e.metaKey) return;
       const target = e.target as HTMLElement | null;
       const ae = document.activeElement as HTMLElement | null;
       const inTerm = !!target?.closest?.(".term-dock") || !!ae?.closest?.(".term-dock");
+      const inInput = !!target?.closest?.("input, textarea, [contenteditable=\"true\"], [contenteditable=\"\"]") || !!ae?.closest?.("input, textarea, [contenteditable=\"true\"], [contenteditable=\"\"]");
+      const inEditable = inTerm || inInput;
       if (open) {
-        if (!inTerm) return;
+        if (!inTerm) {
+          // unfocused (not in terminal): block native downloads. If focused in an
+          // input, let the input handle it (per request: only disable when unfocused).
+          if (inEditable) return;
+          e.preventDefault();
+          e.stopPropagation();
+          (e as any).stopImmediatePropagation?.();
+          return;
+        }
         e.preventDefault();
         e.stopPropagation();
         (e as any).stopImmediatePropagation?.();
@@ -458,8 +472,22 @@ export default function TerminalPanel({
         });
       } else {
         // hidden → reopen from anywhere in the main/chat area (not an overlay)
-        if (document.querySelector(".dlg-scrim, .drawer-scrim.open, .ctx-menu, .cmd-menu, .model-menu")) return;
-        if (inTerm) return;
+        if (document.querySelector(".dlg-scrim, .drawer-scrim.open, .ctx-menu, .cmd-menu, .model-menu")) {
+          e.preventDefault();
+          e.stopPropagation();
+          (e as any).stopImmediatePropagation?.();
+          return;
+        }
+        if (inTerm) {
+          e.preventDefault();
+          e.stopPropagation();
+          (e as any).stopImmediatePropagation?.();
+          return;
+        }
+        // when focused in an input while hidden, still reopen is intentional —
+        // but respect "unfocused" wording: if focused in input, don't steal?
+        // We treat input-focus as editable and still allow reopen? Keep blocking
+        // downloads regardless — the toggle already prevents native.
         e.preventDefault();
         e.stopPropagation();
         (e as any).stopImmediatePropagation?.();
