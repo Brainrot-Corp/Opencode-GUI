@@ -216,6 +216,8 @@ export default function TermInstanceView({
     term.open(mountRef.current);
 
     term.attachCustomKeyEventHandler((ev) => {
+      // Ctrl+J is handled globally to hide terminal and focus chat — block it from reaching the shell
+      if (ev.type === "keydown" && ev.ctrlKey && !ev.shiftKey && !ev.altKey && !ev.metaKey && ev.key.toLowerCase() === "j") return false;
       if (ev.type !== "keydown" || !ev.ctrlKey || !ev.shiftKey || ev.altKey) return true;
       const k = ev.key.toLowerCase();
       if (k === "c") {

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { opencode } from "../api";
+import { opencode, opencodeFor } from "../api";
 import { useContextMenu } from "../hooks/useContextMenu";
 import { useFileCache } from "../hooks/useFileCache";
 import { clipboardWrite } from "../lib/clipboard";
@@ -36,8 +36,8 @@ function FileIcon({ name }: { name: string }) {
   return <i className={`fa-solid ${map[ext] ?? "fa-file-lines"}`} />;
 }
 
-export default function FileTree() {
-  const { kids, error, loadingDir, load } = useFileCache();
+export default function FileTree({ dir = "" }: { dir?: string }) {
+  const { kids, error, loadingDir, load } = useFileCache(dir);
   const [openDirs, setOpenDirs] = useState<Set<string>>(new Set());
   const [localErr, setLocalErr] = useState("");
   const errorMsg = error || localErr;
@@ -110,6 +110,7 @@ export default function FileTree() {
   }
 
   function workspaceRootAbs(): string {
+    if (dir) return dir;
     try {
       const raw = localStorage.getItem("oc.settings");
       if (raw) {
@@ -117,23 +118,17 @@ export default function FileTree() {
         if (typeof j.workspace === "string" && j.workspace) return j.workspace;
       }
     } catch {}
-    // fallback: derive from first node's absolute
     const root = kids.get("")?.[0];
     if (root?.absolute && root?.path) {
       const rel = root.path;
       const abs = root.absolute;
-      // remove trailing /rel
       if (abs.endsWith(rel.replace(/\//g, "\\")) || abs.endsWith(rel)) {
         return abs.slice(0, abs.length - rel.length).replace(/[\/\\]+$/, "");
       }
-      // fallback: parent of absolute
       const idx = Math.max(abs.lastIndexOf("\\"), abs.lastIndexOf("/"));
-      if (idx > 0) {
-        // go up one level from root file's parent? Approximate
-        return abs.slice(0, idx).replace(/[\/\\]+$/, "");
-      }
+      if (idx > 0) return abs.slice(0, idx).replace(/[\/\\]+$/, "");
     }
-    return "";
+    return dir || "";
   }
   function parentPath(p: string): string {
     const i = p.lastIndexOf("/");
@@ -227,7 +222,7 @@ export default function FileTree() {
       { label: "Copy Path", icon: "fa-link", action: () => void clipboardWrite(n.absolute) },
       { label: "Copy Relative Path", icon: "fa-code", action: () => void clipboardWrite(n.path) },
       ...(isDir ? [] : [{ label: "Copy Content", icon: "fa-copy", action: async () => {
-        try { const { client } = await opencode(); const r:any = await client.file.read({ query: { path: n.path }}); const txt = typeof r.data === "string" ? r.data : (r.data?.content ?? ""); await clipboardWrite(String(txt)); } catch (er) { setError(String(er)); }
+        try { const { client } = dir ? await opencodeFor(dir) : await opencode(); const r:any = await (client.file as any).read({ query: { path: n.path }}); const txt = typeof r.data === "string" ? r.data : (r.data?.content ?? ""); await clipboardWrite(String(txt)); } catch (er) { setError(String(er)); }
       }} as any]),
       { separator: true },
       ...(isDir ? [

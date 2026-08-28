@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useSyncExternalStore } from "react";
-import { opencode } from "../api";
+import { opencode, opencodeFor } from "../api";
 
 export type FileNode = {
   name: string;
@@ -28,38 +28,41 @@ function getVersion() {
   return version;
 }
 
-async function fetchKids(path: string, retries = 2): Promise<FileNode[]> {
-  if (pending.has(path)) return pending.get(path)!;
-  // dedupe: if cached and not forced, reuse (caller decides force via cache delete)
+function cacheKey(dir: string, path: string) {
+  return `${dir}\0${path}`;
+}
+
+async function fetchKids(path: string, retries = 2, dir = ""): Promise<FileNode[]> {
+  const key = cacheKey(dir, path);
+  if (pending.has(key)) return pending.get(key)!;
   const p = (async () => {
-    loadingPath = path;
+    loadingPath = key;
     notify();
     try {
-      const { client } = await opencode();
-      const r = await client.file.list({ query: { path } });
+      const { client } = dir ? await opencodeFor(dir) : await opencode();
+      const r = await (client.file as any).list({ query: { path } });
       const nodes = ((r.data ?? []) as FileNode[]).slice().sort((a, b) => {
         if (a.type !== b.type) return a.type === "directory" ? -1 : 1;
         return a.name.localeCompare(b.name);
       });
-      kids = new Map(kids).set(path, nodes);
+      kids = new Map(kids).set(key, nodes);
       err = "";
       return nodes;
     } catch (e: any) {
       if (retries > 0 && path === "") {
-        // boot race — retry keeps skeleton until complete
         await new Promise((res) => setTimeout(res, 800));
-        pending.delete(path);
-        return fetchKids(path, retries - 1);
+        pending.delete(key);
+        return fetchKids(path, retries - 1, dir);
       }
       err = String(e);
       throw e;
     } finally {
       loadingPath = "";
-      pending.delete(path);
+      pending.delete(key);
       notify();
     }
   })();
-  pending.set(path, p);
+  pending.set(key, p);
   return p;
 }
 
@@ -72,14 +75,18 @@ export function getFileError() {
 export function getFileLoading() {
   return loadingPath;
 }
-export function invalidateFileCache(path?: string) {
+export function invalidateFileCache(path?: string, dir = "") {
   if (path === undefined) {
     kids = new Map();
   } else {
+    const key = cacheKey(dir, path);
     const next = new Map(kids);
-    next.delete(path);
-    // also drop children under path
-    for (const k of [...next.keys()]) if (k === path || k.startsWith(path + "/")) next.delete(k);
+    next.delete(key);
+    for (const k of [...next.keys()]) {
+      const [d, p] = k.split("\0");
+      if (d !== dir) continue;
+      if (p === path || p.startsWith(path + "/")) next.delete(k);
+    }
     kids = next;
   }
   err = "";
@@ -87,19 +94,17 @@ export function invalidateFileCache(path?: string) {
 }
 
 let watcherSetup = false;
-// watcher debounces rapid file.watcher.updated bursts — silent refresh keeps
-// stale nodes visible until new data arrives (no skeleton flicker)
 const watcherTimers = new Map<string, number>();
-function scheduleFetch(path: string) {
-  if (pending.has(path)) return;
-  const prev = watcherTimers.get(path);
+function scheduleFetch(key: string, dir: string, path: string) {
+  if (pending.has(key)) return;
+  const prev = watcherTimers.get(key);
   if (prev) window.clearTimeout(prev);
   const id = window.setTimeout(() => {
-    watcherTimers.delete(path);
-    if (pending.has(path)) return;
-    void fetchKids(path).catch(() => {});
+    watcherTimers.delete(key);
+    if (pending.has(key)) return;
+    void fetchKids(path, 2, dir).catch(() => {});
   }, 180);
-  watcherTimers.set(path, id);
+  watcherTimers.set(key, id);
 }
 function setupWatcher() {
   if (watcherSetup) return;
@@ -108,30 +113,31 @@ function setupWatcher() {
     const raw = (e as CustomEvent<string>).detail || "";
     if (!raw) return;
     const norm = raw.replace(/\\/g, "/");
-    // absolute paths (contain ":") — stale-while-revalidate root
     if (norm.includes(":") || norm.startsWith("/")) {
-      if (kids.has("")) scheduleFetch("");
+      // absolute — refresh root for primary dir (others via their own watchers)
+      for (const k of kids.keys()) if (k.endsWith("\0")) scheduleFetch(k, k.split("\0")[0], "");
       return;
     }
     const slash = norm.lastIndexOf("/");
     const parent = slash >= 0 ? norm.slice(0, slash) : "";
-    if (kids.has(parent)) {
-      scheduleFetch(parent);
-    } else if (kids.has("")) {
-      // file in uncached dir — refresh root to show new entry if at top level
-      scheduleFetch("");
+    // schedule for any dir that has this parent cached
+    for (const k of kids.keys()) {
+      const [dir, p] = k.split("\0");
+      if (p === parent) scheduleFetch(k, dir, parent);
     }
+    // also root fallback
+    for (const k of kids.keys()) if (k.endsWith("\0")) scheduleFetch(k, k.split("\0")[0], "");
   }) as EventListener);
 }
 
-export function useFileCache() {
+export function useFileCache(dir = "") {
   const v = useSyncExternalStore(subscribe, getVersion, getVersion);
   void v;
-  // idle prefetch root on first subscriber + watcher for external changes
   useEffect(() => {
     setupWatcher();
-    if (kids.has("") || pending.has("")) return;
-    const run = () => void fetchKids("").catch(() => {});
+    const key = cacheKey(dir, "");
+    if (kids.has(key) || pending.has(key)) return;
+    const run = () => void fetchKids("", 2, dir).catch(() => {});
     const ric = (window as any).requestIdleCallback as ((cb: () => void, opts?: any) => number) | undefined;
     if (ric) {
       const id = ric(run, { timeout: 1500 });
@@ -140,30 +146,43 @@ export function useFileCache() {
       const t = window.setTimeout(run, 120);
       return () => window.clearTimeout(t);
     }
-  }, []);
+  }, [dir]);
 
   const load = useCallback((path: string, force = false) => {
-    if (!force && kids.has(path)) return Promise.resolve(kids.get(path)!);
-    return fetchKids(path).catch(() => undefined as any);
-  }, []);
+    const key = cacheKey(dir, path);
+    if (!force && kids.has(key)) return Promise.resolve(kids.get(key)!);
+    return fetchKids(path, 2, dir).catch(() => undefined as any);
+  }, [dir]);
 
   const refresh = useCallback((path: string) => {
+    const key = cacheKey(dir, path);
     const next = new Map(kids);
-    next.delete(path);
+    next.delete(key);
     kids = next;
     notify();
-    return fetchKids(path).catch(() => undefined as any);
-  }, []);
+    return fetchKids(path, 2, dir).catch(() => undefined as any);
+  }, [dir]);
 
-  const invalidate = useCallback((path?: string) => invalidateFileCache(path), []);
+  const invalidate = useCallback((path?: string) => invalidateFileCache(path, dir), [dir]);
+
+  // view filtered to this dir
+  const dirKids = new Map<string, FileNode[]>();
+  for (const [k, v2] of kids) {
+    const [d, p] = k.split("\0");
+    if (d === dir) dirKids.set(p, v2);
+  }
+  const isLoading = useCallback((p: string) => {
+    const k = cacheKey(dir, p);
+    return loadingPath === k || pending.has(k);
+  }, [dir]);
 
   return {
-    kids,
+    kids: dirKids,
     error: err,
     loadingDir: loadingPath,
     load,
     refresh,
     invalidate,
-    isLoading: (p: string) => loadingPath === p || pending.has(p),
+    isLoading,
   };
 }

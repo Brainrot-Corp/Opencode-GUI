@@ -62,12 +62,14 @@ export default function TerminalPanel({
   open,
   workspace,
   onClose,
+  onToggle,
   terminal,
   onSetDefault,
 }: {
   open: boolean;
   workspace?: string;
   onClose: () => void;
+  onToggle?: () => void;
   terminal?: { defaultProfileId: string | null; customShells: CustomShell[] };
   onSetDefault?: (id: string | null) => void;
 }) {
@@ -436,6 +438,39 @@ export default function TerminalPanel({
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
   }, [open, terms, activeId]);
+
+  // Ctrl+J → hide (when focused in terminal, focus chat) / reopen (when hidden)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key.toLowerCase() !== "j" || !e.ctrlKey || e.altKey || e.shiftKey || e.metaKey) return;
+      const target = e.target as HTMLElement | null;
+      const ae = document.activeElement as HTMLElement | null;
+      const inTerm = !!target?.closest?.(".term-dock") || !!ae?.closest?.(".term-dock");
+      if (open) {
+        if (!inTerm) return;
+        e.preventDefault();
+        e.stopPropagation();
+        (e as any).stopImmediatePropagation?.();
+        playSound("click");
+        onClose();
+        requestAnimationFrame(() => {
+          (document.querySelector(".composer textarea") as HTMLElement | null)?.focus();
+        });
+      } else {
+        // hidden → reopen from anywhere in the main/chat area (not an overlay)
+        if (document.querySelector(".dlg-scrim, .drawer-scrim.open, .ctx-menu, .cmd-menu, .model-menu")) return;
+        if (inTerm) return;
+        e.preventDefault();
+        e.stopPropagation();
+        (e as any).stopImmediatePropagation?.();
+        playSound("click");
+        if (onToggle) onToggle();
+        else (onClose as any)?.();
+      }
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [open, onClose, onToggle]);
 
   return (
     <div className={`term-dock${open ? "" : " closed"}${dragging ? " dragging" : ""}${mounted ? "" : " no-anim"}`} style={{ height: open ? h : 0 }}>

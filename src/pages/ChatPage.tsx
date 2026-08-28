@@ -129,8 +129,8 @@ export default function ChatPage() {
   );
 
   const [sbW, setSbW] = useState(() => {
-    const w = Number(localStorage.getItem(SB_W_KEY)) || 248;
-    return Math.min(Math.max(170, w), 440);
+    const w = Number(localStorage.getItem(SB_W_KEY)) || 280;
+    return Math.min(Math.max(280, w), 440);
   });
   const [sbClosed, setSbClosed] = useState(() => localStorage.getItem(SB_C_KEY) === "1");
   // chat history find — routed when composer not focused and file not last active
@@ -640,7 +640,7 @@ export default function ChatPage() {
       document.body.classList.add("resizing");
       document.body.style.userSelect = "none";
       const move = (ev: MouseEvent) => {
-        setSbW(Math.min(Math.max(170, startW + (ev.clientX - startX)), 440));
+        setSbW(Math.min(Math.max(280, startW + (ev.clientX - startX)), 440));
         const now = performance.now();
         if (now - lastTick > 70) {
           lastTick = now;
@@ -979,14 +979,17 @@ export default function ChatPage() {
             resizing={resizing}
             onToggle={() => setSbClosed((v) => !v)}
             onStartResize={startResize}
-            onNew={oc.newSession}
+            onNew={(dir) => void (oc as any).newSession(dir)}
             onOpen={(id) => oc.openSession(id)}
             onDelete={(id) => oc.removeSession(id)}
             onClearAll={() => void oc.clearSessions()}
+            onClearForDir={(dir) => void (oc as any).clearSessionsFor?.(dir)}
             onRename={(id, t) => void oc.renameSession(id, t)}
             onDuplicate={(id) => void oc.duplicateSession(id)}
             onTogglePin={(id) => oc.togglePin(id)}
             isPinned={(id) => oc.isPinned(id)}
+            getDirForSession={(id) => (oc as any).getDirForSession?.(id) ?? ""}
+            refreshSessions={() => void (oc as any).refreshSessions?.()}
             sidebarExtras={
               sidebarWidgets.length ? (
                 <>
@@ -1013,12 +1016,16 @@ export default function ChatPage() {
             )}
             {(oc.activeId || oc.booting) && (
               <>
-                {settings.workspace && (
-                  <div className="stage-head" data-tip={settings.workspace} data-tip-cursor="">
-                    <i className="fa-solid fa-folder-open" />
-                    <span className="mono">{settings.workspace}</span>
-                  </div>
-                )}
+                {(() => {
+                  const activeDir = oc.activeId ? ((oc as any).getDirForSession?.(oc.activeId) ?? settings.workspace) : settings.workspace;
+                  if (!activeDir) return null;
+                  return (
+                    <div className="stage-head" data-tip={activeDir} data-tip-cursor="">
+                      <i className="fa-solid fa-folder-open" />
+                      <span className="mono">{activeDir}</span>
+                    </div>
+                  );
+                })()}
                 <MessageList
                   msgs={oc.msgs}
                   busy={oc.busy}
@@ -1125,6 +1132,7 @@ export default function ChatPage() {
                 terminal={settings.terminal}
                 onSetDefault={(id)=> update({ terminal: { ...settings.terminal, defaultProfileId: id } })}
                 onClose={() => setTermOpen(false)}
+                onToggle={() => setTermOpen((v) => !v)}
               />
             </Suspense>
           </div>

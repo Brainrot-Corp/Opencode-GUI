@@ -27,16 +27,56 @@ const DEFAULT_COLOR_SETS: AppColors = {
     light: { base: "#eef2f5", baseA: 0.55, surface: "#ffffff", surfaceA: 0.5 },
   },
   latte: {
-    dark: { base: "#141009", baseA: 0.62, surface: "#262016", surfaceA: 0.42 },
-    light: { base: "#f6efe4", baseA: 0.55, surface: "#fffdf8", surfaceA: 0.5 },
+    dark: { base: "#19140c", baseA: 0.6, surface: "#382d1d", surfaceA: 0.33 },
+    light: { base: "#f6efe4", baseA: 0.55, surface: "#fffbf3", surfaceA: 0.5 },
   },
   matcha: {
-    dark: { base: "#0c110b", baseA: 0.62, surface: "#262116", surfaceA: 0.42 },
-    light: { base: "#eef4e7", baseA: 0.55, surface: "#fbfef7", surfaceA: 0.5 },
+    dark: { base: "#0f150c", baseA: 0.6, surface: "#24301f", surfaceA: 0.33 },
+    light: { base: "#eef4e7", baseA: 0.55, surface: "#f8fcf4", surfaceA: 0.5 },
   },
   strawberry: {
-    dark: { base: "#140b0e", baseA: 0.62, surface: "#2c141a", surfaceA: 0.42 },
+    dark: { base: "#170f12", baseA: 0.6, surface: "#342027", surfaceA: 0.33 },
     light: { base: "#fbeef2", baseA: 0.55, surface: "#fff8fa", surfaceA: 0.5 },
+  },
+  sakura: {
+    dark: { base: "#1a1014", baseA: 0.6, surface: "#301c26", surfaceA: 0.33 },
+    light: { base: "#fff8fb", baseA: 0.55, surface: "#fff8fb", surfaceA: 0.5 },
+  },
+  nebula: {
+    dark: { base: "#120e1c", baseA: 0.6, surface: "#28203e", surfaceA: 0.33 },
+    light: { base: "#faf9ff", baseA: 0.55, surface: "#faf9ff", surfaceA: 0.5 },
+  },
+  vaporwave: {
+    dark: { base: "#0e0918", baseA: 0.62, surface: "#2c1a46", surfaceA: 0.35 },
+    light: { base: "#fcf8ff", baseA: 0.55, surface: "#fcf8ff", surfaceA: 0.5 },
+  },
+  ember: {
+    dark: { base: "#160f0a", baseA: 0.6, surface: "#382416", surfaceA: 0.33 },
+    light: { base: "#fffaf4", baseA: 0.55, surface: "#fffaf4", surfaceA: 0.5 },
+  },
+  abyss: {
+    dark: { base: "#060d12", baseA: 0.62, surface: "#142c3e", surfaceA: 0.33 },
+    light: { base: "#f6fbfd", baseA: 0.55, surface: "#f6fbfd", surfaceA: 0.5 },
+  },
+  citrus: {
+    dark: { base: "#14120b", baseA: 0.6, surface: "#38341c", surfaceA: 0.33 },
+    light: { base: "#fefdf3", baseA: 0.55, surface: "#fefdf3", surfaceA: 0.5 },
+  },
+  graphite: {
+    dark: { base: "#0e0f11", baseA: 0.62, surface: "#282a30", surfaceA: 0.33 },
+    light: { base: "#f2f4f6", baseA: 0.6, surface: "#fcfcfd", surfaceA: 0.5 },
+  },
+  crimson: {
+    dark: { base: "#1c0e10", baseA: 0.62, surface: "#3a1c20", surfaceA: 0.33 },
+    light: { base: "#fdf2f3", baseA: 0.6, surface: "#fff8f9", surfaceA: 0.5 },
+  },
+  tidal: {
+    dark: { base: "#0a1616", baseA: 0.62, surface: "#1c3434", surfaceA: 0.33 },
+    light: { base: "#f0f8f7", baseA: 0.6, surface: "#f6fcfb", surfaceA: 0.5 },
+  },
+  aurora: {
+    dark: { base: "#0c1411", baseA: 0.62, surface: "#1c2c28", surfaceA: 0.33 },
+    light: { base: "#f0f8f5", baseA: 0.6, surface: "#f6fcf9", surfaceA: 0.5 },
   },
 };
 
@@ -55,6 +95,7 @@ export type AppSettings = {
   sounds: SoundPrefs;
   colors: AppColors;
   workspace: string;
+  workspaces: string[];
   // global collapse-by-default for thinking + tool-call blocks (/collapse)
   collapsed: boolean;
   voice: {
@@ -112,6 +153,7 @@ const DEFAULTS: AppSettings = {
   },
   colors: structuredClone(DEFAULT_COLOR_SETS),
   workspace: "",
+  workspaces: [],
   collapsed: true,
   voice: { model: "ggml-base.bin", handsFree: false, sens: 0.7, debug: false, multilingual: false },
   speakReplies: false,
@@ -231,6 +273,23 @@ export function useSettings() {
         },
         colors: loadColors(p, legacy ? "light" : theme),
         workspace: typeof p.workspace === "string" ? p.workspace : "",
+        workspaces: (() => {
+          const arr = Array.isArray(p.workspaces) ? p.workspaces : [];
+          const out: string[] = [];
+          const seen = new Set<string>();
+          const primary = typeof p.workspace === "string" ? p.workspace.trim() : "";
+          for (const v of arr) {
+            if (typeof v !== "string") continue;
+            const t = v.trim();
+            if (!t || t === primary) continue;
+            const low = t.toLowerCase();
+            if (seen.has(low)) continue;
+            seen.add(low);
+            out.push(t);
+            if (out.length >= 5) break;
+          }
+          return out;
+        })(),
         voice: {
           model:
             typeof p.voice?.model === "string" && p.voice.model

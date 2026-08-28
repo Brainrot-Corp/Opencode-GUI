@@ -20,7 +20,7 @@
         "decorations": false,
         "transparent": true,
         "visible": false,
-        "dragDropEnabled": false,
+        "dragDropEnabled": true,
         "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --autoplay-policy=no-user-gesture-required"
       }
     ],

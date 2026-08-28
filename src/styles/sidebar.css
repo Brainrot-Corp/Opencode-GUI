@@ -478,3 +478,91 @@ body.resizing * {
     animation: none;
   }
 }
+.sidebar.drag-over {
+  outline: 1px dashed color-mix(in srgb, var(--accent) calc(0.5 * 100%), transparent);
+  box-shadow: inset 0 0 18px -6px var(--accent-glow);
+}
+.ws-head {
+  margin-top: 4px;
+}
+.ws-head--large {
+  padding: 5px 5px;
+  font-size: 10px;
+  min-height: 27px;
+  border-radius: 0;
+  gap: 6px;
+  flex-wrap: nowrap !important;
+  white-space: nowrap;
+  overflow: hidden;
+  align-items: center;
+  background: transparent;
+  border: 1px solid transparent;
+  box-shadow: none;
+  transition: background 0.2s var(--ease), border-color 0.2s var(--ease), box-shadow 0.3s var(--ease);
+}
+.ws-head--large:hover {
+  background: color-mix(in srgb, var(--accent) calc(0.07 * 100%), transparent);
+  border-color: color-mix(in srgb, var(--accent) calc(0.12 * 100%), transparent);
+  box-shadow: 0 0 12px -6px var(--accent-glow);
+}
+.ws-toggle--large {
+  gap: 5px;
+  padding: 2px 5px;
+  font-size: 10px;
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.ws-toggle--large .gp-sect-chev {
+  font-size: 8px;
+  width: 10px;
+  flex-shrink: 0;
+}
+.ws-acts--large {
+  gap: 5px;
+  flex-wrap: nowrap !important;
+  flex-shrink: 0;
+  white-space: nowrap;
+  align-items: center;
+}
+.ws-action--large {
+  padding: 5px 7px !important;
+  font-size: 9px !important;
+  min-height: 21px;
+  border-radius: 0;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.ws-action--large i {
+  font-size: 9px;
+}
+.ws-body {
+  margin: 2px 0 4px;
+}
+.ws-title {
+  font-weight: 600;
+}
+.ws-title.mono {
+  font-size: 10px;
+  letter-spacing: 0.02em;
+}
+.ws-drop-hint {
+  height: 2px;
+  margin: 4px 0;
+  background: var(--accent);
+  box-shadow: 0 0 8px var(--accent-glow);
+  border-radius: 1px;
+}
+.ws-drop-zone {
+  margin: 6px 0;
+  padding: 10px;
+  border: 1px dashed color-mix(in srgb, var(--accent) 30%, transparent);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+  color: var(--accent);
+  font-family: var(--sans);
+  font-size: 11px;
+  text-align: center;
+  letter-spacing: 0.04em;
+}

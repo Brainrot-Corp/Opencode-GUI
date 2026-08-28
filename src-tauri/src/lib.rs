@@ -397,6 +397,12 @@ fn reveal_config_dir() -> Result<(), String> {
 }
 
 #[tauri::command]
+fn workspace_is_dir(path: String) -> bool {
+    let p = std::path::Path::new(path.trim());
+    p.is_dir()
+}
+
+#[tauri::command]
 fn reveal_plugins_dir() -> Result<(), String> {
     let dir = plugins_dir();
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
@@ -1459,6 +1465,7 @@ pub fn run() {
             file_open,
             reveal_config_dir,
             reveal_plugins_dir,
+            workspace_is_dir,
             plugin_remove,
             plugin_install_files,
             plugins_scan,

@@ -23,23 +23,37 @@ export function getDirectory() {
 }
 
 // merge ?directory= into the query of any SDK call options object
-function withDir(args: any) {
-  if (!directory) return args;
-  return { ...(args ?? {}), query: { ...(args?.query ?? {}), directory } };
+function withDir(args: any, dir = directory) {
+  if (!dir) return args;
+  return { ...(args ?? {}), query: { ...(args?.query ?? {}), directory: dir } };
 }
 
 // wrap the SDK client so every namespaced method (session.*, file.*, …)
 // carries the workspace directory automatically
-function wrap(obj: any): any {
+function wrap(obj: any, dir?: string): any {
+  const d = dir ?? directory;
   return new Proxy(obj, {
     get(t, prop) {
       const v = t[prop];
       if (typeof v === "function")
-        return (...a: any[]) => v.call(t, withDir(a[0]), ...a.slice(1));
-      if (v && typeof v === "object") return wrap(v);
+        return (...a: any[]) => v.call(t, withDir(a[0], d), ...a.slice(1));
+      if (v && typeof v === "object") return wrap(v, d);
       return v;
     },
   });
+}
+
+export async function opencodeFor(dir: string) {
+  const { base } = await opencode();
+  const client = wrap(createOpencodeClient({ baseUrl: base }), dir);
+  return { base, client };
+}
+
+export async function serverFetchFor(dir: string, path: string, init?: RequestInit) {
+  const { base } = await opencode();
+  const sep = path.includes("?") ? "&" : "?";
+  const url = `${base}${path}${dir ? `${sep}directory=${encodeURIComponent(dir)}` : ""}`;
+  return fetch(url, init);
 }
 
 // a rejected invoke must not stay cached, or silent-retry boot would spin
@@ -72,18 +86,20 @@ export async function serverFetch(path: string, init?: RequestInit) {
 export const HIDDEN_TITLE = "__temp__";
 export const hiddenSessions = new Set<string>();
 
-export async function tempSession(): Promise<string> {
-  const { client } = await opencode();
-  const s = await client.session.create({ body: { title: HIDDEN_TITLE } });
+export async function tempSession(dir?: string): Promise<string> {
+  const { client } = dir !== undefined ? await opencodeFor(dir) : await opencode();
+  const s = await client.session.create({ body: { title: HIDDEN_TITLE } } as any);
   const id = (s.data as any).id as string;
   hiddenSessions.add(id);
   return id;
 }
 
-export async function dropSession(id: string) {
+export async function dropSession(id: string, dir?: string) {
   hiddenSessions.delete(id);
-  const { client } = await opencode();
-  await client.session.delete({ path: { id } }).catch(() => {});
+  try {
+    const { client } = dir !== undefined ? await opencodeFor(dir) : await opencode();
+    await (client.session as any).delete({ path: { id } }).catch(() => {});
+  } catch {}
 }
 
 // sync prompts have no deadline server-side — a stalled provider hangs the

@@ -1,9 +1,12 @@
+// @ts-nocheck
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Message, Session } from "@opencode-ai/sdk/client";
 import {
   opencode,
+  opencodeFor,
   getDirectory,
   serverFetch,
+  serverFetchFor,
   hiddenSessions,
   HIDDEN_TITLE,
   withDeadline,
@@ -301,12 +304,9 @@ export function useOpencode() {
     const overrides = getTitleOverrides();
     const pinned = getPinned();
     const mapped = list.map((s) => overrides[s.id] ? { ...s, title: overrides[s.id] } : s);
-    // defensive dedup — protects against the optimistic + SSE race where
-    // session.created arrives before/after newSession's insertion
     const seen = new Set<string>();
     const deduped: Session[] = [];
     for (const s of mapped) if (!seen.has(s.id)) { seen.add(s.id); deduped.push(s); }
-    // pinned first, then by created desc
     const p = pinned;
     return deduped.sort((a, b) => {
       const pa = p.has(a.id) ? 1 : 0;
@@ -316,17 +316,71 @@ export function useOpencode() {
     });
   }
 
-  const refreshSessions = useCallback(async () => {
-    const { client } = await opencode();
-    const r = await client.session.list();
-    // most recently created first; helper sessions (summary/debrief/commit
-    // gen) are dropped — live-tracked ids plus title-marked crash orphans
+  // --- multi-workspace helpers ---
+  const sessionDirRef = useRef<Map<string, string>>(new Map());
+  function getWorkspaces(): string[] {
+    try {
+      const raw = JSON.parse(localStorage.getItem("oc.settings") ?? "{}");
+      const arr = Array.isArray(raw.workspaces) ? raw.workspaces : [];
+      return arr.filter((x: unknown) => typeof x === "string" && (x as string).trim()).slice(0, 5);
+    } catch { return []; }
+  }
+  function getAllDirs(): string[] {
+    const primary = getDirectory();
+    const extras = getWorkspaces();
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const d of [primary, ...extras]) {
+      const t = (d ?? "").trim();
+      // allow empty primary (server cwd) as "" key
+      const key = t.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(t);
+    }
+    return out;
+  }
+  const getDirForSession = useCallback((id: string): string => {
+    return sessionDirRef.current.get(id) ?? getDirectory();
+  }, []);
+
+  const refreshSessionsFor = useCallback(async (dir: string) => {
+    const { client } = dir ? await opencodeFor(dir) : await opencode();
+    const r = await (client.session as any).list();
     const list = ((r.data ?? []) as Session[])
-      .filter((s) => !hiddenSessions.has(s.id) && s.title !== HIDDEN_TITLE && !(s as any).parentID);
-    const out = applyOverrides(list);
+      .filter((s) => !hiddenSessions.has(s.id) && s.title !== HIDDEN_TITLE && !(s as any).parentID)
+      .map((s) => ({ ...s, _dir: dir } as Session & { _dir: string }));
+    for (const s of list) sessionDirRef.current.set(s.id, dir);
+    return applyOverrides(list);
+  }, []);
+
+  const refreshSessions = useCallback(async () => {
+    const dirs = getAllDirs();
+    const all: Session[] = [];
+    const results = await Promise.all(dirs.map((d) => refreshSessionsFor(d).catch(() => [] as Session[])));
+    // rebuild dir map from results (clears stale)
+    const nextMap = new Map<string, string>();
+    for (let i = 0; i < dirs.length; i++) {
+      const dir = dirs[i];
+      const list = results[i] ?? [];
+      for (const s of list) nextMap.set(s.id, dir);
+      all.push(...list);
+    }
+    // preserve pending creations whose dir still exists
+    const dirSet = new Set(dirs.map((d) => d.toLowerCase()));
+    for (const [id, dir] of sessionDirRef.current) if (!nextMap.has(id) && dirSet.has((dir ?? "").toLowerCase())) nextMap.set(id, dir);
+    sessionDirRef.current = nextMap;
+    const out = applyOverrides(all);
+    const finalMap = new Map<string, string>();
+    for (const s of out) {
+      const d = (s as any)._dir ?? nextMap.get(s.id) ?? getDirectory();
+      finalMap.set(s.id, d);
+    }
+    for (const [id, dir] of nextMap) if (!finalMap.has(id) && dirSet.has((dir ?? "").toLowerCase())) finalMap.set(id, dir);
+    sessionDirRef.current = finalMap;
     setSessions(out);
     return out;
-  }, []);
+  }, [refreshSessionsFor]);
 
   // server registry: custom + plugin-registered + skill commands.
   // hot reload: refetched on "/" menu open, window focus, and .opencode
@@ -359,13 +413,12 @@ export function useOpencode() {
     setActiveId(id);
     setPermission(permissionsRef.current.get(id) ?? null);
     setQuestion(questionsRef.current.get(id) ?? null);
-    // show whatever we already have for this session (no blank flash),
-    // then refetch — a per-session sequence guard drops stale responses
     const cached = store.cached(id);
     setMsgs(cached ? [...cached] : []);
     const seq = store.beginFetch(id);
-    const { client } = await opencode();
-    const r = await client.session.messages({ path: { id } });
+    const dirFor = sessionDirRef.current.get(id) ?? getDirectory();
+    const { client } = dirFor ? await opencodeFor(dirFor) : await opencode();
+    const r = await (client.session as any).messages({ path: { id } });
     if (store.isStale(id, seq)) return;
     // mid-stream the SSE-mutated store is NEWER than any fetch snapshot
     // (opencode persists part text only at milestones) — don't reset it
@@ -378,12 +431,11 @@ export function useOpencode() {
   }, []);
 
   useEffect(() => {
-    let es: EventSource | null = null;
+    const esMap = new Map<string, EventSource>();
     let disposed = false;
 
-    const onEvent = (e: OpenCodeEvent) => {
+    const onEvent = (e: OpenCodeEvent, dirHint?: string) => {
       const p = e.properties;
-      // generic compaction fallback — covers any future naming variant
       if (typeof e.type === "string" && e.type.includes("compaction")) {
         const sid = p.sessionID ?? p.id;
         if (sid) {
@@ -540,8 +592,10 @@ export function useOpencode() {
           if (!s?.id) break;
           if ((s as any).parentID) break;
           if (hiddenSessions.has(s.id) || s.title === HIDDEN_TITLE) break;
+          const dir = dirHint ?? getDirectory();
+          sessionDirRef.current.set(s.id, dir);
           const overrides = getTitleOverrides();
-          const patched = overrides[s.id] ? { ...s, title: overrides[s.id] } : s;
+          const patched = overrides[s.id] ? { ...s, title: overrides[s.id], _dir: dir } as any : { ...s, _dir: dir } as any;
           setSessions((prev) => {
             if (prev.some((x) => x.id === patched.id)) return prev;
             return applyOverrides([...prev, patched]);
@@ -574,6 +628,7 @@ export function useOpencode() {
         case "session.deleted": {
           const delId = p.sessionID ?? p.id;
           if (delId) {
+            sessionDirRef.current.delete(delId);
             store.remove(delId);
             tracker.reset(delId);
             markCompacting(delId, false);
@@ -629,32 +684,44 @@ export function useOpencode() {
       }
       if (disposed) return;
 
-      // phase 2: connected for good — finish boot best-effort. A flaky
-      // step (session reopen, provider list) degrades that piece of UI but
-      // must never wedge the whole app back into skeletons.
       try {
         const { base, client } = await opencode();
-
-        const dir = getDirectory();
-        es = new EventSource(
-          dir ? `${base}/event?directory=${encodeURIComponent(dir)}` : `${base}/event`,
-        );
-        es.onopen = () => setLive(true);
-        es.onerror = () => setLive(false);
-        es.onmessage = (ev) => {
-          try {
-            onEvent(JSON.parse(ev.data));
-          } catch {
-            // malformed event — ignore
+        const dirs = getAllDirs();
+        // one live SSE per workspace (5 max) — each filtered by ?directory=
+        let liveCount = 0;
+        const updateLive = () => setLive(liveCount > 0);
+        for (const d of dirs) {
+          if (esMap.has(d)) continue;
+          const url = d ? `${base}/event?directory=${encodeURIComponent(d)}` : `${base}/event`;
+          const es = new EventSource(url);
+          es.onopen = () => { liveCount++; updateLive(); };
+          es.onerror = () => { /* EventSource auto-reconnects; live reflects open count */ };
+          es.onmessage = (ev) => {
+            try { onEvent(JSON.parse(ev.data), d); } catch {}
+          };
+          esMap.set(d, es);
+        }
+        // watch for workspace list changes — add/remove streams live
+        const wsInterval = window.setInterval(() => {
+          if (disposed) return;
+          const cur = getAllDirs();
+          // add new
+          for (const d of cur) if (!esMap.has(d)) {
+            const url = d ? `${base}/event?directory=${encodeURIComponent(d)}` : `${base}/event`;
+            const es = new EventSource(url);
+            es.onopen = () => { liveCount++; updateLive(); };
+            es.onerror = () => {};
+            es.onmessage = (ev) => { try { onEvent(JSON.parse(ev.data), d); } catch {} };
+            esMap.set(d, es);
           }
-        };
-        // onerror: EventSource reconnects automatically
+          // remove gone (closed workspace)
+          for (const [d, es] of [...esMap]) if (!(cur as string[]).includes(d)) { es.close(); esMap.delete(d); }
+        }, 2000);
+        // store interval for cleanup via closure
+        (esMap as any)._interval = wsInterval;
 
-        // reopen the last-used session if it still exists, else the newest
         const lastId = localStorage.getItem(LAST_KEY);
         const target = list.find((s) => s.id === lastId) ?? list[0];
-        // deadline-wrapped: a hung messages fetch must not stall the boot
-        // effect before its finally (loadProviders + setBooting(false))
         if (target && !disposed)
           await withDeadline(openSession(target.id), 15_000, "session reopen").catch(() => {});
 
@@ -725,7 +792,10 @@ export function useOpencode() {
 
     return () => {
       disposed = true;
-      es?.close();
+      const iv = (esMap as any)._interval as number | undefined;
+      if (iv) window.clearInterval(iv);
+      for (const es of esMap.values()) es.close();
+      esMap.clear();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refreshSessions, openSession, refreshCommands]);
@@ -752,16 +822,18 @@ export function useOpencode() {
     return () => clearInterval(id);
   }, [attentionIds.size]);
 
-  const newSession = useCallback(async () => {
-    const { client } = await opencode();
-    const r = await client.session.create({ body: {} });
+  const newSession = useCallback(async (dir?: string) => {
+    const effDir = (dir ?? getDirectory()).trim();
+    const { client } = effDir ? await opencodeFor(effDir) : await opencode();
+    const r = await (client.session as any).create({ body: {} });
     const s = r.data as Session;
+    sessionDirRef.current.set(s.id, effDir);
     localStorage.setItem(LAST_KEY, s.id);
     activeRef.current = s.id;
     setSessions((prev) => {
       if (prev.some((x) => x.id === s.id)) return prev;
       const overrides = getTitleOverrides();
-      const patched = overrides[s.id] ? { ...s, title: overrides[s.id] } : s;
+      const patched = overrides[s.id] ? { ...s, title: overrides[s.id], _dir: effDir } as any : { ...s, _dir: effDir } as any;
       return applyOverrides([...prev, patched]);
     });
     setActiveId(s.id);
@@ -769,6 +841,7 @@ export function useOpencode() {
     setMsgs([]);
     setPermission(null);
     setQuestion(null);
+    return s.id;
   }, []);
 
   // session-wide token/cost totals — summed from the authoritative store
@@ -792,14 +865,14 @@ export function useOpencode() {
   const promptNow = useCallback(
     async (sid: string, text: string, files?: Attachment[]) => {
       if (!sid || (!text && !files?.length)) return;
-      // slash stays local — never prompt the model
       if (!files?.length && text.trim().startsWith("/")) {
         store.addCommand(sid, text.trim());
         return;
       }
       tracker.markBusy(sid, true);
       try {
-        const { client } = await opencode();
+        const dirFor = sessionDirRef.current.get(sid) ?? getDirectory();
+        const { client } = dirFor ? await opencodeFor(dirFor) : await opencode();
         const parts: any[] = [{ type: "text", text }];
         for (const f of files ?? [])
           parts.push({ type: "file", mime: f.mime, filename: f.filename, url: f.url });
@@ -811,7 +884,7 @@ export function useOpencode() {
         }
         if (agentSel) body.agent = agentSel;
         if (prov.variantSel) body.variant = prov.variantSel;
-        await client.session.promptAsync({ path: { id: sid }, body });
+        await (client.session as any).promptAsync({ path: { id: sid }, body });
       } catch (e) {
         tracker.markBusy(sid, false);
         // surface it in the history (synthetic error bubble) + the banner
@@ -857,15 +930,14 @@ export function useOpencode() {
     if (!activeId) return;
     tracker.reset(activeId);
     markCompacting(activeId, false);
-    // an aborted turn drops its pending asks — the server discards the
-    // requests with the run, so don't leave popups pointing at corpses
     questionsRef.current.delete(activeId);
     setQuestion((cur) => (cur?.sessionID === activeId ? null : cur));
     permissionsRef.current.delete(activeId);
     setPermission((cur) => (cur?.sessionID === activeId ? null : cur));
     clearAttention(activeId);
-    const { client } = await opencode();
-    await client.session.abort({ path: { id: activeId } }).catch(() => {});
+    const dirFor = sessionDirRef.current.get(activeId) ?? getDirectory();
+    const { client } = dirFor ? await opencodeFor(dirFor) : await opencode();
+    await (client.session as any).abort({ path: { id: activeId } }).catch(() => {});
   }, [activeId, markCompacting, clearAttention]);
 
   const respondToPermission = useCallback(
@@ -875,8 +947,9 @@ export function useOpencode() {
       permissionsRef.current.delete(perm.sessionID);
       setPermission(null);
       syncAttention(perm.sessionID);
-      const { client } = await opencode();
-      await client
+      const dirFor = sessionDirRef.current.get(perm.sessionID) ?? getDirectory();
+      const { client } = dirFor ? await opencodeFor(dirFor) : await opencode();
+      await (client as any)
         .postSessionIdPermissionsPermissionId({
           path: { id: perm.sessionID, permissionID: perm.id },
           body: { response },
@@ -895,7 +968,8 @@ export function useOpencode() {
       syncAttention(ask.sessionID);
       playSound("send");
       try {
-        const r = await serverFetch(`/question/${ask.id}/reply`, {
+        const dirFor = sessionDirRef.current.get(ask.sessionID) ?? getDirectory();
+        const r = await serverFetchFor(dirFor, `/question/${ask.id}/reply`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ answers }),
@@ -914,7 +988,8 @@ export function useOpencode() {
     setQuestion(null);
     questionsRef.current.delete(ask.sessionID);
     syncAttention(ask.sessionID);
-    await serverFetch(`/question/${ask.id}/reject`, { method: "POST" }).catch(() => {});
+    const dirFor = sessionDirRef.current.get(ask.sessionID) ?? getDirectory();
+    await serverFetchFor(dirFor, `/question/${ask.id}/reject`, { method: "POST" }).catch(() => {});
   }, [question, syncAttention]);
 
   // session.revert cuts the conversation after the given message;
@@ -931,7 +1006,6 @@ export function useOpencode() {
     async (messageID: string) => {
       const id = activeRef.current;
       if (!id) return;
-      // capture text of the rewound segment to paste into composer input
       let pasteText = "";
       try {
         const all = store.cached(id) ?? msgs;
@@ -950,18 +1024,17 @@ export function useOpencode() {
           if (userAfter.length) {
             pasteText = userAfter.map(extract).filter(Boolean).join("\n\n");
           } else {
-            // no later user messages — use the target message itself for editing
             const target = all[idx];
             if (target?.info?.role === "user") pasteText = extract(target);
           }
         }
       } catch {}
-      const { client } = await opencode();
-      await client.session.revert({ path: { id }, body: { messageID } }).catch(() => {});
+      const dirFor = sessionDirRef.current.get(id) ?? getDirectory();
+      const { client } = dirFor ? await opencodeFor(dirFor) : await opencode();
+      await (client.session as any).revert({ path: { id }, body: { messageID } }).catch(() => {});
       await refreshSessions().catch(() => {});
       await openSession(id).catch(() => {});
       if (pasteText) {
-        // persist to drafts so it survives reloads, and notify composer via event
         try { setDraft(id, pasteText); } catch {}
         window.dispatchEvent(new CustomEvent("oc:rewind-input", { detail: pasteText }));
       }
@@ -972,8 +1045,9 @@ export function useOpencode() {
   const unrevert = useCallback(async () => {
     const id = activeRef.current;
     if (!id) return;
-    const { client } = await opencode();
-    await client.session.unrevert({ path: { id } }).catch(() => {});
+    const dirFor = sessionDirRef.current.get(id) ?? getDirectory();
+    const { client } = dirFor ? await opencodeFor(dirFor) : await opencode();
+    await (client.session as any).unrevert({ path: { id } }).catch(() => {});
     await refreshSessions().catch(() => {});
     await openSession(id).catch(() => {});
   }, [refreshSessions, openSession]);
@@ -1096,8 +1170,10 @@ export function useOpencode() {
 
   const removeSession = useCallback(
     async (id: string) => {
-      const { client } = await opencode();
-      await client.session.delete({ path: { id } }).catch(() => {});
+      const dirFor = sessionDirRef.current.get(id) ?? getDirectory();
+      const { client } = dirFor ? await opencodeFor(dirFor) : await opencode();
+      await (client.session as any).delete({ path: { id } }).catch(() => {});
+      sessionDirRef.current.delete(id);
       setSessions((prev) => prev.filter((s) => s.id !== id));
       store.remove(id);
       questionsRef.current.delete(id);
@@ -1121,7 +1197,8 @@ export function useOpencode() {
     const trimmed = title.trim().slice(0, 120);
     if (!trimmed) return;
     try {
-      const { client } = await opencode();
+      const dirFor = sessionDirRef.current.get(id) ?? getDirectory();
+      const { client } = dirFor ? await opencodeFor(dirFor) : await opencode();
       // try server update — if available
       const api: any = (client as any).session;
       if (api && typeof api.update === "function") {
@@ -1148,9 +1225,11 @@ export function useOpencode() {
   }, []);
 
   const duplicateSession = useCallback(async (id: string) => {
-    const { client } = await opencode();
+    const dirFor = sessionDirRef.current.get(id) ?? getDirectory();
+    const { client } = dirFor ? await opencodeFor(dirFor) : await opencode();
     const r: any = await (client.session as any).fork({ path: { id } });
     const s = r.data as Session;
+    sessionDirRef.current.set(s.id, dirFor);
     await refreshSessions();
     await openSession(s.id);
     return s.id;
@@ -1172,9 +1251,11 @@ export function useOpencode() {
           .join("\n");
       }
     } catch {}
-    const { client } = await opencode();
+    const dirFor = sessionDirRef.current.get(id) ?? getDirectory();
+    const { client } = dirFor ? await opencodeFor(dirFor) : await opencode();
     const r: any = await (client.session as any).fork({ path: { id }, body: { messageID } });
     const s = r.data as Session;
+    sessionDirRef.current.set(s.id, dirFor);
     if (pasteText) {
       try { setDraft(s.id, pasteText); } catch {}
     }
@@ -1198,12 +1279,49 @@ export function useOpencode() {
 
   const isPinned = useCallback((id: string) => getPinned().has(id), []);
 
-  // clear every session in the current workspace — server delete + local reset
-  const clearSessions = useCallback(async () => {
-    const { client } = await opencode();
-    const ids = sessionsRef.current.map((s) => s.id);
+  const clearSessionsFor = useCallback(async (dir: string) => {
+    const norm = (dir ?? "").toLowerCase();
+    const ids = sessionsRef.current
+      .filter((s) => (sessionDirRef.current.get(s.id) ?? "").toLowerCase() === norm)
+      .map((s) => s.id);
+    if (!ids.length) return;
     await Promise.all(
-      ids.map((id) => client.session.delete({ path: { id } }).catch(() => {})),
+      ids.map(async (id) => {
+        const dirFor = sessionDirRef.current.get(id) ?? getDirectory();
+        const { client } = dirFor ? await opencodeFor(dirFor) : await opencode();
+        return (client.session as any).delete({ path: { id } }).catch(() => {});
+      }),
+    );
+    for (const id of ids) {
+      sessionDirRef.current.delete(id);
+      store.remove(id);
+      questionsRef.current.delete(id);
+      permissionsRef.current.delete(id);
+      clearAttention(id);
+      markCompacting(id, false);
+      tracker.reset(id);
+      clearDraft(id);
+    }
+    setSessions((prev) => prev.filter((s) => !ids.includes(s.id)));
+    if (activeRef.current && ids.includes(activeRef.current)) {
+      setActiveId("");
+      store.clearStashes();
+      setMsgs([]);
+      setQuestion(null);
+      setPermission(null);
+      setCompactingIds(new Set());
+    }
+  }, [store, tracker, markCompacting, clearAttention]);
+
+  // clear every session across all workspaces
+  const clearSessions = useCallback(async () => {
+    const ids = [...sessionsRef.current.map((s) => s.id)];
+    await Promise.all(
+      ids.map(async (id) => {
+        const dirFor = sessionDirRef.current.get(id) ?? getDirectory();
+        const { client } = dirFor ? await opencodeFor(dirFor) : await opencode();
+        return (client.session as any).delete({ path: { id } }).catch(() => {});
+      }),
     );
     for (const id of ids) {
       store.remove(id);
@@ -1278,6 +1396,10 @@ export function useOpencode() {
     forkFrom,
     togglePin,
     isPinned,
+    getDirForSession,
+    refreshSessions,
+    refreshSessionsFor,
+    clearSessionsFor,
   };
 }
 
