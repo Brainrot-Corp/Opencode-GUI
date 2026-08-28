@@ -39,7 +39,9 @@ export function useUpdater() {
   // force=true (the manual Check button) always hits the network — the
   // 1h cooldown cache is only for the silent launch check, so a just-fixed
   // release can't be hidden by a stale cached "no update"
-  const check = useCallback(async (force = false): Promise<void> => {
+  // forceCurrent=true treats the latest GitHub release as an update even if
+  // version == current — debug path for reinstall testing (Ctrl+Shift+Tab+Click)
+  const check = useCallback(async (force = false, forceCurrent = false): Promise<void> => {
     setBusy(true);
     setErr("");
     try {
@@ -73,7 +75,7 @@ export function useUpdater() {
       let info: UpdateInfo | null = null;
       if (asset && digest.startsWith("sha256:")) {
         const sha256 = digest.slice(7);
-        if (newer(version, cur) && sha256) {
+        if ((forceCurrent || newer(version, cur)) && sha256) {
           info = {
             version,
             notes: String(j.body ?? ""),

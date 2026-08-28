@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { enable, isEnabled, disable } from "@tauri-apps/plugin-autostart";
 import type { AppSettings, ColorSet } from "../hooks/useSettings";
@@ -82,6 +82,26 @@ export default function SettingsDrawer({
   // preference and reload into the first-launch wizard
   const [confirmClean, setConfirmClean] = useState(false);
   const upd = updProp ?? useUpdaterInternal();
+  // debug reinstall: RightControl held while left-clicking Check treats
+  // the latest release as an update even if version == current
+  const rightCtrlHeld = useRef(false);
+  useEffect(() => {
+    const down = (e: KeyboardEvent) => {
+      if (e.code === "ControlRight") rightCtrlHeld.current = true;
+    };
+    const up = (e: KeyboardEvent) => {
+      if (e.code === "ControlRight") rightCtrlHeld.current = false;
+    };
+    const clear = () => { rightCtrlHeld.current = false; };
+    window.addEventListener("keydown", down);
+    window.addEventListener("keyup", up);
+    window.addEventListener("blur", clear);
+    return () => {
+      window.removeEventListener("keydown", down);
+      window.removeEventListener("keyup", up);
+      window.removeEventListener("blur", clear);
+    };
+  }, []);
 
   async function cleanState() {
     if (!confirmClean) {
@@ -509,7 +529,11 @@ export default function SettingsDrawer({
                     type="button"
                     className="reset-btn"
                     disabled={upd.busy}
-                    onClick={() => void upd.check(true)}
+                    title="RightCtrl+Click to reinstall current version (debug)"
+                    onClick={() => {
+                      const forceCurrent = rightCtrlHeld.current;
+                      void upd.check(true, forceCurrent);
+                    }}
                   >
                     <i className="fa-solid fa-magnifying-glass" />
                     Check
