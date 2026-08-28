@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import type { AppSettings } from "./useSettings";
 import { playSound } from "../lib/sounds";
 import { UI_SCALES } from "../lib/uiScale";
+import { matchesEvent } from "../lib/hotkeys";
 
 // surfaces that own a single Escape (menus, dialogs, popups) — while any of
 // them is open the double-Escape stop gesture stands down entirely and the
@@ -111,15 +112,24 @@ export function useGlobalShortcuts({
         acc = 0;
       }
     };
+    const hk = settings.hotkeys;
     const key = (e: KeyboardEvent) => {
-      if (!e.ctrlKey || e.altKey) return;
-      if (["=", "+", "-"].includes(e.key)) {
+      if (hk.zoomIn && matchesEvent(e, hk.zoomIn)) {
         e.preventDefault();
-        stepZoom(e.key === "-" ? -1 : 1);
-      } else if (e.key === "0" || e.code === "Digit0" || e.code === "Numpad0") {
+        stepZoom(1);
+        return;
+      }
+      if (hk.zoomOut && matchesEvent(e, hk.zoomOut)) {
+        e.preventDefault();
+        stepZoom(-1);
+        return;
+      }
+      if (hk.zoomReset && matchesEvent(e, hk.zoomReset)) {
         e.preventDefault();
         update({ uiScale: 1 });
+        return;
       }
+      // keep legacy hard check as fallback when unbound? no — unbound means disabled
     };
     window.addEventListener("wheel", wheel, { passive: false });
     window.addEventListener("keydown", key);
@@ -127,7 +137,7 @@ export function useGlobalShortcuts({
       window.removeEventListener("wheel", wheel);
       window.removeEventListener("keydown", key);
     };
-  }, [settings.uiScale, update]);
+  }, [settings.uiScale, settings.hotkeys.zoomIn, settings.hotkeys.zoomOut, settings.hotkeys.zoomReset, update]);
 
   // double-Escape within four seconds aborts the running turn — the
   // keyboard twin of the stop button. The first free Escape arms the
@@ -179,126 +189,129 @@ export function useGlobalShortcuts({
     return () => document.removeEventListener("contextmenu", ctx);
   }, []);
 
-  // Ctrl+P toggles always-on-top — a plain window listener, so it naturally
-  // only fires while the app is open and focused
+  // Pin on top — rebindable (default Ctrl+P)
   useEffect(() => {
+    const binding = settings.hotkeys.pinOnTop;
+    if (!binding) return;
     const key = (e: KeyboardEvent) => {
-      if (
-        e.ctrlKey &&
-        !e.shiftKey &&
-        !e.altKey &&
-        e.key.toLowerCase() === "p"
-      ) {
-        e.preventDefault();
-        // same click noise as toggling via the titlebar pin
-        playSound("click");
-        update({ alwaysOnTop: !settings.alwaysOnTop });
-      }
-    };
-    window.addEventListener("keydown", key);
-    return () => window.removeEventListener("keydown", key);
-  }, [settings.alwaysOnTop, update]);
-
-  // Ctrl+Tab next chat, Ctrl+Shift+Tab previous — full loop at both ends.
-  // preventDefault keeps WebView2 from treating Tab as focus traversal
-  useEffect(() => {
-    if (!onCycleSessions) return;
-    const key = (e: KeyboardEvent) => {
-      if (!e.ctrlKey || e.altKey || e.key !== "Tab") return;
+      if (!matchesEvent(e, binding)) return;
       e.preventDefault();
       playSound("click");
-      onCycleSessions(e.shiftKey ? -1 : 1);
+      update({ alwaysOnTop: !settings.alwaysOnTop });
     };
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
-  }, [onCycleSessions]);
+  }, [settings.alwaysOnTop, settings.hotkeys.pinOnTop, update]);
 
-  // Ctrl+W closes the active session
+  // Cycle sessions — rebindable (default Ctrl+Tab / Ctrl+Shift+Tab)
   useEffect(() => {
-    if (!onCloseSession) return;
+    if (!onCycleSessions) return;
+    const nextB = settings.hotkeys.cycleNext;
+    const prevB = settings.hotkeys.cyclePrev;
+    if (!nextB && !prevB) return;
     const key = (e: KeyboardEvent) => {
-      if (
-        e.ctrlKey &&
-        !e.shiftKey &&
-        !e.altKey &&
-        e.key.toLowerCase() === "w"
-      ) {
+      if (nextB && matchesEvent(e, nextB)) {
         e.preventDefault();
-        onCloseSession();
+        playSound("click");
+        onCycleSessions(1);
+        return;
+      }
+      if (prevB && matchesEvent(e, prevB)) {
+        e.preventDefault();
+        playSound("click");
+        onCycleSessions(-1);
+        return;
       }
     };
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
-  }, [onCloseSession]);
+  }, [onCycleSessions, settings.hotkeys.cycleNext, settings.hotkeys.cyclePrev]);
 
-  // Ctrl+` toggles the terminal dock — e.code (physical backtick) so it
-  // fires on layouts where the character needs Shift
+  // Close session — rebindable (default Ctrl+W)
+  useEffect(() => {
+    if (!onCloseSession) return;
+    const b = settings.hotkeys.closeSession;
+    if (!b) return;
+    const key = (e: KeyboardEvent) => {
+      if (!matchesEvent(e, b)) return;
+      e.preventDefault();
+      onCloseSession();
+    };
+    window.addEventListener("keydown", key);
+    return () => window.removeEventListener("keydown", key);
+  }, [onCloseSession, settings.hotkeys.closeSession]);
+
+  // Toggle terminal — rebindable (default Ctrl+`)
   useEffect(() => {
     if (!onToggleTerm) return;
+    const b = settings.hotkeys.toggleTerm;
+    if (!b) return;
     const key = (e: KeyboardEvent) => {
-      if (!e.ctrlKey || e.altKey || e.code !== "Backquote") return;
+      if (!matchesEvent(e, b)) return;
       e.preventDefault();
       playSound("click");
       onToggleTerm();
     };
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
-  }, [onToggleTerm]);
+  }, [onToggleTerm, settings.hotkeys.toggleTerm]);
 
-  // Ctrl+B toggles the session sidebar — VS Code parity, global (no terminal
-  // guard, works even when an editor/terminal has focus)
+  // Toggle sidebar — rebindable (default Ctrl+B)
   useEffect(() => {
     if (!onToggleSidebar) return;
+    const b = settings.hotkeys.toggleSidebar;
+    if (!b) return;
     const key = (e: KeyboardEvent) => {
-      if (!e.ctrlKey || e.shiftKey || e.altKey || e.repeat) return;
-      if (e.key.toLowerCase() !== "b") return;
+      if (!matchesEvent(e, b)) return;
       e.preventDefault();
       onToggleSidebar();
     };
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
-  }, [onToggleSidebar]);
+  }, [onToggleSidebar, settings.hotkeys.toggleSidebar]);
 
-  // Ctrl+O opens the workspace picker — exact same behavior as the Browse
-  // button (pickWorkspace → applyWorkspace → reload), global like VS Code
+  // Open workspace — rebindable (default Ctrl+O)
   useEffect(() => {
     if (!onOpenWorkspace) return;
+    const b = settings.hotkeys.openWorkspace;
+    if (!b) return;
     const key = (e: KeyboardEvent) => {
-      if (!e.ctrlKey || e.shiftKey || e.altKey || e.repeat) return;
-      if (e.key.toLowerCase() !== "o") return;
+      if (!matchesEvent(e, b)) return;
       e.preventDefault();
       onOpenWorkspace();
     };
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
-  }, [onOpenWorkspace]);
+  }, [onOpenWorkspace, settings.hotkeys.openWorkspace]);
 
-  // Ctrl+Shift+N opens a new window — in-app only, same as tray "Open new window"
+  // New window — rebindable (default Ctrl+Shift+N)
   useEffect(() => {
     if (!onNewInstance) return;
+    const b = settings.hotkeys.newWindow;
+    if (!b) return;
     const key = (e: KeyboardEvent) => {
-      if (!e.ctrlKey || !e.shiftKey || e.altKey || e.repeat) return;
-      if (e.key.toLowerCase() !== "n") return;
+      if (!matchesEvent(e, b)) return;
       e.preventDefault();
       onNewInstance();
     };
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
-  }, [onNewInstance]);
+  }, [onNewInstance, settings.hotkeys.newWindow]);
 
-  // Ctrl+N creates a new session — app-wide (even when composer/terminal focused)
+  // New session — rebindable (default Ctrl+N)
   useEffect(() => {
     if (!onNewSession) return;
+    const b = settings.hotkeys.newSession;
+    if (!b) return;
     const key = (e: KeyboardEvent) => {
-      if (!e.ctrlKey || e.shiftKey || e.altKey || e.repeat) return;
-      if (e.key.toLowerCase() !== "n") return;
+      if (!matchesEvent(e, b)) return;
       e.preventDefault();
       playSound("click");
       onNewSession();
     };
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
-  }, [onNewSession]);
+  }, [onNewSession, settings.hotkeys.newSession]);
 
   // Rust emits visibility://changed on tray click / Alt+Space / tray menu
   useEffect(() => {

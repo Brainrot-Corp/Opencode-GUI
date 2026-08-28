@@ -30,6 +30,7 @@ import { ensureDict } from "../lib/dictWords";
 import { pickWorkspace } from "../lib/workspace";
 import { playSound } from "../lib/sounds";
 import { useSpeech } from "../hooks/useSpeech";
+import { matchesEvent } from "../lib/hotkeys";
 import { usePlugins } from "../hooks/usePlugins";
 import { loadPluginsCatalog, type PluginCatalogEntry } from "../lib/pluginsCatalog";
 import { isNewer } from "../lib/plugins";
@@ -152,15 +153,32 @@ export default function ChatPage() {
   );
 
   // Ctrl+W close active session — empty sessions go instantly, non-empty need
-  // a second Ctrl+W within 1s (banner shows while armed)
+  // a second Ctrl+W within 1s (banner shows while armed). After a successful
+  // close, opens the next session like Ctrl+Tab; if none left, shows empty
+  // placeholder without error.
   const [closeHint, setCloseHint] = useState(false);
   const closeArm = useRef(0);
   const closeTimer = useRef(0);
   const closeActiveSession = useCallback(() => {
     const id = oc.activeId;
     if (!id) return;
+    const list = oc.sessions;
+    const idx = list.findIndex((s) => s.id === id);
+    const nextId = list.length > 1 ? list[(idx + 1 + list.length) % list.length]?.id ?? "" : "";
+    // distinct target: when idx<0 (should not happen for active) fall back to first
+    const resolvedNext = idx < 0 ? list[0]?.id ?? "" : nextId;
+    const doClose = (target: string) => {
+      // avoid opening the session we just deleted
+      const toOpen = resolvedNext && resolvedNext !== target ? resolvedNext : "";
+      void oc.removeSession(target).then(() => {
+        if (!toOpen) return;
+        // list may have been refreshed via SSE; verify still exists or just open
+        // modulo next — safe even if list changed, openSession handles missing id gracefully
+        void oc.openSession(toOpen).catch(() => {});
+      });
+    };
     if (!oc.msgs.some((m) => m.info.role === "user")) {
-      void oc.removeSession(id);
+      doClose(id);
       return;
     }
     if (Date.now() - closeArm.current < 1000) {
@@ -168,7 +186,7 @@ export default function ChatPage() {
       closeArm.current = 0;
       setCloseHint(false);
       playSound("close");
-      void oc.removeSession(id);
+      doClose(id);
     } else {
       closeArm.current = Date.now();
       setCloseHint(true);
@@ -179,7 +197,7 @@ export default function ChatPage() {
         setCloseHint(false);
       }, 1000);
     }
-  }, [oc.activeId, oc.msgs, oc.removeSession]);
+  }, [oc.activeId, oc.msgs, oc.sessions, oc.removeSession, oc.openSession]);
 
   // browser bar band = titlebar bottom + bar height; the child webview starts
   // right below the bar
@@ -534,17 +552,18 @@ export default function ChatPage() {
   const retranslateRef = useRef<(() => Promise<string | null>) | null>(null);
   retranslateRef.current = voice.retranslate;
 
-  // Ctrl+M toggles the mic — same path as clicking the composer button
+  // Mic toggle — rebindable (default Ctrl+M)
   useEffect(() => {
+    const b = settings.hotkeys.micToggle;
+    if (!b) return;
     const key = (e: KeyboardEvent) => {
-      if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "m") {
-        e.preventDefault();
-        voice.toggle();
-      }
+      if (!matchesEvent(e, b)) return;
+      e.preventDefault();
+      voice.toggle();
     };
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
-  }, [voice.toggle]);
+  }, [voice.toggle, settings.hotkeys.micToggle]);
 
   // global Ctrl+Shift+M (Rust-registered) reaches here even when unfocused;
   // different combo from Ctrl+M so both can't fire for one press.
@@ -1079,6 +1098,7 @@ export default function ChatPage() {
                   onPickWorkspace={() => pickWorkspace()}
                   workspace={settings.workspace}
                   commands={oc.cmdList}
+                  cycleAgentHotkey={settings.hotkeys.cycleAgent}
                   onCommandsOpen={oc.refreshCommands}
                   agents={oc.agents}
                   agentSel={oc.agentSel}

@@ -687,7 +687,7 @@ export default function SettingsDrawer({
         </div>
       </aside>
         {infoOpen && (
-          <InfoDialog commands={commands ?? []} pluginDocs={pluginDocs} onClose={() => setInfoOpen(false)} />
+          <InfoDialog commands={commands ?? []} pluginDocs={pluginDocs} settings={settings} update={update} onClose={() => setInfoOpen(false)} />
         )}
         {wizOpen && (
           <Onboarding

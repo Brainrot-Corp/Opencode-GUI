@@ -13,6 +13,7 @@ import {
   type NormalizedTheme,
   type ThemeMeta,
 } from "../lib/themes";
+import { DEFAULT_HOTKEYS, normalizeBinding, type HotkeysMap } from "../lib/hotkeys";
 
 export type ThemeName = string;
 export type Mode = "dark" | "light";
@@ -80,6 +81,7 @@ export type AppSettings = {
   terminal: TerminalSettings;
   // opaque per-plugin config blobs — each plugin validates its own shape
   plugins: Record<string, Record<string, unknown>>;
+  hotkeys: HotkeysMap;
 };
 
 const KEY = "oc.settings";
@@ -120,6 +122,7 @@ const DEFAULTS: AppSettings = {
   updateNotifications: true,
   terminal: { defaultProfileId: null, customShells: [] },
   plugins: {},
+  hotkeys: structuredClone(DEFAULT_HOTKEYS),
 };
 
 function num(v: unknown, def: number, min: number, max: number) {
@@ -267,6 +270,21 @@ export function useSettings() {
           p.plugins && typeof p.plugins === "object" && !Array.isArray(p.plugins)
             ? p.plugins
             : {},
+        hotkeys: (() => {
+          const out = structuredClone(DEFAULT_HOTKEYS) as HotkeysMap;
+          const src = p.hotkeys as any;
+          if (src && typeof src === "object" && !Array.isArray(src)) {
+            for (const k of Object.keys(DEFAULT_HOTKEYS) as (keyof HotkeysMap)[]) {
+              const v = src[k];
+              if (v === null) out[k] = null;
+              else if (typeof v === "string") {
+                const n = normalizeBinding(v);
+                out[k] = n;
+              }
+            }
+          }
+          return out;
+        })(),
         speakReplies: !!p.speakReplies && typeof p.secondaryModel === "string" && !!p.secondaryModel && typeof p.ttsVoice === "string" && p.ttsVoice.endsWith(".onnx"),
         // legacy showThinking (true = thinking expanded) inverts into the new
         // collapsed flag so existing users keep their default; fresh installs
