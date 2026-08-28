@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { opencode } from "../api";
 import { useContextMenu } from "../hooks/useContextMenu";
+import { useFileCache } from "../hooks/useFileCache";
 import { clipboardWrite } from "../lib/clipboard";
 import "../styles/files.css";
 import "../styles/find.css";
@@ -36,11 +37,11 @@ function FileIcon({ name }: { name: string }) {
 }
 
 export default function FileTree() {
-  // fetched children per directory path ("" = workspace root)
-  const [kids, setKids] = useState<Map<string, Node[]>>(new Map());
+  const { kids, error, loadingDir, load } = useFileCache();
   const [openDirs, setOpenDirs] = useState<Set<string>>(new Set());
-  const [loadingDir, setLoadingDir] = useState("");
-  const [error, setError] = useState("");
+  const [localErr, setLocalErr] = useState("");
+  const errorMsg = error || localErr;
+  const setError = (v: string) => setLocalErr(v);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [renameVal, setRenameVal] = useState("");
   const ctx = (() => { try { return useContextMenu(); } catch { return null; } })();
@@ -149,26 +150,7 @@ export default function FileTree() {
     return base.replace(/[\/\\]+$/, "") + sep + name;
   }
 
-  async function load(path: string) {
-    setLoadingDir(path);
-    try {
-      const { client } = await opencode();
-      const r = await client.file.list({ query: { path } });
-      const nodes = ((r.data ?? []) as Node[]).slice().sort((a, b) => {
-        if (a.type !== b.type) return a.type === "directory" ? -1 : 1;
-        return a.name.localeCompare(b.name);
-      });
-      setKids((prev) => new Map(prev).set(path, nodes));
-      setError("");
-    } catch (e) {
-      setError(String(e));
-    }
-    setLoadingDir("");
-  }
 
-  useEffect(() => {
-    load("");
-  }, []);
 
   function toggleDir(n: Node) {
     setOpenDirs((prev) => {
@@ -199,7 +181,7 @@ export default function FileTree() {
     const abs = joinAbs(baseAbs, trimmed);
     try {
       await invoke("file_create", { path: abs, is_dir: isDir });
-      await load(basePath);
+      await load(basePath, true);
       if (base && !openDirs.has(base.path)) setOpenDirs((prev) => new Set(prev).add(base.path));
     } catch (e) { setError(String(e)); }
   }
@@ -208,14 +190,14 @@ export default function FileTree() {
     if (!window.confirm(`Delete ${n.type} "${n.name}"?\n${n.path}\n\nThis cannot be undone.`)) return;
     try {
       await invoke("file_delete", { path: n.absolute });
-      await load(parentPath(n.path));
+      await load(parentPath(n.path), true);
     } catch (e) { setError(String(e)); }
   }
 
   async function doDuplicate(n: Node) {
     try {
       await invoke<string>("file_duplicate", { path: n.absolute });
-      await load(parentPath(n.path));
+      await load(parentPath(n.path), true);
     } catch (e) { setError(String(e)); }
   }
 
@@ -229,7 +211,7 @@ export default function FileTree() {
     try {
       await invoke("file_rename", { from: n.absolute, to: newAbs });
       setRenaming(null);
-      await load(pPath);
+      await load(pPath, true);
     } catch (e) { setError(String(e)); }
   }
 
@@ -268,7 +250,7 @@ export default function FileTree() {
       { label: "New File", icon: "fa-file-circle-plus", action: () => void doCreate(false, null) },
       { label: "New Folder", icon: "fa-folder-plus", action: () => void doCreate(true, null) },
       { separator: true },
-      { label: "Refresh", icon: "fa-arrows-rotate", action: () => void load("") },
+      { label: "Refresh", icon: "fa-arrows-rotate", action: () => void load("", true) },
       { label: "Reveal Workspace in Explorer", icon: "fa-folder-open", action: () => {
         const root = workspaceRootAbs();
         if (root) void invoke("file_reveal", { path: root }).catch((er)=> setError(String(er)));
@@ -363,8 +345,8 @@ export default function FileTree() {
           </button>
         </div>
       )}
-      {error && <p className="empty">{error}</p>}
-      {!error && kids.get("") === undefined && (
+      {errorMsg && <p className="empty">{errorMsg}</p>}
+      {!errorMsg && kids.get("") === undefined && (
         <>
           <div className="skel-row" />
           <div className="skel-row" style={{ animationDelay: "0.15s", width: "80%" }} />

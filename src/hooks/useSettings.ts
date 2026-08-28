@@ -38,6 +38,9 @@ const DEFAULT_COLOR_SETS: AppColors = {
   },
 };
 
+export type CustomShell = { id: string; name: string; path: string; args: string };
+export type TerminalSettings = { defaultProfileId: string | null; customShells: CustomShell[] };
+
 export type AppSettings = {
   theme: ThemeName;
   mode: Mode;
@@ -74,6 +77,7 @@ export type AppSettings = {
   commitBody: boolean;
   // show the update-available prompt on launch (Settings → Updates still works when off)
   updateNotifications: boolean;
+  terminal: TerminalSettings;
   // opaque per-plugin config blobs — each plugin validates its own shape
   plugins: Record<string, Record<string, unknown>>;
 };
@@ -114,6 +118,7 @@ const DEFAULTS: AppSettings = {
   secondaryModel: "",
   commitBody: false,
   updateNotifications: true,
+  terminal: { defaultProfileId: null, customShells: [] },
   plugins: {},
 };
 
@@ -239,6 +244,25 @@ export function useSettings() {
         secondaryModel: typeof p.secondaryModel === "string" ? p.secondaryModel : "",
         commitBody: !!p.commitBody,
         updateNotifications: p.updateNotifications === false ? false : true,
+        terminal: (() => {
+          const t: any = p.terminal;
+          if (!t || typeof t !== "object") return structuredClone(DEFAULTS.terminal);
+          const def = typeof t.defaultProfileId === "string" && t.defaultProfileId.trim() ? t.defaultProfileId.trim() : null;
+          const arr = Array.isArray(t.customShells) ? t.customShells : [];
+          const customShells: CustomShell[] = [];
+          for (const c of arr) {
+            if (!c || typeof c !== "object") continue;
+            const id = typeof (c as any).id === "string" ? (c as any).id.trim() : "";
+            const name = typeof (c as any).name === "string" ? (c as any).name.trim() : "";
+            const path = typeof (c as any).path === "string" ? (c as any).path.trim() : "";
+            const args = typeof (c as any).args === "string" ? (c as any).args : "";
+            if (!id || !name || !path) continue;
+            if (name.length > 80 || path.length > 500 || args.length > 500) continue;
+            customShells.push({ id: id.slice(0, 64), name: name.slice(0, 80), path: path.slice(0, 500), args: args.slice(0, 500) });
+            if (customShells.length >= 20) break;
+          }
+          return { defaultProfileId: def, customShells };
+        })(),
         plugins:
           p.plugins && typeof p.plugins === "object" && !Array.isArray(p.plugins)
             ? p.plugins

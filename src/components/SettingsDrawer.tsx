@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { AppSettings, ColorSet } from "../hooks/useSettings";
+import { fetchTerminalProfiles, useTerminalProfiles, type TerminalProfile as TermProfile } from "../hooks/useTerminalProfiles";
 import { useUpdater as useUpdaterInternal } from "../hooks/useUpdater";
 import type { ThemeMeta } from "../lib/themes";
 import type { SoundPrefs } from "../lib/sounds";
@@ -66,6 +67,18 @@ export default function SettingsDrawer({
   // preference and reload into the first-launch wizard
   const [confirmClean, setConfirmClean] = useState(false);
   const upd = updProp ?? useUpdaterInternal();
+
+  // terminal discovery — shared global cache (probes + WSL + WT via Rust)
+  const { profiles: termProfiles, loading: termLoading, error: termErr } = useTerminalProfiles();
+  const [customName, setCustomName] = useState("");
+  const [customPath, setCustomPath] = useState("");
+  const [customArgs, setCustomArgs] = useState("");
+  const refreshTerms = () => void fetchTerminalProfiles(true).catch(() => {});
+  useEffect(() => {
+    if (!open) return;
+    if (termProfiles.length) return;
+    void fetchTerminalProfiles().catch(() => {});
+  }, [open, termProfiles.length]);
 
   const [debugLocalPath, setDebugLocalPath] = useState("");
   const [debugLocalErr, setDebugLocalErr] = useState("");
@@ -410,6 +423,138 @@ export default function SettingsDrawer({
               >
                 <span className="knob" />
               </button>
+            </div>
+          </section>
+
+          {/* ── Terminal ── */}
+          <section className="settings-section" aria-label="Terminal">
+            <div className="settings-section-title">
+              <i className="fa-solid fa-terminal" /> Terminal
+            </div>
+
+            <div className="setting-row">
+              <div className="setting-info">
+                <i className="fa-solid fa-power-off setting-icon" />
+                <div>
+                  <div className="setting-name">Default shell</div>
+                  <div className="setting-desc">New terminals use this shell · per-terminal picker in the dock</div>
+                </div>
+              </div>
+              <button type="button" className="reset-btn" disabled={termLoading} onClick={refreshTerms} data-tip="Detect installed shells again">
+                <i className={`fa-solid ${termLoading ? "fa-spinner fa-spin" : "fa-rotate"}`} /> Detect again
+              </button>
+            </div>
+            <div className="setting-row" style={{ paddingTop: 0 }}>
+              <div className="setting-info" style={{ flex: 1 }}>
+                <select
+                  value={settings.terminal?.defaultProfileId ?? ""}
+                  onChange={(e) => {
+                    const v = e.target.value || null;
+                    update({ terminal: { ...settings.terminal, defaultProfileId: v } });
+                  }}
+                  className="discord-in"
+                  style={{ flex: 1, minWidth: 0, padding: "6px 8px" }}
+                >
+                  <option value="">System default (PowerShell)</option>
+                  {(() => {
+                    const groups: Record<string, TermProfile[]> = { probe: [], wsl: [], wt: [] };
+                    for (const p of termProfiles) {
+                      if (p.source === "wsl") groups.wsl.push(p);
+                      else if (p.source === "wt") groups.wt.push(p);
+                      else groups.probe.push(p);
+                    }
+                    const nodes: any[] = [];
+                    if (groups.probe.length) nodes.push(
+                      <optgroup key="probe" label="Installed shells">
+                        {groups.probe.map((p) => (
+                          <option key={p.id} value={p.id}>{p.name} — {p.path}{p.args.length ? " " + p.args.join(" ") : ""}</option>
+                        ))}
+                      </optgroup>
+                    );
+                    if (groups.wsl.length) nodes.push(
+                      <optgroup key="wsl" label="WSL distros">
+                        {groups.wsl.map((p) => (
+                          <option key={p.id} value={p.id}>{p.name} — {p.path}{p.args.length ? " " + p.args.join(" ") : ""}</option>
+                        ))}
+                      </optgroup>
+                    );
+                    if (groups.wt.length) nodes.push(
+                      <optgroup key="wt" label="Windows Terminal">
+                        {groups.wt.map((p) => (
+                          <option key={p.id} value={p.id}>{p.name} — {p.path}{p.args.length ? " " + p.args.join(" ") : ""}</option>
+                        ))}
+                      </optgroup>
+                    );
+                    const customs = settings.terminal?.customShells ?? [];
+                    if (customs.length) nodes.push(
+                      <optgroup key="custom" label="Custom">
+                        {customs.map((c) => (
+                          <option key={c.id} value={c.id}>Custom: {c.name} — {c.path}{c.args ? " " + c.args : ""}</option>
+                        ))}
+                      </optgroup>
+                    );
+                    return nodes;
+                  })()}
+                </select>
+              </div>
+            </div>
+            {termErr && <div className="voice-err mono-hint" style={{ padding: "0 12px 6px" }}>{termErr}</div>}
+            {!termLoading && termProfiles.length === 0 && !termErr && (
+              <div className="mono-hint" style={{ padding: "0 12px 6px", opacity: 0.7 }}>No shells detected — check WSL/Windows Terminal install</div>
+            )}
+
+            <div className="setting-row" style={{ flexDirection: "column", alignItems: "stretch", gap: "6px" }}>
+              <div className="setting-info">
+                <i className="fa-solid fa-plus setting-icon" />
+                <div>
+                  <div className="setting-name">Custom shell</div>
+                  <div className="setting-desc">Add any executable on PATH or absolute path · shown in both pickers</div>
+                </div>
+              </div>
+              <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+                <input className="discord-in" style={{ flex: "1 1 90px", minWidth: 0 }} placeholder="Name (e.g. Nushell)" value={customName} onChange={(e) => setCustomName(e.target.value)} spellCheck={false} maxLength={80} />
+                <input className="discord-in" style={{ flex: "2 1 160px", minWidth: 0 }} placeholder="Path (C:\tools\nu.exe or nu)" value={customPath} onChange={(e) => setCustomPath(e.target.value)} spellCheck={false} />
+                <input className="discord-in" style={{ flex: "1 1 80px", minWidth: 0 }} placeholder="Args (optional)" value={customArgs} onChange={(e) => setCustomArgs(e.target.value)} spellCheck={false} />
+                <button
+                  type="button"
+                  className="reset-btn"
+                  disabled={!customName.trim() || !customPath.trim()}
+                  onClick={() => {
+                    const name = customName.trim().slice(0, 80);
+                    const path = customPath.trim().slice(0, 500);
+                    const args = customArgs.trim().slice(0, 500);
+                    if (!name || !path) return;
+                    const id = `custom-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+                    const next = [...(settings.terminal?.customShells ?? []), { id, name, path, args }];
+                    update({ terminal: { ...settings.terminal, customShells: next } });
+                    setCustomName(""); setCustomPath(""); setCustomArgs("");
+                  }}
+                >
+                  <i className="fa-solid fa-plus" /> Add
+                </button>
+              </div>
+              {(settings.terminal?.customShells?.length ?? 0) > 0 && (
+                <div style={{ display: "flex", flexDirection: "column", gap: "4px", marginTop: "4px" }}>
+                  {settings.terminal.customShells.map((c) => (
+                    <div key={c.id} style={{ display: "flex", alignItems: "center", gap: "6px", padding: "4px 6px", background: "var(--inset-bg)", border: "1px solid var(--line)", fontFamily: "var(--mono)", fontSize: "11px" }}>
+                      <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={`${c.name} — ${c.path} ${c.args}`}>{c.name} — {c.path}{c.args ? " " + c.args : ""}</span>
+                      <button
+                        type="button"
+                        className="reset-btn"
+                        style={{ padding: "2px 6px" }}
+                        onClick={() => {
+                          const next = settings.terminal.customShells.filter((x) => x.id !== c.id);
+                          const def = settings.terminal.defaultProfileId === c.id ? null : settings.terminal.defaultProfileId;
+                          update({ terminal: { ...settings.terminal, customShells: next, defaultProfileId: def } });
+                        }}
+                        data-tip="Remove custom shell"
+                      >
+                        <i className="fa-solid fa-trash-can" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </section>
 

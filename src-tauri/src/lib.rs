@@ -22,6 +22,9 @@ use git::{git_commit, git_diff, git_diff_stat, git_discard, git_log, git_pull, g
 mod pty;
 use pty::{kill_all as pty_kill_all, pty_kill, pty_resize, pty_spawn, pty_write, PtyState};
 
+mod terminals;
+use terminals::list_terminals;
+
 mod discord;
 use discord::{discord_clear, discord_close, discord_set, discord_status, DiscordState};
 
@@ -1450,6 +1453,7 @@ pub fn run() {
             git_diff,
             git_diff_stat,
             git_log,
+            list_terminals,
             pty_spawn,
             pty_write,
             pty_resize,

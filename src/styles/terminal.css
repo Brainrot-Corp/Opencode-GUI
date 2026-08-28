@@ -432,3 +432,56 @@
   padding: 4px 6px 6px;
   letter-spacing: 0.03em;
 }
+
+/* per-terminal shell picker menu — portaled overlay, escapes all overflow clips */
+.term-add-menu {
+  min-width: 240px;
+  max-width: 320px;
+  max-height: min(360px, 60vh);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px;
+  background: rgba(var(--surf-rgb), 0.96);
+  border: 1px solid var(--line-strong);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35), 0 0 14px -6px var(--accent-glow);
+}
+.term-add-group {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  padding: 6px 6px 2px;
+}
+.term-add-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-dim);
+  font-family: var(--sans);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.18s var(--ease), border-color 0.18s var(--ease), color 0.18s var(--ease);
+}
+.term-add-item i {
+  font-size: 11px;
+  color: var(--accent);
+  opacity: 0.85;
+  width: 14px;
+  text-align: center;
+  flex-shrink: 0;
+}
+.term-add-item:hover {
+  background: color-mix(in srgb, var(--accent) calc(0.08 * 100%), transparent);
+  border-color: var(--line);
+  color: var(--text);
+}

@@ -111,10 +111,8 @@ export default function ChatPage() {
       isTyping: composerHasText,
     };
   }, [settings.workspace, oc.modelSel, oc.defaultModel, oc.busy, oc.activeId, oc.sessions, editingFile, diffOpen, diffFiles, oc.permission, oc.question, oc.compacting, composerHasText]);
-  // terminal dock visibility (height + instances live inside TerminalPanel — survives hide/show)
-  const [termOpen, setTermOpen] = useState(
-    () => localStorage.getItem("oc.term.open") === "1",
-  );
+  // terminal dock — starts hidden on launch (PTY warms in background, no GUI to not disturb user)
+  const [termOpen, setTermOpen] = useState(false);
   // first-launch setup wizard — any close records the flag so it shows once
   const [onboardOpen, setOnboardOpen] = useState(
     () => localStorage.getItem("oc.onboarded") !== "1",
@@ -1099,6 +1097,8 @@ export default function ChatPage() {
               <TerminalPanel
                 open={termOpen}
                 workspace={settings.workspace}
+                terminal={settings.terminal}
+                onSetDefault={(id)=> update({ terminal: { ...settings.terminal, defaultProfileId: id } })}
                 onClose={() => setTermOpen(false)}
               />
             </Suspense>

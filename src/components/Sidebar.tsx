@@ -182,7 +182,7 @@ export default function Sidebar({
                   )}
                 </div>
               )}
-              {loading && sessions.length === 0 ? (
+              {loading && sessions.length === 0 && (
                 <>
                   <div className="skel-row" />
                   <div className="skel-row" style={{ animationDelay: "0.15s" }} />
@@ -190,10 +190,13 @@ export default function Sidebar({
                   <div className="skel-row" style={{ animationDelay: "0.45s" }} />
                   <div className="skel-row" style={{ animationDelay: "0.6s" }} />
                 </>
-              ) : tab === "files" ? (
+              )}
+              {/* file tree mounts once at launch — async idle fetch, hidden while booting or on chats tab; skeleton stays until complete */}
+              <div style={{ display: loading && sessions.length === 0 ? "none" : tab === "files" ? "block" : "none" }}>
                 <FileTree />
-              ) : (
-                sessions.map((s) => {
+              </div>
+              <div style={{ display: loading && sessions.length === 0 || tab === "files" ? "none" : "block" }}>
+                {!(loading && sessions.length === 0) && sessions.map((s) => {
                   const pinned = !!isPinned?.(s.id);
                   const busy = !!busyIds?.has(s.id);
                   const needsAttention = !!attentionIds?.has(s.id);
@@ -298,9 +301,9 @@ export default function Sidebar({
                       <i className="fa-solid fa-xmark" />
                     </button>
                   </div>
-                  );
-                })
-              )}
+                    );
+                })}
+                  </div>
             </div>
             {sidebarExtras}
             <GitPanel />

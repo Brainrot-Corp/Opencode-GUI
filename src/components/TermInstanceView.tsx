@@ -50,6 +50,9 @@ export default function TermInstanceView({
   id,
   gen,
   cwd,
+  shell,
+  args,
+  shellName,
   active,
   open,
   onTitle,
@@ -59,6 +62,9 @@ export default function TermInstanceView({
   id: number;
   gen: number;
   cwd?: string;
+  shell?: string;
+  args?: string[];
+  shellName?: string;
   active: boolean;
   open: boolean;
   onTitle: (id: number, title: string) => void;
@@ -86,6 +92,8 @@ export default function TermInstanceView({
   const genRef = useRef(gen);
   const idRef = useRef(id);
   const cwdRef = useRef(cwd);
+  const shellRef = useRef(shell);
+  const argsRef = useRef(args);
   const spawnedGenRef = useRef<number | null>(null);
 
   const [deadLocal, setDeadLocal] = useState(false);
@@ -95,8 +103,12 @@ export default function TermInstanceView({
   useEffect(() => { genRef.current = gen; }, [gen]);
   useEffect(() => { idRef.current = id; }, [id]);
   useEffect(() => { cwdRef.current = cwd; }, [cwd]);
+  useEffect(() => { shellRef.current = shell; }, [shell]);
+  useEffect(() => { argsRef.current = args; }, [args]);
   useEffect(() => { activeRef.current = active; }, [active]);
   useEffect(() => { openRef.current = open; }, [open]);
+  // void to avoid unused warning for shellName prop (used only for display in parent)
+  void shellName;
 
   const flushResize = useCallback(() => {
     const p = pendingResizeRef.current;
@@ -121,10 +133,8 @@ export default function TermInstanceView({
     const curId = idRef.current;
     const curGen = genRef.current;
     if (spawnedGenRef.current === curGen && aliveRef.current) return;
-    // defer initial spawn until dock is actually visible — creating a ConPTY at 80x24
-    // then immediately resizing to the real xterm size makes PowerShell reprint the prompt
-    // (hence the duplicate PS …> on hide→show). We create with the correct size.
-    if (!openRef.current && !aliveRef.current) return;
+    // background warm — allow spawn even when dock is hidden so opening is instant;
+    // hidden spawn uses 80x24 fallback and is resized on next open (no GUI on launch to not disturb user)
     spawnedGenRef.current = curGen;
     setErrLocal("");
     onErr(curId, "");
@@ -151,8 +161,12 @@ export default function TermInstanceView({
         } catch {}
       }
     }
+    // background spawn (dock hidden) has no dimensions — use 80x24 so shell starts warm; resized on open
+    if (!cols || !rows) { cols = 80; rows = 24; }
     try {
-      await invoke("pty_spawn", { id: curId, cwd: curCwd, gen: curGen, cols, rows });
+      const curShell = shellRef.current;
+      const curArgs = argsRef.current ?? [];
+      await invoke("pty_spawn", { id: curId, cwd: curCwd, gen: curGen, cols, rows, shell: curShell ?? null, args: curArgs.length ? curArgs : null, shell_args: null });
       aliveRef.current = true;
       if (cols && rows) lastResizeRef.current = { c: cols, r: rows };
       setTimeout(() => fitNowRef.current(), 60);
@@ -318,11 +332,52 @@ export default function TermInstanceView({
     return () => { obs.disconnect(); cancelAnimationFrame(raf); };
   }, []);
 
-  // boot + spawn — only when id/gen changes or dock opens (deferred initial spawn)
+  // boot + spawn — only when id/gen changes or dock opens (deferred initial spawn).
+  // Stagger background terminals on app start so 3-4 ConPTYs don't jank the first paint.
+  // Active terminal spawns via idle quickly; inactive ones are lazy until they become active (or via longer idle stagger).
   useEffect(() => {
     boot();
-    void spawn();
-  }, [boot, spawn, gen, id, open]);
+    const isReload = spawnedGenRef.current !== null && spawnedGenRef.current !== genRef.current;
+    if (isReload) {
+      // reload / shell switch — spawn promptly (still off critical paint)
+      const t = window.setTimeout(() => void spawn(), 30);
+      return () => window.clearTimeout(t);
+    }
+    if (!activeRef.current && !aliveRef.current) {
+      // inactive background terminal — don't spawn yet; will spawn on active (see effect below) or via longer idle fallback
+      const stagger = ((idRef.current % 4) * 240) + 600;
+      const ric = (window as any).requestIdleCallback as ((cb: () => void, opts?: any) => number) | undefined;
+      let idleId: number | undefined;
+      let timeoutId: number | undefined;
+      if (ric) {
+        idleId = ric(() => { if (!aliveRef.current) void spawn(); }, { timeout: 1800 + stagger });
+        // hard fallback in case idle never fires (e.g., page busy)
+        timeoutId = window.setTimeout(() => { if (!aliveRef.current) void spawn(); }, 1600 + stagger) as unknown as number;
+      } else {
+        timeoutId = window.setTimeout(() => void spawn(), stagger) as unknown as number;
+      }
+      return () => {
+        if (idleId !== undefined) (window as any).cancelIdleCallback?.(idleId);
+        if (timeoutId !== undefined) window.clearTimeout(timeoutId);
+      };
+    }
+    // active terminal — spawn via idle so first paint isn't blocked
+    const ric = (window as any).requestIdleCallback as ((cb: () => void, opts?: any) => number) | undefined;
+    if (ric) {
+      const idleId = ric(() => void spawn(), { timeout: 900 });
+      return () => (window as any).cancelIdleCallback?.(idleId);
+    } else {
+      const t = window.setTimeout(() => void spawn(), 90) as unknown as number;
+      return () => window.clearTimeout(t);
+    }
+  }, [boot, spawn, gen, id, open, active]);
+
+  // inactive → active transition — ensure the terminal is running (covers lazy background case)
+  useEffect(() => {
+    if (active && !aliveRef.current && bootedRef.current) {
+      void spawn();
+    }
+  }, [active, spawn]);
 
   // fit when becoming active — handles dock open animation and resizes
   useEffect(() => {
@@ -378,10 +433,10 @@ export default function TermInstanceView({
     };
   }, [fitNow]);
 
-  // focus when becoming active
+  // focus when becoming active — only when dock is visible to not steal focus on background warm
   useEffect(() => {
-    if (active && termRef.current) setTimeout(() => termRef.current?.focus(), 50);
-  }, [active]);
+    if (active && open && termRef.current) setTimeout(() => termRef.current?.focus(), 50);
+  }, [active, open]);
 
   // expose dead/err for dock's header? parent tracks via callbacks, but also keep local for potential future header per view
   void deadLocal; void errLocal;
