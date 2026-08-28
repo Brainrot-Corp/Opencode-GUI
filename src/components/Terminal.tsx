@@ -259,32 +259,72 @@ export default function TerminalPanel({
 
   // single resize entry point: RO-debounced via rAF, gated on visibility,
   // rejecting degenerate measurements BEFORE they reach xterm/ConPTY — once
-  // applied, bad dims corrupt the renderer grid until a full reload
+  // applied, bad dims corrupt the renderer grid until a full reload.
+  // Hardened: double-fit on next frame + explicit refresh to avoid the
+  // sporadic blank/crumpled canvas when the dock animates open or the window
+  // resizes mid-frame (height transition leaves intermediate sizes).
   const fitNow = useCallback(() => {
     const el = bodyRef.current;
     const fit = fitRef.current;
     const term = termRef.current;
     if (!el || !fit || !term || !openRef.current) return;
     if (el.clientHeight < 60 || el.clientWidth < 80) return;
-    let next: { cols: number; rows: number } | undefined;
+    if (el.clientWidth === 0 || el.clientHeight === 0) return;
+    let proposed: { cols: number; rows: number } | undefined;
     try {
-      next = fit.proposeDimensions();
+      proposed = fit.proposeDimensions();
     } catch {
       return;
     }
-    if (!next || !Number.isFinite(next.cols) || !Number.isFinite(next.rows) || next.cols < 2 || next.rows < 2 || next.cols > 1000 || next.rows > 1000)
+    if (!proposed || !Number.isFinite(proposed.cols) || !Number.isFinite(proposed.rows) || proposed.cols < 2 || proposed.rows < 2 || proposed.cols > 1000 || proposed.rows > 1000)
       return;
     try {
       fit.fit();
     } catch {
       return;
     }
-    if (next.cols === lastResizeRef.current.c && next.rows === lastResizeRef.current.r) {
-      return; // unchanged — no ConPTY churn
-    }
-    lastResizeRef.current = { c: next.cols, r: next.rows };
+    // xterm's canvas can be left stale after a fit inside a transitioning
+    // flex container — force a full row repaint. The dock's backdrop-filter
+    // now lives on an isolated layer (terminal.css) but a stale backing
+    // bitmap still needs this push.
+    try {
+      const rows = term.rows ?? proposed.rows;
+      term.refresh(0, Math.max(0, rows - 1));
+    } catch {}
+    // re-propose after the DOM settled — catches the case where proposeDimensions
+    // was based on a mid-transition size (first fit undershoots, second fixes it)
+    requestAnimationFrame(() => {
+      if (!openRef.current || !bodyRef.current || !fitRef.current || !termRef.current) return;
+      let second: { cols: number; rows: number } | undefined;
+      try {
+        second = fitRef.current.proposeDimensions();
+      } catch { return; }
+      if (!second || second.cols === proposed!.cols && second.rows === proposed!.rows) {
+        // still need to push ConPTY size even if we skip the second fit
+        if (proposed!.cols !== lastResizeRef.current.c || proposed!.rows !== lastResizeRef.current.r) {
+          lastResizeRef.current = { c: proposed!.cols, r: proposed!.rows };
+          if (aliveRef.current) invoke("pty_resize", { cols: proposed!.cols, rows: proposed!.rows }).catch(() => {});
+        }
+        return;
+      }
+      if (second.cols < 2 || second.rows < 2 || second.cols > 1000 || second.rows > 1000) return;
+      try {
+        fitRef.current.fit();
+        termRef.current?.refresh(0, Math.max(0, (termRef.current.rows ?? second.rows) - 1));
+      } catch {}
+      const final = { c: second.cols, r: second.rows };
+      if (final.c === lastResizeRef.current.c && final.r === lastResizeRef.current.r) return;
+      lastResizeRef.current = final;
+      if (aliveRef.current) invoke("pty_resize", { cols: final.c, rows: final.r }).catch(() => {});
+      return;
+    });
+    // push the first proposal's size immediately — the second pass above will
+    // correct it if it was mid-transition. Doing it here avoids a visible delay
+    // where the shell still thinks it's 80×24.
+    if (proposed.cols === lastResizeRef.current.c && proposed.rows === lastResizeRef.current.r) return;
+    lastResizeRef.current = { c: proposed.cols, r: proposed.rows };
     if (aliveRef.current)
-      invoke("pty_resize", { cols: next.cols, rows: next.rows }).catch(() => {});
+      invoke("pty_resize", { cols: proposed.cols, rows: proposed.rows }).catch(() => {});
   }, []);
   fitNowRef.current = fitNow;
   // full rebuild is delegated to the parent via a key bump: React unmounts
@@ -331,9 +371,29 @@ export default function TerminalPanel({
     boot();
     // spawn when the renderer is new or the shell died (closed, exited, error)
     if (!aliveRef.current) void spawn();
-    // one final fit after the open transition settles
-    setTimeout(() => fitNow(), 300);
-  }, [open, boot, killSession, spawn]);
+    // fit after the open height transition settles — timeout as fallback,
+    // transitionend as primary (fires once per open; RO catches the rest)
+    const dock = document.querySelector(".term-dock") as HTMLElement | null;
+    let done = false;
+    const doFit = () => {
+      if (done) return;
+      done = true;
+      fitNow();
+      // one more after the next frame to catch the final layout
+      requestAnimationFrame(() => fitNow());
+    };
+    const onEnd = (e: TransitionEvent) => {
+      if (e.propertyName === "height") doFit();
+    };
+    dock?.addEventListener("transitionend", onEnd);
+    const t1 = window.setTimeout(doFit, 280);
+    const t2 = window.setTimeout(doFit, 550);
+    return () => {
+      dock?.removeEventListener("transitionend", onEnd);
+      window.clearTimeout(t1);
+      window.clearTimeout(t2);
+    };
+  }, [open, boot, killSession, spawn, fitNow]);
 
   // full teardown only when the app/page itself goes away
   useEffect(
@@ -350,9 +410,8 @@ export default function TerminalPanel({
 
   // container resizes (panel drag, window resize, open/close collapse) drive
   // both the renderer grid and the PTY size — coalesced to one fit per frame.
-  // The RO on .term-body is the single source: window resizes propagate to the
-  // dock/body layout, so no separate window listener is needed (it would just
-  // double-fire the same fit). Change-detection in fitNow skips re-sends.
+  // The RO on .term-body is the primary source; a window listener covers DPR
+  // / zoom changes that don't resize the element but do invalidate the canvas.
   useEffect(() => {
     const el = bodyRef.current;
     if (!el) return;
@@ -364,8 +423,25 @@ export default function TerminalPanel({
       });
     });
     ro.observe(el);
+    const onWin = () => {
+      if (roRafRef.current) return;
+      roRafRef.current = requestAnimationFrame(() => {
+        roRafRef.current = 0;
+        fitNow();
+      });
+    };
+    window.addEventListener("resize", onWin);
+    // DPR change (move between monitors / OS scale) leaves canvas backing
+    // at the old resolution — one extra fit re-creates it at the new ratio
+    let mql: MediaQueryList | null = null;
+    try {
+      mql = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`);
+      mql.addEventListener("change", onWin);
+    } catch {}
     return () => {
       ro.disconnect();
+      window.removeEventListener("resize", onWin);
+      try { mql?.removeEventListener("change", onWin); } catch {}
       cancelAnimationFrame(roRafRef.current);
     };
   }, [fitNow]);

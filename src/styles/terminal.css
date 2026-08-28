@@ -6,16 +6,17 @@
   flex-direction: column;
   min-height: 0;
   overflow: hidden;
-  /* exact composer recipe so the dock reads as part of the main column */
+  /* glass lives on a separate layer behind the canvas — putting
+     backdrop-filter on the same stacking context as xterm's canvas
+     corrupts the renderer's backing bitmap on some GPU paths */
   background: linear-gradient(
     180deg,
     rgba(var(--surf-rgb), min(1, calc(var(--surf-a) * 1.15))),
     rgba(var(--surf-rgb), var(--surf-a))
   );
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.045);
   transition: height 0.25s var(--ease);
+  isolation: isolate;
 }
 .term-dock.dragging {
   transition: none;
@@ -113,6 +114,8 @@
   position: relative;
   flex: 1;
   min-height: 0;
+  /* keeps the dock's blur/glass out of the canvas compositing path */
+  transform: translateZ(0);
 }
 /* xterm measures its parent — the mount is the sizing box, so the 6px
    spacing-unit inset IS the text padding (padding on .xterm itself would
