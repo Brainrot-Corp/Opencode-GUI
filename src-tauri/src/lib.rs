@@ -784,6 +784,10 @@ mod wininput {
             lparam: isize,
         ) -> i32;
         pub fn SendInput(count: u32, inputs: *mut Input, size: i32) -> u32;
+        pub fn SetFocus(hwnd: isize) -> isize;
+        pub fn SetForegroundWindow(hwnd: isize) -> i32;
+        pub fn GetClassNameW(hwnd: isize, buf: *mut u16, max: i32) -> i32;
+        pub fn IsWindowVisible(hwnd: isize) -> i32;
     }
 
     // cursor position shared with the EnumChildWindows callbacks — a plain
@@ -849,6 +853,38 @@ mod wininput {
             SendInput(2, inputs.as_mut_ptr(), std::mem::size_of::<Input>() as i32) == 2
         }
     }
+
+    // focus the WebView2 child HWND directly — SetFocus on the top-level HWND
+    // alone doesn't route WM_KEYDOWN into the Chromium process after a
+    // hide/show or Alt+Tab cycle. Walk descendants and SetFocus the first
+    // Chrome_WidgetWin* (the real webview content host).
+    pub unsafe extern "system" fn focus_webview_child(child: isize, _lp: isize) -> i32 {
+        // recurse first so deepest Chrome_WidgetWin wins (it is the actual content)
+        EnumChildWindows(child, focus_webview_child, 0);
+        let mut buf = [0u16; 256];
+        let len = GetClassNameW(child, buf.as_mut_ptr(), 256);
+        if len > 0 {
+            // cheap check: Chrome_WidgetWin* starts with 'C' (67) — avoid alloc if not
+            if buf[0] == 67 {
+                let name = String::from_utf16_lossy(&buf[..len as usize]);
+                if name.starts_with("Chrome_WidgetWin") {
+                    // only visible webview should steal focus
+                    if IsWindowVisible(child) != 0 {
+                        SetFocus(child);
+                    }
+                }
+            }
+        }
+        1
+    }
+
+    pub fn focus_webview(hwnd_main: isize) {
+        unsafe {
+            SetForegroundWindow(hwnd_main);
+            SetFocus(hwnd_main);
+            EnumChildWindows(hwnd_main, focus_webview_child, 0);
+        }
+    }
 }
 
 // Hiding + reshowing the window leaves WebView2's input pipeline stuck:
@@ -871,17 +907,22 @@ fn unpoison_input(app: &tauri::AppHandle) {
     };
     let app = app.clone();
     std::thread::spawn(move || {
+        use tauri::Emitter;
         // let the show settle before poking at input state
         std::thread::sleep(std::time::Duration::from_millis(60));
         let app2 = app.clone();
         let _ = app.run_on_main_thread(move || unsafe {
-            // ensure OS focus — first retry (covers show() settling)
+            // ensure OS focus — first retry (covers show() settling) + direct
+            // WebView child focus. w.set_focus() alone leaves WM_KEYDOWN stuck
+            // on the outer HWND until a click.
             if let Some(w) = app2.get_webview_window("main") {
                 if !window_focused(&w) {
                     let _ = w.set_focus();
                 }
             }
             use wininput::*;
+            // focus deepest Chrome_WidgetWin so keyboard goes to Chromium
+            focus_webview(hwnd);
             EnumChildWindows(hwnd, pump_cancelmode, 0);
             let mut pt = Point { x: 0, y: 0 };
             if GetCursorPos(&mut pt) != 0 {
@@ -890,6 +931,8 @@ fn unpoison_input(app: &tauri::AppHandle) {
                 EnumChildWindows(hwnd, pump_mousemove, 0);
             }
         });
+        // tell frontend to re-assert DOM focus (composer textarea → body fallback)
+        let _ = app.emit("focus://restore", ());
         // real events through the OS input pipeline — the part that
         // actually clears the webview's stuck state; needs no main thread
         std::thread::sleep(std::time::Duration::from_millis(30));
@@ -914,6 +957,20 @@ fn unpoison_input(app: &tauri::AppHandle) {
                     // in cases where mouse capture was stuck
                     let _ = w.set_focus();
                 }
+            }
+            // ensure child still owns keyboard focus after the wiggle
+            wininput::focus_webview(hwnd);
+        });
+        let _ = app.emit("focus://restore", ());
+        // final JS-level focus via eval fallback (in case frontend hasn't mounted
+        // its listener yet — e.g. first show during setup)
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        let app4 = app.clone();
+        let _ = app.run_on_main_thread(move || {
+            if let Some(w) = app4.get_webview_window("main") {
+                let _ = w.eval(
+                    "setTimeout(()=>{ try{ window.focus(); var a=document.activeElement; if(!a||a===document.body){ var f=document.querySelector('.composer textarea')||document.querySelector('.fe-ta')||document.body; if(f){ if(!f.hasAttribute('tabindex')&&f===document.body) f.setAttribute('tabindex','-1'); f.focus({preventScroll:true}); } } else { try{a.focus({preventScroll:true});}catch(e){} } window.focus(); }catch(e){} }, 0)",
+                );
             }
         });
     });
@@ -1661,6 +1718,10 @@ pub fn run() {
         .expect("error while building tauri application")
         .run(|_app_handle, event| {
             // track last focused HWND for system-wide hotkeys across multiple instances
+            // + restore WebView2 keyboard focus after Alt+Tab / taskbar activation
+            // (Alt+Tab doesn't go through show_main/unpoison, so do a lightweight
+            // version here). Mouse wiggle is intentionally NOT repeated — only
+            // keyboard focus.
             #[cfg(windows)]
             if let RunEvent::WindowEvent {
                 label,
@@ -1672,6 +1733,30 @@ pub fn run() {
                     if let Some(w) = _app_handle.get_webview_window("main") {
                         if let Ok(hwnd) = w.hwnd() {
                             write_last_focused(_app_handle, hwnd.0 as isize);
+                            // lightweight keyboard restore for Alt+Tab — don't wait
+                            // for JS window.focus which WebView2 may swallow
+                            let ap = _app_handle.clone();
+                            let hwnd_isize = hwnd.0 as isize;
+                            std::thread::spawn(move || {
+                                std::thread::sleep(std::time::Duration::from_millis(20));
+                                use tauri::Emitter;
+                                let _ = ap.emit("focus://restore", ());
+                                let ap2 = ap.clone();
+                                let _ = ap.run_on_main_thread(move || {
+                                    // outer + deepest Chrome_WidgetWin
+                                    wininput::focus_webview(hwnd_isize);
+                                    // also nudge DOM via eval in case frontend
+                                    // listener hasn't attached yet
+                                    if let Some(w2) = ap2.get_webview_window("main") {
+                                        let _ = w2.eval(
+                                            "try{ window.focus(); var a=document.activeElement; if(!a||a===document.body){ var f=document.querySelector('.composer textarea')||document.querySelector('.fe-ta'); if(f) f.focus({preventScroll:true}); else { if(!document.body.hasAttribute('tabindex')) document.body.setAttribute('tabindex','-1'); document.body.focus({preventScroll:true}); } window.focus(); } }catch(e){}",
+                                        );
+                                    }
+                                });
+                                // second emit for frontend rescue that debounces 20ms
+                                std::thread::sleep(std::time::Duration::from_millis(80));
+                                let _ = ap.emit("focus://restore", ());
+                            });
                         }
                     }
                 }
