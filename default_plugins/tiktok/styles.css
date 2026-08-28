@@ -1,7 +1,8 @@
 /* tiktok — floating glass panel, inherits notepad drag/resize pattern */
 .tiktok-panel{
   position:fixed;
-  z-index:40;
+  /* native child webview (HWND child) always paints above HTML — keep chrome above every HTML overlay too */
+  z-index:95;
   display:flex;
   flex-direction:column;
   background:var(--surface);
@@ -13,6 +14,7 @@
   contain:layout style;
   transform:translateZ(0);
   overflow:visible;
+  isolation:isolate;
 }
 .tiktok-head{
   display:flex;
@@ -23,6 +25,8 @@
   cursor:grab;
   user-select:none;
   flex-shrink:0;
+  position:relative;
+  z-index:3;
 }
 .tiktok-head:active{cursor:grabbing}
 .tiktok-head-title{
@@ -65,7 +69,7 @@
   color:var(--text-faint);
   background:var(--inset-bg);
 }
-.tiktok-handle{position:absolute; background:transparent; z-index:5; touch-action:none}
+.tiktok-handle{position:absolute; background:transparent; z-index:10; touch-action:none}
 .tiktok-handle:hover{background:color-mix(in srgb, var(--accent) 18%, transparent)}
 .tiktok-handle:active{background:color-mix(in srgb, var(--accent) 28%, transparent)}
 .tiktok-handle.n{top:-6px; left:6px; right:6px; height:10px; cursor:ns-resize}
