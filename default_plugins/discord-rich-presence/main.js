@@ -206,7 +206,7 @@ export default function activate(api) {
             value: conf.largeTextTpl,
             placeholder: "{workspace}",
             spellCheck: false,
-            title: "Hover text de l'image",
+            "data-tip": "Hover text de l'image",
             onChange: (e) => set({ largeTextTpl: e.target.value }),
           })
         )

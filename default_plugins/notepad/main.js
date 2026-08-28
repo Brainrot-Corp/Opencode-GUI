@@ -351,8 +351,7 @@ export default function activate(api){
               className:"notepad-tab"+(isActive?" on":""),
               onClick:()=> setActive(t.id),
               onDoubleClick:()=> startRename(t.id, t.title),
-              "data-tip":"Double-click to rename",
-              title:"Double-click to rename"
+              "data-tip":"Double-click to rename"
             },
               h("span", {className:"notepad-tab-label"}, t.title),
               h("button", {

@@ -670,7 +670,7 @@ export default function activate(api) {
         h("div", { className: "sp-head", onClick: toggleCollapsed, style: { cursor: "pointer" }, "data-tip": collapsed ? "Expand player" : "Collapse to title + track" },
           h("i", { className: "fa-brands fa-spotify" }), h("span", null, "Spotify"),
           h("span", { style: { display: "inline-flex", alignItems: "center", gap: "6px", marginLeft: "auto" } },
-            h("span", { className: `sp-dot ${dotCls}`, title: statusTxt }),
+            h("span", { className: `sp-dot ${dotCls}`, "data-tip": statusTxt }),
             h("span", { className: "mono-hint", style: { fontSize: "10px" } }, statusTxt),
             h("button", { className: "icon-btn", style: { width: "22px", height: "22px", marginLeft: "4px" }, onClick: (e) => { e.stopPropagation(); toggleCollapsed(); }, "data-tip": collapsed ? "Expand" : "Collapse", "aria-label": collapsed ? "Expand" : "Collapse" },
               h("i", { className: `fa-solid ${collapsed ? "fa-chevron-down" : "fa-chevron-up"}`, style: { fontSize: "10px" } }))
@@ -688,7 +688,7 @@ export default function activate(api) {
         h("i", { className: "fa-brands fa-spotify" }), h("span", null, "Spotify"),
         h("div", { style: { display: "inline-flex", alignItems: "center", gap: "6px", marginLeft: "auto" } },
           h("span", { style: { display: "inline-flex", alignItems: "center", gap: "6px" } },
-            h("span", { className: `sp-dot ${dotCls}`, title: statusTxt }),
+            h("span", { className: `sp-dot ${dotCls}`, "data-tip": statusTxt }),
             h("span", { className: "mono-hint", style: { fontSize: "10px", color: isPlaying ? "var(--accent)" : "var(--text-faint)" } }, statusTxt)
           ),
           h("button", { className: "icon-btn", style: { width: "22px", height: "22px" }, onClick: (e) => { e.stopPropagation(); toggleCollapsed(); }, "data-tip": collapsed ? "Expand" : "Collapse", "aria-label": collapsed ? "Expand" : "Collapse" },
@@ -702,14 +702,14 @@ export default function activate(api) {
             id: "sp-album", style: { width: "32px", height: "32px", borderRadius: "3px", flexShrink: "0" },
             src: track.album.image.url, alt: "cover",
             onClick: () => openSpotify(`/album/${track.album.id}`),
-            title: track.album.name,
+            "data-tip": track.album.name,
           }) : h("div", { id: "sp-album", style: { width: "32px", height: "32px", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-faint)", background: "rgba(255,255,255,.06)", borderRadius: "3px", flexShrink: "0" } }, h("i", { className: "fa-solid fa-music" })),
           h("div", { id: "sp-titles", style: { gap: "1px", flex: "1", minWidth: "0" } },
-            h("div", { id: "sp-title", className: "sp-ellip", title: track.name, style: { fontSize: "12px" }, ...(track.id ? { role: "link", onClick: () => openSpotify(`/track/${track.id}`) } : {}) }, track.name),
-            track.artists.length ? h("div", { className: "sp-secondary sp-ellip", title: track.artists.map((a) => a.name).join(", "), style: { fontSize: "10px" } },
+            h("div", { id: "sp-title", className: "sp-ellip", "data-tip": track.name, style: { fontSize: "12px" }, ...(track.id ? { role: "link", onClick: () => openSpotify(`/track/${track.id}`) } : {}) }, track.name),
+            track.artists.length ? h("div", { className: "sp-secondary sp-ellip", "data-tip": track.artists.map((a) => a.name).join(", "), style: { fontSize: "10px" } },
               h("span", null, `${track.artists.map((a) => a.name).join(", ")}`)
             ) : null,
-            track.album.name ? h("div", { className: "sp-secondary sp-ellip", title: track.album.name, style: { fontSize: "10px" } },
+            track.album.name ? h("div", { className: "sp-secondary sp-ellip", "data-tip": track.album.name, style: { fontSize: "10px" } },
               h("span", { style: { color: "var(--text-faint)" } }, `${track.album.name}`)
             ) : null
           ),
@@ -724,7 +724,7 @@ export default function activate(api) {
               className: "sp-btn", style: { width: "28px", height: "28px", fontSize: "11px", borderRadius: "4px" },
               onClick: () => { const nv = volumeRef.current > 0 ? 0 : 50; doVolume(nv); },
               onWheel: doVolumeWheel,
-              title: `Volume ${Math.round(volume)}% — scroll to adjust`, "data-tip": `Volume ${Math.round(volume)}% — scroll`, "aria-label": "Volume",
+              "data-tip": `Volume ${Math.round(volume)}% — scroll`, "aria-label": "Volume",
               disabled: !device
             }, h("i", { className: volume === 0 ? "fa-solid fa-volume-xmark" : volume < 50 ? "fa-solid fa-volume-low" : "fa-solid fa-volume-high" }))
           )
@@ -740,19 +740,19 @@ export default function activate(api) {
               e.preventDefault();
               openSpotify(`/album/${track.album.id}`);
             },
-            title: "Click to expand, right-click to open album",
+            "data-tip": "Click to expand, right-click to open album",
           }) : h("div", { id: "sp-album", style: { display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-faint)" } }, h("i", { className: "fa-solid fa-music" })),
           h("div", { id: "sp-titles" },
             h("div", {
-              id: "sp-title", className: "sp-ellip", title: track.name,
+              id: "sp-title", className: "sp-ellip", "data-tip": track.name,
               ...(track.id ? { role: "link", onClick: () => openSpotify(`/track/${track.id}`) } : {}),
             }, track.name),
-            track.artists.length ? h("div", { className: "sp-secondary sp-ellip", title: track.artists.map((a) => a.name).join(", ") },
+            track.artists.length ? h("div", { className: "sp-secondary sp-ellip", "data-tip": track.artists.map((a) => a.name).join(", ") },
               h("span", { className: "sp-prefix" }, "by "), ...track.artists.map((a, i) =>
                 h("span", {
                   key: a.id || a.name, className: "sp-artist",
                   ...(a.id ? { role: "link", onClick: () => openSpotify(`/artist/${a.id}`) } : {}),
-                  title: a.name,
+                  "data-tip": a.name,
                 }, a.name + (i < track.artists.length - 1 ? ", " : ""))
               )
             ) : null,
@@ -761,7 +761,7 @@ export default function activate(api) {
               h("span", {
                 id: "sp-album-name", className: "sp-ellip",
                 ...(track.album.id ? { role: "link", onClick: () => openSpotify(`/album/${track.album.id}`) } : {}),
-                title: track.album.name,
+                "data-tip": track.album.name,
               }, track.album.name)
             ) : null
           )
@@ -800,11 +800,11 @@ export default function activate(api) {
         )
       ) : null,
       collapsed ? null : track ? h("div", { className: "sp-vol", onWheel: doVolumeWheel },
-        h("i", { className: "fa-solid fa-volume-high", title: `Volume ${Math.round(volume)}%` }),
+        h("i", { className: "fa-solid fa-volume-high", "data-tip": `Volume ${Math.round(volume)}%` }),
         h("div", { className: "sp-bar", style: { flex: "1", height: "3px", position: "relative" }, onClick: (e) => { const rect = e.currentTarget.getBoundingClientRect(); const r = (e.clientX - rect.left) / rect.width; doVolume(Math.round(r * 100)); } },
           h("div", { className: "sp-fill", style: { width: `${Math.round(volume)}%`, background: "var(--accent)" } }),
           h("div", { className: "sp-grabber", style: { left: `${Math.round(volume)}%` } }),
-          h("input", { className: "sp-range", type: "range", min: 0, max: 100, step: 1, value: Math.round(volume), onInput: (e) => doVolume(Number(e.target.value)), onChange: (e) => doVolume(Number(e.target.value)), title: `${Math.round(volume)}% — scroll to adjust` })
+          h("input", { className: "sp-range", type: "range", min: 0, max: 100, step: 1, value: Math.round(volume), onInput: (e) => doVolume(Number(e.target.value)), onChange: (e) => doVolume(Number(e.target.value)), "data-tip": `${Math.round(volume)}% — scroll to adjust` })
         ),
         h("span", { className: "mono-hint", style: { minWidth: "28px", textAlign: "right", fontSize: "10px" } }, `${Math.round(volume)}%`)
       ) : null,

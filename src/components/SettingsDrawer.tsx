@@ -529,7 +529,7 @@ export default function SettingsDrawer({
                     type="button"
                     className="reset-btn"
                     disabled={upd.busy}
-                    title="RightCtrl+Click to reinstall current version (debug)"
+                    data-tip="RightCtrl+Click to reinstall current version (debug)"
                     onClick={() => {
                       const forceCurrent = rightCtrlHeld.current;
                       void upd.check(true, forceCurrent);
