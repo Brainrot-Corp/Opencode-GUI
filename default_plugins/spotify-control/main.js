@@ -428,10 +428,22 @@ export default function activate(api) {
         h("label", { className: "mono-hint", style: { display: "flex", alignItems: "center", gap: "6px", cursor: "pointer" } },
           h("input", { type: "checkbox", checked: !!conf.useSpotifyUris, onChange: (e) => set({ useSpotifyUris: e.target.checked }) }),
           "Use spotify: URIs"
+        )
+      ),
+      h("div", { className: "setting-row", style: { borderTop: "1px solid var(--line)", marginTop: "4px" } },
+        h("div", { className: "setting-info" },
+          h("i", { className: "fa-solid fa-microphone-lines setting-icon" }),
+          h("div", null,
+            h("div", { className: "setting-name" }, "Lyrics window"),
+            h("div", { className: "setting-desc mono-hint" }, "Show microphone icon in top bar — floating synchronized lyrics (LRCLIB)")
+          )
         ),
-        h("label", { className: "mono-hint", style: { display: "flex", alignItems: "center", gap: "6px", cursor: "pointer" } },
-          h("input", { type: "checkbox", checked: !!conf.lyricsEnabled, onChange: (e) => {
-            const on = e.target.checked;
+        h("button", {
+          type: "button",
+          className: `toggle${conf.lyricsEnabled ? " on" : ""}`,
+          "aria-pressed": !!conf.lyricsEnabled,
+          onClick: () => {
+            const on = !conf.lyricsEnabled;
             set({ lyricsEnabled: on });
             if (!on) {
               try {
@@ -440,10 +452,8 @@ export default function activate(api) {
                 window.dispatchEvent(new Event("oc:spotify:lyrics:changed"));
               } catch {}
             }
-          } }),
-          h("i", { className: "fa-solid fa-microphone-lines", style: { fontSize: "10px", color: "var(--accent)" } }),
-          "Lyrics window (top bar icon)"
-        )
+          }
+        }, h("span", { className: "knob" }))
       ),
       err ? h("div", { className: "voice-err", style: { margin: "0 10px 8px" } }, err) : null,
       h("div", { className: "mono-hint sp-hint" }, "After Authorize, Spotify redirects to ", h("code", null, REDIRECT), " which will fail to load — copy the address bar URL and paste it above. Tokens stored in localStorage (oc.settings.plugins.spotify-control).")
