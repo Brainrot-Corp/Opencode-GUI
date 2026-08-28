@@ -1,0 +1,36 @@
+id,event,source_file,handler_line,output,responsive_impact,severity,notes
+E1,open terminal,ChatPage.tsx:1099 + Terminal.tsx:179,useEffect seed + spawn idle,canvas mount + ConPTY 80x24 or propose,watchdog 5s err,HIGH,
+E2,keystroke in xterm,TermInstanceView.tsx:230,term.onData -> pty_write,shell echo -> frame -> render,,,
+E3,Ctrl+Shift+C with selection,TermInstanceView.tsx:215,clipboard.writeText,copy,,LOW,
+E4,Ctrl+Shift+C without selection,TermInstanceView.tsx:215,return false no copy,none -> user thinks copied,HIGH,remove return false
+E5,Ctrl+Shift+V,TermInstanceView.tsx:222,clipboard.readText -> term.paste,paste -> pty_write,,,
+E6,Ctrl+Tab inside dock,Terminal.tsx:352,keydown capture cycle activeId,switch view + focus,side collapsed dot update,MEDIUM,
+E7,Ctrl+Tab outside dock,useGlobalShortcuts.ts:199,cycle sessions,change chat session,,,
+E8,vertical drag handle,Terminal.tsx:284,mousemove clampH drag,resize dock + fitNow -> pty_resize,body height <60 early return MEDIUM,MEDIUM,retry instead
+E9,double-click handle/head,Terminal.tsx:312,resetSize 240,reset height,,LOW,
+E10,horizontal drag side,Terminal.tsx:315,mousemove sideW 132-360,side width change,narrow window R1 CRIT,CRITICAL,
+E11,collapse/expand side,Terminal.tsx:498,toggle sideCollapsed 46px,layout shift,8 rows overflow hidden MEDIUM,MEDIUM,
+E12,click instance row,Terminal.tsx:508,setActiveId,display flex/none + fitNow,,,
+E13,hover reload/kill,Terminal.tsx:534,invoke pty_kill + gen++,respawn or remove,last kill auto onClose,,,
+E14,header reload/kill,Terminal.tsx:388,same as E13,,,
+E15,new terminal default,Terminal.tsx:219,addTerm null -> System default,push entry max8 guard,9th ghost HIGH,HIGH,use updater guard
+E16,new with shell menu,Terminal.tsx:440,DropdownPortal addTerm profileId,shell path/args resolve,width clamp 240-320 LOW,LOW,
+E17,right-click row prompt,Terminal.tsx:517,prompt() blocking -> changeTermShell,freeze render CRIT,HIGH,replace portal menu
+E18,outside click/Escape add menu,Terminal.tsx:146,pointerdown capture close,,,
+E19,hide panel chevron,Terminal.tsx:401,onClose set oc.term.open 0,height 0 shells alive,,,
+E20,window resize/DPR/RO,TermInstanceView.tsx:413,ResizeObserver+resize+matchMedia fitNow,pty_resize debounce,width R1 R6 CRIT,CRITICAL,
+E21,theme switch,TermInstanceView.tsx:324,MutationObserver termTheme,16 colors recolor,,,
+E22,shell exit,TermInstanceView.tsx:274,pty://exit dead=true,header exited row dead 0.7,,,
+E23,watchdog no output,TermInstanceView.tsx:175,frameAtRef 0 after 5s err+dead,header term-err,,HIGH,
+E24,localStorage corrupt,Terminal.tsx:96,JSON parse catch silent,fallback 1 term no error toast,LOW,LOW,add toast
+E25,clipboard fail,TermInstanceView.tsx:219,catch(()=>{}),silent ignore,,LOW,
+OUT,capture ls ANSI,pty.rs:181+termHighlight.ts:135,ESC split bypass,correct colors,,,
+OUT,plain python cat 200L,termHighlight.ts:179,block 120L highlight python SGR,,,
+OUT,binary cat png,termHighlight.ts:118,TextDecoder FFD -> highlight fail,corrupt CRIT,CRITICAL,detect binary bypass
+OUT,OSC BEL title,termHighlight.ts:232,ESC ] .. BEL out raw + regex title,title update,,,
+OUT,OSC ST title,termHighlight.ts:232,ESC ] .. ESC\ seqEnd -1 hold -> freeze,freeze CRIT,CRITICAL,fix seqEnd
+OUT,Unicode split UTF8,termHighlight.ts:136,TextDecoder stream reassemble,ok,,,
+OUT,minified 30K one line,termHighlight.ts:184,MAX_PARTIAL 8192 flush raw,color bleed MEDIUM,MEDIUM,
+OUT,zoom 1.5, useSettings.ts:359,setZoom + fitNow col off-by-1,R6 HIGH,HIGH,measure mount
+OUT,narrow 360px viewport,terminal.css:207,side 176 -> views 212 -> 25 cols wrap,unreadable CRIT,CRITICAL,media query collapse
+OUT,8 terms overflow collapse,terminal.css:310,collapsed 8*34=328>240 scrollbar none hidden,MEDIUM,MEDIUM,
