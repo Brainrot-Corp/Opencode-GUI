@@ -1,22 +1,41 @@
 /* terminal dock: flush bottom panel inside .main, glass header, mono body */
 
 .term-dock {
+  position: relative;
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
   min-height: 0;
   overflow: hidden;
-  /* glass lives on a separate layer behind the canvas — putting
-     backdrop-filter on the same stacking context as xterm's canvas
-     corrupts the renderer's backing bitmap on some GPU paths */
+  /* same glass recipe as .messages/.composer so the background reads as
+     one continuous surface; the blur+fill live on ::before behind the
+     canvas — a backdrop-filter on the same stacking context as xterm's
+     canvas corrupts the renderer's backing bitmap on some GPU paths */
+  background: transparent;
+  border: 1px solid var(--line);
+  border-top: none;
+  border-bottom: none;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.045);
+  transition: height 0.25s var(--ease);
+  isolation: isolate;
+}
+.term-dock::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
   background: linear-gradient(
     180deg,
     rgba(var(--surf-rgb), min(1, calc(var(--surf-a) * 1.15))),
     rgba(var(--surf-rgb), var(--surf-a))
   );
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.045);
-  transition: height 0.25s var(--ease);
-  isolation: isolate;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  pointer-events: none;
+}
+.term-dock.closed {
+  border-color: transparent;
+  box-shadow: none;
 }
 .term-dock.dragging {
   transition: none;
