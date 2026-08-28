@@ -151,9 +151,10 @@ export default function TermInstanceView({
         cols = d.cols; rows = d.rows;
       }
     } catch {}
-    // fall back to measuring the body if fit not ready (e.g., first mount while hidden)
-    if ((!cols || !rows) && bodyRef.current) {
-      const el = bodyRef.current;
+    // fall back to measuring the mount/body if fit not ready (e.g., first mount while hidden)
+    const fallbackEl = mountRef.current ?? bodyRef.current;
+    if ((!cols || !rows) && fallbackEl) {
+      const el = fallbackEl;
       if (el.clientWidth >= 80 && el.clientHeight >= 60 && fitRef.current) {
         try {
           const d2 = fitRef.current.proposeDimensions();
@@ -217,7 +218,8 @@ export default function TermInstanceView({
       const k = ev.key.toLowerCase();
       if (k === "c") {
         const sel = term.getSelection();
-        if (sel) navigator.clipboard.writeText(sel).catch(() => {});
+        if (!sel) return true;
+        navigator.clipboard.writeText(sel).catch(() => {});
         return false;
       }
       if (k === "v") {
@@ -258,8 +260,8 @@ export default function TermInstanceView({
         try {
           const txt = new TextDecoder().decode(bytes);
           // OSC 0 / 2 title: \x1b]0;title\x07 or \x1b]2;title\x07 (BEL or ST \x1b\\)
-          // Scan for patterns
-          const re = /\x1b\]0;([^\x07\x1b]*)\x07|\x1b\]2;([^\x07\x1b]*)\x07/g;
+          // BEL \x07 and ST \x1b\\ both terminate OSC
+          const re = /\x1b\]0;([^\x07\x1b]*?)(?:\x07|\x1b\\)|\x1b\]2;([^\x07\x1b]*?)(?:\x07|\x1b\\)/g;
           let m: RegExpExecArray | null;
           while ((m = re.exec(txt)) !== null) {
             const title = (m[1] ?? m[2] ?? "").trim();
@@ -285,12 +287,18 @@ export default function TermInstanceView({
   }, [onDead, onTitle]);
 
   const fitNow = useCallback(() => {
-    const el = bodyRef.current;
+    const el = mountRef.current ?? bodyRef.current;
     const fit = fitRef.current;
     const term = termRef.current;
     if (!el || !fit || !term || !activeRef.current) return;
-    if (el.clientHeight < 60 || el.clientWidth < 80) return;
-    if (el.clientWidth === 0 || el.clientHeight === 0) return;
+    if (el.clientHeight < 60 || el.clientWidth < 80) {
+      if (openRef.current) requestAnimationFrame(() => fitNow());
+      return;
+    }
+    if (el.clientWidth === 0 || el.clientHeight === 0) {
+      if (openRef.current) requestAnimationFrame(() => fitNow());
+      return;
+    }
     let proposed: { cols: number; rows: number } | undefined;
     try { proposed = fit.proposeDimensions(); } catch { return; }
     if (!proposed || !Number.isFinite(proposed.cols) || !Number.isFinite(proposed.rows) || proposed.cols < 2 || proposed.rows < 2 || proposed.cols > 1000 || proposed.rows > 1000) return;
@@ -409,26 +417,29 @@ export default function TermInstanceView({
     void invoke("pty_kill", { id: idRef.current, gen: genRef.current }).catch(() => {});
   }, []);
 
-  // resize observer
+  // resize observer — ResizeObserver on the mount covers window resizes too,
+  // so no separate window resize listener needed (was double-firing with RO)
   useEffect(() => {
-    const el = bodyRef.current;
+    const el = mountRef.current ?? bodyRef.current;
     if (!el) return;
     const ro = new ResizeObserver(() => {
       if (roRafRef.current) return;
       roRafRef.current = requestAnimationFrame(() => { roRafRef.current = 0; fitNow(); });
     });
     ro.observe(el);
-    const onWin = () => {
+    // also observe body when mount exists, to catch dock height animation that resizes body
+    if (mountRef.current && bodyRef.current && mountRef.current !== bodyRef.current) {
+      ro.observe(bodyRef.current);
+    }
+    const onDpr = () => {
       if (roRafRef.current) return;
       roRafRef.current = requestAnimationFrame(() => { roRafRef.current = 0; fitNow(); });
     };
-    window.addEventListener("resize", onWin);
     let mql: MediaQueryList | null = null;
-    try { mql = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`); mql.addEventListener("change", onWin); } catch {}
+    try { mql = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`); mql.addEventListener("change", onDpr); } catch {}
     return () => {
       ro.disconnect();
-      window.removeEventListener("resize", onWin);
-      try { mql?.removeEventListener("change", onWin); } catch {}
+      try { mql?.removeEventListener("change", onDpr); } catch {}
       cancelAnimationFrame(roRafRef.current);
     };
   }, [fitNow]);

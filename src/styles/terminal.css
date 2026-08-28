@@ -486,3 +486,74 @@
   border-color: var(--line);
   color: var(--text);
 }
+
+/* responsive: narrow viewports — auto-collapse the instance list to preserve readable cols
+   JS also auto-collapses below 720px, this is the safety net when inline style still says 176px */
+@media (max-width: 720px) {
+  .term-side:not(.collapsed) {
+    width: 46px !important;
+  }
+  .term-side:not(.collapsed) .term-side-head span,
+  .term-side:not(.collapsed) .term-inst-info,
+  .term-side:not(.collapsed) .term-inst-spacer,
+  .term-side:not(.collapsed) .term-inst-actions,
+  .term-side:not(.collapsed) .term-side-hint {
+    display: none;
+  }
+  .term-side:not(.collapsed) .term-side-head {
+    justify-content: center;
+  }
+  .term-side:not(.collapsed) .term-side-resize {
+    display: none;
+  }
+  .term-side:not(.collapsed) .term-inst-list {
+    gap: 8px;
+    align-items: center;
+    padding: 8px 6px;
+  }
+  .term-side:not(.collapsed) .term-inst-row {
+    justify-content: center;
+    padding: 0;
+    width: 34px;
+    height: 34px;
+    border-radius: 4px;
+    position: relative;
+  }
+}
+@media (max-width: 520px) {
+  .term-head {
+    gap: 4px;
+    font-size: 10px;
+  }
+  .term-head .term-count {
+    display: none;
+  }
+  .term-mount {
+    inset: 4px;
+  }
+}
+/* when the side overflows (8 instances in collapsed strip), show thin scrollbar as affordance */
+.term-side.collapsed .term-inst-list,
+.term-side:not(.collapsed) .term-inst-list {
+  scrollbar-width: thin;
+}
+.term-side.collapsed .term-inst-list::-webkit-scrollbar,
+.term-side:not(.collapsed) .term-inst-list::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+  display: block;
+}
+.term-side.collapsed .term-inst-list::-webkit-scrollbar-thumb,
+.term-side:not(.collapsed) .term-inst-list::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--accent) calc(0.14 * 100%), transparent);
+}
+@media (prefers-reduced-motion: reduce) {
+  .term-dock,
+  .term-dock::before,
+  .term-resize::before,
+  .term-resize i,
+  .term-inst-row {
+    transition: none !important;
+    animation: none !important;
+  }
+}
