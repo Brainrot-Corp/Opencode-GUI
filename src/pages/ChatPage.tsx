@@ -140,6 +140,7 @@ export default function ChatPage() {
   const [browserTop, setBrowserTop] = useState<number | null>(null);
   const toggleDiff = useCallback(() => setDiffOpen((v) => !v), []);
   const openSettingsDrawer = useCallback(() => setSettingsOpen(true), []);
+  const toggleSettings = useCallback(() => setSettingsOpen((v) => !v), []);
 
   // Ctrl(+Shift+)Tab — walk the sidebar list (recency order), looping at both ends
   const cycleSessions = useCallback(
@@ -237,6 +238,7 @@ export default function ChatPage() {
     onCloseSession: closeActiveSession,
     onToggleTerm: () => setTermOpen((v) => !v),
     onToggleSidebar: toggleSidebar,
+    onToggleSettings: toggleSettings,
     onOpenWorkspace: () => void pickWorkspace(),
     onNewInstance: () => void invoke("spawn_new_instance"),
     onNewSession: () => void oc.newSession(),

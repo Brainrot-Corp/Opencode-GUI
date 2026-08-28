@@ -3,6 +3,7 @@
 
 export type HotkeyId =
   | "toggleSidebar"
+  | "openSettings"
   | "micToggle"
   | "openWorkspace"
   | "newWindow"
@@ -21,6 +22,7 @@ export type HotkeysMap = Record<HotkeyId, string | null>;
 
 export const DEFAULT_HOTKEYS: HotkeysMap = {
   toggleSidebar: "Ctrl+B",
+  openSettings: "Ctrl+,",
   micToggle: "Ctrl+M",
   openWorkspace: "Ctrl+O",
   newWindow: "Ctrl+Shift+N",
@@ -38,6 +40,7 @@ export const DEFAULT_HOTKEYS: HotkeysMap = {
 
 export const HOTKEY_META: Record<HotkeyId, { group: string; desc: string }> = {
   toggleSidebar: { group: "In the app", desc: "toggle sidebar" },
+  openSettings: { group: "In the app", desc: "open settings" },
   micToggle: { group: "In the app", desc: "mic on/off" },
   openWorkspace: { group: "In the app", desc: "open workspace" },
   newWindow: { group: "In the app", desc: "open new window" },
@@ -56,6 +59,7 @@ export const HOTKEY_META: Record<HotkeyId, { group: string; desc: string }> = {
 // order used in the Help dialog (mirrors the former KEYS list)
 export const HOTKEY_ORDER: HotkeyId[] = [
   "toggleSidebar",
+  "openSettings",
   "micToggle",
   "openWorkspace",
   "newWindow",
@@ -219,6 +223,7 @@ export function matchesEvent(e: KeyboardEvent, binding: string | null): boolean 
   }
   if (keyToken.length === 1) {
     // symbol single char
+    if (keyToken === ",") return ek === "," || code === "Comma";
     return ek === keyToken || (keyToken === "=" && (ek === "+" || ek === "="));
   }
   // fallback case-insensitive

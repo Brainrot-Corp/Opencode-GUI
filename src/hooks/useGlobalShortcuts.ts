@@ -32,6 +32,7 @@ export function useGlobalShortcuts({
   onCloseSession,
   onToggleTerm,
   onToggleSidebar,
+  onToggleSettings,
   onOpenWorkspace,
   onNewInstance,
   onNewSession,
@@ -56,6 +57,8 @@ export function useGlobalShortcuts({
   onToggleTerm?: () => void;
   // Ctrl+B toggles the session sidebar (VS Code parity, global)
   onToggleSidebar?: () => void;
+  // Ctrl+, toggles settings (rebindable)
+  onToggleSettings?: () => void;
   // Ctrl+O opens the workspace picker (same as Browse button)
   onOpenWorkspace?: () => void;
   // Ctrl+Shift+N opens a new window (second instance)
@@ -269,6 +272,20 @@ export function useGlobalShortcuts({
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
   }, [onToggleSidebar, settings.hotkeys.toggleSidebar]);
+
+  // Toggle settings — rebindable (default Ctrl+,)
+  useEffect(() => {
+    if (!onToggleSettings) return;
+    const b = settings.hotkeys.openSettings;
+    if (!b) return;
+    const key = (e: KeyboardEvent) => {
+      if (!matchesEvent(e, b)) return;
+      e.preventDefault();
+      onToggleSettings();
+    };
+    window.addEventListener("keydown", key);
+    return () => window.removeEventListener("keydown", key);
+  }, [onToggleSettings, settings.hotkeys.openSettings]);
 
   // Open workspace — rebindable (default Ctrl+O)
   useEffect(() => {
