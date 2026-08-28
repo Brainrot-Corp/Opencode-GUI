@@ -90,6 +90,7 @@ export default function Sidebar({
   const [dragOver, setDragOver] = useState(false);
   const [dropIndex, setDropIndex] = useState<number | null>(null);
   const [dragReorder, setDragReorder] = useState<number | null>(null);
+  const [draggedName, setDraggedName] = useState<string | null>(null);
   const wsConfirmTimer = useRef(0);
   const scrollRef = useRef<HTMLDivElement>(null);
   const ctx = (() => { try { return useContextMenu(); } catch { return null; } })();
@@ -150,18 +151,38 @@ export default function Sidebar({
         idx = Math.max(0, rawIdx - 1);
       }
       void handleDropPaths(paths, idx);
-      setDragOver(false); setDropIndex(null);
+      setDragOver(false); setDropIndex(null); setDraggedName(null);
     }).then(f => un = f).catch(() => {});
     const onEnter = () => setDragOver(true);
-    const onLeave = () => setDragOver(false);
+    const onLeave = () => { setDragOver(false); setDraggedName(null); };
     window.addEventListener("dragenter", onEnter as any);
     window.addEventListener("dragleave", onLeave as any);
     return () => { un?.(); window.removeEventListener("dragenter", onEnter as any); window.removeEventListener("dragleave", onLeave as any); };
   }, [dropIndex]);
-  // html drag over for placement hint
+  // html drag over for placement hint + preview name
   const onDragOver = (e: React.DragEvent) => {
     e.preventDefault();
+    const types = Array.from((e.dataTransfer?.types as any) ?? []);
+    const isFileDrag = types.includes("Files");
+    if (!isFileDrag && dragReorder === null) return;
     setDragOver(true);
+    if (isFileDrag) {
+      let name: string | null = null;
+      const files: any[] = Array.from((e.dataTransfer as any)?.files ?? []);
+      if (files[0]?.name) name = files[0].name;
+      if (!name) {
+        try {
+          const items: any[] = Array.from((e.dataTransfer as any)?.items ?? []);
+          const f = items.find((it: any) => it.kind === "file")?.getAsFile?.();
+          if (f?.name) name = f.name;
+        } catch {}
+      }
+      if (!name) {
+        const txt = e.dataTransfer.getData("text/plain");
+        if (txt) { const t = txt.trim().split(/[\/\\]/).pop(); if (t) name = t; }
+      }
+      if (name) setDraggedName(baseName(name));
+    }
     const container = scrollRef.current;
     if (!container) return;
     const headers = [...container.querySelectorAll<HTMLElement>("[data-ws-header]")];
@@ -176,11 +197,11 @@ export default function Sidebar({
     setDropIndex(Math.min(extraIdx, extraDirs.length));
   };
   const onDragLeave = (e: React.DragEvent) => {
-    if (!(e.currentTarget as HTMLElement).contains(e.relatedTarget as Node)) { setDragOver(false); setDropIndex(null); }
+    if (!(e.currentTarget as HTMLElement).contains(e.relatedTarget as Node)) { setDragOver(false); setDropIndex(null); setDraggedName(null); }
   };
   const onDrop = async (e: React.DragEvent) => {
     e.preventDefault();
-    setDragOver(false);
+    setDragOver(false); setDraggedName(null);
     if (dragReorder !== null && typeof dropIndex === "number") {
       const from = dragReorder;
       const to = dropIndex;
@@ -290,7 +311,23 @@ export default function Sidebar({
     );
   };
 
-  const dropHint = (idx: number) => dropIndex === idx && dragOver ? <div className="ws-drop-hint" /> : null;
+  const dropPreview = (idx: number) => {
+    if (!(dragOver && dropIndex === idx)) return null;
+    const isReorder = dragReorder !== null;
+    const label = isReorder ? baseName(extraDirs[dragReorder!]) : (draggedName || "New workspace");
+    return (
+      <div className="ws-drop-preview" aria-hidden>
+        <i className="fa-solid fa-folder" style={{ fontSize: 13, color: "var(--accent)", opacity: 0.9 }} />
+        <span className="ws-title mono" style={{ maxWidth: 140, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{label}</span>
+        <span className="ws-drop-preview-badge"><i className="fa-solid fa-plus" /></span>
+      </div>
+    );
+  };
+  const dropHint = (idx: number) => {
+    if (!(dragOver && dropIndex === idx)) return null;
+    // thin line under preview for precise insertion point
+    return <><div className="ws-drop-hint" />{dropPreview(idx)}</>;
+  };
 
   return (
     <>
@@ -357,7 +394,7 @@ export default function Sidebar({
                   );
                 })}
                 {dropHint(extraDirs.length)}
-                {dragOver && <div className="ws-drop-zone">Drop folder to add workspace</div>}
+                {dragOver && dragReorder === null && <div className="ws-drop-zone">Drop folder to add workspace</div>}
               </div>
 
               {/* Chats tab: grouped sessions */}
@@ -407,7 +444,7 @@ export default function Sidebar({
                   );
                 })}
                 {dropHint(extraDirs.length)}
-                {dragOver && <div className="ws-drop-zone">Drop folder to add workspace</div>}
+                {dragOver && dragReorder === null && <div className="ws-drop-zone">Drop folder to add workspace</div>}
               </div>
             </div>
             {sidebarExtras}

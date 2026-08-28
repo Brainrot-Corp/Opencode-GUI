@@ -554,6 +554,43 @@ body.resizing * {
   box-shadow: 0 0 8px var(--accent-glow);
   border-radius: 1px;
 }
+.ws-drop-preview {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 7px;
+  min-height: 27px;
+  margin: 2px 0 4px;
+  border: 1px dashed color-mix(in srgb, var(--accent) 32%, transparent);
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  opacity: 0.55;
+  pointer-events: none;
+  border-radius: 0;
+  box-shadow: 0 0 12px -6px var(--accent-glow);
+  animation: ws-preview-in 0.14s var(--ease);
+}
+.ws-drop-preview-badge {
+  margin-left: auto;
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--accent);
+  color: #0a1116;
+  font-size: 8px;
+  border-radius: 4px;
+  opacity: 0.9;
+}
+@keyframes ws-preview-in {
+  from { opacity: 0; transform: translateY(-4px) scale(0.98); }
+  to { opacity: 0.55; transform: translateY(0) scale(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ws-drop-preview { animation: none; }
+}
 .ws-drop-zone {
   margin: 6px 0;
   padding: 10px;
