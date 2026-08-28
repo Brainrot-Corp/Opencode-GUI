@@ -141,11 +141,14 @@ body.gp-resizing * {
   font-size: 12px;
   line-height: 1.4;
   outline: none;
-  resize: vertical;
+  resize: none;
   min-height: 32px;
   max-height: 96px;
   overflow-y: auto;
   transition: border-color 0.2s, box-shadow 0.3s;
+}
+.gp-msg::-webkit-resizer {
+  display: none;
 }
 .gp-msg::placeholder {
   color: var(--text-faint);
