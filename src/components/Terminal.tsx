@@ -252,6 +252,23 @@ export default function TerminalPanel({
   const onErr = useCallback((id: number, err: string) => {
     setTerms((prev) => prev.map((t) => (t.id === id ? { ...t, err } : t)));
   }, []);
+  const onExit = useCallback((id: number) => {
+    setTerms((prev) => {
+      const target = prev.find((t) => t.id === id);
+      if (target) void invoke("pty_kill", { id, gen: target.gen }).catch(() => {});
+      const idx = prev.findIndex((x) => x.id === id);
+      if (idx === -1) return prev;
+      const next = prev.filter((x) => x.id !== id);
+      if (next.length === 0) {
+        setTimeout(() => onClose(), 0);
+      } else if (activeId === id) {
+        const newActive = next[Math.min(idx, next.length - 1)]?.id ?? next[0].id;
+        setTimeout(() => setActiveId(newActive), 0);
+      }
+      playSound("close");
+      return next;
+    });
+  }, [activeId, onClose]);
 
   const addTerm = useCallback((profileId?: string | null) => {
     let createdId: number | null = null;
@@ -462,6 +479,7 @@ export default function TerminalPanel({
               onTitle={onTitle}
               onDead={onDead}
               onErr={onErr}
+              onExit={onExit}
             />
           ))}
         </div>

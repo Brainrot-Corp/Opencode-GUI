@@ -146,9 +146,8 @@ pub fn pty_spawn(
     }
     let mut cmd = CommandBuilder::new(shell_cmd.clone());
     let low = shell_cmd.to_lowercase();
-    if (low.contains("powershell") || low.contains("pwsh")) && !extra_args.iter().any(|a| a == "-NoLogo" || a == "-NoExit") {
+    if (low.contains("powershell") || low.contains("pwsh")) && !extra_args.iter().any(|a| a == "-NoLogo") {
         cmd.arg("-NoLogo");
-        cmd.arg("-NoExit");
     }
     for a in &extra_args {
         cmd.arg(a);
@@ -170,15 +169,18 @@ pub fn pty_spawn(
 
     let emitter = app.clone();
     let killed = session.killed.clone();
+    let session_clone = session.clone();
     std::thread::spawn(move || {
         let mut buf = [0u8; 8192];
         let mut total = 0usize;
         use base64::Engine as _;
         let mut reason = "eof";
+        let mut consecutive_errs: u32 = 0;
         loop {
             match reader.read(&mut buf) {
                 Ok(0) => break,
                 Ok(n) => {
+                    consecutive_errs = 0;
                     total += n;
                     let _ = emitter.emit(
                         "pty://frame",
@@ -192,6 +194,26 @@ pub fn pty_spawn(
                 Err(_) => {
                     if killed.load(Ordering::Relaxed) {
                         reason = "killed";
+                        break;
+                    }
+                    // `exit` in cmd.exe on Windows often surfaces as repeated Err instead of Ok(0);
+                    // poll the child so we reliably emit `pty://exit` and let the UI auto-close the instance
+                    if let Ok(mut guard) = session_clone.child.try_lock() {
+                        if let Ok(Some(_status)) = guard.try_wait() {
+                            reason = "exit";
+                            break;
+                        }
+                    }
+                    consecutive_errs = consecutive_errs.saturating_add(1);
+                    if consecutive_errs > 50 {
+                        // ~1s of empty Errs — treat as exit if child is gone, otherwise as err
+                        if let Ok(mut guard) = session_clone.child.try_lock() {
+                            if let Ok(Some(_)) = guard.try_wait() {
+                                reason = "exit";
+                            } else {
+                                reason = "err";
+                            }
+                        }
                         break;
                     }
                     std::thread::sleep(Duration::from_millis(20));

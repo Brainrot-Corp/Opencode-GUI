@@ -58,6 +58,7 @@ export default function TermInstanceView({
   onTitle,
   onDead,
   onErr,
+  onExit,
 }: {
   id: number;
   gen: number;
@@ -70,6 +71,7 @@ export default function TermInstanceView({
   onTitle: (id: number, title: string) => void;
   onDead: (id: number, dead: boolean) => void;
   onErr: (id: number, err: string) => void;
+  onExit?: (id: number) => void;
 }) {
   const bodyRef = useRef<HTMLDivElement>(null);
   const mountRef = useRef<HTMLDivElement>(null);
@@ -278,13 +280,15 @@ export default function TermInstanceView({
         if (e.payload.id !== idRef.current || e.payload.g !== genRef.current || suppressExitRef.current) return;
         aliveRef.current = false;
         setDeadLocal(true);
-        onDead(idRef.current, true);
+        // exit via `exit` command should auto-close the instance; watchdog/err stays via onDead
+        if (onExit) onExit(idRef.current);
+        else onDead(idRef.current, true);
       }),
     ];
     return () => {
       for (const u of unsubs) u.then((f) => f()).catch(() => {});
     };
-  }, [onDead, onTitle]);
+  }, [onDead, onTitle, onExit]);
 
   const fitNow = useCallback(() => {
     const el = mountRef.current ?? bodyRef.current;

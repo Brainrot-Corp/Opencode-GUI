@@ -792,6 +792,11 @@ export function useOpencode() {
   const promptNow = useCallback(
     async (sid: string, text: string, files?: Attachment[]) => {
       if (!sid || (!text && !files?.length)) return;
+      // slash stays local — never prompt the model
+      if (!files?.length && text.trim().startsWith("/")) {
+        store.addCommand(sid, text.trim());
+        return;
+      }
       tracker.markBusy(sid, true);
       try {
         const { client } = await opencode();
@@ -823,6 +828,10 @@ export function useOpencode() {
       if (!activeId) return;
       const trimmed = text.trim();
       if (!trimmed && !files?.length) return;
+      if (!files?.length && trimmed.startsWith("/")) {
+        store.addCommand(activeId, trimmed);
+        return;
+      }
       if (busyRef.current.has(activeId)) {
         tracker.pushQueued(activeId, { text: trimmed, files });
         playSound("send");
@@ -1046,8 +1055,14 @@ export function useOpencode() {
         refreshSessions,
         openSession,
       });
-      if (!handled) await send(text);
-      else if (sidBefore) store.addCommand(sidBefore, trimmed);
+      if (!handled) {
+        // any slash input stays local — display as command trace, never hit the model
+        if (trimmed.startsWith("/")) {
+          if (sidBefore) store.addCommand(sidBefore, trimmed);
+          return;
+        }
+        await send(text);
+      } else if (sidBefore) store.addCommand(sidBefore, trimmed);
     },
     [
       commands,
