@@ -1,9 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { opencode } from "../api";
 import { useContextMenu } from "../hooks/useContextMenu";
 import { clipboardWrite } from "../lib/clipboard";
 import "../styles/files.css";
+import "../styles/find.css";
 
 type Node = {
   name: string;
@@ -43,6 +44,69 @@ export default function FileTree() {
   const [renaming, setRenaming] = useState<string | null>(null);
   const [renameVal, setRenameVal] = useState("");
   const ctx = (() => { try { return useContextMenu(); } catch { return null; } })();
+  // file name search — triggered when last click was in file area (positioned at file tree)
+  const [filterOpen, setFilterOpen] = useState(false);
+  const [filterQuery, setFilterQuery] = useState("");
+  const filterInputRef = useRef<HTMLInputElement>(null);
+  const filterOpenRef = useRef(filterOpen);
+  filterOpenRef.current = filterOpen;
+
+  useEffect(() => {
+    const onFind = () => {
+      if (filterOpenRef.current) {
+        filterInputRef.current?.focus();
+        filterInputRef.current?.select();
+        return;
+      }
+      setFilterOpen(true);
+      requestAnimationFrame(() => filterInputRef.current?.select());
+      window.dispatchEvent(new CustomEvent("oc:find-opened", { detail: "file-tree" }));
+    };
+    window.addEventListener("oc:file-tree-find", onFind);
+    return () => window.removeEventListener("oc:file-tree-find", onFind);
+  });
+  useEffect(() => {
+    const onOther = (e: Event) => {
+      const detail = (e as CustomEvent<string>).detail;
+      if (detail !== "file-tree" && filterOpenRef.current) {
+        setFilterOpen(false);
+        setFilterQuery("");
+      }
+    };
+    window.addEventListener("oc:find-opened", onOther as EventListener);
+    return () => window.removeEventListener("oc:find-opened", onOther as EventListener);
+  });
+  // close when clicking outside the find bar
+  useEffect(() => {
+    if (!filterOpen) return;
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (t?.closest?.(".ft-find")) return;
+      setFilterOpen(false);
+      setFilterQuery("");
+    };
+    document.addEventListener("mousedown", onDown, true);
+    return () => document.removeEventListener("mousedown", onDown, true);
+  }, [filterOpen]);
+
+  function highlightName(name: string, query: string): React.ReactNode {
+    if (!query) return name;
+    const lower = name.toLowerCase();
+    const qLower = query.toLowerCase();
+    const idx = lower.indexOf(qLower);
+    if (idx === -1) return name;
+    const before = name.slice(0, idx);
+    const match = name.slice(idx, idx + query.length);
+    const after = name.slice(idx + query.length);
+    // only first occurrence highlighted for file tree — keeps row compact
+    return (
+      <>
+        {before}
+        <span className="find-hit active">{match}</span>
+        {after}
+      </>
+    );
+  }
 
   function workspaceRootAbs(): string {
     try {
@@ -219,6 +283,9 @@ export default function FileTree() {
 
   function renderNodes(nodes: Node[], depth: number): React.ReactNode {
     return nodes.map((n) => {
+      if (filterQuery && n.type === "file" && !n.name.toLowerCase().includes(filterQuery.toLowerCase())) {
+        return null;
+      }
       if (renaming === n.path) {
         return (
           <div key={n.path} className="ft-row file" style={{ paddingLeft: 6 + depth * 14 + 16, gap: 6 }}>
@@ -239,6 +306,7 @@ export default function FileTree() {
           </div>
         );
       }
+      const isOpen = openDirs.has(n.path) || !!filterQuery;
       return n.type === "directory" ? (
         <div key={n.path}>
           <button
@@ -247,12 +315,12 @@ export default function FileTree() {
             onClick={() => toggleDir(n)}
             onContextMenu={(e) => showFileMenu(e as any, n)}
           >
-            <i className={`fa-solid fa-chevron-${openDirs.has(n.path) ? "down" : "right"} ft-chev`} />
-            <i className={`fa-solid ${openDirs.has(n.path) ? "fa-folder-open" : "fa-folder"}`} />
-            <span>{n.name}</span>
+            <i className={`fa-solid fa-chevron-${isOpen ? "down" : "right"} ft-chev`} />
+            <i className={`fa-solid ${isOpen ? "fa-folder-open" : "fa-folder"}`} />
+            <span>{filterQuery ? highlightName(n.name, filterQuery) : n.name}</span>
             {loadingDir === n.path && <i className="fa-solid fa-gear fa-spin-pulse ft-load" />}
           </button>
-          {openDirs.has(n.path) && renderNodes(kids.get(n.path) ?? [], depth + 1)}
+          {isOpen && renderNodes(kids.get(n.path) ?? [], depth + 1)}
         </div>
       ) : (
         <button
@@ -263,7 +331,7 @@ export default function FileTree() {
           onContextMenu={(e) => showFileMenu(e as any, n)}
         >
           <FileIcon name={n.name} />
-          <span>{n.name}</span>
+          <span>{filterQuery ? highlightName(n.name, filterQuery) : n.name}</span>
         </button>
       );
     });
@@ -271,6 +339,30 @@ export default function FileTree() {
 
   return (
     <div className="filetree" onContextMenu={showBackgroundMenu} style={{ minHeight: 60 }}>
+      {filterOpen && (
+        <div className="ft-find" onMouseDown={(e) => e.preventDefault()}>
+          <i className="fa-solid fa-magnifying-glass" />
+          <input
+            ref={filterInputRef}
+            className="ft-find-input mono"
+            placeholder="Find file"
+            value={filterQuery}
+            autoFocus
+            onChange={(e) => setFilterQuery(e.target.value)}
+            onKeyDown={(e) => {
+              e.stopPropagation();
+              if (e.key === "Escape") {
+                e.preventDefault();
+                setFilterOpen(false);
+                setFilterQuery("");
+              }
+            }}
+          />
+          <button className="icon-btn" data-tip="Close (Esc)" onClick={() => { setFilterOpen(false); setFilterQuery(""); }}>
+            <i className="fa-solid fa-xmark" />
+          </button>
+        </div>
+      )}
       {error && <p className="empty">{error}</p>}
       {!error && kids.get("") === undefined && (
         <>

@@ -1014,6 +1014,17 @@ export function useOpencode() {
     return s.id;
   }, [refreshSessions, openSession]);
 
+  const forkFrom = useCallback(async (messageID: string) => {
+    const id = activeRef.current;
+    if (!id) return;
+    const { client } = await opencode();
+    const r: any = await (client.session as any).fork({ path: { id }, body: { messageID } });
+    const s = r.data as Session;
+    await refreshSessions();
+    await openSession(s.id);
+    return s.id;
+  }, [refreshSessions, openSession]);
+
   const togglePin = useCallback((id: string) => {
     try {
       const set = getPinned();
@@ -1101,6 +1112,7 @@ export function useOpencode() {
     removeSession,
     renameSession,
     duplicateSession,
+    forkFrom,
     togglePin,
     isPinned,
   };

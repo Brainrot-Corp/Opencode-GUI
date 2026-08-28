@@ -8,6 +8,7 @@ import type { Msg } from "../types";
 import { iconFor } from "../lib/attachments";
 import ToolBlock from "./ToolBlock";
 import "../styles/chat.css";
+import "../styles/find.css";
 
 // "User has answered your questions: "q"="a", ... . You can now continue ..."
 // appears as a synthetic text part after the question tool is answered —
@@ -293,11 +294,13 @@ const MsgRow = memo(function MsgRow({
   m,
   collapsed,
   onRevert,
+  onFork,
   onImage,
 }: {
   m: Msg;
   collapsed?: boolean;
   onRevert?: (messageID: string) => void;
+  onFork?: (messageID: string) => void;
   onImage?: (url: string) => void;
 }) {
   const err = m.info.role === "assistant" ? (m.info as any).error : null;
@@ -307,14 +310,27 @@ const MsgRow = memo(function MsgRow({
   const full = fmtFull(rawTs);
   return (
     <div className={`msg ${m.info.role}${showErr ? " msg-error" : ""}`}>
-      {m.info.role === "user" && onRevert && (
-        <button
-          className="rewind"
-          data-tip="Rewind conversation to here"
-          onClick={() => onRevert(m.info.id)}
-        >
-          <i className="fa-solid fa-clock-rotate-left" />
-        </button>
+      {m.info.role === "user" && (onRevert || onFork) && (
+        <span className="msg-actions">
+          {onFork && (
+            <button
+              className="fork"
+              data-tip="Fork conversation from here"
+              onClick={() => onFork(m.info.id)}
+            >
+              <i className="fa-solid fa-code-branch" />
+            </button>
+          )}
+          {onRevert && (
+            <button
+              className="rewind"
+              data-tip="Rewind conversation to here"
+              onClick={() => onRevert(m.info.id)}
+            >
+              <i className="fa-solid fa-clock-rotate-left" />
+            </button>
+          )}
+        </span>
       )}
       {showErr && (
         <div className="msg-err-line">
@@ -340,7 +356,19 @@ export default function MessageList({
   loading,
   collapsed,
   onRevert,
+  onFork,
   sessionId,
+  findOpen,
+  findQuery,
+  findCase,
+  findCur,
+  findHits,
+  onFindHits,
+  onFindQueryChange,
+  onFindCaseToggle,
+  onFindClose,
+  onFindNext,
+  onFindPrev,
 }: {
   msgs: Msg[];
   busy: boolean;
@@ -349,7 +377,19 @@ export default function MessageList({
   // global /collapse default for thinking + tool blocks
   collapsed?: boolean;
   onRevert?: (messageID: string) => void;
+  onFork?: (messageID: string) => void;
   sessionId?: string;
+  findOpen?: boolean;
+  findQuery?: string;
+  findCase?: boolean;
+  findCur?: number;
+  findHits?: number;
+  onFindHits?: (n: number) => void;
+  onFindQueryChange?: (v: string) => void;
+  onFindCaseToggle?: () => void;
+  onFindClose?: () => void;
+  onFindNext?: () => void;
+  onFindPrev?: () => void;
 }) {
   const [lightbox, setLightbox] = useState<string | null>(null);
   useEffect(() => {
@@ -358,6 +398,11 @@ export default function MessageList({
     window.addEventListener("keydown", k);
     return () => window.removeEventListener("keydown", k);
   }, [lightbox]);
+
+  const chatFindInputRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (findOpen) requestAnimationFrame(() => chatFindInputRef.current?.select());
+  }, [findOpen]);
 
   const listRef = useRef<HTMLDivElement>(null);
   const raf = useRef(0);
@@ -481,8 +526,124 @@ export default function MessageList({
     };
   }, []);
 
+  // chat history find — highlight all matches, active is opaque
+  useEffect(() => {
+    const root = listRef.current;
+    if (!root) return;
+    // clear previous highlights
+    root.querySelectorAll(".find-hit").forEach((el) => {
+      const p = el.parentNode as HTMLElement | null;
+      if (!p) return;
+      const text = el.textContent ?? "";
+      p.replaceChild(document.createTextNode(text), el);
+      p.normalize();
+    });
+    if (!findOpen || !findQuery) {
+      onFindHits?.(0);
+      return;
+    }
+    const query = findQuery;
+    const lowerQuery = findCase ? query : query.toLowerCase();
+    const hits: HTMLElement[] = [];
+    let globalIdx = 0;
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+      acceptNode: (node) => {
+        const parent = node.parentElement as HTMLElement | null;
+        if (!parent) return NodeFilter.FILTER_REJECT;
+        if (parent.closest(".find-hit, .copy-btn, .rewind, .fork, .jump-bottom, .chat-find, .img-lightbox, .reasoning-toggle")) return NodeFilter.FILTER_REJECT;
+        if (!node.nodeValue || !node.nodeValue.trim()) return NodeFilter.FILTER_REJECT;
+        return NodeFilter.FILTER_ACCEPT;
+      },
+    });
+    const textNodes: Text[] = [];
+    let n: Text | null;
+    while ((n = walker.nextNode() as Text | null)) textNodes.push(n);
+    for (const textNode of textNodes) {
+      const text = textNode.nodeValue ?? "";
+      const hay = findCase ? text : text.toLowerCase();
+      let pos = hay.indexOf(lowerQuery);
+      if (pos === -1) continue;
+      const frag = document.createDocumentFragment();
+      let last = 0;
+      let idx = pos;
+      while (idx !== -1) {
+        frag.appendChild(document.createTextNode(text.slice(last, idx)));
+        const span = document.createElement("span");
+        span.className = globalIdx === (findCur ?? 0) ? "find-hit active" : "find-hit";
+        span.textContent = text.slice(idx, idx + query.length);
+        frag.appendChild(span);
+        hits.push(span);
+        globalIdx++;
+        last = idx + query.length;
+        idx = hay.indexOf(lowerQuery, last);
+      }
+      frag.appendChild(document.createTextNode(text.slice(last)));
+      textNode.parentNode?.replaceChild(frag, textNode);
+    }
+    onFindHits?.(hits.length);
+    if (hits.length) {
+      const cur = ((findCur ?? 0) % hits.length + hits.length) % hits.length;
+      const active = hits[cur];
+      active?.scrollIntoView({ block: "center", behavior: "smooth" });
+    }
+  }, [findOpen, findQuery, findCase, findCur, msgs, onFindHits]);
+
+  // clear chat find when requested (ChatPage close)
+  useEffect(() => {
+    const onClear = () => {
+      const root = listRef.current;
+      if (!root) return;
+      root.querySelectorAll(".find-hit").forEach((el) => {
+        const p = el.parentNode as HTMLElement | null;
+        if (!p) return;
+        p.replaceChild(document.createTextNode(el.textContent ?? ""), el);
+        p.normalize();
+      });
+    };
+    window.addEventListener("oc:chat-find-clear", onClear);
+    return () => window.removeEventListener("oc:chat-find-clear", onClear);
+  }, []);
+
   return (
     <div className="msgs-wrap">
+      {findOpen && (
+        <div className="chat-find" onMouseDown={(e) => e.preventDefault()}>
+          <input
+            ref={chatFindInputRef}
+            className="chat-find-input mono"
+            placeholder="Find in chat"
+            value={findQuery ?? ""}
+            autoFocus
+            onChange={(e) => onFindQueryChange?.(e.target.value)}
+            onKeyDown={(e) => {
+              e.stopPropagation();
+              if (e.key === "Escape") {
+                e.preventDefault();
+                onFindClose?.();
+              } else if (e.key === "Enter") {
+                e.preventDefault();
+                if (e.shiftKey) onFindPrev?.();
+                else onFindNext?.();
+              }
+            }}
+          />
+          <span className="chat-find-count mono">
+            {findQuery ? `${findHits ? (findCur ?? 0) + 1 : 0}/${findHits ?? 0}` : ""}
+          </span>
+          <button className="icon-btn" data-tip="Previous (Shift+Enter)" onClick={onFindPrev}>
+            <i className="fa-solid fa-chevron-up" />
+          </button>
+          <button className="icon-btn" data-tip="Next (Enter)" onClick={onFindNext}>
+            <i className="fa-solid fa-chevron-down" />
+          </button>
+          <button className={"icon-btn fe-cs" + (findCase ? " on" : "")} data-tip="Match case" onClick={onFindCaseToggle}>
+            Aa
+          </button>
+          <button className="icon-btn" data-tip="Close (Esc)" onClick={onFindClose}>
+            <i className="fa-solid fa-xmark" />
+          </button>
+        </div>
+      )}
       <div className={`messages${busy ? " streaming" : ""}`} ref={listRef}>
         {loading && (
           <>
@@ -493,7 +654,7 @@ export default function MessageList({
         )}
         {!loading && msgs.length === 0 && !busy && <p className="empty">Say something…</p>}
         {msgs.filter(rowVisible).map((m) => (
-          <MsgRow key={m.info.id} m={m} collapsed={collapsed} onRevert={onRevert} onImage={setLightbox} />
+          <MsgRow key={m.info.id} m={m} collapsed={collapsed} onRevert={onRevert} onFork={onFork} onImage={setLightbox} />
         ))}
         {compacting && (
           <div className="compacting">

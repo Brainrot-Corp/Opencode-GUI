@@ -11,8 +11,10 @@ import { invoke } from "@tauri-apps/api/core";
 import { opencode } from "../api";
 import { extLang, hlHtml } from "../lib/syntax";
 import { handleEditorKeys } from "../lib/editorKeys";
+import { findMatches, highlightFindInHtml } from "../lib/find";
 import Dialog from "./Dialog";
 import "../styles/file-editor.css";
+import "../styles/find.css";
 
 // centered editable file viewer — portal-mounted so the sidebar's
 // backdrop-filter ancestors can't turn position:fixed into sidebar-relative
@@ -42,6 +44,8 @@ export default function FileEditor({
   const [repl, setRepl] = useState("");
   const [matchCase, setMatchCase] = useState(false);
   const [cur, setCur] = useState(0);
+  const findOpenRef = useRef(findOpen);
+  findOpenRef.current = findOpen;
   // two-step close: first attempt with unsaved edits arms, second commits
   const [closeArmed, setCloseArmed] = useState(false);
 
@@ -147,7 +151,7 @@ export default function FileEditor({
     if (!dirty) setCloseArmed(false);
   }, [dirty]);
 
-  // Ctrl+S save, Ctrl+F find — undo/redo (Ctrl+Z/Y) stays native to the textarea
+  // Ctrl+S save + navigation — find open is routed via oc:file-find
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
       if (!(e.ctrlKey || e.metaKey)) return;
@@ -155,14 +159,50 @@ export default function FileEditor({
       if (k === "s") {
         e.preventDefault();
         void save();
-      } else if (k === "f" && editable) {
+      } else if (k === "g" && findOpen && editable) {
         e.preventDefault();
-        openFind();
+        goto(cur + (e.shiftKey ? -1 : 1));
+      } else if (e.key === "F3" && findOpen && editable) {
+        e.preventDefault();
+        goto(cur + (e.shiftKey ? -1 : 1));
       }
     };
-    window.addEventListener("keydown", key);
-    return () => window.removeEventListener("keydown", key);
+    window.addEventListener("keydown", key, { capture: true } as any);
+    return () => window.removeEventListener("keydown", key, { capture: true } as any);
   });
+  useEffect(() => {
+    const onFind = () => {
+      if (!editable) return;
+      if (findOpenRef.current) {
+        const input = document.querySelector(".fe-find .fe-input") as HTMLInputElement | null;
+        input?.focus();
+        input?.select();
+        return;
+      }
+      openFind();
+    };
+    window.addEventListener("oc:file-find", onFind);
+    return () => window.removeEventListener("oc:file-find", onFind);
+  });
+  useEffect(() => {
+    const onOther = (e: Event) => {
+      const detail = (e as CustomEvent<string>).detail;
+      if (detail !== "file" && findOpenRef.current) setFindOpen(false);
+    };
+    window.addEventListener("oc:find-opened", onOther as EventListener);
+    return () => window.removeEventListener("oc:find-opened", onOther as EventListener);
+  });
+  // close when clicking outside the find bar
+  useEffect(() => {
+    if (!findOpen) return;
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (t?.closest?.(".fe-find")) return;
+      setFindOpen(false);
+    };
+    document.addEventListener("mousedown", onDown, true);
+    return () => document.removeEventListener("mousedown", onDown, true);
+  }, [findOpen]);
 
   // server SSE file.watcher.updated arrives relayed as oc:file-changed —
   // clean view silently reloads; local edits win and surface a stale banner
@@ -203,16 +243,7 @@ export default function FileEditor({
 
   const matches = useMemo(() => {
     if (!findOpen || !query) return [];
-    const out: number[] = [];
-    if (matchCase) {
-      for (let i = draft.indexOf(query); i >= 0; i = draft.indexOf(query, i + query.length))
-        out.push(i);
-    } else {
-      const hay = draft.toLowerCase();
-      const q = query.toLowerCase();
-      for (let i = hay.indexOf(q); i >= 0; i = hay.indexOf(q, i + q.length)) out.push(i);
-    }
-    return out;
+    return findMatches(draft, query, matchCase);
   }, [draft, query, matchCase, findOpen]);
 
   const syncScroll = () => {
@@ -229,11 +260,15 @@ export default function FileEditor({
 
   const deferred = useDeferredValue(draft);
   const lang = extLang(path);
-  const hlMarkup = useMemo(
+  const hlBase = useMemo(
     // trailing newline: pre collapses the final empty line a textarea shows
     () => hlHtml(deferred, lang) + (/\n$/.test(deferred) ? "\n" : ""),
     [deferred, lang],
   );
+  const hlMarkup = useMemo(() => {
+    if (!findOpen || !query || !matches.length) return hlBase;
+    return highlightFindInHtml(hlBase, query, matchCase, cur);
+  }, [hlBase, findOpen, query, matchCase, cur, matches.length]);
 
   const goto = (idx: number) => {
     if (!matches.length) return;
@@ -256,6 +291,7 @@ export default function FileEditor({
       setQuery(draft.slice(ta.selectionStart, ta.selectionEnd));
     setCur(0);
     setFindOpen(true);
+    window.dispatchEvent(new CustomEvent("oc:find-opened", { detail: "file" }));
   };
 
   // stopPropagation keeps Dialog's window Escape handler closed
@@ -345,6 +381,12 @@ export default function FileEditor({
     applyEdit(e.target.value);
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (findOpen && e.key === "Escape") {
+      e.preventDefault();
+      e.stopPropagation();
+      setFindOpen(false);
+      return;
+    }
     const ta = e.currentTarget;
     const isMod = e.ctrlKey || e.metaKey;
     const k = e.key.toLowerCase();

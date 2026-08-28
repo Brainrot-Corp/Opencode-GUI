@@ -10,7 +10,7 @@ import { UI_SCALES } from "../lib/uiScale";
 // classes that are MOUNTED only while open — .drawer-scrim for one stays in
 // the DOM forever and just toggles its .open class
 const OVERLAY_SEL =
-  ".cmd-menu, .model-menu, .ctx-menu, .dlg-scrim, .drawer-scrim.open, .permission-bar";
+  ".cmd-menu, .model-menu, .ctx-menu, .dlg-scrim, .drawer-scrim.open, .permission-bar, .comp-find, .fe-find, .chat-find, .ft-find";
 // window in which the second Escape completes the stop gesture
 const STOP_ARM_MS = 4000;
 

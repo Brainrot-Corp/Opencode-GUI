@@ -33,6 +33,7 @@ import { usePlugins } from "../hooks/usePlugins";
 import { loadPluginsCatalog } from "../lib/pluginsCatalog";
 import { ContextMenuProvider } from "../hooks/useContextMenu";
 import SelectionMenu from "../components/SelectionMenu";
+import { getFindTarget, setFindTarget, targetFromElement } from "../lib/findContext";
 
 const SB_W_KEY = "oc.sb.w";
 const SB_C_KEY = "oc.sb.c";
@@ -102,6 +103,11 @@ export default function ChatPage() {
     return Math.min(Math.max(170, w), 440);
   });
   const [sbClosed, setSbClosed] = useState(() => localStorage.getItem(SB_C_KEY) === "1");
+  // chat history find — routed when composer not focused and file not last active
+  const [chatFindOpen, setChatFindOpen] = useState(false);
+  const [chatFindQuery, setChatFindQuery] = useState("");
+  const [chatFindCase, setChatFindCase] = useState(false);
+  const [chatFindCur, setChatFindCur] = useState(0);
   const [resizing, setResizing] = useState(false);
   const [browserTop, setBrowserTop] = useState<number | null>(null);
   const toggleDiff = useCallback(() => setDiffOpen((v) => !v), []);
@@ -550,6 +556,43 @@ export default function ChatPage() {
     [sbW],
   );
 
+  // track last find context for Ctrl+F routing
+  useEffect(() => {
+    const onDown = (e: MouseEvent) => {
+      const t = targetFromElement(e.target as Element);
+      if (t) setFindTarget(t);
+    };
+    const onFocus = (e: FocusEvent) => {
+      const t = targetFromElement(e.target as Element);
+      if (t) setFindTarget(t);
+    };
+    document.addEventListener("mousedown", onDown, true);
+    document.addEventListener("focusin", onFocus, true);
+    return () => {
+      document.removeEventListener("mousedown", onDown, true);
+      document.removeEventListener("focusin", onFocus, true);
+    };
+  }, []);
+  const hoveringFileRef = useRef(false);
+  const hoveringChatRef = useRef(false);
+  useEffect(() => {
+    const onMove = (e: MouseEvent) => {
+      const el = e.target as Element | null;
+      const overFileTree = !!el?.closest?.(".filetree");
+      const overSidebarWithFiles = !!el?.closest?.(".sidebar") && !!document.querySelector(".filetree");
+      hoveringFileRef.current = overFileTree || overSidebarWithFiles;
+      hoveringChatRef.current = !!el?.closest?.(".messages, .msgs-wrap");
+    };
+    document.addEventListener("mousemove", onMove, true);
+    document.addEventListener("mouseleave", () => {
+      hoveringFileRef.current = false;
+      hoveringChatRef.current = false;
+    }, true);
+    return () => {
+      document.removeEventListener("mousemove", onMove, true);
+    };
+  }, []);
+
   function openSettings() {
     playSound("expand");
     setSettingsOpen(true);
@@ -578,6 +621,143 @@ export default function ChatPage() {
       setUpdDismissed("1");
     }
   }
+
+  // chat find helpers — position at chat history when composer not focused
+  const [chatFindHits, setChatFindHits] = useState(0);
+  const chatFindHitsRef = useRef(0);
+  chatFindHitsRef.current = chatFindHits;
+  const chatFindOpenRef = useRef(chatFindOpen);
+  chatFindOpenRef.current = chatFindOpen;
+  const openChatFind = useCallback(() => {
+    const sel = window.getSelection()?.toString() ?? "";
+    if (sel && sel.length <= 120 && !sel.includes("\n")) setChatFindQuery(sel);
+    setChatFindOpen(true);
+    setChatFindCur(0);
+    window.dispatchEvent(new CustomEvent("oc:find-opened", { detail: "chat" }));
+  }, []);
+  const closeChatFind = useCallback(() => {
+    setChatFindOpen(false);
+    window.dispatchEvent(new Event("oc:chat-find-clear"));
+  }, []);
+  useEffect(() => {
+    const onOther = (e: Event) => {
+      const detail = (e as CustomEvent<string>).detail;
+      if (detail !== "chat" && chatFindOpenRef.current) {
+        setChatFindOpen(false);
+        window.dispatchEvent(new Event("oc:chat-find-clear"));
+      }
+    };
+    window.addEventListener("oc:find-opened", onOther as EventListener);
+    return () => window.removeEventListener("oc:find-opened", onOther as EventListener);
+  }, []);
+  const gotoChatFind = useCallback((idx: number) => {
+    const n = chatFindHitsRef.current;
+    if (!n) return;
+    const j = ((idx % n) + n) % n;
+    setChatFindCur(j);
+  }, []);
+
+  // central Ctrl+F routing — capture phase to block browser find
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+      const k = e.key.toLowerCase();
+      if (k === "f") {
+        const ae = document.activeElement as HTMLElement | null;
+        const inComposer = !!ae?.closest(".composer");
+        const hasFileEditor = !!document.querySelector(".fe-stack");
+        const lastTarget = getFindTarget();
+        const isHoveringFileExplorer =
+          hoveringFileRef.current ||
+          !!document.querySelector(".filetree:hover") ||
+          (!!document.querySelector(".sidebar:hover") && !!document.querySelector(".filetree"));
+        const isHoveringChat =
+          hoveringChatRef.current ||
+          !!document.querySelector(".messages:hover") ||
+          !!document.querySelector(".msgs-wrap:hover");
+        if (inComposer) {
+          e.preventDefault();
+          e.stopPropagation();
+          window.dispatchEvent(new CustomEvent("oc:composer-find"));
+          return;
+        }
+        if (isHoveringFileExplorer) {
+          e.preventDefault();
+          e.stopPropagation();
+          window.dispatchEvent(new CustomEvent("oc:file-tree-find"));
+          return;
+        }
+        if (isHoveringChat) {
+          if (!oc.activeId && !oc.booting) return;
+          e.preventDefault();
+          e.stopPropagation();
+          if (chatFindOpen) {
+            const input = document.querySelector(".chat-find-input") as HTMLInputElement | null;
+            input?.focus();
+            input?.select();
+            return;
+          }
+          openChatFind();
+          return;
+        }
+        if (lastTarget === "file") {
+          e.preventDefault();
+          e.stopPropagation();
+          if (hasFileEditor) window.dispatchEvent(new CustomEvent("oc:file-find"));
+          else window.dispatchEvent(new CustomEvent("oc:file-tree-find"));
+          return;
+        }
+        // otherwise chat history (covers not-focused composer case)
+        if (!oc.activeId && !oc.booting) return;
+        e.preventDefault();
+        e.stopPropagation();
+        if (chatFindOpen) {
+          const input = document.querySelector(".chat-find-input") as HTMLInputElement | null;
+          input?.focus();
+          input?.select();
+          return;
+        }
+        openChatFind();
+        return;
+      }
+      if (k === "g" || e.key === "F3") {
+        if (!chatFindOpen) return;
+        // when chat find is open, handle next/prev
+        const inChat = !!document.activeElement?.closest(".chat-find") || !!document.querySelector(".chat-find");
+        if (inChat || chatFindOpen) {
+          e.preventDefault();
+          gotoChatFind(chatFindCur + (e.shiftKey ? -1 : 1));
+        }
+      }
+    };
+    window.addEventListener("keydown", onKey, { capture: true } as any);
+    return () => window.removeEventListener("keydown", onKey, { capture: true } as any);
+  }, [chatFindOpen, chatFindCur, openChatFind, gotoChatFind, oc.activeId, oc.booting]);
+
+  // Esc closes chat find before other overlays
+  useEffect(() => {
+    if (!chatFindOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        closeChatFind();
+      }
+    };
+    window.addEventListener("keydown", onKey, { capture: true } as any);
+    return () => window.removeEventListener("keydown", onKey, { capture: true } as any);
+  }, [chatFindOpen, closeChatFind]);
+  // click outside chat find input closes it
+  useEffect(() => {
+    if (!chatFindOpen) return;
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (t?.closest?.(".chat-find")) return;
+      setChatFindOpen(false);
+      window.dispatchEvent(new Event("oc:chat-find-clear"));
+    };
+    document.addEventListener("mousedown", onDown, true);
+    return () => document.removeEventListener("mousedown", onDown, true);
+  }, [chatFindOpen]);
 
 
 
@@ -733,7 +913,25 @@ export default function ChatPage() {
                   loading={oc.booting}
                   collapsed={settings.collapsed}
                   onRevert={oc.revertTo}
+                  onFork={oc.forkFrom}
                   sessionId={oc.activeId}
+                  findOpen={chatFindOpen}
+                  findQuery={chatFindQuery}
+                  findCase={chatFindCase}
+                  findCur={chatFindCur}
+                  findHits={chatFindHits}
+                  onFindHits={setChatFindHits}
+                  onFindQueryChange={(v) => {
+                    setChatFindQuery(v);
+                    setChatFindCur(0);
+                  }}
+                  onFindCaseToggle={() => {
+                    setChatFindCase((c) => !c);
+                    setChatFindCur(0);
+                  }}
+                  onFindClose={closeChatFind}
+                  onFindNext={() => gotoChatFind(chatFindCur + 1)}
+                  onFindPrev={() => gotoChatFind(chatFindCur - 1)}
                 />
                 {oc.revertId && (
                   <div className="revert-banner">

@@ -240,6 +240,7 @@ button.debrief-indicator.idle .debrief-dot {
 }
 
 .main {
+  position: relative;
   display: flex;
   flex-direction: column;
   min-width: 0;

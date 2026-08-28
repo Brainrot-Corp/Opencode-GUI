@@ -1,0 +1,12 @@
+/* shared find highlight — used by composer + file editor overlays */
+.find-hit {
+  background: color-mix(in srgb, var(--accent) calc(0.18 * 100%), transparent);
+  border-radius: 2px;
+  /* paint-only: keeps overlay glyph columns aligned */
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+.find-hit.active {
+  background: color-mix(in srgb, var(--accent) calc(0.38 * 100%), transparent);
+  box-shadow: 0 0 8px var(--accent-glow);
+}

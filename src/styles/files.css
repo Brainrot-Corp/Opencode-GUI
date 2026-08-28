@@ -78,3 +78,40 @@
   outline: none;
   border-radius: 0;
 }
+
+.ft-find {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  margin: 0 0 6px;
+  background: var(--drawer-bg);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid color-mix(in srgb, var(--accent) calc(0.22 * 100%), transparent);
+  box-shadow: 0 6px 16px -8px rgba(0, 0, 0, 0.5);
+}
+.ft-find i.fa-magnifying-glass {
+  font-size: 10px;
+  color: var(--text-faint);
+}
+.ft-find-input {
+  flex: 1;
+  min-width: 0;
+  background: none;
+  border: none;
+  outline: none;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text);
+}
+.ft-find-input::placeholder { color: var(--text-faint); }
+.ft-find .icon-btn {
+  width: 20px;
+  height: 20px;
+  font-size: 10px;
+  border-radius: 4px;
+}

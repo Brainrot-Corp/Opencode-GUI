@@ -7,12 +7,14 @@ import { splitModel } from "../lib/models";
 import { useAttachments } from "../hooks/useAttachments";
 import { detectLang, escPlain, hlHtml, insertFenced, looksLikeCode } from "../lib/syntax";
 import { handleComposerKeys } from "../lib/editorKeys";
+import { findMatches, highlightFindInHtml } from "../lib/find";
 import ModelMenu, { type ModelEntry } from "./ModelMenu";
 import SlashMenu from "./SlashMenu";
 import { playSound } from "../lib/sounds";
 import { getDraft, setDraft } from "../lib/drafts";
 import { getRecentModels, pushRecentModel } from "../lib/recentModels";
 import "../styles/composer.css";
+import "../styles/find.css";
 
 // rebuild the draft as HTML for the highlight layer behind the textarea:
 // fenced blocks get hljs coloring, fence markers dim, prose escapes plain.
@@ -159,17 +161,59 @@ export default function Composer({
   const inputRef2 = useRef(input);
   inputRef2.current = input;
 
+  // find state — overlay highlights all matches, active one opaque
+  const [findOpen, setFindOpen] = useState(false);
+  const [findQuery, setFindQuery] = useState("");
+  const [findCase, setFindCase] = useState(false);
+  const [findCur, setFindCur] = useState(0);
+  const findInputRef = useRef<HTMLInputElement>(null);
+  const findOpenRef = useRef(findOpen);
+  findOpenRef.current = findOpen;
+
+  const compMatches = useMemo(
+    () => findMatches(input, findQuery, findCase),
+    [input, findQuery, findCase],
+  );
+  // reset current when query changes
+  useEffect(() => { setFindCur(0); }, [findQuery, findCase]);
+  // keep cur in bounds when text changes
+  useEffect(() => {
+    if (compMatches.length === 0) setFindCur(0);
+    else if (findCur >= compMatches.length) setFindCur(compMatches.length - 1);
+  }, [compMatches.length, findCur]);
+
   // live highlight layer: rebuilt synchronously. Plain text bypasses the
   // overlay entirely (hasCode gate) so many newlines never drift; code
   // blocks keep the trailing "\n" sentinel to make pre-wrap render the last
   // empty line (textarea shows it natively).
-  const markup = useMemo(() => {
+  const rawMarkup = useMemo(() => {
     if (!input) return "";
     const base = draftHtml(input);
     const needsSentinel = base.includes("comp-codeblock") && /\n$/.test(input);
     return needsSentinel ? base + "\n" : base;
   }, [input]);
-  const hasCode = markup.includes("comp-codeblock");
+  const hasCode = rawMarkup.includes("comp-codeblock");
+  const hasFind = findOpen && findQuery.length > 0;
+  const hasOverlay = (hasCode || hasFind) && input.length > 0;
+  const markup = useMemo(() => {
+    if (!input) return "";
+    let base = rawMarkup;
+    // when find is active but no code block, base is still plain escaped text
+    // draftHtml already produced it; if somehow empty (plain without code, still has content)
+    // rawMarkup is non-empty. For safety, if no code and we need find, ensure base
+    // mirrors textarea plain text.
+    if (hasFind && !hasCode) {
+      // draftHtml for plain text already is escPlain lines; but if codeuhi
+      // For find-only, we want full plain html to highlight
+      // rawMarkup already is that (or empty if input empty which we early returned)
+    }
+    if (hasFind && findQuery) {
+      // ponytail: highlight counts from raw text indices but injected by scanning
+      // html text nodes — misses cross-token boundaries, ok for single-token queries
+      base = highlightFindInHtml(base, findQuery, findCase, findCur);
+    }
+    return base;
+  }, [input, rawMarkup, hasFind, hasCode, findQuery, findCase, findCur]);
 
   // the composer used to be drag-resizable (oc.comp.h) — clear any stale
   // stored height so old installs fall back to auto sizing
@@ -210,6 +254,7 @@ export default function Composer({
     sidRef.current = sessionId;
     suppressSaveRef.current = true;
     setInput(getDraft(sessionId ?? ""));
+    setFindOpen(false);
     // next tick allow saving again — avoids saving old input under new sid
     queueMicrotask(() => {
       suppressSaveRef.current = false;
@@ -274,6 +319,91 @@ export default function Composer({
       }
     });
     return true;
+  };
+
+  const gotoFind = (idx: number) => {
+    if (!compMatches.length) return;
+    const j = ((idx % compMatches.length) + compMatches.length) % compMatches.length;
+    setFindCur(j);
+    const ta = inputRef.current;
+    if (!ta) return;
+    const start = compMatches[j];
+    const qlen = findQuery.length;
+    ta.focus();
+    try { ta.setSelectionRange(start, start + qlen); } catch {}
+    // center line in view
+    const lh = 21;
+    const line = (input.slice(0, start).match(/\n/g) ?? []).length;
+    try {
+      ta.scrollTop = Math.max(0, line * lh - ta.clientHeight / 2);
+      if (hlRef.current) {
+        hlRef.current.scrollTop = ta.scrollTop;
+        hlRef.current.scrollLeft = ta.scrollLeft;
+      }
+    } catch {}
+  };
+
+  const openFind = () => {
+    const ta = inputRef.current;
+    if (ta && ta.selectionStart !== ta.selectionEnd) {
+      const sel = input.slice(ta.selectionStart, ta.selectionEnd);
+      // avoid seeding with multiline selection > 120 chars
+      if (sel && sel.length <= 120 && !sel.includes("\n")) setFindQuery(sel);
+    }
+    setFindOpen(true);
+    setFindCur(0);
+    requestAnimationFrame(() => findInputRef.current?.select());
+    window.dispatchEvent(new CustomEvent("oc:find-opened", { detail: "composer" }));
+  };
+  const closeFind = () => {
+    setFindOpen(false);
+    inputRef.current?.focus();
+  };
+
+  // routed via ChatPage central Ctrl+F — listen for dispatched event
+  useEffect(() => {
+    const onFind = () => {
+      if (findOpenRef.current) {
+        findInputRef.current?.focus();
+        findInputRef.current?.select();
+        return;
+      }
+      openFind();
+    };
+    window.addEventListener("oc:composer-find", onFind);
+    return () => window.removeEventListener("oc:composer-find", onFind);
+  });
+  // close when another find tool opens
+  useEffect(() => {
+    const onOther = (e: Event) => {
+      const detail = (e as CustomEvent<string>).detail;
+      if (detail !== "composer" && findOpenRef.current) setFindOpen(false);
+    };
+    window.addEventListener("oc:find-opened", onOther as EventListener);
+    return () => window.removeEventListener("oc:find-opened", onOther as EventListener);
+  });
+  // close when clicking outside the find bar
+  useEffect(() => {
+    if (!findOpen) return;
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (t?.closest?.(".comp-find")) return;
+      setFindOpen(false);
+    };
+    document.addEventListener("mousedown", onDown, true);
+    return () => document.removeEventListener("mousedown", onDown, true);
+  }, [findOpen]);
+
+  // when find is open, Esc closes it; Enter navigates
+  const onFindKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    e.stopPropagation();
+    if (e.key === "Escape") {
+      e.preventDefault();
+      closeFind();
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      gotoFind(findCur + (e.shiftKey ? -1 : 1));
+    }
   };
 
   const attach = useAttachments();
@@ -383,6 +513,27 @@ export default function Composer({
   // priority: model menu → slash suggestions → plain Enter send / Tab cycle
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // find open has priority over model/slash/send
+      if (findOpen) {
+        if (e.key === "Escape") {
+          e.preventDefault();
+          closeFind();
+          return;
+        }
+        if (e.key === "F3" || ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "g")) {
+          e.preventDefault();
+          gotoFind(findCur + (e.shiftKey ? -1 : 1));
+          return;
+        }
+        // typing in find input — don't steal keys
+        if (e.target === findInputRef.current) return;
+        // Enter in composer navigates find, not sends
+        if (e.key === "Enter" && !e.shiftKey && e.target === inputRef.current && findQuery) {
+          e.preventDefault();
+          gotoFind(findCur + (e.shiftKey ? -1 : 1));
+          return;
+        }
+      }
       // --- model picker open: owns navigation from anywhere ---
       if (open) {
         if (e.key === "ArrowDown") {
@@ -788,6 +939,38 @@ export default function Composer({
       {attach.note && <div className="composer-note">{attach.note}</div>}
       {!attach.note && voiceError && <div className="composer-note">{voiceError}</div>}
       <div className="composer-row">
+        {findOpen && (
+          <div className="comp-find" onMouseDown={(e) => e.preventDefault()}>
+            <input
+              ref={findInputRef}
+              className="comp-find-input mono"
+              placeholder="Find"
+              value={findQuery}
+              autoFocus
+              onChange={(e) => setFindQuery(e.target.value)}
+              onKeyDown={onFindKey}
+            />
+            <span className="comp-find-count mono">
+              {findQuery ? `${compMatches.length ? findCur + 1 : 0}/${compMatches.length}` : ""}
+            </span>
+            <button className="icon-btn" data-tip="Previous (Shift+Enter)" onClick={() => gotoFind(findCur - 1)}>
+              <i className="fa-solid fa-chevron-up" />
+            </button>
+            <button className="icon-btn" data-tip="Next (Enter)" onClick={() => gotoFind(findCur + 1)}>
+              <i className="fa-solid fa-chevron-down" />
+            </button>
+            <button
+              className={"icon-btn fe-cs" + (findCase ? " on" : "")}
+              data-tip="Match case"
+              onClick={() => setFindCase((v) => !v)}
+            >
+              Aa
+            </button>
+            <button className="icon-btn" data-tip="Close (Esc)" onClick={closeFind}>
+              <i className="fa-solid fa-xmark" />
+            </button>
+          </div>
+        )}
         <input
           ref={fileInputRef}
           type="file"
@@ -838,8 +1021,8 @@ export default function Composer({
             </button>
           )}
         </div>
-        <div className={`comp-input${hasCode ? " has-code" : ""}`}>
-          {hasCode && (
+        <div className={`comp-input${hasCode ? " has-code" : ""}${hasFind ? " has-find" : ""}`}>
+          {hasOverlay && (
             <div
               ref={hlRef}
               className="comp-hl"
@@ -886,6 +1069,24 @@ export default function Composer({
                     }
                   }}
                   onKeyDown={(e) => {
+                    if (findOpen && e.key === "Escape") {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      closeFind();
+                      return;
+                    }
+                    if (findOpen && findQuery && e.key === "Enter" && !e.shiftKey) {
+                      // when find is open, Enter in the textarea navigates, not sends
+                      e.preventDefault();
+                      e.stopPropagation();
+                      gotoFind(findCur + (e.shiftKey ? -1 : 1));
+                      return;
+                    }
+                    if (findOpen && (e.key === "F3" || ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "g"))) {
+                      e.preventDefault();
+                      gotoFind(findCur + (e.shiftKey ? -1 : 1));
+                      return;
+                    }
                     const el = e.currentTarget as HTMLTextAreaElement;
                     const isMod = e.ctrlKey || e.metaKey;
                     const k = e.key.toLowerCase();
