@@ -100,6 +100,32 @@ export default function ChatPage() {
     () => localStorage.getItem("oc.update.dismissed") || "",
   );
   const [debugUpdateForced, setDebugUpdateForced] = useState(false);
+  // RightCtrl+Click Check clears dismissed — keep React state in sync even
+  // though SettingsDrawer writes localStorage directly (different component)
+  useEffect(() => {
+    const clear = () => setUpdDismissed("");
+    window.addEventListener("oc:update-force", clear);
+    // also sync on focus/storage in case another window cleared it
+    const onStorage = () => setUpdDismissed(localStorage.getItem("oc.update.dismissed") || "");
+    window.addEventListener("storage", onStorage);
+    window.addEventListener("focus", onStorage);
+    return () => {
+      window.removeEventListener("oc:update-force", clear);
+      window.removeEventListener("storage", onStorage);
+      window.removeEventListener("focus", onStorage);
+    };
+  }, []);
+  // If check with forceCurrent sets latest to same version as running,
+  // auto-clear dismissed so UpdatePrompt actually shows (otherwise
+  // "RightCtrl+Click doesn't trigger the update window")
+  useEffect(() => {
+    if (upd.latest && upd.ver && upd.latest.version === upd.ver) {
+      if (localStorage.getItem("oc.update.dismissed") === upd.ver) {
+        localStorage.removeItem("oc.update.dismissed");
+        setUpdDismissed("");
+      }
+    }
+  }, [upd.latest, upd.ver]);
 
   const [sbW, setSbW] = useState(() => {
     const w = Number(localStorage.getItem(SB_W_KEY)) || 248;

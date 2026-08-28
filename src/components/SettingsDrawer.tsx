@@ -86,20 +86,29 @@ export default function SettingsDrawer({
   // the latest release as an update even if version == current
   const rightCtrlHeld = useRef(false);
   useEffect(() => {
+    const isRightCtrl = (e: KeyboardEvent) =>
+      e.code === "ControlRight" || (e.key === "Control" && e.location === 2);
     const down = (e: KeyboardEvent) => {
-      if (e.code === "ControlRight") rightCtrlHeld.current = true;
+      if (isRightCtrl(e)) rightCtrlHeld.current = true;
     };
     const up = (e: KeyboardEvent) => {
-      if (e.code === "ControlRight") rightCtrlHeld.current = false;
+      if (isRightCtrl(e)) rightCtrlHeld.current = false;
+      // generic Control up without location (some WebView2 builds) — clear to avoid stuck
+      else if (e.key === "Control" && e.code === "") rightCtrlHeld.current = false;
     };
     const clear = () => { rightCtrlHeld.current = false; };
     window.addEventListener("keydown", down);
     window.addEventListener("keyup", up);
     window.addEventListener("blur", clear);
+    // capture phase — global shortcuts may stopPropagation
+    window.addEventListener("keydown", down, true);
+    window.addEventListener("keyup", up, true);
     return () => {
       window.removeEventListener("keydown", down);
       window.removeEventListener("keyup", up);
       window.removeEventListener("blur", clear);
+      window.removeEventListener("keydown", down, true);
+      window.removeEventListener("keyup", up, true);
     };
   }, []);
 
@@ -547,9 +556,18 @@ export default function SettingsDrawer({
                     className="reset-btn"
                     disabled={upd.busy}
                     data-tip="RightCtrl+Click to reinstall current version (debug)"
-                    onClick={() => {
+                    onClick={async () => {
                       const forceCurrent = rightCtrlHeld.current;
-                      void upd.check(true, forceCurrent);
+                      if (forceCurrent) {
+                        localStorage.removeItem("oc.update.dismissed");
+                        window.dispatchEvent(new CustomEvent("oc:update-force"));
+                      }
+                      await upd.check(true, forceCurrent);
+                      if (forceCurrent) {
+                        // ensure prompt isn't still considered dismissed (ChatPage state)
+                        localStorage.removeItem("oc.update.dismissed");
+                        window.dispatchEvent(new CustomEvent("oc:update-force"));
+                      }
                     }}
                   >
                     <i className="fa-solid fa-magnifying-glass" />
