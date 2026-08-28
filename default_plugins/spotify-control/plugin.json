@@ -1,6 +1,6 @@
 {
   "id": "spotify-control",
   "name": "Spotify",
-  "version": "1.5.0",
+  "version": "1.5.1",
   "description": "Vencord-style Spotify controls in the sidebar — before Git, with seek bar, shuffle/repeat, PKCE auth and timestamp-synced lyrics window (LRCLIB)"
 }

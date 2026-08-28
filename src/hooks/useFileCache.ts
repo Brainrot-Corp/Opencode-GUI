@@ -87,6 +87,20 @@ export function invalidateFileCache(path?: string) {
 }
 
 let watcherSetup = false;
+// watcher debounces rapid file.watcher.updated bursts — silent refresh keeps
+// stale nodes visible until new data arrives (no skeleton flicker)
+const watcherTimers = new Map<string, number>();
+function scheduleFetch(path: string) {
+  if (pending.has(path)) return;
+  const prev = watcherTimers.get(path);
+  if (prev) window.clearTimeout(prev);
+  const id = window.setTimeout(() => {
+    watcherTimers.delete(path);
+    if (pending.has(path)) return;
+    void fetchKids(path).catch(() => {});
+  }, 180);
+  watcherTimers.set(path, id);
+}
 function setupWatcher() {
   if (watcherSetup) return;
   watcherSetup = true;
@@ -94,23 +108,18 @@ function setupWatcher() {
     const raw = (e as CustomEvent<string>).detail || "";
     if (!raw) return;
     const norm = raw.replace(/\\/g, "/");
-    // absolute paths (contain ":") — invalidate root to stay correct
+    // absolute paths (contain ":") — stale-while-revalidate root
     if (norm.includes(":") || norm.startsWith("/")) {
-      if (kids.has("")) {
-        invalidateFileCache("");
-        void fetchKids("").catch(() => {});
-      }
+      if (kids.has("")) scheduleFetch("");
       return;
     }
     const slash = norm.lastIndexOf("/");
     const parent = slash >= 0 ? norm.slice(0, slash) : "";
     if (kids.has(parent)) {
-      invalidateFileCache(parent);
-      void fetchKids(parent).catch(() => {});
+      scheduleFetch(parent);
     } else if (kids.has("")) {
       // file in uncached dir — refresh root to show new entry if at top level
-      invalidateFileCache("");
-      void fetchKids("").catch(() => {});
+      scheduleFetch("");
     }
   }) as EventListener);
 }
