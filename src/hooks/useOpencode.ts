@@ -22,6 +22,7 @@ import {
   type CmdEntry,
   type DialogState,
 } from "../lib/slashCommands";
+import { getPluginSlash } from "../lib/plugins";
 import { useProviders } from "./useProviders";
 import { clearDraft, setDraft } from "../lib/drafts";
 import type { Msg, OpenCodeEvent, PermAsk, ProviderGroup, Attachment, QuestionAsk, Cmd } from "../types";
@@ -78,6 +79,12 @@ export function useOpencode() {
     });
   }, []);
   const [commands, setCommands] = useState<Cmd[]>([]);
+  const [slashTick, setSlashTick] = useState(0);
+  useEffect(() => {
+    const h = () => setSlashTick((x) => x + 1);
+    window.addEventListener("oc:plugin-slash", h);
+    return () => window.removeEventListener("oc:plugin-slash", h);
+  }, []);
   const [agents, setAgents] = useState<{ name: string; mode: string }[]>([]);
   const [agentSel, setAgentSel] = useState("");
   // per-session agent memory: only entries that were EXPLICITLY picked for
@@ -1201,6 +1208,7 @@ export function useOpencode() {
         defaultModel: prov.defaultModel,
         modelVariants: prov.modelVariants,
         commands,
+        pluginSlash: getPluginSlash(),
         undoTarget,
         revertId,
         isBusy: (id) => busyRef.current.has(id),
@@ -1252,8 +1260,10 @@ export function useOpencode() {
         agentSel,
         modelVariants: prov.modelVariants,
         variantSel: prov.variantSel,
+        pluginSlash: getPluginSlash(),
       }),
-    [commands, agents, agentSel, prov.modelVariants, prov.variantSel],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [commands, agents, agentSel, prov.modelVariants, prov.variantSel, slashTick],
   );
 
   const removeSession = useCallback(

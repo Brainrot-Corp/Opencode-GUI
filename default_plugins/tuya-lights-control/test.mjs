@@ -136,6 +136,14 @@ eq(
   "json-reporting device gets json back",
 );
 
+// mock localStorage so Settings renders expanded
+if (typeof globalThis.localStorage === "undefined") {
+  globalThis.localStorage = { getItem: (k) => k === "oc.settings.lights.collapsed" ? "0" : null, setItem: () => {}, removeItem: () => {} };
+} else {
+  const _get = globalThis.localStorage.getItem?.bind(globalThis.localStorage);
+  globalThis.localStorage.getItem = (k) => k === "oc.settings.lights.collapsed" ? "0" : (_get ? _get(k) : null);
+}
+if (typeof globalThis.window === "undefined") globalThis.window = { dispatchEvent: () => {}, addEventListener: () => {}, removeEventListener: () => {} };
 // settings panel renders through the host's h() contract
 const api = {
   id: "tuya-lights-control",
