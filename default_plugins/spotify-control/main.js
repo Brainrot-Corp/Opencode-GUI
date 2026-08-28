@@ -21,6 +21,7 @@ const DEF = {
   useSpotifyUris: false,
   previousButtonRestartsTrack: true,
   hoverControls: false,
+  lyricsEnabled: false,
 };
 
 function confOf(settings) {
@@ -49,6 +50,59 @@ function fmt(ms) {
   return `${m}:${String(r).padStart(2, "0")}`;
 }
 function basenameTrack(t) { return t && t.name ? t.name : ""; }
+
+// lyrics panel persistence — mirrors notepad but own key, open+geom only
+const LYRICS_KEY = "oc.spotify.lyrics";
+const LYRICS_MIN_W = 360, LYRICS_MIN_H = 280, LYRICS_MAX_W = 560, LYRICS_MAX_H = 720;
+function lyricsDefaultGeom() {
+  const w = 420, h = 520;
+  const vw = typeof window !== "undefined" ? window.innerWidth : 1200;
+  const vh = typeof window !== "undefined" ? window.innerHeight : 800;
+  const x = Math.max(12, Math.floor(vw - w - 20));
+  const y = Math.max(12, Math.floor((vh - h) / 2));
+  return { x, y, w, h };
+}
+function lyricsClamp(n,a,b){ return Math.min(Math.max(n,a),b); }
+function loadLyricsState() {
+  try {
+    const raw = localStorage.getItem(LYRICS_KEY);
+    if (!raw) return { open: false, geom: lyricsDefaultGeom() };
+    const p = JSON.parse(raw);
+    let g = p.geom && typeof p.geom === "object" ? p.geom : lyricsDefaultGeom();
+    const vw = window.innerWidth, vh = window.innerHeight;
+    g = {
+      x: lyricsClamp(Number(g.x)||0, 0, Math.max(0, vw - LYRICS_MIN_W)),
+      y: lyricsClamp(Number(g.y)||0, 0, Math.max(0, vh - LYRICS_MIN_H)),
+      w: lyricsClamp(Number(g.w)||420, LYRICS_MIN_W, Math.min(LYRICS_MAX_W, vw - 12)),
+      h: lyricsClamp(Number(g.h)||520, LYRICS_MIN_H, Math.min(LYRICS_MAX_H, vh - 12)),
+    };
+    return { open: !!p.open, geom: g };
+  } catch { return { open: false, geom: lyricsDefaultGeom() }; }
+}
+function saveLyricsState(s, notify=true) {
+  try { localStorage.setItem(LYRICS_KEY, JSON.stringify(s)); } catch {}
+  if (notify) try { window.dispatchEvent(new CustomEvent("oc:spotify:lyrics:changed")); } catch {}
+}
+function lyricsEqual(a,b){ try{ return JSON.stringify(a)===JSON.stringify(b);}catch{return false;}}
+// LRC parser — syncedLyrics from LRCLIB is "[mm:ss.xx] text"
+function parseLRC(lrc) {
+  if (!lrc || typeof lrc !== "string") return [];
+  const out = [];
+  for (const line of lrc.split("\n")) {
+    const stamps = [...line.matchAll(/\[(\d+):(\d+)(?:\.(\d+))?\]/g)];
+    if (!stamps.length) continue;
+    const text = line.replace(/\[.*?\]/g, "").trim();
+    if (!text) continue;
+    for (const m of stamps) {
+      const min = parseInt(m[1],10), sec = parseInt(m[2],10);
+      const frac = m[3] ? m[3].padEnd(3,"0").slice(0,3) : "0";
+      const ms = (min*60+sec)*1000 + parseInt(frac,10);
+      out.push({ ms, text });
+    }
+  }
+  out.sort((a,b)=>a.ms-b.ms);
+  return out;
+}
 
 export default function activate(api) {
   const { h, useState, useEffect, useRef } = api;
@@ -374,6 +428,21 @@ export default function activate(api) {
         h("label", { className: "mono-hint", style: { display: "flex", alignItems: "center", gap: "6px", cursor: "pointer" } },
           h("input", { type: "checkbox", checked: !!conf.useSpotifyUris, onChange: (e) => set({ useSpotifyUris: e.target.checked }) }),
           "Use spotify: URIs"
+        ),
+        h("label", { className: "mono-hint", style: { display: "flex", alignItems: "center", gap: "6px", cursor: "pointer" } },
+          h("input", { type: "checkbox", checked: !!conf.lyricsEnabled, onChange: (e) => {
+            const on = e.target.checked;
+            set({ lyricsEnabled: on });
+            if (!on) {
+              try {
+                const s = loadLyricsState();
+                if (s.open) { s.open = false; saveLyricsState(s, true); }
+                window.dispatchEvent(new Event("oc:spotify:lyrics:changed"));
+              } catch {}
+            }
+          } }),
+          h("i", { className: "fa-solid fa-microphone-lines", style: { fontSize: "10px", color: "var(--accent)" } }),
+          "Lyrics window (top bar icon)"
         )
       ),
       err ? h("div", { className: "voice-err", style: { margin: "0 10px 8px" } }, err) : null,
@@ -547,6 +616,12 @@ export default function activate(api) {
 
     // keep pos in sync when mPos changes
     useEffect(() => { setPos(mPos); }, [mPos]);
+
+    // lyrics overlay sync — broadcast track + playback state (pos ticks each second while playing)
+    useEffect(() => {
+      try { window.dispatchEvent(new CustomEvent("oc:spotify:state", { detail: { track, device, isPlaying, pos, duration, playingType } })); } catch {}
+      try { window.__spotify_state = { track, device, isPlaying, pos, duration, playingType }; } catch {}
+    }, [track, device, isPlaying, pos, duration, playingType]);
 
     // non-blocking req — instant feedback + quick poll burst (reduced to 3)
     async function req(method, path, query, opts) {
@@ -812,12 +887,373 @@ export default function activate(api) {
     );
   }
 
+  function TitlebarBtn({ settings }) {
+    const conf = confOf(settings);
+    if (!conf.lyricsEnabled) return null;
+    const [open, setOpen] = useState(() => loadLyricsState().open);
+    useEffect(() => {
+      const sync = () => setOpen(loadLyricsState().open);
+      window.addEventListener("oc:spotify:lyrics:changed", sync);
+      window.addEventListener("storage", sync);
+      return () => { window.removeEventListener("oc:spotify:lyrics:changed", sync); window.removeEventListener("storage", sync); };
+    }, []);
+    const toggle = () => {
+      const s = loadLyricsState();
+      s.open = !s.open;
+      saveLyricsState(s, true);
+      setOpen(s.open);
+      try { api.playSound(s.open ? "expand" : "collapse"); } catch {}
+    };
+    return h("button", {
+      className: `icon-btn${open ? " on" : ""}`,
+      "data-tip": open ? "Hide lyrics" : "Show lyrics",
+      "aria-pressed": open,
+      onClick: toggle
+    }, h("i", { className: "fa-solid fa-microphone-lines" }));
+  }
+
+  function LyricsOverlay({ settings, updatePlugin }) {
+    const conf = confOf(settings);
+    const [lState, setLState] = useState(() => loadLyricsState());
+    const panelRef = useRef(null);
+    const bodyRef = useRef(null);
+    const dragRef = useRef(null);
+    const resizeRef = useRef(null);
+    const cacheRef = useRef(new Map());
+    const [lyrics, setLyrics] = useState({ loading: false, error: "", plain: "", synced: "", lines: [], instrumental: false, syncedAvailable: false, notFound: false });
+    const [curTrack, setCurTrack] = useState(() => { try { return (window.__spotify_state && window.__spotify_state.track) || null; } catch { return null; } });
+    const [curDevice, setCurDevice] = useState(() => { try { return (window.__spotify_state && window.__spotify_state.device) || null; } catch { return null; } });
+    const [curPos, setCurPos] = useState(() => { try { return (window.__spotify_state && typeof window.__spotify_state.pos === "number") ? window.__spotify_state.pos : 0; } catch { return 0; } });
+    const [curIsPlaying, setCurIsPlaying] = useState(() => { try { return !!(window.__spotify_state && window.__spotify_state.isPlaying); } catch { return false; } });
+    const [activeIdx, setActiveIdx] = useState(-1);
+
+    // sync panel open/geom from storage (other instance / titlebar)
+    useEffect(() => {
+      const sync = () => {
+        const nxt = loadLyricsState();
+        setLState(prev => lyricsEqual(prev, nxt) ? prev : nxt);
+      };
+      window.addEventListener("oc:spotify:lyrics:changed", sync);
+      window.addEventListener("storage", sync);
+      return () => { window.removeEventListener("oc:spotify:lyrics:changed", sync); window.removeEventListener("storage", sync); };
+    }, []);
+
+    // viewport clamp on resize
+    useEffect(() => {
+      const onResize = () => {
+        const vw = window.innerWidth, vh = window.innerHeight;
+        setLState(s => {
+          const g = s.geom;
+          const nx = lyricsClamp(g.x, 0, Math.max(0, vw - LYRICS_MIN_W));
+          const ny = lyricsClamp(g.y, 0, Math.max(0, vh - LYRICS_MIN_H));
+          const nw = lyricsClamp(g.w, LYRICS_MIN_W, Math.min(LYRICS_MAX_W, vw - 12));
+          const nh = lyricsClamp(g.h, LYRICS_MIN_H, Math.min(LYRICS_MAX_H, vh - 12));
+          if (nx===g.x && ny===g.y && nw===g.w && nh===g.h) return s;
+          const nxt = { ...s, geom: { x: nx, y: ny, w: nw, h: nh } };
+          saveLyricsState(nxt, false);
+          return nxt;
+        });
+      };
+      window.addEventListener("resize", onResize);
+      return () => window.removeEventListener("resize", onResize);
+    }, []);
+
+    // listen to player state broadcasts from Sidebar
+    useEffect(() => {
+      const onState = (e) => {
+        const d = e && e.detail;
+        if (!d) return;
+        if (d.track !== undefined) setCurTrack(d.track);
+        if (d.device !== undefined) setCurDevice(d.device);
+        if (typeof d.pos === "number") setCurPos(d.pos);
+        if (typeof d.isPlaying === "boolean") setCurIsPlaying(d.isPlaying);
+      };
+      window.addEventListener("oc:spotify:state", onState);
+      return () => window.removeEventListener("oc:spotify:state", onState);
+    }, []);
+
+    // escape closes panel
+    useEffect(() => {
+      if (!lState.open) return;
+      const onKey = (e) => {
+        if (e.key === "Escape") {
+          const s = loadLyricsState(); s.open=false; saveLyricsState(s,true); setLState(s);
+          try { api.playSound("collapse"); } catch {}
+        }
+      };
+      window.addEventListener("keydown", onKey);
+      return () => window.removeEventListener("keydown", onKey);
+    }, [lState.open]);
+
+    // lyrics fetch helper with http_json fallback (mirrors tokenFetch)
+    async function lyricsFetch(url) {
+      try {
+        const res = await fetch(url);
+        const text = await res.text();
+        return { status: res.status, body: text };
+      } catch (e) {
+        try {
+          const r = await api.invoke("http_json", { method: "GET", url, headers: {}, body: null });
+          return r;
+        } catch (err) { return { status: 0, body: String(err) }; }
+      }
+    }
+
+    // fetch when track id changes
+    const lastFetchId = useRef("");
+    useEffect(() => {
+      const t = curTrack;
+      if (!t || !t.id) { setLyrics({ loading:false, error:"", plain:"", synced:"", lines:[], instrumental:false, syncedAvailable:false, notFound:false }); lastFetchId.current=""; setActiveIdx(-1); return; }
+      if (lastFetchId.current === t.id) return;
+      lastFetchId.current = t.id;
+      const cached = cacheRef.current.get(t.id);
+      if (cached) { setLyrics(cached); setActiveIdx(-1); return; }
+      let cancelled = false;
+      (async () => {
+        setLyrics({ loading:true, error:"", plain:"", synced:"", lines:[], instrumental:false, syncedAvailable:false, notFound:false });
+        const artist = (t.artists||[]).map(a=>a.name).join(", ");
+        const durSec = Math.round((t.duration||0)/1000);
+        const q1 = new URLSearchParams({ artist_name: artist, track_name: t.name, album_name: (t.album && t.album.name) || "", duration: String(durSec) }).toString();
+        const url1 = `https://lrclib.net/api/get?${q1}`;
+        try {
+          let r = await lyricsFetch(url1);
+          if (!cancelled && r.status===200) {
+            let j=null; try{ j=JSON.parse(r.body); }catch{}
+            if (j && (j.plainLyrics || j.syncedLyrics)) {
+              const synced = parseLRC(j.syncedLyrics||"");
+              const plain = j.plainLyrics||"";
+              const data = { loading:false, error:"", plain, synced: j.syncedLyrics||"", lines: synced.length ? synced : plain.split("\n").filter(s=>s.trim()).map(txt=>({ms:0,text:txt})), instrumental: !!j.instrumental, syncedAvailable: synced.length>0, notFound:false };
+              cacheRef.current.set(t.id, data);
+              if(!cancelled) setLyrics(data);
+              return;
+            }
+          }
+          const q2 = new URLSearchParams({ track_name: t.name, artist_name: artist }).toString();
+          const url2 = `https://lrclib.net/api/search?${q2}`;
+          r = await lyricsFetch(url2);
+          if (!cancelled && r.status===200) {
+            let arr=null; try{ arr=JSON.parse(r.body); }catch{ arr=null; }
+            if (Array.isArray(arr) && arr.length) {
+              let best = arr[0];
+              const lower = (t.name||"").toLowerCase();
+              const exact = arr.find(x=> (x.trackName||"").toLowerCase()===lower);
+              if (exact) best = exact;
+              else {
+                // closest duration
+                let bestDiff = Infinity;
+                for(const c of arr){ const d = Math.abs(((c.duration||0) - durSec)); if(d<bestDiff){bestDiff=d; best=c;} }
+              }
+              const synced = parseLRC(best.syncedLyrics||"");
+              const plain = best.plainLyrics||"";
+              if (plain || synced.length) {
+                const data = { loading:false, error:"", plain, synced: best.syncedLyrics||"", lines: synced.length ? synced : plain.split("\n").filter(s=>s.trim()).map(txt=>({ms:0,text:txt})), instrumental: !!best.instrumental, syncedAvailable: synced.length>0, notFound:false };
+                cacheRef.current.set(t.id, data);
+                if(!cancelled) setLyrics(data);
+                return;
+              }
+            }
+          }
+          const data = { loading:false, error:"", plain:"", synced:"", lines:[], instrumental:false, syncedAvailable:false, notFound:true };
+          cacheRef.current.set(t.id, data);
+          if(!cancelled) setLyrics(data);
+        } catch (e) {
+          if(!cancelled) setLyrics({ loading:false, error: e instanceof Error ? e.message.slice(0,180) : String(e).slice(0,180), plain:"", synced:"", lines:[], instrumental:false, syncedAvailable:false, notFound:false });
+        }
+      })();
+      return () => { cancelled = true; };
+    }, [curTrack && curTrack.id]);
+
+    // compute active synced line from pos
+    useEffect(() => {
+      const lines = lyrics.lines;
+      if (!lyrics.syncedAvailable || !lines || !lines.length) { setActiveIdx(-1); return; }
+      let idx = -1;
+      for(let i=0;i<lines.length;i++){ if(curPos >= lines[i].ms) idx=i; else break; }
+      setActiveIdx(idx);
+    }, [curPos, lyrics.lines, lyrics.syncedAvailable]);
+
+    // auto-scroll active line into view (centered)
+    useEffect(() => {
+      if (activeIdx < 0) return;
+      const c = bodyRef.current;
+      if (!c) return;
+      const el = c.querySelector(`[data-idx="${activeIdx}"]`);
+      if (el && typeof el.scrollIntoView === "function") {
+        try { el.scrollIntoView({ block: "center", behavior: "smooth" }); } catch { try{ el.scrollIntoView(); }catch{} }
+      }
+    }, [activeIdx]);
+
+    async function seekTo(ms) {
+      const c = confOf(api.settings());
+      if (!c.accessToken) return;
+      try {
+        await spotifyReq(c, (patch)=> updatePlugin({ ...c, ...patch }), "PUT", "/seek", { position_ms: Math.round(ms), ...(curDevice && curDevice.id ? { device_id: curDevice.id } : {}) }, null);
+        setCurPos(ms);
+      } catch (e) {}
+    }
+
+    const onDragStart = (e) => {
+      if (e.button!==0) return;
+      if (e.target.closest("button, input, a")) return;
+      e.preventDefault();
+      const el = panelRef.current; if(!el) return;
+      const startX=e.clientX, startY=e.clientY;
+      const g0={...lState.geom};
+      dragRef.current={startX,startY,g0};
+      document.body.style.userSelect="none";
+      let raf=0, last={x:g0.x, y:g0.y};
+      const flush=()=>{ raf=0; el.style.left=last.x+"px"; el.style.top=last.y+"px"; };
+      const move=(ev)=>{
+        const d=dragRef.current; if(!d) return;
+        last.x = lyricsClamp(d.g0.x + (ev.clientX - d.startX), 0, Math.max(0, window.innerWidth - g0.w));
+        last.y = lyricsClamp(d.g0.y + (ev.clientY - d.startY), 0, Math.max(0, window.innerHeight - 80));
+        if(!raf) raf=requestAnimationFrame(flush);
+      };
+      const up=()=>{
+        if(raf) cancelAnimationFrame(raf);
+        el.style.left=last.x+"px"; el.style.top=last.y+"px";
+        setLState(s=>{
+          if(s.geom.x===last.x && s.geom.y===last.y) return s;
+          const nxt={...s, geom:{...s.geom, x:last.x, y:last.y}};
+          saveLyricsState(nxt, true);
+          return nxt;
+        });
+        dragRef.current=null;
+        document.body.style.userSelect="";
+        window.removeEventListener("mousemove", move);
+        window.removeEventListener("mouseup", up);
+      };
+      window.addEventListener("mousemove", move);
+      window.addEventListener("mouseup", up);
+    };
+
+    const onResizeStart = (dir)=>(e)=>{
+      if(e.button!==0) return;
+      e.preventDefault(); e.stopPropagation();
+      const el=panelRef.current; if(!el) return;
+      const sx=e.clientX, sy=e.clientY;
+      const g0={...lState.geom};
+      resizeRef.current={dir,sx,sy,g0};
+      document.body.style.userSelect="none";
+      let raf=0, last={...g0};
+      const flush=()=>{ raf=0; el.style.left=last.x+"px"; el.style.top=last.y+"px"; el.style.width=last.w+"px"; el.style.height=last.h+"px"; };
+      const move=(ev)=>{
+        const r=resizeRef.current; if(!r) return;
+        let {x,y,w,h}=r.g0;
+        const dx=ev.clientX - r.sx, dy=ev.clientY - r.sy;
+        if(r.dir.includes("e")) w = lyricsClamp(g0.w + dx, LYRICS_MIN_W, Math.min(LYRICS_MAX_W, window.innerWidth - x - 6));
+        if(r.dir.includes("s")) h = lyricsClamp(g0.h + dy, LYRICS_MIN_H, Math.min(LYRICS_MAX_H, window.innerHeight - y - 6));
+        if(r.dir.includes("w")){ const nw=lyricsClamp(g0.w - dx, LYRICS_MIN_W, g0.x + g0.w); x = g0.x + g0.w - nw; w=nw; x=lyricsClamp(x,0,window.innerWidth - LYRICS_MIN_W); }
+        if(r.dir.includes("n")){ const nh=lyricsClamp(g0.h - dy, LYRICS_MIN_H, g0.y + g0.h); y = g0.y + g0.h - nh; h=nh; y=lyricsClamp(y,0,window.innerHeight - LYRICS_MIN_H); }
+        last={x,y,w,h};
+        if(!raf) raf=requestAnimationFrame(flush);
+      };
+      const up=()=>{
+        if(raf) cancelAnimationFrame(raf);
+        el.style.left=last.x+"px"; el.style.top=last.y+"px"; el.style.width=last.w+"px"; el.style.height=last.h+"px";
+        setLState(s=>{
+          if(lyricsEqual(s.geom,last)) return s;
+          const nxt={...s, geom:last};
+          saveLyricsState(nxt, true);
+          return nxt;
+        });
+        resizeRef.current=null;
+        document.body.style.userSelect="";
+        window.removeEventListener("mousemove", move);
+        window.removeEventListener("mouseup", up);
+      };
+      window.addEventListener("mousemove", move);
+      window.addEventListener("mouseup", up);
+    };
+
+    if (!conf.lyricsEnabled) return null;
+    if (!lState.open) return null;
+
+    const geom = lState.geom;
+    const trackLabel = curTrack ? `${curTrack.name} — ${(curTrack.artists||[]).map(a=>a.name).join(", ")}` : "";
+    const hasTrack = !!curTrack;
+
+    const closePanel = () => {
+      const s={...lState, open:false};
+      saveLyricsState(s,true); setLState(s);
+      try{ api.playSound("collapse"); }catch{}
+    };
+
+    let body;
+    if (!hasTrack) {
+      body = h("div", { className:"lyrics-empty" }, "No track — start playback in Spotify");
+    } else if (lyrics.loading) {
+      body = h("div", { className:"lyrics-empty" }, h("i", { className:"fa-solid fa-spinner fa-spin", style:{marginRight:"6px"} }), "Loading lyrics…");
+    } else if (lyrics.instrumental) {
+      body = h("div", { className:"lyrics-empty" }, h("i", { className:"fa-solid fa-music", style:{marginRight:"6px"} }), "Instrumental — no lyrics");
+    } else if (lyrics.error) {
+      body = h("div", { className:"sp-err", style:{margin:"8px"} }, lyrics.error);
+    } else if (lyrics.notFound) {
+      body = h("div", { className:"lyrics-empty", style:{ display:"flex", flexDirection:"column", gap:"8px", alignItems:"center"} },
+        h("span", null, "No lyrics found on LRCLIB"),
+        h("button", { className:"reset-btn", onClick:()=>{ const q = encodeURIComponent(`${(curTrack.artists||[]).map(a=>a.name).join(" ")} ${curTrack.name}`); api.invoke("open_external",{url:`https://genius.com/search?q=${q}`}).catch(()=>{}); } }, h("i",{className:"fa-solid fa-arrow-up-right-from-square"}), " Search Genius")
+      );
+    } else if (lyrics.syncedAvailable && lyrics.lines.length) {
+      body = h("div", { ref: bodyRef, className:"lyrics-body synced" },
+        ...lyrics.lines.map((ln,i)=>{
+          const isActive = i===activeIdx;
+          const isPast = i<activeIdx;
+          const cls = `lyrics-line${isActive?" on":""}${isPast?" past":""}`;
+          return h("div", { key:i, "data-idx":i, className:cls, onClick:()=> void seekTo(ln.ms), "data-tip": `Seek to ${fmt(ln.ms)}` }, ln.text);
+        })
+      );
+    } else if (lyrics.plain) {
+      const plainLines = lyrics.plain.split("\n");
+      body = h("div", { ref: bodyRef, className:"lyrics-body plain" },
+        h("pre", { className:"lyrics-plain" }, lyrics.plain),
+        h("div", { className:"mono-hint", style:{padding:"6px 0 2px", color:"var(--text-faint)", fontSize:"10px"} }, "Plain lyrics — no timestamps (seek disabled)")
+      );
+    } else if (lyrics.lines.length) {
+      body = h("div", { ref: bodyRef, className:"lyrics-body synced" },
+        ...lyrics.lines.map((ln,i)=> h("div",{key:i, className:"lyrics-line plain-line"}, ln.text))
+      );
+    } else {
+      body = h("div", { className:"lyrics-empty" }, "No lyrics");
+    }
+
+    return h("div", {
+      ref: panelRef,
+      className:"lyrics-panel",
+      style:{ left: geom.x+"px", top: geom.y+"px", width: geom.w+"px", height: geom.h+"px" },
+    },
+      h("div", { className:"lyrics-head", onMouseDown:onDragStart },
+        h("i", { className:"fa-solid fa-microphone-lines", style:{color:"var(--accent)"} }),
+        h("span", { className:"lyrics-head-title" }, "Lyrics"),
+        h("span", { className:"lyrics-head-track mono-hint", title: trackLabel }, hasTrack ? trackLabel : "—"),
+        h("span", { style:{marginLeft:"auto", display:"inline-flex", gap:"6px", alignItems:"center"} },
+          hasTrack && lyrics.syncedAvailable ? h("span", { className:"mono-hint", style:{fontSize:"10px", color: curIsPlaying ? "var(--accent)" : "var(--text-faint)"} }, curIsPlaying ? "● synced" : "○ paused") : null,
+          h("button", { className:"icon-btn", "data-tip":"Close lyrics", onClick:closePanel, "aria-label":"Close" }, h("i",{className:"fa-solid fa-xmark"}))
+        )
+      ),
+      h("div", { className:"lyrics-main" }, body),
+      h("div", { className:"lyrics-foot mono-hint" },
+        hasTrack ? `${curTrack.name} • ${fmt(curPos)} / ${fmt(curTrack.duration)}` : "",
+        hasTrack && lyrics.syncedAvailable ? h("span", { style:{marginLeft:"8px", opacity:.6} }, "click line to seek") : null
+      ),
+      h("div", { className:"lyrics-handle n", onMouseDown:onResizeStart("n") }),
+      h("div", { className:"lyrics-handle s", onMouseDown:onResizeStart("s") }),
+      h("div", { className:"lyrics-handle e", onMouseDown:onResizeStart("e") }),
+      h("div", { className:"lyrics-handle w", onMouseDown:onResizeStart("w") }),
+      h("div", { className:"lyrics-handle nw", onMouseDown:onResizeStart("nw") }),
+      h("div", { className:"lyrics-handle ne", onMouseDown:onResizeStart("ne") }),
+      h("div", { className:"lyrics-handle sw", onMouseDown:onResizeStart("sw") }),
+      h("div", { className:"lyrics-handle se", onMouseDown:onResizeStart("se") })
+    );
+  }
+
   return {
     Sidebar,
     Settings,
+    Titlebar: TitlebarBtn,
+    Overlay: LyricsOverlay,
     info: {
       voice: [],
-      keys: [["Spotify", "Controls before Git — Vencord style"]],
+      keys: [["Spotify", "Controls before Git — Vencord style"], ["Lyrics (microphone icon)","Timestamp-synced floating window — LRCLIB, click line to seek"]],
     },
   };
 }

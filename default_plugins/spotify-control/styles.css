@@ -115,3 +115,124 @@
 
 .spotify-box .discord-in { font-size: 11px; }
 .sp-hint { line-height: 1.4; padding: 4px 2px; }
+
+/* lyrics floating window — glass + draggable like notepad, timestamp-synced */
+.lyrics-panel{
+  position:fixed;
+  z-index:40;
+  display:flex;
+  flex-direction:column;
+  background:var(--surface);
+  border:1px solid color-mix(in srgb, var(--accent) 22%, var(--line));
+  box-shadow:0 24px 64px -24px var(--accent-glow);
+  backdrop-filter:blur(8px);
+  -webkit-backdrop-filter:blur(8px);
+  will-change:transform;
+  contain:layout style paint;
+  transform:translateZ(0);
+  overflow:hidden;
+}
+.lyrics-head{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  padding:8px 8px 8px 10px;
+  border-bottom:1px solid var(--line);
+  cursor:grab;
+  user-select:none;
+  flex-shrink:0;
+  min-width:0;
+}
+.lyrics-head:active{cursor:grabbing}
+.lyrics-head-title{
+  font-family:var(--sans);
+  font-size:11px;
+  font-weight:600;
+  letter-spacing:0.08em;
+  text-transform:uppercase;
+  color:var(--text-faint);
+  flex-shrink:0;
+}
+.lyrics-head-track{
+  flex:1;
+  min-width:0;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+  font-size:10px;
+  color:var(--text-dim);
+}
+.lyrics-main{ flex:1; min-height:0; display:flex; flex-direction:column; overflow:hidden; }
+.lyrics-body{
+  flex:1;
+  min-height:0;
+  overflow:auto;
+  padding:10px 12px;
+  scrollbar-width:thin;
+  scroll-behavior:smooth;
+}
+.lyrics-body.synced{ display:flex; flex-direction:column; gap:4px; }
+.lyrics-line{
+  font-family:var(--sans);
+  font-size:13px;
+  line-height:1.5;
+  color:var(--text-dim);
+  padding:4px 8px;
+  border-radius:4px;
+  cursor:pointer;
+  transition: color .15s, background .15s, transform .12s;
+  border-left:2px solid transparent;
+}
+.lyrics-line:hover{ color:var(--text); background: color-mix(in srgb, var(--accent) 6%, transparent); border-left-color: color-mix(in srgb, var(--accent) 30%, transparent); }
+.lyrics-line.past{ color:var(--text-faint); opacity:.85; }
+.lyrics-line.on{
+  color: var(--accent-bright);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border-left-color: var(--accent);
+  box-shadow: 0 0 12px -8px var(--accent-glow);
+  transform: translateX(2px);
+}
+.lyrics-body.plain{ padding:0; }
+.lyrics-plain{
+  margin:0;
+  padding:12px;
+  font-family:var(--sans);
+  font-size:13px;
+  line-height:1.7;
+  color:var(--text);
+  white-space:pre-wrap;
+  overflow-wrap:break-word;
+}
+.lyrics-empty{
+  flex:1;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  text-align:center;
+  padding:24px 12px;
+  font-family:var(--sans);
+  font-size:12px;
+  color:var(--text-faint);
+}
+.lyrics-foot{
+  flex-shrink:0;
+  padding:6px 10px;
+  border-top:1px solid var(--line);
+  font-size:10px;
+  color:var(--text-faint);
+  display:flex;
+  align-items:center;
+  gap:6px;
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+.lyrics-handle{position:absolute; background:transparent; z-index:1}
+.lyrics-handle.n{top:-3px; left:6px; right:6px; height:6px; cursor:ns-resize}
+.lyrics-handle.s{bottom:-3px; left:6px; right:6px; height:6px; cursor:ns-resize}
+.lyrics-handle.e{top:6px; right:-3px; bottom:6px; width:6px; cursor:ew-resize}
+.lyrics-handle.w{top:6px; left:-3px; bottom:6px; width:6px; cursor:ew-resize}
+.lyrics-handle.nw{top:-3px; left:-3px; width:10px; height:10px; cursor:nwse-resize}
+.lyrics-handle.ne{top:-3px; right:-3px; width:10px; height:10px; cursor:nesw-resize}
+.lyrics-handle.sw{bottom:-3px; left:-3px; width:10px; height:10px; cursor:nwse-resize}
+.lyrics-handle.se{bottom:-3px; right:-3px; width:10px; height:10px; cursor:nwse-resize}
