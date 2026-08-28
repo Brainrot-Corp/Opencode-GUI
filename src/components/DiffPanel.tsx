@@ -41,7 +41,9 @@ export default function DiffPanel({
           const list = ((m.info as any).summary?.diffs ?? []) as FileDiff[];
           for (const d of list) byFile.set(d.file, d);
         }
-        setDiffs([...byFile.values()]);
+        const list = [...byFile.values()];
+        setDiffs(list);
+        window.dispatchEvent(new CustomEvent("oc:diff-files", { detail: list.map((d) => d.file) }));
       } catch (e) {
         setError(String(e));
       }

@@ -62,9 +62,10 @@ export default function ChatPage() {
   );
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [diffOpen, setDiffOpen] = useState(false);
-  // discord plugin reads this for {status} — file > diff > permission/question > compacting > busy > typing > idle
+  // discord plugin reads this for {status} — file > diff > permission/question > compacting > busy > typing > working > idle
   const [editingFile, setEditingFile] = useState("");
   const [composerHasText, setComposerHasText] = useState(false);
+  const [diffFiles, setDiffFiles] = useState<string[]>([]);
   useEffect(() => {
     const onFileEdit = (ev: Event) => setEditingFile((ev as CustomEvent<{ path?: string }>).detail?.path || "");
     window.addEventListener("oc:file-editor", onFileEdit);
@@ -75,6 +76,17 @@ export default function ChatPage() {
     window.addEventListener("oc:composer-draft", onDraft);
     return () => window.removeEventListener("oc:composer-draft", onDraft);
   }, []);
+  useEffect(() => {
+    const onDiff = (ev: Event) => {
+      const d = (ev as CustomEvent<string[]>).detail;
+      setDiffFiles(Array.isArray(d) ? d : []);
+    };
+    window.addEventListener("oc:diff-files", onDiff);
+    return () => window.removeEventListener("oc:diff-files", onDiff);
+  }, []);
+  useEffect(() => {
+    if (!diffOpen) setDiffFiles([]);
+  }, [diffOpen]);
   // presence live snapshot for plugins (discord etc.) — always mirrored to window
   useEffect(() => {
     const ws = settings.workspace;
@@ -88,12 +100,13 @@ export default function ChatPage() {
       sessionTitle: oc.sessions.find((s) => s.id === oc.activeId)?.title || "",
       editingFile,
       diffOpen,
+      diffFiles,
       hasPermission: !!oc.permission,
       hasQuestion: !!oc.question,
       compacting: !!oc.compacting,
       isTyping: composerHasText,
     };
-  }, [settings.workspace, oc.modelSel, oc.defaultModel, oc.busy, oc.activeId, oc.sessions, editingFile, diffOpen, oc.permission, oc.question, oc.compacting, composerHasText]);
+  }, [settings.workspace, oc.modelSel, oc.defaultModel, oc.busy, oc.activeId, oc.sessions, editingFile, diffOpen, diffFiles, oc.permission, oc.question, oc.compacting, composerHasText]);
   // terminal dock visibility (height + instances live inside TerminalPanel — survives hide/show)
   const [termOpen, setTermOpen] = useState(
     () => localStorage.getItem("oc.term.open") === "1",

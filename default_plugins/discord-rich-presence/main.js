@@ -13,8 +13,8 @@
 // }
 //
 // Live snapshot lu depuis window.__presence (mis à jour par ChatPage) :
-//   {workspace, workspaceName, model, busy, sessionId, sessionTitle, editingFile, diffOpen, hasPermission, hasQuestion, compacting, isTyping}
-//   {status} priority: file > diff > permission/question > compacting > busy > typing > idle
+//   {workspace, workspaceName, model, busy, sessionId, sessionTitle, editingFile, diffOpen, diffFiles, hasPermission, hasQuestion, compacting, isTyping}
+//   {status} priority: file > diff(file) > permission/question > compacting > busy > typing > working > idle
 //   Timer: app launch → close (sessionStorage, survives reloads/HMR within same launch)
 
 const ID = "discord-rich-presence";
@@ -67,6 +67,7 @@ function readPresence() {
     sessionTitle: p.sessionTitle || "",
     editingFile: p.editingFile || "",
     diffOpen: !!p.diffOpen,
+    diffFiles: Array.isArray(p.diffFiles) ? p.diffFiles : [],
     hasPermission: !!p.hasPermission,
     hasQuestion: !!p.hasQuestion,
     compacting: !!p.compacting,
@@ -260,16 +261,23 @@ export default function activate(api) {
       const wsName = live.workspaceName;
       const workspaceDisp = wsName || "No workspace";
       const modelDisp = live.model || "—";
-      // file > diff > permission/question > compacting > busy > typing > idle
+      // file > diff(file) > permission/question > compacting > busy > typing > working > idle
       let statusDisp = "Idle";
       if (live.editingFile) statusDisp = `Editing: ${basename(live.editingFile)}`;
-      else if (live.diffOpen) statusDisp = "Reviewing diff";
+      else if (live.diffOpen) {
+        const files = live.diffFiles;
+        if (files.length === 1) statusDisp = `Reviewing: ${basename(files[0])}`;
+        else if (files.length > 1) statusDisp = `Reviewing: ${basename(files[0])} (+${files.length - 1})`;
+        else statusDisp = "Reviewing diff";
+      }
       else if (live.hasPermission && live.hasQuestion) statusDisp = "Awaiting input";
       else if (live.hasPermission) statusDisp = "Awaiting approval";
       else if (live.hasQuestion) statusDisp = "Awaiting answer";
       else if (live.compacting) statusDisp = "Compacting…";
       else if (live.busy) statusDisp = "Generating…";
       else if (live.isTyping) statusDisp = "Typing…";
+      else if (live.sessionTitle) statusDisp = `Working: ${live.sessionTitle}`;
+      else if (live.sessionId) statusDisp = `Working: ${live.sessionId.slice(0, 8)}`;
 
       const details = renderTpl(conf.detailsTpl, { workspace: workspaceDisp, model: modelDisp, status: statusDisp });
       const state = renderTpl(conf.stateTpl, { workspace: workspaceDisp, model: modelDisp, status: statusDisp });
