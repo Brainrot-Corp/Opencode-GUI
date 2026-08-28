@@ -119,6 +119,7 @@ export default function GitPanel() {
   const bodyOpt = useCommitBody();
   const genIdRef = useRef(0);
   const genSidRef = useRef<string | null>(null);
+  const [genHover, setGenHover] = useState(false);
   const dir = useRef(getDirectory());
   const [gh, setGh] = useState(() => clampH(Number(localStorage.getItem(GH_KEY)) || GH_DEFAULT));
   const [dragging, setDragging] = useState(false);
@@ -210,10 +211,15 @@ export default function GitPanel() {
     const sid = genSidRef.current;
     genSidRef.current = null;
     setGen(false);
+    setGenHover(false);
     if (sid) {
       opencode().then(({ client }) => client.session.abort({ path: { id: sid } }).catch(() => {})).catch(() => {});
       dropSession(sid).catch(() => {});
     }
+  }, [gen]);
+
+  useEffect(() => {
+    if (!gen) setGenHover(false);
   }, [gen]);
 
   const commit = (thenPush = false, override?: string) =>
@@ -569,16 +575,26 @@ export default function GitPanel() {
               disabled={busy}
             />
             <button
-              className={`gp-gen${gen ? " spinning" : ""}`}
+              className={`gp-gen${gen ? " spinning" : ""}${gen && genHover ? " abort" : ""}`}
               data-tip={
-                secondaryModel()
-                  ? `Generate message (${secondaryModel()})${bodyOpt ? " + body" : ""}`
-                  : "Heuristic only — pick a Secondary model for AI"
+                gen
+                  ? "Stop generation"
+                  : secondaryModel()
+                    ? `Generate message (${secondaryModel()})${bodyOpt ? " + body" : ""}`
+                    : "Heuristic only — pick a Secondary model for AI"
               }
-              disabled={gen || busy || !staged.length}
-              onClick={genMsg}
+              disabled={busy || (!gen && !staged.length)}
+              onMouseEnter={() => gen && setGenHover(true)}
+              onMouseLeave={() => setGenHover(false)}
+              onClick={() => {
+                if (gen) {
+                  abortGen();
+                } else {
+                  genMsg();
+                }
+              }}
             >
-              <i className="fa-solid fa-wand-magic-sparkles" />
+              <i className={`fa-solid ${gen && genHover ? "fa-xmark" : "fa-wand-magic-sparkles"}`} />
             </button>
           </div>
           <div className="gp-actions">

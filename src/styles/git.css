@@ -171,18 +171,35 @@ body.gp-resizing * {
   cursor: pointer;
   color: var(--text-faint);
   font-size: 12px;
-  transition: color 0.2s, box-shadow 0.3s;
+  transition: color 0.2s;
 }
 .gp-gen:hover:not(:disabled) {
   color: var(--accent);
-  box-shadow: 0 0 10px -2px var(--accent-glow);
+}
+.gp-gen:hover:not(:disabled) i {
+  text-shadow: 0 0 10px var(--accent-glow);
 }
 .gp-gen:disabled {
   opacity: 0.35;
   cursor: default;
 }
+.gp-gen:disabled i {
+  text-shadow: none;
+}
 .gp-gen.spinning i {
   animation: gp-spin 1s linear infinite;
+}
+.gp-gen.spinning.abort {
+  color: var(--danger);
+}
+.gp-gen.spinning.abort i {
+  animation: none;
+}
+.gp-gen.spinning.abort:hover {
+  color: var(--danger);
+}
+.gp-gen.spinning.abort:hover i {
+  text-shadow: 0 0 10px color-mix(in srgb, var(--danger) calc(0.55 * 100%), transparent);
 }
 @keyframes gp-spin {
   to { transform: rotate(360deg); }
