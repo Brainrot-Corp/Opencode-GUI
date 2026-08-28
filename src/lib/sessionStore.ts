@@ -145,7 +145,12 @@ export function createSessionStore(onChange: (sid: string) => void) {
   // a completed fetch is authoritative for THIS session — drop its stashes,
   // install the list, and let the caller decide whether to show it
   function setFetched(sid: string, list: Msg[]) {
-    stores.set(sid, list);
+    const existing = stores.get(sid);
+    // retain local command entries (they never exist server-side)
+    const cmds = existing ? existing.filter((m) => (m as any)._isCommand) : [];
+    const ids = new Set(list.map((m) => m.info.id));
+    const keep = cmds.filter((c) => !ids.has(c.info.id));
+    stores.set(sid, keep.length ? [...list, ...keep].sort((a, b) => (a.info.time?.created ?? 0) - (b.info.time?.created ?? 0)) : list);
     dropStashes(sid);
   }
 
@@ -163,6 +168,30 @@ export function createSessionStore(onChange: (sid: string) => void) {
   function clearStashes() {
     orphanParts.clear();
     pendingDeltas.clear();
+  }
+
+  // local slash-command trace — shown in history but never sent as a prompt
+  let cmdSeq = 0;
+  function addCommand(sid: string, text: string) {
+    const now = Date.now();
+    const id = `cmd-${++cmdSeq}-${now}`;
+    const msg: any = {
+      info: {
+        id,
+        sessionID: sid,
+        role: "user",
+        time: { created: now, completed: now },
+        parentID: "",
+        modelID: "",
+        providerID: "",
+        mode: "",
+        path: { cwd: "", root: "" },
+      },
+      parts: [{ id: `${id}-p`, type: "text", text, sessionID: sid, messageID: id } as Part],
+      _isCommand: true,
+    };
+    storeFor(sid).push(msg as Msg);
+    onChange(sid);
   }
 
   // synthetic entry for a prompt that failed before the server created any
@@ -207,6 +236,7 @@ export function createSessionStore(onChange: (sid: string) => void) {
     remove,
     clearStashes,
     addError,
+    addCommand,
     cached: (sid: string) => stores.get(sid),
   };
 }

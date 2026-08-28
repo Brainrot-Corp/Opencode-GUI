@@ -316,6 +316,17 @@
 .msg.assistant .msg-time {
   justify-content: flex-start;
 }
+.msg-cmd-label {
+  margin-left: 4px;
+  font-style: italic;
+  color: var(--text-faint);
+  opacity: 0.9;
+}
+.msg.msg-command {
+  opacity: 0.78;
+  border-style: dashed;
+  background: color-mix(in srgb, var(--accent) calc(0.05 * 100%), transparent);
+}
 
 /* "viewing earlier version" notice above the composer */
 .revert-banner {

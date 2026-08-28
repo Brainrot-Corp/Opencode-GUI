@@ -1004,7 +1004,7 @@ export function useOpencode() {
   // earlier version. "" when there is nothing left to undo.
   const undoTarget = useMemo(() => {
     if (!activeId) return "";
-    const users = msgs.filter((m) => m.info.role === "user").map((m) => m.info.id);
+    const users = msgs.filter((m) => m.info.role === "user" && !(m as any)._isCommand).map((m) => m.info.id);
     const pos = revertId ? users.indexOf(revertId) : users.length;
     const t = revertId ? pos - 1 : pos - 2;
     return t >= 0 ? users[t] : "";
@@ -1019,6 +1019,7 @@ export function useOpencode() {
         await send(trimmed, files);
         return;
       }
+      const sidBefore = activeRef.current;
       const handled = await handleSlash(trimmed, {
         activeId: activeRef.current,
         sessions,
@@ -1046,6 +1047,7 @@ export function useOpencode() {
         openSession,
       });
       if (!handled) await send(text);
+      else if (sidBefore) store.addCommand(sidBefore, trimmed);
     },
     [
       commands,
