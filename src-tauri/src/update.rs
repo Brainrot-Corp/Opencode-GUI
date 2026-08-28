@@ -210,25 +210,47 @@ pub fn cleanup_old() {
     }
 }
 
+fn trace(msg: &str) {
+    let _ = (|| -> std::io::Result<()> {
+        use std::io::Write;
+        let p = std::env::temp_dir().join("oc-update-trace.log");
+        let mut f = std::fs::OpenOptions::new().create(true).append(true).open(p)?;
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs().to_string())
+            .unwrap_or_default();
+        writeln!(f, "[{ts}] {msg}").ok();
+        Ok(())
+    })();
+}
+
 pub fn apply_on_exit() {
+    // trace to %TEMP%\oc-update-trace.log for field diagnosis (portable + debug local)
+    trace("apply_on_exit enter");
     if !ARMED.load(Ordering::Relaxed) {
+        trace("apply_on_exit: not armed");
         return;
     }
     let staged = STAGED.lock().unwrap_or_else(|e| e.into_inner()).clone();
-    let Some(dir) = staged else { return };
-    let Some(cur) = std::env::current_exe().ok() else { return };
-    let Some(exe_dir) = cur.parent().map(|p| p.to_owned()) else { return };
+    let Some(dir) = staged.clone() else { trace("apply_on_exit: no staged dir"); return };
+    trace(&format!("staged dir: {}", dir.display()));
+    let Some(cur) = std::env::current_exe().ok() else { trace("apply_on_exit: current_exe failed"); return };
+    trace(&format!("cur exe: {}", cur.display()));
+    let Some(exe_dir) = cur.parent().map(|p| p.to_owned()) else { trace("apply_on_exit: no parent"); return };
+    trace(&format!("exe_dir: {}", exe_dir.display()));
 
     // rename the running exe aside, then drop the new files in — copying
     // over a running exe is denied, renaming it is fine
     let old = exe_dir.join("opencode-gui.old.exe");
     let _ = std::fs::remove_file(&old);
-    if std::fs::rename(&cur, &old).is_err() {
-        // e.g. MSI installs under Program Files — cannot self-update
-        return;
+    match std::fs::rename(&cur, &old) {
+        Ok(_) => trace("rename cur -> old ok"),
+        Err(e) => { trace(&format!("rename failed (MSI/locked): {e}")); return; }
     }
     move_file(&dir.join("opencode-gui.exe"), &exe_dir.join("opencode-gui.exe"));
+    trace(&format!("move_file gui -> {} exists={}", exe_dir.join("opencode-gui.exe").display(), exe_dir.join("opencode-gui.exe").exists()));
     move_file(&dir.join("opencode.exe"), &exe_dir.join("opencode.exe"));
+    trace(&format!("move_file sidecar -> {} exists={}", exe_dir.join("opencode.exe").display(), exe_dir.join("opencode.exe").exists()));
 
     let _ = std::fs::remove_dir_all(&dir);
     // the old exe's image may still be held open until this process fully
@@ -248,32 +270,43 @@ pub fn apply_on_exit() {
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         const DETACHED_PROCESS: u32 = 0x0000_0008;
         const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
-        let pid = std::process::id();
         let exe_quoted = format!("\"{}\"", exe_path.display());
-        // Prefer a tiny batch file: tasklist polls the parent PID, ping gives
-        // a locale-independent delay, start is detached. Batch deletes itself.
+        trace(&format!("exe_path: {} quoted={}", exe_path.display(), exe_quoted));
+        // 1.5.5 simply did `Command::new(exe).spawn()` with no wait — worked on Win11
+        // where the single-instance mutex is released quickly, but failed on Win10
+        // where AV/WebView2 holds it ~1-2s. The tasklist-polling batch added later
+        // broke entirely (missing parens caused infinite `goto wait` loop, plus
+        // locale-dependent `tasklist`/`find` failures). Fixed-delay batch avoids
+        // all of that: ~2.5s ping delay then `start --new-instance` bypasses the
+        // mutex entirely. Matches 1.5.5's direct spawn semantics but survives Win10.
         let batch_path = std::env::temp_dir().join("oc-relaunch.bat");
-        // Two polls: filtered (fast, English) + unfiltered (locale-independent fallback)
         let batch = format!(
-            "@echo off\r\n:wait\r\ntasklist /FI \"PID eq {}\" 2>nul | find \"{}\" >nul && ping -n 2 127.0.0.1 >nul & goto wait\r\ntasklist 2>nul | find \" {} \" >nul && ping -n 2 127.0.0.1 >nul & goto wait\r\nping -n 2 127.0.0.1 >nul\r\nstart \"\" {}\r\ndel \"%~f0\"\r\n",
-            pid, pid, pid, exe_quoted
+            "@echo off\r\nping -n 4 127.0.0.1 >nul\r\nstart \"\" {} --new-instance\r\n(goto) 2>nul & del \"%~f0\"\r\n",
+            exe_quoted
         );
+        trace(&format!("batch_path: {} batch_len={}", batch_path.display(), batch.len()));
         let mut spawned = false;
-        if std::fs::write(&batch_path, batch).is_ok() {
+        if std::fs::write(&batch_path, &batch).is_ok() {
+            trace("batch write ok");
             let mut cmd = std::process::Command::new("cmd");
             cmd.args(["/C", &batch_path.to_string_lossy().to_string()]);
             cmd.creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
-            if cmd.spawn().is_ok() {
-                spawned = true;
+            match cmd.spawn() {
+                Ok(_) => { trace("batch spawn ok"); spawned = true; }
+                Err(e) => trace(&format!("batch spawn failed: {e}")),
             }
+        } else {
+            trace("batch write failed");
         }
         if !spawned {
-            // Fallback: PowerShell PID wait — handles missing tasklist or batch write fail
+            trace("batch not spawned, trying powershell");
+            // Fallback: fixed 2s sleep then Start-Process --new-instance (same semantics as batch)
             let exe_str = exe_path.to_string_lossy().replace('\'', "''");
             let ps_cmd = format!(
-                "$p={}; while (Get-Process -Id $p -ErrorAction SilentlyContinue) {{ Start-Sleep -Milliseconds 300 }}; Start-Sleep -Milliseconds 800; Start-Process -FilePath '{}'",
-                pid, exe_str
+                "Start-Sleep -Seconds 2; Start-Process -FilePath '{}' -ArgumentList '--new-instance'",
+                exe_str
             );
+            trace(&format!("ps_cmd: {ps_cmd}"));
             let mut cmd = std::process::Command::new("powershell");
             cmd.args([
                 "-NoProfile",
@@ -286,36 +319,42 @@ pub fn apply_on_exit() {
                 &ps_cmd,
             ]);
             cmd.creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
-            let res = cmd.spawn();
-            if res.is_err() {
-                let mut alt = std::process::Command::new("pwsh");
-                alt.args([
-                    "-NoProfile",
-                    "-NonInteractive",
-                    "-WindowStyle",
-                    "Hidden",
-                    "-ExecutionPolicy",
-                    "Bypass",
-                    "-Command",
-                    &ps_cmd,
-                ]);
-                alt.creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
-                if alt.spawn().is_err() {
-                    // Last resort: direct ping delay then start
-                    let cmdline = format!("ping -n 4 127.0.0.1 >nul && start \"\" {}", exe_quoted);
-                    let mut fb = std::process::Command::new("cmd");
-                    fb.args(["/C", &cmdline]);
-                    fb.creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
-                    let _ = fb.spawn().or_else(|_| {
-                        let mut fallback = std::process::Command::new(&exe_path);
-                        fallback.creation_flags(
-                            CREATE_NO_WINDOW | DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP,
-                        );
-                        fallback.spawn()
-                    });
+            match cmd.spawn() {
+                Ok(_) => { trace("powershell spawn ok"); spawned = true; }
+                Err(e) => {
+                    trace(&format!("powershell spawn failed: {e}"));
+                    let mut alt = std::process::Command::new("pwsh");
+                    alt.args([
+                        "-NoProfile",
+                        "-NonInteractive",
+                        "-WindowStyle",
+                        "Hidden",
+                        "-ExecutionPolicy",
+                        "Bypass",
+                        "-Command",
+                        &ps_cmd,
+                    ]);
+                    alt.creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
+                    match alt.spawn() {
+                        Ok(_) => { trace("pwsh spawn ok"); spawned = true; }
+                        Err(e2) => {
+                            trace(&format!("pwsh spawn failed: {e2}"));
+                            // Last resort: direct detached launch (no delay)
+                            let mut fallback = std::process::Command::new(&exe_path);
+                            fallback.arg("--new-instance");
+                            fallback.creation_flags(
+                                CREATE_NO_WINDOW | DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP,
+                            );
+                            match fallback.spawn() {
+                                Ok(_) => { trace("direct fallback spawn ok"); spawned = true; }
+                                Err(e3) => trace(&format!("direct fallback spawn failed: {e3}")),
+                            }
+                        }
+                    }
                 }
             }
         }
+        trace(&format!("apply_on_exit done spawned={spawned}"));
     }
     #[cfg(not(windows))]
     {
