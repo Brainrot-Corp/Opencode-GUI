@@ -455,6 +455,13 @@ export default function TermInstanceView({
     if (active && open && termRef.current) setTimeout(() => termRef.current?.focus(), 50);
   }, [active, open]);
 
+  // allow Terminal dock to focus active terminal via Ctrl+J from composer
+  useEffect(() => {
+    const onFocusReq = () => { if (active && termRef.current) termRef.current.focus(); };
+    window.addEventListener("oc:term-focus", onFocusReq as any);
+    return () => window.removeEventListener("oc:term-focus", onFocusReq as any);
+  }, [active]);
+
   // expose dead/err for dock's header? parent tracks via callbacks, but also keep local for potential future header per view
   void deadLocal; void errLocal;
 

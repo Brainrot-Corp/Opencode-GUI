@@ -133,40 +133,69 @@ export default function Sidebar({
   const primaryDir = allDirs[0] ?? getDirectory();
   const extraDirs = allDirs.slice(1);
 
-  // drag-drop: Tauri payload + HTML fallback
+  // drag-drop: Tauri payload + HTML fallback — also show dimmed preview on hover
   useEffect(() => {
-    let un: (() => void) | undefined;
+    let unDrop: (() => void) | undefined;
+    let unEnter: (() => void) | undefined;
+    let unOver: (() => void) | undefined;
+    let unLeave: (() => void) | undefined;
+    const updatePreviewFromY = (y: number, paths?: string[]) => {
+      setDragOver(true);
+      if (paths?.[0]) setDraggedName(baseName(paths[0]));
+      const container = scrollRef.current;
+      if (!container) return;
+      const headers = [...container.querySelectorAll<HTMLElement>("[data-ws-header]")].filter(h => (h as HTMLElement).offsetParent !== null);
+      if (!headers.length) { setDropIndex(extraDirs.length); return; }
+      let rawIdx = headers.length;
+      for (let i = 0; i < headers.length; i++) {
+        const r = headers[i].getBoundingClientRect();
+        if (r.height === 0) continue;
+        if (y < r.top + r.height / 2) { rawIdx = i; break; }
+      }
+      const extraIdx = Math.max(0, rawIdx - 1);
+      setDropIndex(Math.min(extraIdx, extraDirs.length));
+    };
     listen("tauri://drag-drop", (e: any) => {
       const payload = e.payload as { paths?: string[]; position?: { x: number; y: number } };
       const paths: string[] = Array.isArray(payload?.paths) ? payload.paths : Array.isArray((e as any).payload) ? (e as any).payload : [];
       let idx: number | null = dropIndex;
       if (payload?.position && scrollRef.current) {
-        const headers = [...scrollRef.current.querySelectorAll<HTMLElement>("[data-ws-header]")];
+        const headers = [...scrollRef.current.querySelectorAll<HTMLElement>("[data-ws-header]")].filter(h => (h as HTMLElement).offsetParent !== null);
         const y = payload.position.y;
         let rawIdx = headers.length;
         for (let i = 0; i < headers.length; i++) {
           const r = headers[i].getBoundingClientRect();
+          if (r.height === 0) continue;
           if (y < r.top + r.height / 2) { rawIdx = i; break; }
         }
         idx = Math.max(0, rawIdx - 1);
       }
       void handleDropPaths(paths, idx);
       setDragOver(false); setDropIndex(null); setDraggedName(null);
-    }).then(f => un = f).catch(() => {});
+    }).then(f => unDrop = f).catch(() => {});
+    // Tauri hover events — drive preview before drop (HTML drag events may not fire for OS files)
+    const tauriHover = (e: any) => {
+      const payload = e.payload as { paths?: string[]; position?: { x: number; y: number } };
+      const paths: string[] = Array.isArray(payload?.paths) ? payload.paths : Array.isArray(payload) ? payload : [];
+      const y = payload?.position?.y;
+      if (typeof y === "number") updatePreviewFromY(y, paths);
+      else setDragOver(true);
+    };
+    listen("tauri://drag-enter", tauriHover as any).then(f => unEnter = f).catch(() => {});
+    listen("tauri://drag-over", tauriHover as any).then(f => unOver = f).catch(() => {});
+    listen("tauri://drag-leave", (() => { setDragOver(false); setDropIndex(null); setDraggedName(null); }) as any).then(f => unLeave = f).catch(() => {});
     const onEnter = () => setDragOver(true);
     const onLeave = () => { setDragOver(false); setDraggedName(null); };
     window.addEventListener("dragenter", onEnter as any);
     window.addEventListener("dragleave", onLeave as any);
-    return () => { un?.(); window.removeEventListener("dragenter", onEnter as any); window.removeEventListener("dragleave", onLeave as any); };
-  }, [dropIndex]);
+    return () => { unDrop?.(); unEnter?.(); unOver?.(); unLeave?.(); window.removeEventListener("dragenter", onEnter as any); window.removeEventListener("dragleave", onLeave as any); };
+  }, [dropIndex, extraDirs.length]);
   // html drag over for placement hint + preview name
   const onDragOver = (e: React.DragEvent) => {
     e.preventDefault();
-    const types = Array.from((e.dataTransfer?.types as any) ?? []);
-    const isFileDrag = types.includes("Files");
-    if (!isFileDrag && dragReorder === null) return;
     setDragOver(true);
-    if (isFileDrag) {
+    // try to capture dragged filename for preview label (best-effort, may be empty until drop)
+    try {
       let name: string | null = null;
       const files: any[] = Array.from((e.dataTransfer as any)?.files ?? []);
       if (files[0]?.name) name = files[0].name;
@@ -182,15 +211,16 @@ export default function Sidebar({
         if (txt) { const t = txt.trim().split(/[\/\\]/).pop(); if (t) name = t; }
       }
       if (name) setDraggedName(baseName(name));
-    }
+    } catch {}
     const container = scrollRef.current;
     if (!container) return;
-    const headers = [...container.querySelectorAll<HTMLElement>("[data-ws-header]")];
+    const headers = [...container.querySelectorAll<HTMLElement>("[data-ws-header]")].filter(h => (h as HTMLElement).offsetParent !== null);
     if (!headers.length) { setDropIndex(extraDirs.length); return; }
     const rawHeaders = headers;
     let rawIdx = rawHeaders.length;
     for (let i = 0; i < rawHeaders.length; i++) {
       const r = rawHeaders[i].getBoundingClientRect();
+      if (r.height === 0) continue;
       if (e.clientY < r.top + r.height / 2) { rawIdx = i; break; }
     }
     const extraIdx = Math.max(0, rawIdx - 1);

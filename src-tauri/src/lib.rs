@@ -1165,6 +1165,11 @@ fn hide_to_tray(app: tauri::AppHandle) {
     hide_main(&app);
 }
 
+#[tauri::command]
+fn toggle_window(app: tauri::AppHandle) {
+    toggle_main(&app);
+}
+
 // ground-truth focus check for the Alt+Space toggle: after an interactive
 // resize, tao's internal focus tracking desyncs and is_focused() reports
 // false until a hide/minimize cycle resets it — making the hotkey take the
@@ -1524,6 +1529,7 @@ pub fn run() {
             autostart_disable,
             set_tray_reset,
             hide_to_tray,
+            toggle_window,
             spawn_new_instance,
             debug_log,
             resize_cursor,

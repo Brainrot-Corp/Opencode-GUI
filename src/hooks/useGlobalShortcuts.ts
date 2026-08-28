@@ -192,22 +192,38 @@ export function useGlobalShortcuts({
     return () => document.removeEventListener("contextmenu", ctx);
   }, []);
 
-  // suppress Chromium/WebView2 native downloads popup on Ctrl+J when focus is
-  // NOT inside an input/textarea/contenteditable or the terminal. This is the
-  // "unfocused" case from the request — inputs and terminal already consume or
-  // intentionally handle Ctrl+J, so we only block the unfocused path here as a
-  // fallback for any code path that didn't already preventDefault.
+  // fallback suppress for Chromium downloads popup on Ctrl+J when unfocused.
+  // Terminal dock handles most cases (including composer toggle); this only
+  // preventsDefault so the native window never appears if Terminal didn't handle,
+  // but does not stop propagation so hidden→reopen still fires.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key.toLowerCase() !== "j" || !e.ctrlKey || e.altKey || e.shiftKey || e.metaKey) return;
       const t = e.target as HTMLElement | null;
       const ae = document.activeElement as HTMLElement | null;
       const inTerm = !!t?.closest?.(".term-dock") || !!ae?.closest?.(".term-dock") || !!t?.closest?.(".xterm") || !!ae?.closest?.(".xterm");
-      const inInput = !!t?.closest?.("input, textarea, [contenteditable=\"true\"], [contenteditable=\"\"]") || !!ae?.closest?.("input, textarea, [contenteditable=\"true\"], [contenteditable=\"\"]");
+      const inInput = !!t?.closest?.("input, textarea, [contenteditable=\"true\"], [contenteditable=\"\"]") || !!ae?.closest?.("input, textarea, [contenteditable=\"true\"], [contenteditable=\"\"]") || !!t?.closest?.(".composer") || !!ae?.closest?.(".composer");
       if (inTerm || inInput) return;
+      e.preventDefault();
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, []);
+
+  // Alt+Space: suppress Windows system menu and toggle window (tray) when focused.
+  // The Rust global-shortcut handles system-wide toggling, but when the window is
+  // focused Windows still shows the legacy Restore/Move/Size menu on Alt+Space
+  // before the global shortcut fires. Intercepting here restores the old
+  // "Alt+Space toggles app in focus / in the tray" behavior.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!e.altKey || e.ctrlKey || e.shiftKey || e.metaKey) return;
+      const isSpace = e.code === "Space" || e.key === " " || e.key === "Spacebar";
+      if (!isSpace) return;
       e.preventDefault();
       e.stopPropagation();
       (e as any).stopImmediatePropagation?.();
+      void import("@tauri-apps/api/core").then(({ invoke }) => invoke("toggle_window").catch(() => {}));
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);

@@ -440,22 +440,40 @@ export default function TerminalPanel({
   }, [open, terms, activeId]);
 
   // Ctrl+J → hide (when focused in terminal, focus chat) / reopen (when hidden)
+  // Composer Ctrl+J toggles to terminal: if hidden opens, if open focuses.
   // Also suppresses the WebView2/Chromium native downloads popup (Ctrl+J) when
-  // focus is NOT in an input/terminal — i.e. unfocused case. Inputs/terminals
-  // already consume the event; the early returns below must still preventDefault
-  // so the native window never appears on unfocused presses.
+  // focus is NOT in an input/terminal — i.e. unfocused case.
   useEffect(() => {
+    const focusTerminal = () => {
+      // xterm helper textarea is the focusable element
+      const helper = document.querySelector(".term-dock .xterm-helper-textarea") as HTMLElement | null;
+      if (helper) { helper.focus(); return; }
+      // fallback: dispatch to active TermInstanceView
+      window.dispatchEvent(new CustomEvent("oc:term-focus"));
+      // last resort: focus mount
+      (document.querySelector(".term-dock .term-mount") as HTMLElement | null)?.focus();
+    };
     const onKey = (e: KeyboardEvent) => {
       if (e.key.toLowerCase() !== "j" || !e.ctrlKey || e.altKey || e.shiftKey || e.metaKey) return;
       const target = e.target as HTMLElement | null;
       const ae = document.activeElement as HTMLElement | null;
       const inTerm = !!target?.closest?.(".term-dock") || !!ae?.closest?.(".term-dock");
+      const inComposer = !!target?.closest?.(".composer") || !!ae?.closest?.(".composer");
       const inInput = !!target?.closest?.("input, textarea, [contenteditable=\"true\"], [contenteditable=\"\"]") || !!ae?.closest?.("input, textarea, [contenteditable=\"true\"], [contenteditable=\"\"]");
       const inEditable = inTerm || inInput;
       if (open) {
+        if (inComposer) {
+          // Composer → terminal toggle: focus terminal (keep open)
+          e.preventDefault();
+          e.stopPropagation();
+          (e as any).stopImmediatePropagation?.();
+          playSound("click");
+          requestAnimationFrame(() => focusTerminal());
+          return;
+        }
         if (!inTerm) {
-          // unfocused (not in terminal): block native downloads. If focused in an
-          // input, let the input handle it (per request: only disable when unfocused).
+          // unfocused (not in terminal/composer): block native downloads.
+          // Other inputs (e.g. file editor) stay untouched per "unfocused" wording.
           if (inEditable) return;
           e.preventDefault();
           e.stopPropagation();
@@ -484,16 +502,20 @@ export default function TerminalPanel({
           (e as any).stopImmediatePropagation?.();
           return;
         }
-        // when focused in an input while hidden, still reopen is intentional —
-        // but respect "unfocused" wording: if focused in input, don't steal?
-        // We treat input-focus as editable and still allow reopen? Keep blocking
-        // downloads regardless — the toggle already prevents native.
         e.preventDefault();
         e.stopPropagation();
         (e as any).stopImmediatePropagation?.();
         playSound("click");
         if (onToggle) onToggle();
         else (onClose as any)?.();
+        // if triggered from composer, focus the newly opened terminal
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            const helper = document.querySelector(".term-dock .xterm-helper-textarea") as HTMLElement | null;
+            if (helper) helper.focus();
+            else window.dispatchEvent(new CustomEvent("oc:term-focus"));
+          });
+        });
       }
     };
     window.addEventListener("keydown", onKey, true);
