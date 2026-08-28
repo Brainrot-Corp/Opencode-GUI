@@ -179,7 +179,7 @@ export default function FileTree({ dir = "" }: { dir?: string }) {
     const abs = joinAbs(baseAbs, trimmed);
     const newRel = basePath ? `${basePath}/${trimmed}` : trimmed;
     try {
-      await invoke("file_create", { path: abs, is_dir: isDir });
+      await invoke("file_create", { path: abs, isDir });
       await load(basePath, true);
       emitChange(newRel);
       emitChange(basePath);

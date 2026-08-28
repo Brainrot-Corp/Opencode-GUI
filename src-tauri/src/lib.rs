@@ -334,18 +334,28 @@ fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> std::io::
 #[tauri::command]
 fn file_reveal(path: String) -> Result<(), String> {
     if path.trim().is_empty() { return Err("empty path".into()); }
+    let p = std::path::Path::new(&path);
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        std::process::Command::new("explorer")
-            .arg(format!("/select,{}", path))
-            .creation_flags(CREATE_NO_WINDOW)
-            .spawn().map_err(|e| e.to_string())?;
+        if p.is_dir() {
+            std::process::Command::new("explorer")
+                .arg(&path)
+                .creation_flags(CREATE_NO_WINDOW)
+                .spawn().map_err(|e| e.to_string())?;
+        } else {
+            // /select, needs separate arg handling for spaces — explorer parses
+            // "/select,<path>" as one token; quoting the path fixes spaces.
+            std::process::Command::new("explorer")
+                .arg(format!("/select,\"{}\"", path))
+                .creation_flags(CREATE_NO_WINDOW)
+                .spawn().map_err(|e| e.to_string())?;
+        }
     }
     #[cfg(not(windows))]
     {
-        let dir = std::path::Path::new(&path).parent().unwrap_or(std::path::Path::new(&path));
+        let dir = if p.is_dir() { p } else { p.parent().unwrap_or(p) };
         std::process::Command::new("xdg-open").arg(dir).spawn().map_err(|e| e.to_string())?;
     }
     Ok(())
