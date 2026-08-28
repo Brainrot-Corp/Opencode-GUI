@@ -6,7 +6,6 @@ import type { LoadedPlugin } from "../lib/plugins";
 import { isNewer } from "../lib/plugins";
 import type { AppSettings } from "../hooks/useSettings";
 import {
-  loadPluginsCatalog,
   fetchPluginFiles,
   pluginRawUrl,
   normalizePluginUrl,
@@ -24,6 +23,10 @@ export default function PluginsDialog({
   onRemoved,
   settings,
   updatePlugin,
+  catalog,
+  catalogLoading,
+  catalogError,
+  onRefreshCatalog,
 }: {
   open: boolean;
   onClose: () => void;
@@ -32,16 +35,19 @@ export default function PluginsDialog({
   onRemoved: (id: string) => void;
   settings?: AppSettings;
   updatePlugin?: (id: string, patch: Record<string, unknown>) => void;
+  catalog?: PluginCatalogEntry[] | null;
+  catalogLoading?: boolean;
+  catalogError?: string;
+  onRefreshCatalog?: (force?: boolean) => Promise<unknown>;
 }) {
   const [tab, setTab] = useState<"installed" | "browse">("installed");
   const [confirmId, setConfirmId] = useState<string | null>(null);
   const [removing, setRemoving] = useState<string | null>(null);
   const [err, setErr] = useState("");
 
-  // browse state
-  const [catalog, setCatalog] = useState<PluginCatalogEntry[] | null>(null);
-  const [catLoading, setCatLoading] = useState(false);
-  const [catErr, setCatErr] = useState("");
+  // catalog now owned by ChatPage (single source) — dialog is stateless for it
+  const catLoading = !!catalogLoading;
+  const catErr = catalogError ?? "";
   const [query, setQuery] = useState("");
   const [installing, setInstalling] = useState<string | null>(null);
   // url install
@@ -80,28 +86,9 @@ export default function PluginsDialog({
     }
   }
 
-  async function loadCatalog(force = false) {
-    setCatLoading(true);
-    setCatErr("");
-    try {
-      const entries = await loadPluginsCatalog(force);
-      setCatalog(entries);
-      if (!entries.length) setCatErr("No plugins found — check connection and try refresh");
-    } catch (e) {
-      setCatErr(e instanceof Error ? e.message : String(e));
-    } finally {
-      setCatLoading(false);
-    }
+  function refreshCatalog(force = false) {
+    void onRefreshCatalog?.(force)?.catch(() => {});
   }
-
-  // lazy load on first browse open (like VoicesDialog)
-  // eslint-disable-next-line react-hooks/rules-of-hooks
-  useEffect(() => {
-    if (!open) return;
-    if (tab !== "browse") return;
-    if (catalog !== null || catLoading) return;
-    void loadCatalog(false);
-  }, [open, tab, catalog, catLoading]);
 
   useEffect(() => {
     if (!open) setSettingsId(null);
@@ -110,7 +97,6 @@ export default function PluginsDialog({
   async function handleInstall(entry: PluginCatalogEntry) {
     setInstalling(entry.id);
     setErr("");
-    setCatErr("");
     try {
       const base = pluginRawUrl(entry.id, "").replace(/\/$/, "");
       // use shared fetch helper for consistency (handles css optional)
@@ -119,7 +105,7 @@ export default function PluginsDialog({
       await invoke("plugin_install_files", { dir, manifest, main, css });
       // watcher will reload; no need to manually refresh plugins prop
     } catch (e) {
-      setCatErr(e instanceof Error ? e.message : String(e));
+      setErr(e instanceof Error ? e.message : String(e));
     } finally {
       setInstalling(null);
     }
@@ -249,24 +235,37 @@ export default function PluginsDialog({
             </div>
           ) : (
             <>
-              {updateCount > 0 && (
-                <div className="browse-search" style={{ padding: "2px 0 0" }}>
-                  <div className="model-search-wrap" style={{ background: "color-mix(in srgb, var(--accent) 8%, var(--inset-bg))", borderColor: "color-mix(in srgb, var(--accent) 22%, var(--line))" }}>
-                    <i className="fa-solid fa-arrows-rotate" style={{ color: "var(--accent)" }} />
-                    <span className="mono-hint" style={{ flex: 1 }}>{updateCount} update{updateCount === 1 ? "" : "s"} available</span>
+              <div className="browse-search" style={{ padding: "2px 0 0" }}>
+                <div className="model-search-wrap">
+                  <i className={`fa-solid ${catLoading ? "fa-spinner fa-spin" : "fa-arrows-rotate"}`} style={{ color: updateCount ? "var(--accent)" : undefined }} />
+                  <span className="mono-hint" style={{ flex: 1 }}>
+                    {catLoading ? "Checking for updates…" : updateCount ? `${updateCount} update${updateCount === 1 ? "" : "s"} available` : catalog ? "All plugins up to date" : "Checking catalog…"}
+                  </span>
+                  {updateCount > 0 && (
                     <button
                       type="button"
                       className="reset-btn"
-                      disabled={!!installing}
+                      disabled={!!installing || catLoading}
                       onClick={async () => {
                         for (const p of plugins.filter((x) => hasUpdate(x.id))) await handleUpdate(p);
                       }}
                     >
                       <i className="fa-solid fa-download" /> Update all
                     </button>
-                  </div>
+                  )}
+                  <button
+                    type="button"
+                    className="reset-btn"
+                    data-tip="Force refresh catalog (bypass 12h cache)"
+                    disabled={catLoading}
+                    onClick={() => refreshCatalog(true)}
+                  >
+                    <i className={`fa-solid ${catLoading ? "fa-spinner fa-spin" : "fa-arrows-rotate"}`} />
+                    Refresh
+                  </button>
                 </div>
-              )}
+              </div>
+              {catalog != null && !catalog.length && !catLoading ? <div className="voice-err">No plugins found — check connection and try refresh</div> : catErr ? <div className="voice-err">{catErr}</div> : null}
               <div className="plugins-list">
                 {plugins.map((p) => {
                   const enabled = !p.disabled;
@@ -411,9 +410,9 @@ export default function PluginsDialog({
               <button
                 type="button"
                 className="reset-btn"
-                data-tip="Force refresh catalog (bypass 1-day cache)"
+                data-tip="Force refresh catalog (bypass 12h cache)"
                 disabled={catLoading}
-                onClick={() => void loadCatalog(true)}
+                onClick={() => refreshCatalog(true)}
               >
                 <i className={`fa-solid ${catLoading ? "fa-spinner fa-spin" : "fa-arrows-rotate"}`} />
                 Refresh
@@ -477,7 +476,7 @@ export default function PluginsDialog({
             )}
           </div>
           <p className="cmd-note mono-hint" style={{ padding: "4px 2px 0" }}>
-            Catalog cached for 1 day — <button type="button" className="linklike" onClick={() => void loadCatalog(true)} disabled={catLoading}>force refresh</button> to bypass. Sources from <code>github.com/Brainrot-Corp/Opencode-GUI/default_plugins</code>.
+            Catalog cached for 12h — <button type="button" className="linklike" onClick={() => refreshCatalog(true)} disabled={catLoading}>force refresh</button> to bypass. Sources from <code>github.com/Brainrot-Corp/Opencode-GUI/default_plugins</code>.
           </p>
         </>
       )}

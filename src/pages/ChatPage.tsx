@@ -66,6 +66,8 @@ export default function ChatPage() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [pluginsOpen, setPluginsOpen] = useState(false);
   const [pluginCatalog, setPluginCatalog] = useState<PluginCatalogEntry[] | null>(null);
+  const [catalogLoading, setCatalogLoading] = useState(false);
+  const [catalogError, setCatalogError] = useState("");
   const [diffOpen, setDiffOpen] = useState(false);
   // discord plugin reads this for {status} — file > diff > permission/question > compacting > busy > typing > working > idle
   const [editingFile, setEditingFile] = useState("");
@@ -417,24 +419,25 @@ export default function ChatPage() {
   useEffect(() => {
     void ensureDict();
   }, []);
-  // prefetch plugin catalog on launch — warms 12h cache so Browse opens instantly and powers the titlebar update dot
-  useEffect(() => {
-    let cancelled = false;
-    void loadPluginsCatalog()
-      .then((c) => { if (!cancelled) setPluginCatalog(c); })
-      .catch(() => {});
-    return () => { cancelled = true; };
+  const refreshCatalog = useCallback(async (force = false) => {
+    setCatalogLoading(true);
+    setCatalogError("");
+    try {
+      const entries = await loadPluginsCatalog(force);
+      setPluginCatalog(entries);
+      return entries;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setCatalogError(msg);
+      throw e;
+    } finally {
+      setCatalogLoading(false);
+    }
   }, []);
-  // when Plugins dialog closes after an install/refresh, re-read the (possibly force-refreshed) catalog
+  // prefetch plugin catalog on launch — single source for titlebar dot + dialog (was duplicated in PluginsDialog)
   useEffect(() => {
-    if (pluginsOpen) return;
-    if (pluginCatalog === null) return;
-    let cancelled = false;
-    void loadPluginsCatalog()
-      .then((c) => { if (!cancelled && c.length) setPluginCatalog(c); })
-      .catch(() => {});
-    return () => { cancelled = true; };
-  }, [pluginsOpen]); // eslint-disable-line react-hooks/exhaustive-deps
+    void refreshCatalog(false).catch(() => {});
+  }, [refreshCatalog]);
   const hasPluginUpdate = useMemo(() => {
     if (!pluginCatalog || !pluginCatalog.length || !plugins.length) return false;
     const byId = new Map(pluginCatalog.map((c) => [c.id, c] as const));
@@ -952,6 +955,10 @@ export default function ChatPage() {
           onRemoved={(id) => removeDisabled(id)}
           settings={settings}
           updatePlugin={updatePlugin}
+          catalog={pluginCatalog}
+          catalogLoading={catalogLoading}
+          catalogError={catalogError}
+          onRefreshCatalog={refreshCatalog}
         />
         <div
           className={`layout${resizing ? " no-anim" : ""}`}
