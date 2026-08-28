@@ -1,546 +1,382 @@
-// bottom-dock terminal: xterm.js front-end over the Rust-owned ConPTY
-// (src-tauri/src/pty.rs). This component stays mounted for the whole app
-// lifetime — open/close only collapses the dock's height, so the shell,
-// scrollback and running jobs survive hide/show. First open lazily creates
-// the terminal and spawns the PTY.
+// bottom-dock multi-terminal: xterm.js front-ends over Rust ConPTYs (src-tauri/src/pty.rs).
+// Dock survives hide/show (height collapse) — shells keep running. Right side shows
+// instance list with hover reload/kill (2-click kill), collapsed to icon strip.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
-import { Terminal as XTerm } from "@xterm/xterm";
-import type { ITheme } from "@xterm/xterm";
-import { FitAddon } from "@xterm/addon-fit";
-import "@xterm/xterm/css/xterm.css";
 import { playSound } from "../lib/sounds";
-import { TermHighlighter } from "../lib/termHighlight";
+import TermInstanceView from "./TermInstanceView";
 import "../styles/terminal.css";
 
 const H_KEY = "oc.term.h";
 const H_MIN = 120;
 const H_DEFAULT = 240;
+const SIDE_KEY = "oc.term.sideCollapsed";
+const SIDE_W_KEY = "oc.term.sideW";
+const SIDE_W_DEFAULT = 176;
+const SIDE_W_MIN = 132;
+const SIDE_W_MAX = 360;
+const ACTIVE_KEY = "oc.term.active";
+const INST_KEY = "oc.term.instances";
 
-// monotonic PTY generation counter — module-scoped so it survives panel
-// remounts (reload). See the note at genRef below.
-let ptyGen = 0;
+// persisted shape for instances — cwd remembered at spawn, title may update from shell
+type PersistedInst = { id: number; gen: number; cwd: string; title: string };
+
+type TermEntry = {
+  id: number;
+  gen: number;
+  title: string;
+  cwd: string;
+  dead: boolean;
+  err: string;
+};
 
 const clampH = (h: number) =>
   Math.min(Math.max(H_MIN, Math.floor(h)), Math.floor(window.innerHeight * 0.7));
-
-// hex (#rrggbb) → rgba() with alpha — accents arrive as raw hex from tokens
-const hexA = (hex: string, a: number) => {
-  const n = parseInt(hex.replace("#", ""), 16);
-  if (Number.isNaN(n)) return "";
-  return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${a})`;
-};
-
-// ANSI palette follows the active theme's syntax tokens so ls/git/vim colors
-// stay in-family; magenta has no token — one fixed tint that fits both modes
-function termTheme(): ITheme {
-  const cs = getComputedStyle(document.documentElement);
-  const v = (n: string, fb: string) => cs.getPropertyValue(n).trim() || fb;
-  const accent = v("--accent", "#7fd4d4");
-  const text = v("--text", "#d7e0e6");
-  return {
-    background: "rgba(0,0,0,0)",
-    foreground: text,
-    cursor: accent,
-    cursorAccent: v("--bg-0", "#090d11"),
-    // same 22% accent wash as ::selection in tokens.css (the CSS layer above
-    // enforces it for the DOM renderer; these feed any other path)
-    selectionBackground: hexA(accent, 0.22),
-    selectionInactiveBackground: hexA(accent, 0.22),
-    black: v("--bg-1", "#0d1218"),
-    red: v("--danger", "#e08f8f"),
-    green: v("--syn-string", "#9fce8f"),
-    yellow: v("--syn-number", "#d4b57f"),
-    blue: v("--syn-type", "#8fc7e0"),
-    magenta: "#b48ead",
-    cyan: accent,
-    white: text,
-    brightBlack: v("--text-faint", "#5b6c76"),
-    brightRed: v("--danger", "#e08f8f"),
-    brightGreen: v("--syn-string", "#9fce8f"),
-    brightYellow: v("--syn-number", "#d4b57f"),
-    brightBlue: v("--syn-type", "#8fc7e0"),
-    brightMagenta: "#c9aed6",
-    brightCyan: v("--accent-bright", "#a8e6e4"),
-    brightWhite: "#eef4f7",
-  };
-}
 
 export default function TerminalPanel({
   open,
   workspace,
   onClose,
-  onReload,
 }: {
   open: boolean;
   workspace?: string;
   onClose: () => void;
-  onReload: () => void;
 }) {
-  const bodyRef = useRef<HTMLDivElement>(null);
-  const mountRef = useRef<HTMLDivElement>(null);
-  const termRef = useRef<XTerm | null>(null);
-  const fitRef = useRef<FitAddon | null>(null);
-  const bootedRef = useRef(false);
-  const aliveRef = useRef(false);
-  // intentional kills (respawn/workspace switch/restart) emit pty://exit too —
-  // suppressed so they don't flip the header into "exited" state
-  const suppressExitRef = useRef(false);
-  const wsRef = useRef(workspace);
-  const hlRef = useRef<TermHighlighter | null>(null);
-  const openRef = useRef(open);
-  const roRafRef = useRef(0);
-  // session generation — every spawn bumps it; frames tagged with older
-  // generations are dropped so dead shells can't bleed into this view.
-  // MODULE-LEVEL on purpose: reload remounts this component, and a per-instance
-  // counter would restart at 1 — making the old panel's teardown kill (gen 1)
-  // collide with the fresh panel's first spawn (also gen 1) and kill it.
-  const genRef = useRef(ptyGen);
-  // last frame timestamp + watchdog id — used to detect a shell that spawned
-  // but never delivers output (Windows ConPTY quirk after a respawn) so we can
-  // self-heal with one kill+respawn instead of leaving a dead cursor
-  const frameAtRef = useRef(0);
-  const watchdogRef = useRef(0);
-  const retriesRef = useRef(0);
-  // set after killAndRespawn is defined — breaks the spawn↔respawn cycle
-  const respawnRef = useRef<() => void>(() => {});
-  // set after fitNow is defined — spawn needs to re-fit once the shell is
-  // alive, but fitNow is declared later in the component body
-  const fitNowRef = useRef<() => void>(() => {});
-  // last size actually sent to the ConPTY — skips redundant resizes (the
-  // RO + window listener would otherwise re-send the same size dozens of
-  // times a second, churning PSReadLine's redraw mid-output)
-  const lastResizeRef = useRef<{ c: number; r: number }>({ c: 0, r: 0 });
-
   const [h, setH] = useState(() => clampH(Number(localStorage.getItem(H_KEY)) || 240));
-  const [dead, setDead] = useState(false);
-  const [err, setErr] = useState("");
   const [dragging, setDragging] = useState(false);
+  const [sideCollapsed, setSideCollapsed] = useState(() => localStorage.getItem(SIDE_KEY) === "1");
+  const [sideW, setSideW] = useState(() => {
+    const v = Number(localStorage.getItem(SIDE_W_KEY)) || SIDE_W_DEFAULT;
+    return Math.min(Math.max(SIDE_W_MIN, v), SIDE_W_MAX);
+  });
+  const [sideResizing, setSideResizing] = useState(false);
+  const [armedId, setArmedId] = useState<number | null>(null);
+  const armedTimer = useRef(0);
+  const [maxErr, setMaxErr] = useState("");
 
-  const spawn = useCallback(async () => {
-    setErr("");
-    setDead(false);
-    // fresh shell → fresh screen; without this a respawn appends its banner
-    // onto whatever the previous session left in the buffer
-    termRef.current?.reset();
-    const gen = ++ptyGen;
-    genRef.current = gen;
+  const nextIdRef = useRef(1);
+  const genCounterRef = useRef(1);
+
+  const [terms, setTerms] = useState<TermEntry[]>(() => {
     try {
-      await invoke("pty_spawn", { cwd: wsRef.current ?? "", gen });
-      aliveRef.current = true;
-      // fits that ran before the shell existed were skipped (sent=false) —
-      // push the current size now that a session is alive
-      setTimeout(() => fitNowRef.current(), 60);
-      // self-heal watchdog: if the shell never delivers a frame within 5s,
-      // kill it and respawn once — a wedged ConPTY otherwise leaves a dead
-      // cursor forever
-      frameAtRef.current = 0;
-      window.clearTimeout(watchdogRef.current);
-      watchdogRef.current = window.setTimeout(() => {
-        if (frameAtRef.current !== 0 || !aliveRef.current) return;
-        if (retriesRef.current >= 2) {
-          setErr("shell produced no output");
-          return;
+      const raw = localStorage.getItem(INST_KEY);
+      if (raw) {
+        const arr = JSON.parse(raw) as PersistedInst[];
+        if (Array.isArray(arr) && arr.length > 0 && arr.length <= 8) {
+          let maxId = 0;
+          let maxGen = 0;
+          for (const a of arr) {
+            if (a.id > maxId) maxId = a.id;
+            if (a.gen > maxGen) maxGen = a.gen;
+          }
+          nextIdRef.current = maxId + 1;
+          genCounterRef.current = maxGen + 1;
+          return arr.map((a) => ({
+            id: a.id,
+            gen: a.gen,
+            cwd: a.cwd || "",
+            title: a.title || `Terminal ${a.id}`,
+            dead: false,
+            err: "",
+          }));
         }
-        retriesRef.current += 1;
-        console.error(`[term] no output for gen=${gen} — respawning`);
-        respawnRef.current();
-      }, 5000);
-    } catch (e) {
-      aliveRef.current = false;
-      const msg = e instanceof Error ? e.message : String(e);
-      setErr(msg);
-    }
-  }, []);
-
-  // kill the current session without respawning — used on panel close (the
-  // app deliberately keeps no background shells) and as half of respawn flows
-  const killSession = useCallback(async () => {
-    suppressExitRef.current = true;
-    window.clearTimeout(watchdogRef.current);
-    const gen = genRef.current; // the live session's gen — pty_kill is gen-tagged
-    ++ptyGen; // any frames the dying shell still emits get dropped
-    genRef.current = ptyGen;
-    await invoke("pty_kill", { gen }).catch(() => {});
-    termRef.current?.reset();
-    aliveRef.current = false;
-    setTimeout(() => {
-      suppressExitRef.current = false;
-    }, 600);
-  }, []);
-
-  // intentional kills emit pty://exit too (kill→respawn races the EOF);
-  // suppression stays armed briefly past the respawn so the dead session's
-  // exit can't flip the header into "exited" state
-  const killAndRespawn = useCallback(async () => {
-    await killSession();
-    await spawn();
-  }, [killSession, spawn]);
-  respawnRef.current = killAndRespawn;
-
-  // one-time boot on first open. NO cleanup on close — the whole point is
-  // that hide/show leaves the shell running; teardown lives in the
-  // mount-only effect below
-  const boot = useCallback(() => {
-    if (bootedRef.current || !mountRef.current) return;
-    bootedRef.current = true;
-
-    const term = new XTerm({
-      fontFamily: getComputedStyle(document.documentElement).getPropertyValue("--mono") || "monospace",
-      fontSize: 13,
-      cursorBlink: true,
-      scrollback: 5000,
-      allowTransparency: true,
-      // TermHighlighter collapses PowerShell's \r\n to bare \n for buffered
-      // lines; without convertEol xterm keeps the column on LF, so every line
-      // starts where the previous one ended (cascading offset). Treat LF as a
-      // full newline like Windows Terminal / VS Code do.
-      convertEol: true,
-      theme: termTheme(),
-    });
-    termRef.current = term;
-    const fit = new FitAddon();
-    fitRef.current = fit;
-    term.loadAddon(fit);
-    term.open(mountRef.current);
-
-    // Ctrl+Shift+C/V clipboard — plain Ctrl+C keeps its SIGINT meaning
-    term.attachCustomKeyEventHandler((ev) => {
-      if (ev.type !== "keydown" || !ev.ctrlKey || !ev.shiftKey || ev.altKey) return true;
-      const k = ev.key.toLowerCase();
-      if (k === "c") {
-        const sel = term.getSelection();
-        if (sel) navigator.clipboard.writeText(sel).catch(() => {});
-        return false;
       }
-      if (k === "v") {
-        navigator.clipboard.readText().then((t) => term.paste(t)).catch(() => {});
-        return false;
-      }
-      return true;
-    });
-
-    term.onData((d) => {
-      void invoke("pty_write", { data: d }).catch(() => {});
-    });
-
-    // output filter: plain-text code lines get colored, ANSI/control data
-    // passes raw. Frames arrive via the mount-once transport below and land
-    // here through hlRef, so reloads swap the filter without rewiring
-    hlRef.current = new TermHighlighter((s) => term.write(s));
-    // the shell itself is spawned by the open/close effect — boot only
-    // builds the renderer
-  }, []);
-
-  // transport wiring — mount-once, survives reloads/workspace switches.
-  // Generation-tagged frames from superseded shells are dropped here, which
-  // is what keeps a slow-dying PowerShell's banner out of the current view
-  useEffect(() => {
-    const unsubs = [
-      listen<{ g: number; d: string }>("pty://frame", (e) => {
-        if (e.payload.g !== genRef.current || !hlRef.current) return;
-        const bin = atob(e.payload.d);
-        const bytes = new Uint8Array(bin.length);
-        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-        frameAtRef.current = performance.now();
-        hlRef.current.write(bytes);
-      }),
-      listen<{ g: number }>("pty://exit", (e) => {
-        if (e.payload.g !== genRef.current || suppressExitRef.current) return;
-        aliveRef.current = false;
-        setDead(true);
-      }),
-    ];
-    return () => {
-      for (const u of unsubs) u.then((f) => f()).catch(() => {});
-    };
-  }, []);
-
-  // single resize entry point: RO-debounced via rAF, gated on visibility,
-  // rejecting degenerate measurements BEFORE they reach xterm/ConPTY — once
-  // applied, bad dims corrupt the renderer grid until a full reload.
-  // Hardened: double-fit on next frame + explicit refresh to avoid the
-  // sporadic blank/crumpled canvas when the dock animates open or the window
-  // resizes mid-frame (height transition leaves intermediate sizes).
-  const fitNow = useCallback(() => {
-    const el = bodyRef.current;
-    const fit = fitRef.current;
-    const term = termRef.current;
-    if (!el || !fit || !term || !openRef.current) return;
-    if (el.clientHeight < 60 || el.clientWidth < 80) return;
-    if (el.clientWidth === 0 || el.clientHeight === 0) return;
-    let proposed: { cols: number; rows: number } | undefined;
-    try {
-      proposed = fit.proposeDimensions();
-    } catch {
-      return;
-    }
-    if (!proposed || !Number.isFinite(proposed.cols) || !Number.isFinite(proposed.rows) || proposed.cols < 2 || proposed.rows < 2 || proposed.cols > 1000 || proposed.rows > 1000)
-      return;
-    try {
-      fit.fit();
-    } catch {
-      return;
-    }
-    // xterm's canvas can be left stale after a fit inside a transitioning
-    // flex container — force a full row repaint. The dock's backdrop-filter
-    // now lives on an isolated layer (terminal.css) but a stale backing
-    // bitmap still needs this push.
-    try {
-      const rows = term.rows ?? proposed.rows;
-      term.refresh(0, Math.max(0, rows - 1));
     } catch {}
-    // re-propose after the DOM settled — catches the case where proposeDimensions
-    // was based on a mid-transition size (first fit undershoots, second fixes it)
-    requestAnimationFrame(() => {
-      if (!openRef.current || !bodyRef.current || !fitRef.current || !termRef.current) return;
-      let second: { cols: number; rows: number } | undefined;
-      try {
-        second = fitRef.current.proposeDimensions();
-      } catch { return; }
-      if (!second || second.cols === proposed!.cols && second.rows === proposed!.rows) {
-        // still need to push ConPTY size even if we skip the second fit
-        if (proposed!.cols !== lastResizeRef.current.c || proposed!.rows !== lastResizeRef.current.r) {
-          lastResizeRef.current = { c: proposed!.cols, r: proposed!.rows };
-          if (aliveRef.current) invoke("pty_resize", { cols: proposed!.cols, rows: proposed!.rows }).catch(() => {});
-        }
-        return;
-      }
-      if (second.cols < 2 || second.rows < 2 || second.cols > 1000 || second.rows > 1000) return;
-      try {
-        fitRef.current.fit();
-        termRef.current?.refresh(0, Math.max(0, (termRef.current.rows ?? second.rows) - 1));
-      } catch {}
-      const final = { c: second.cols, r: second.rows };
-      if (final.c === lastResizeRef.current.c && final.r === lastResizeRef.current.r) return;
-      lastResizeRef.current = final;
-      if (aliveRef.current) invoke("pty_resize", { cols: final.c, rows: final.r }).catch(() => {});
-      return;
-    });
-    // push the first proposal's size immediately — the second pass above will
-    // correct it if it was mid-transition. Doing it here avoids a visible delay
-    // where the shell still thinks it's 80×24.
-    if (proposed.cols === lastResizeRef.current.c && proposed.rows === lastResizeRef.current.r) return;
-    lastResizeRef.current = { c: proposed.cols, r: proposed.rows };
-    if (aliveRef.current)
-      invoke("pty_resize", { cols: proposed.cols, rows: proposed.rows }).catch(() => {});
+    // fresh: one terminal seeded
+    const id = 1;
+    const gen = 1;
+    nextIdRef.current = 2;
+    genCounterRef.current = 2;
+    return [{ id, gen, title: `Terminal ${id}`, cwd: workspace ?? "", dead: false, err: "" }];
+  });
+
+  const [activeId, setActiveId] = useState<number>(() => {
+    const saved = Number(localStorage.getItem(ACTIVE_KEY) || 0);
+    if (saved) return saved;
+    return terms[0]?.id ?? 1;
+  });
+
+  // ensure activeId points to existing term
+  useEffect(() => {
+    if (!terms.some((t) => t.id === activeId)) {
+      if (terms.length) setActiveId(terms[0].id);
+    }
+  }, [terms, activeId]);
+
+  // when panel is reopened empty (last was killed), seed fresh terminal
+  useEffect(() => {
+    if (open && terms.length === 0) {
+      const id = nextIdRef.current++;
+      const gen = genCounterRef.current++;
+      const cwd = workspaceRef.current ?? "";
+      const entry: TermEntry = { id, gen, title: `Terminal ${id}`, cwd, dead: false, err: "" };
+      setTerms([entry]);
+      setActiveId(id);
+    }
+  }, [open, terms.length]);
+
+  // persist side + active + instances (lightweight)
+  useEffect(() => { localStorage.setItem(SIDE_KEY, sideCollapsed ? "1" : "0"); }, [sideCollapsed]);
+  useEffect(() => { localStorage.setItem(SIDE_W_KEY, String(sideW)); }, [sideW]);
+  useEffect(() => { localStorage.setItem(ACTIVE_KEY, String(activeId)); }, [activeId]);
+  useEffect(() => {
+    try {
+      const arr: PersistedInst[] = terms.map((t) => ({ id: t.id, gen: t.gen, cwd: t.cwd, title: t.title }));
+      localStorage.setItem(INST_KEY, JSON.stringify(arr));
+    } catch {}
+  }, [terms]);
+  useEffect(() => { localStorage.setItem(H_KEY, String(h)); }, [h]);
+
+  const workspaceRef = useRef(workspace);
+  useEffect(() => { workspaceRef.current = workspace; }, [workspace]);
+
+  const onTitle = useCallback((id: number, title: string) => {
+    setTerms((prev) => prev.map((t) => (t.id === id ? { ...t, title: title.slice(0, 80) } : t)));
   }, []);
-  fitNowRef.current = fitNow;
-  // full rebuild is delegated to the parent via a key bump: React unmounts
-  // this panel (teardown effect kills the PTY, listeners unsubscribe) and
-  // mounts a fresh one that boots xterm and spawns a new shell exactly like
-  // first open — no in-place dispose/reboot races to reason about
-  const reloadTerm = useCallback(() => {
+  const onDead = useCallback((id: number, dead: boolean) => {
+    setTerms((prev) => prev.map((t) => (t.id === id ? { ...t, dead } : t)));
+  }, []);
+  const onErr = useCallback((id: number, err: string) => {
+    setTerms((prev) => prev.map((t) => (t.id === id ? { ...t, err } : t)));
+  }, []);
+
+  const addTerm = useCallback(() => {
+    if (terms.length >= 8) {
+      setMaxErr("max 8 terminals");
+      window.setTimeout(() => setMaxErr(""), 2500);
+      playSound("click");
+      return;
+    }
+    const id = nextIdRef.current++;
+    const gen = genCounterRef.current++;
+    const cwd = workspaceRef.current ?? "";
+    const entry: TermEntry = { id, gen, title: `Terminal ${id}`, cwd, dead: false, err: "" };
+    setTerms((prev) => [...prev, entry]);
+    setActiveId(id);
     playSound("click");
-    onReload();
-  }, [onReload]);
+  }, [terms.length]);
 
-  // theme applications write the palette as inline CSS vars / data attrs on
-  // <html> — watch instead of guessing when. This covers every path: the
-  // late async themes.json load at app start (the terminal boots before it
-  // lands), dropdown switches, /scheme mode toggles and hot-reloaded file
-  // edits (which also emit themes://changed — same applyTheme, same attrs)
-  useEffect(() => {
-    let raf = 0;
-    const obs = new MutationObserver(() => {
-      if (!termRef.current) return;
-      cancelAnimationFrame(raf);
-      raf = requestAnimationFrame(() => {
-        if (termRef.current) termRef.current.options.theme = termTheme();
-      });
-    });
-    obs.observe(document.documentElement, {
-      attributes: true,
-      attributeFilter: ["style", "data-theme", "data-mode"],
-    });
-    return () => {
-      obs.disconnect();
-      cancelAnimationFrame(raf);
-    };
-  }, []);
+  const reloadTerm = useCallback(async (id: number) => {
+    const t = terms.find((x) => x.id === id);
+    if (!t) return;
+    playSound("click");
+    // kill old gen before bumping — view will spawn with new gen
+    await invoke("pty_kill", { id, gen: t.gen }).catch(() => {});
+    const newGen = genCounterRef.current++;
+    setTerms((prev) => prev.map((x) => (x.id === id ? { ...x, gen: newGen, dead: false, err: "" } : x)));
+  }, [terms]);
 
-  useEffect(() => {
-    openRef.current = open;
-    if (!open) {
-      // policy: no background shells — hiding the panel kills the session;
-      // reopening spawns a fresh one at the same cwd
-      if (bootedRef.current && aliveRef.current) void killSession();
+  const killTerm = useCallback(async (id: number) => {
+    if (armedId !== id) {
+      setArmedId(id);
+      playSound("click");
+      window.clearTimeout(armedTimer.current);
+      armedTimer.current = window.setTimeout(() => setArmedId(null), 1000) as unknown as number;
       return;
     }
-    boot();
-    // spawn when the renderer is new or the shell died (closed, exited, error)
-    if (!aliveRef.current) void spawn();
-    // fit after the open height transition settles — timeout as fallback,
-    // transitionend as primary (fires once per open; RO catches the rest)
-    const dock = document.querySelector(".term-dock") as HTMLElement | null;
-    let done = false;
-    const doFit = () => {
-      if (done) return;
-      done = true;
-      fitNow();
-      // one more after the next frame to catch the final layout
-      requestAnimationFrame(() => fitNow());
-    };
-    const onEnd = (e: TransitionEvent) => {
-      if (e.propertyName === "height") doFit();
-    };
-    dock?.addEventListener("transitionend", onEnd);
-    const t1 = window.setTimeout(doFit, 280);
-    const t2 = window.setTimeout(doFit, 550);
-    return () => {
-      dock?.removeEventListener("transitionend", onEnd);
-      window.clearTimeout(t1);
-      window.clearTimeout(t2);
-    };
-  }, [open, boot, killSession, spawn, fitNow]);
-
-  // full teardown only when the app/page itself goes away
-  useEffect(
-    () => () => {
-      window.clearTimeout(watchdogRef.current);
-      hlRef.current?.dispose();
-      termRef.current?.dispose();
-      // gen-tagged: on a reload remount this fires against the old session's
-      // gen, so it can't kill the fresh session the new panel just spawned
-      void invoke("pty_kill", { gen: genRef.current }).catch(() => {});
-    },
-    [],
-  );
-
-  // container resizes (panel drag, window resize, open/close collapse) drive
-  // both the renderer grid and the PTY size — coalesced to one fit per frame.
-  // The RO on .term-body is the primary source; a window listener covers DPR
-  // / zoom changes that don't resize the element but do invalidate the canvas.
-  useEffect(() => {
-    const el = bodyRef.current;
-    if (!el) return;
-    const ro = new ResizeObserver(() => {
-      if (roRafRef.current) return;
-      roRafRef.current = requestAnimationFrame(() => {
-        roRafRef.current = 0;
-        fitNow();
-      });
+    // armed → confirm kill
+    window.clearTimeout(armedTimer.current);
+    setArmedId(null);
+    const t = terms.find((x) => x.id === id);
+    if (t) {
+      await invoke("pty_kill", { id, gen: t.gen }).catch(() => {});
+    }
+    playSound("close");
+    setTerms((prev) => {
+      const idx = prev.findIndex((x) => x.id === id);
+      const next = prev.filter((x) => x.id !== id);
+      if (next.length === 0) {
+        // last terminal killed — hide panel and keep empty; next open seeds fresh
+        setTimeout(() => onClose(), 0);
+        return [];
+      }
+      if (activeId === id) {
+        const newActive = next[Math.min(idx, next.length - 1)]?.id ?? next[0].id;
+        setTimeout(() => setActiveId(newActive), 0);
+      }
+      return next;
     });
-    ro.observe(el);
-    const onWin = () => {
-      if (roRafRef.current) return;
-      roRafRef.current = requestAnimationFrame(() => {
-        roRafRef.current = 0;
-        fitNow();
-      });
+  }, [armedId, terms, activeId, onClose]);
+
+  // vertical resize handle (same as single-terminal version)
+  const startResize = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    const startY = e.clientY;
+    const startH = h;
+    let lastTick = 0;
+    setDragging(true);
+    document.body.classList.add("resizing");
+    document.body.style.userSelect = "none";
+    document.body.style.cursor = "row-resize";
+    const move = (ev: MouseEvent) => {
+      setH(clampH(startH + (startY - ev.clientY)));
+      const now = performance.now();
+      if (now - lastTick > 70) { lastTick = now; playSound("resize"); }
     };
-    window.addEventListener("resize", onWin);
-    // DPR change (move between monitors / OS scale) leaves canvas backing
-    // at the old resolution — one extra fit re-creates it at the new ratio
-    let mql: MediaQueryList | null = null;
-    try {
-      mql = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`);
-      mql.addEventListener("change", onWin);
-    } catch {}
-    return () => {
-      ro.disconnect();
-      window.removeEventListener("resize", onWin);
-      try { mql?.removeEventListener("change", onWin); } catch {}
-      cancelAnimationFrame(roRafRef.current);
+    const up = () => {
+      setDragging(false);
+      document.body.classList.remove("resizing");
+      document.body.style.userSelect = "";
+      document.body.style.cursor = "";
+      window.removeEventListener("mousemove", move);
+      window.removeEventListener("mouseup", up);
+      window.removeEventListener("blur", up);
     };
-  }, [fitNow]);
-
-  // workspace switch: cwd is baked into the ConPTY at spawn → fresh shell.
-  // Scrollback dies with it (reset), which matches the mental model of
-  // opening a terminal in another folder
-  useEffect(() => {
-    const prev = wsRef.current;
-    wsRef.current = workspace;
-    if (!bootedRef.current || prev === workspace) return;
-    void killAndRespawn();
-  }, [workspace, killAndRespawn]);
-
-  // opening focuses so keystrokes land immediately; closing returns nothing
-  useEffect(() => {
-    if (open && termRef.current) setTimeout(() => termRef.current?.focus(), 50);
-  }, [open]);
-
-  useEffect(() => {
-    localStorage.setItem(H_KEY, String(h));
+    window.addEventListener("mousemove", move);
+    window.addEventListener("mouseup", up);
+    window.addEventListener("blur", up);
   }, [h]);
 
-  // vertical twin of the sidebar drag: pull up to grow, native cursors
-  // locked on body, sound ticks throttled like ChatPage's resize
-  const startResize = useCallback(
-    (e: React.MouseEvent) => {
-      e.preventDefault();
-      const startY = e.clientY;
-      const startH = h;
-      let lastTick = 0;
-      setDragging(true);
-      document.body.classList.add("resizing");
-      document.body.style.userSelect = "none";
-      document.body.style.cursor = "row-resize";
-      const move = (ev: MouseEvent) => {
-        setH(clampH(startH + (startY - ev.clientY)));
-        const now = performance.now();
-        if (now - lastTick > 70) {
-          lastTick = now;
-          playSound("resize");
-        }
-      };
-      const up = () => {
-        setDragging(false);
-        document.body.classList.remove("resizing");
-        document.body.style.userSelect = "";
-        document.body.style.cursor = "";
-        window.removeEventListener("mousemove", move);
-        window.removeEventListener("mouseup", up);
-        window.removeEventListener("blur", up);
-      };
-      window.addEventListener("mousemove", move);
-      window.addEventListener("mouseup", up);
-      window.addEventListener("blur", up);
-    },
-    [h],
-  );
+  const resetSize = useCallback(() => { setH(H_DEFAULT); playSound("click"); }, []);
 
-  // double-click on the handle or header snaps back to the default height
-  const resetSize = useCallback(() => {
-    setH(H_DEFAULT);
-    playSound("click");
-  }, []);
+  // horizontal resize for expanded side panel — mirrors sidebar drag
+  const startSideResize = useCallback((e: React.MouseEvent) => {
+    if (sideCollapsed) return;
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = sideW;
+    let lastTick = 0;
+    setSideResizing(true);
+    document.body.classList.add("resizing");
+    (document.body as any).__termSideResizing = true;
+    document.body.style.userSelect = "none";
+    document.body.style.cursor = "col-resize";
+    const move = (ev: MouseEvent) => {
+      const next = Math.min(Math.max(SIDE_W_MIN, startW + (startX - ev.clientX)), SIDE_W_MAX);
+      setSideW(next);
+      const now = performance.now();
+      if (now - lastTick > 70) { lastTick = now; playSound("resize"); }
+    };
+    const up = () => {
+      setSideResizing(false);
+      document.body.classList.remove("resizing");
+      delete (document.body as any).__termSideResizing;
+      document.body.style.userSelect = "";
+      document.body.style.cursor = "";
+      window.removeEventListener("mousemove", move);
+      window.removeEventListener("mouseup", up);
+      window.removeEventListener("blur", up);
+    };
+    window.addEventListener("mousemove", move);
+    window.addEventListener("mouseup", up);
+    window.addEventListener("blur", up);
+  }, [sideW, sideCollapsed]);
+
+  const activeTerm = terms.find((t) => t.id === activeId);
 
   return (
-    <div
-      className={`term-dock${open ? "" : " closed"}${dragging ? " dragging" : ""}`}
-      style={{ height: open ? h : 0 }}
-    >
-      <div
-        className="term-resize"
-        data-tip="Drag to resize · double-click to reset"
-        onMouseDown={startResize}
-        onDoubleClick={resetSize}
-      >
+    <div className={`term-dock${open ? "" : " closed"}${dragging ? " dragging" : ""}`} style={{ height: open ? h : 0 }}>
+      <div className="term-resize" data-tip="Drag to resize · double-click to reset" onMouseDown={startResize} onDoubleClick={resetSize}>
         <i className="fa-solid fa-grip-lines" aria-hidden="true" />
       </div>
-      <div
-        className="term-head"
-        onDoubleClick={(e) => {
-          // buttons own their clicks — don't reset when mashing close/restart
-          if (!(e.target as HTMLElement).closest("button")) resetSize();
-        }}
-      >
+      <div className="term-head" onDoubleClick={(e) => { if (!(e.target as HTMLElement).closest("button")) resetSize(); }}>
         <i className="fa-solid fa-terminal" />
         <span>terminal</span>
-        {err && <span className="term-err">{err}</span>}
-        {dead && !err && <span className="term-dead">exited</span>}
+        {terms.length > 1 && <span className="term-count">{terms.length}/8</span>}
+        {maxErr && <span className="term-err">{maxErr}</span>}
+        {activeTerm?.err && !maxErr && <span className="term-err">{activeTerm.err}</span>}
+        {activeTerm?.dead && !activeTerm?.err && !maxErr && <span className="term-dead">exited</span>}
         <span className="term-spacer" />
-        <button className="icon-btn term-btn" data-tip="Reload terminal" onClick={reloadTerm}>
-          <i className="fa-solid fa-sync" />
-        </button>
-        <button className="icon-btn close term-btn" data-tip="Hide panel" onClick={onClose}>
+        {activeTerm && (
+          <>
+            <button className="icon-btn term-btn" data-tip="Reload active terminal" onClick={() => void reloadTerm(activeTerm.id)}>
+              <i className="fa-solid fa-rotate" />
+            </button>
+            <button
+              className={`icon-btn term-btn${armedId === activeTerm.id ? " danger" : ""}`}
+              data-tip={armedId === activeTerm.id ? "Click again to kill" : "Kill active terminal"}
+              onClick={() => void killTerm(activeTerm.id)}
+            >
+              <i className={`fa-solid ${armedId === activeTerm.id ? "fa-check" : "fa-trash-can"}`} />
+            </button>
+          </>
+        )}
+        <button className="icon-btn term-btn" data-tip="Hide panel" onClick={onClose}>
           <i className="fa-solid fa-chevron-down" />
         </button>
       </div>
-      <div className="term-body" ref={bodyRef}>
-        <div className="term-mount" ref={mountRef} />
+      <div className="term-main">
+        <div className="term-views">
+          {terms.map((t) => (
+            <TermInstanceView
+              key={t.id}
+              id={t.id}
+              gen={t.gen}
+              cwd={t.cwd}
+              active={t.id === activeId}
+              open={open}
+              onTitle={onTitle}
+              onDead={onDead}
+              onErr={onErr}
+            />
+          ))}
+        </div>
+        <div className={`term-side${sideCollapsed ? " collapsed" : ""}${sideResizing ? " resizing" : ""}`} style={!sideCollapsed ? { width: sideW } : undefined}>
+          {!sideCollapsed && <div className="term-side-resize" onMouseDown={startSideResize} />}
+          <div className="term-side-head">
+            {!sideCollapsed && <span>instances</span>}
+            <span className="term-side-spacer" />
+            {!sideCollapsed && (
+              <button className="icon-btn term-btn small" data-tip="New terminal" onClick={addTerm}>
+                <i className="fa-solid fa-plus" />
+              </button>
+            )}
+            <button
+              className="icon-btn term-btn small"
+              data-tip={sideCollapsed ? "Expand list" : "Collapse list"}
+              onClick={() => { playSound("click"); setSideCollapsed((v) => !v); }}
+            >
+              <i className={`fa-solid ${sideCollapsed ? "fa-chevron-left" : "fa-chevron-right"}`} />
+            </button>
+          </div>
+          <div className="term-inst-list">
+            {terms.map((t) => (
+              <div
+                key={t.id}
+                className={`term-inst-row${t.id === activeId ? " active" : ""}${armedId === t.id ? " armed" : ""}${t.dead ? " dead" : ""}`}
+                onClick={() => { if (armedId !== t.id) setActiveId(t.id); }}
+                data-tip={sideCollapsed ? `${t.title}${t.cwd ? " — " + t.cwd : ""}${t.dead ? " (exited)" : ""}` : undefined}
+              >
+                <i className="fa-solid fa-terminal term-inst-ico" />
+                {!sideCollapsed && (
+                  <>
+                    <div className="term-inst-info">
+                      <span className="term-inst-title" title={t.title}>{t.title}</span>
+                      <span className="term-inst-cwd" title={t.cwd}>{t.cwd ? t.cwd.split(/[/\\]/).pop() : "—"}</span>
+                    </div>
+                    <span className="term-inst-spacer" />
+                    <span className="term-inst-actions">
+                      <button
+                        className="icon-btn term-btn small"
+                        data-tip="Reload terminal"
+                        onClick={(e) => { e.stopPropagation(); void reloadTerm(t.id); }}
+                      >
+                        <i className="fa-solid fa-rotate" />
+                      </button>
+                      <button
+                        className={`icon-btn term-btn small${armedId === t.id ? " danger" : " close"}`}
+                        data-tip={armedId === t.id ? "Click again to kill" : "Kill terminal"}
+                        onClick={(e) => { e.stopPropagation(); void killTerm(t.id); }}
+                      >
+                        <i className={`fa-solid ${armedId === t.id ? "fa-check" : "fa-trash-can"}`} />
+                      </button>
+                    </span>
+                  </>
+                )}
+                {sideCollapsed && t.dead && <span className="term-inst-dot dead" />}
+                {sideCollapsed && !t.dead && t.id === activeId && <span className="term-inst-dot active" />}
+              </div>
+            ))}
+          </div>
+          {sideCollapsed && (
+            <div className="term-side-foot">
+              <button className="icon-btn term-btn small" data-tip="New terminal" onClick={addTerm}>
+                <i className="fa-solid fa-plus" />
+              </button>
+            </div>
+          )}
+          {!sideCollapsed && terms.length >= 8 && <div className="term-side-hint">max 8 reached</div>}
+        </div>
       </div>
     </div>
   );

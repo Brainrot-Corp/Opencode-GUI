@@ -128,11 +128,42 @@
 .term-head .icon-btn i {
   font-size: 11px;
 }
+.term-head .icon-btn.danger,
+.term-side .icon-btn.danger {
+  color: var(--danger);
+  background: rgba(224, 143, 143, 0.14);
+  box-shadow: 0 0 10px rgba(224, 143, 143, 0.35);
+}
+
+.term-count {
+  font-size: 10px;
+  color: var(--text-faint);
+  opacity: 0.8;
+  letter-spacing: 0.04em;
+  margin-left: 6px;
+}
+
+.term-main {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+.term-views {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  position: relative;
+  overflow: hidden;
+}
 
 .term-body {
   position: relative;
   flex: 1;
   min-height: 0;
+  min-width: 0;
   /* keeps the dock's blur/glass out of the canvas compositing path */
   transform: translateZ(0);
 }
@@ -155,8 +186,249 @@
   background: transparent !important;
 }
 /* selection rects use the exact ::selection recipe from tokens.css. The
-   renderer normally pre-blends them against the background color, which
-   goes muddy over our transparent glass */
+     renderer normally pre-blends them against the background color, which
+     goes muddy over our transparent glass */
 .term-mount .xterm .xterm-selection div {
   background-color: color-mix(in srgb, var(--accent) calc(0.22 * 100%), transparent) !important;
+}
+/* terminal viewport scrollbar — hidden (wheel/trackpad still scrolls) */
+.term-mount .xterm-viewport {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.term-mount .xterm-viewport::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
+}
+
+/* right-side instance list — glass chrome like sidebar/titlebar */
+.term-side {
+  position: relative;
+  width: 176px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-left: 1px solid var(--line);
+  background: linear-gradient(180deg, rgba(var(--chrome-rgb), 0.14), rgba(var(--chrome-rgb), 0.22));
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  overflow: hidden;
+}
+.term-side.collapsed {
+  width: 46px;
+}
+.term-side-resize {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 10px;
+  cursor: var(--cur-colresize, col-resize);
+  z-index: 5;
+}
+.term-side.collapsed .term-side-resize {
+  display: none;
+}
+.term-side-resize::before {
+  content: "";
+  position: absolute;
+  left: 3px;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: transparent;
+  transition: background 0.25s var(--ease), box-shadow 0.3s var(--ease);
+}
+.term-side-resize:hover::before,
+.term-side.resizing .term-side-resize::before {
+  background: color-mix(in srgb, var(--accent) calc(0.45 * 100%), transparent);
+  box-shadow: 0 0 10px var(--accent-glow);
+}
+.term-side.resizing .term-inst-list {
+  scrollbar-width: none;
+}
+.term-side.resizing .term-inst-list::-webkit-scrollbar {
+  width: 0;
+}
+.term-side-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 6px;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--line);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  user-select: none;
+}
+.term-side-spacer {
+  flex: 1;
+}
+.term-side .icon-btn.small {
+  width: 22px;
+  height: 20px;
+}
+.term-side .icon-btn.small i {
+  font-size: 10px;
+}
+.term-inst-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.term-inst-list::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
+}
+.term-side.collapsed .term-side-head {
+  justify-content: center;
+  padding: 0 6px;
+}
+.term-side.collapsed .term-side-spacer {
+  display: none;
+}
+.term-side.collapsed .term-inst-list {
+  gap: 8px;
+  align-items: center;
+  padding: 8px 6px;
+}
+.term-inst-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 8px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: background 0.2s var(--ease), border-color 0.2s var(--ease);
+  user-select: none;
+  min-width: 0;
+}
+.term-inst-row:hover {
+  background: color-mix(in srgb, var(--accent) calc(0.06 * 100%), transparent);
+  border-color: var(--line);
+}
+.term-inst-row.active {
+  border-color: color-mix(in srgb, var(--accent) calc(0.28 * 100%), transparent);
+  background: var(--accent-dim);
+}
+.term-inst-row.armed {
+  border-color: color-mix(in srgb, var(--danger) calc(0.35 * 100%), transparent);
+  background: color-mix(in srgb, var(--danger) calc(0.12 * 100%), transparent);
+}
+.term-inst-row.dead {
+  opacity: 0.7;
+}
+.term-inst-ico {
+  font-size: 11px;
+  color: var(--accent);
+  opacity: 0.85;
+  flex-shrink: 0;
+}
+.term-inst-row.active .term-inst-ico {
+  color: var(--accent);
+}
+.term-inst-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  overflow: hidden;
+}
+.term-inst-title {
+  font-family: var(--sans);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.2;
+}
+.term-inst-row.active .term-inst-title {
+  color: var(--text);
+}
+.term-inst-cwd {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.2;
+}
+.term-inst-spacer {
+  flex: 1;
+}
+.term-inst-actions {
+  display: flex;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity 0.15s var(--ease);
+  flex-shrink: 0;
+}
+.term-inst-row:hover .term-inst-actions,
+.term-inst-row:focus-within .term-inst-actions {
+  opacity: 1;
+}
+.term-side.collapsed .term-inst-row {
+  justify-content: center;
+  padding: 0;
+  width: 34px;
+  height: 34px;
+  border-radius: 4px;
+  position: relative;
+}
+.term-inst-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.term-inst-dot.active {
+  background: var(--accent);
+  box-shadow: 0 0 8px var(--accent-glow);
+}
+.term-inst-dot.dead {
+  background: var(--text-faint);
+  opacity: 0.6;
+}
+.term-side.collapsed .term-inst-dot {
+  position: absolute;
+  right: 5px;
+  bottom: 5px;
+  width: 6px;
+  height: 6px;
+  border: 1px solid var(--line);
+}
+.term-side.collapsed .term-inst-dot.active {
+  border-color: transparent;
+}
+.term-side-foot {
+  display: flex;
+  justify-content: center;
+  padding: 6px;
+  border-top: 1px solid var(--line);
+}
+.term-side-hint {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-faint);
+  text-align: center;
+  padding: 4px 6px 6px;
+  letter-spacing: 0.03em;
 }

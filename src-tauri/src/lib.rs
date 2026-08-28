@@ -20,7 +20,7 @@ mod git;
 use git::{git_commit, git_diff, git_diff_stat, git_discard, git_log, git_pull, git_push, git_stage, git_status, git_unstage};
 
 mod pty;
-use pty::{pty_kill, pty_resize, pty_spawn, pty_write, PtyState};
+use pty::{kill_all as pty_kill_all, pty_kill, pty_resize, pty_spawn, pty_write, PtyState};
 
 mod discord;
 use discord::{discord_clear, discord_close, discord_set, discord_status, DiscordState};
@@ -1762,16 +1762,9 @@ pub fn run() {
                 // staged update swap + relaunch — after the sidecar is dead
                 // so its image file is no longer locked
                 apply_on_exit();
-                // terminal shell dies with the app
-                if let Some(ses) = _app_handle
-                    .state::<PtyState>()
-                    .inner()
-                    .0
-                    .lock()
-                    .unwrap()
-                    .take()
-                {
-                    ses.kill();
+                // terminal shells die with the app
+                if let Some(state) = _app_handle.try_state::<PtyState>() {
+                    pty_kill_all(&state);
                 }
                 // discord ipc pipe close
                 if let Some(state) = _app_handle.try_state::<DiscordState>() {

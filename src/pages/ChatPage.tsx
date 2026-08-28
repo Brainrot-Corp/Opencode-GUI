@@ -83,13 +83,10 @@ export default function ChatPage() {
       diffOpen,
     };
   }, [settings.workspace, oc.modelSel, oc.defaultModel, oc.busy, oc.activeId, oc.sessions, editingFile, diffOpen]);
-  // terminal dock visibility (height lives inside TerminalPanel)
+  // terminal dock visibility (height + instances live inside TerminalPanel — survives hide/show)
   const [termOpen, setTermOpen] = useState(
     () => localStorage.getItem("oc.term.open") === "1",
   );
-  // reload = full remount (bumped by the panel's reload button); a fresh mount
-  // boots xterm + spawns a shell exactly like first open — no in-place rebuild
-  const [termKey, setTermKey] = useState(0);
   // first-launch setup wizard — any close records the flag so it shows once
   const [onboardOpen, setOnboardOpen] = useState(
     () => localStorage.getItem("oc.onboarded") !== "1",
@@ -811,11 +808,9 @@ export default function ChatPage() {
             )}
             <Suspense fallback={null}>
               <TerminalPanel
-                key={termKey}
                 open={termOpen}
                 workspace={settings.workspace}
                 onClose={() => setTermOpen(false)}
-                onReload={() => setTermKey((k) => k + 1)}
               />
             </Suspense>
           </div>
