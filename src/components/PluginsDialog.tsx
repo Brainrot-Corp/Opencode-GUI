@@ -148,11 +148,14 @@ export default function PluginsDialog({
     }
   }
 
-  const q = query.trim().toLowerCase();
-  const filtered = (catalog ?? []).filter(
-    (e) => !q || e.id.toLowerCase().includes(q) || e.name.toLowerCase().includes(q) || (e.description ?? "").toLowerCase().includes(q),
-  );
   const getInstalled = (id: string) => plugins.find((p) => p.id === id || p.dir === id) ?? null;
+  const q = query.trim().toLowerCase();
+  const filtered = (catalog ?? []).filter((e) => {
+    if (getInstalled(e.id)) return false;
+    if (!q) return true;
+    return e.id.toLowerCase().includes(q) || e.name.toLowerCase().includes(q) || (e.description ?? "").toLowerCase().includes(q);
+  });
+  const availableCount = (catalog ?? []).filter((c) => !getInstalled(c.id)).length;
   // version-aware update check — catalog version newer than installed
   const hasUpdate = (id: string) => {
     const inst = getInstalled(id);
@@ -402,7 +405,7 @@ export default function PluginsDialog({
               <input
                 className="model-search"
                 type="text"
-                placeholder={`Filter ${catalog?.length ?? "..."} plugins...`}
+                placeholder={`Filter ${catalog ? availableCount : "..."} available...`}
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 spellCheck={false}
@@ -424,24 +427,19 @@ export default function PluginsDialog({
             {catLoading && !catalog ? (
               <div className="model-empty">Loading catalog…</div>
             ) : filtered.length === 0 ? (
-              <div className="model-empty">{catalog?.length === 0 ? "No plugins in catalog" : "No plugins match"}</div>
+              <div className="model-empty">
+                {catalog?.length === 0 ? "No plugins in catalog" : q ? "No plugins match" : "All available plugins are installed"}
+              </div>
             ) : (
               filtered.map((e) => {
-                const inst = getInstalled(e.id);
-                const installed = !!inst;
                 const busy = installing === e.id;
-                const needsUpdate = installed && isNewer(inst?.version, e.version);
-                const isConfirm = inst ? confirmId === inst.dir : false;
-                const isRemoving = inst ? removing === inst.dir : false;
                 return (
-                  <div key={e.id} className={`plugin-row${installed && !needsUpdate ? " disabled" : ""}`} style={{ opacity: installed && !needsUpdate ? 0.9 : 1, borderStyle: installed && !needsUpdate ? "solid" : needsUpdate ? "solid" : undefined, borderColor: needsUpdate ? "color-mix(in srgb, var(--accent) 22%, var(--line))" : undefined }}>
+                  <div key={e.id} className="plugin-row">
                     <div className="plugin-info">
                       <div className="plugin-name">
                         <i className="fa-solid fa-puzzle-piece plugin-icon" />
                         <span>{e.name}</span>
                         {e.version && <span className="plugin-badge">{e.version}</span>}
-                        {inst?.version && e.version && inst.version !== e.version && <span className="mono-hint" style={{ fontSize: 10 }}>{inst.version} → {e.version}</span>}
-                        {needsUpdate ? <span className="plugin-badge" style={{ background: "color-mix(in srgb, var(--accent) 14%, transparent)", borderColor: "color-mix(in srgb, var(--accent) 40%, transparent)", color: "var(--accent-bright)" }}>update</span> : installed ? <span className="plugin-badge">installed</span> : null}
                       </div>
                       <div className="mono-hint plugin-id">{e.id}</div>
                       {e.description && <div className="mono-hint" style={{ fontSize: 11, lineHeight: 1.4 }}>{e.description}</div>}
@@ -450,25 +448,13 @@ export default function PluginsDialog({
                       <button
                         type="button"
                         className="reset-btn"
-                        disabled={busy || isRemoving}
-                        data-tip={needsUpdate ? `Update ${inst?.version ?? ""} → ${e.version}` : installed ? "Reinstall / update from catalog" : "Install from catalog"}
+                        disabled={busy}
+                        data-tip="Install from catalog"
                         onClick={() => void handleInstall(e)}
                       >
-                        <i className={`fa-solid ${busy ? "fa-spinner fa-spin" : needsUpdate ? "fa-arrows-rotate" : installed ? "fa-arrows-rotate" : "fa-download"}`} />
-                        {busy ? "Installing…" : needsUpdate ? "Update" : installed ? "Reinstall" : "Install"}
+                        <i className={`fa-solid ${busy ? "fa-spinner fa-spin" : "fa-download"}`} />
+                        {busy ? "Installing…" : "Install"}
                       </button>
-                      {installed && inst && (
-                        <button
-                          type="button"
-                          className={`reset-btn danger-btn${isConfirm ? " armed" : ""}`}
-                          data-tip={isConfirm ? "Click again to confirm delete" : "Uninstall plugin"}
-                          disabled={isRemoving || busy}
-                          onClick={() => void handleDelete(inst)}
-                        >
-                          <i className={`fa-solid ${isConfirm ? "fa-triangle-exclamation" : "fa-trash-can"}`} />
-                          {isConfirm ? "Confirm" : isRemoving ? "Removing…" : "Uninstall"}
-                        </button>
-                      )}
                     </div>
                   </div>
                 );
