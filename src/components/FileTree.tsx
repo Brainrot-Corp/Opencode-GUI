@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { opencode, opencodeFor } from "../api";
 import { useContextMenu } from "../hooks/useContextMenu";
-import { useFileCache } from "../hooks/useFileCache";
+import { invalidateFileCache, useFileCache } from "../hooks/useFileCache";
 import { clipboardWrite } from "../lib/clipboard";
 import "../styles/files.css";
 import "../styles/find.css";
@@ -144,6 +144,9 @@ export default function FileTree({ dir = "" }: { dir?: string }) {
     const sep = base.includes("\\") ? "\\" : "/";
     return base.replace(/[\/\\]+$/, "") + sep + name;
   }
+  function emitChange(rel: string) {
+    window.dispatchEvent(new CustomEvent("oc:file-changed", { detail: rel }));
+  }
 
 
 
@@ -174,9 +177,12 @@ export default function FileTree({ dir = "" }: { dir?: string }) {
     const baseAbs = base ? base.absolute : workspaceRootAbs();
     if (!baseAbs) { setError("Cannot determine workspace root — open a workspace first"); return; }
     const abs = joinAbs(baseAbs, trimmed);
+    const newRel = basePath ? `${basePath}/${trimmed}` : trimmed;
     try {
       await invoke("file_create", { path: abs, is_dir: isDir });
       await load(basePath, true);
+      emitChange(newRel);
+      emitChange(basePath);
       if (base && !openDirs.has(base.path)) setOpenDirs((prev) => new Set(prev).add(base.path));
     } catch (e) { setError(String(e)); }
   }
@@ -185,14 +191,20 @@ export default function FileTree({ dir = "" }: { dir?: string }) {
     if (!window.confirm(`Delete ${n.type} "${n.name}"?\n${n.path}\n\nThis cannot be undone.`)) return;
     try {
       await invoke("file_delete", { path: n.absolute });
-      await load(parentPath(n.path), true);
+      const p = parentPath(n.path);
+      invalidateFileCache(n.path, dir);
+      await load(p, true);
+      emitChange(n.path);
+      emitChange(p);
     } catch (e) { setError(String(e)); }
   }
 
   async function doDuplicate(n: Node) {
     try {
       await invoke<string>("file_duplicate", { path: n.absolute });
-      await load(parentPath(n.path), true);
+      const p = parentPath(n.path);
+      await load(p, true);
+      emitChange(p);
     } catch (e) { setError(String(e)); }
   }
 
@@ -203,10 +215,15 @@ export default function FileTree({ dir = "" }: { dir?: string }) {
     const pPath = parentPath(n.path);
     const pAbs = parentAbs(n);
     const newAbs = joinAbs(pAbs, newName);
+    const newRel = pPath ? `${pPath}/${newName}` : newName;
     try {
       await invoke("file_rename", { from: n.absolute, to: newAbs });
       setRenaming(null);
+      invalidateFileCache(n.path, dir);
       await load(pPath, true);
+      emitChange(n.path);
+      emitChange(newRel);
+      emitChange(pPath);
     } catch (e) { setError(String(e)); }
   }
 
