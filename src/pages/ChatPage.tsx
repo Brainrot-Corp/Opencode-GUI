@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import Titlebar from "../components/Titlebar";
@@ -520,6 +520,41 @@ export default function ChatPage() {
   useEffect(() => {
     localStorage.setItem("oc.term.open", termOpen ? "1" : "0");
   }, [termOpen]);
+
+  // permission/question overlay dynamic anchoring — bottom tracks composer top with 6px gap (spacing unit)
+  useLayoutEffect(() => {
+    const GAP = 6;
+    const update = () => {
+      const composer = document.querySelector(".composer") as HTMLElement | null;
+      if (!composer) return;
+      const rect = composer.getBoundingClientRect();
+      const bottom = Math.round(window.innerHeight - rect.top + GAP);
+      document.documentElement.style.setProperty("--perm-bottom", `${bottom}px`);
+    };
+    update();
+    const ro = new ResizeObserver(update);
+    const observe = () => {
+      const c = document.querySelector(".composer") as HTMLElement | null;
+      const td = document.querySelector(".term-dock") as HTMLElement | null;
+      const main = document.querySelector(".main") as HTMLElement | null;
+      if (c) ro.observe(c);
+      if (td) ro.observe(td);
+      if (main) ro.observe(main);
+    };
+    observe();
+    window.addEventListener("resize", update);
+    const mo = new MutationObserver(() => {
+      ro.disconnect();
+      observe();
+      update();
+    });
+    mo.observe(document.body, { childList: true, subtree: true });
+    return () => {
+      ro.disconnect();
+      mo.disconnect();
+      window.removeEventListener("resize", update);
+    };
+  }, [oc.activeId, oc.permission, oc.question, termOpen, sbW, sbClosed, oc.booting]);
 
   const startResize = useCallback(
     (e: React.MouseEvent) => {
