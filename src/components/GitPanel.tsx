@@ -117,6 +117,8 @@ export default function GitPanel() {
   const [gen, setGen] = useState(false); // AI message in flight
   const [diff, setDiff] = useState<{ path: string; patch: string; staged: boolean } | null>(null);
   const bodyOpt = useCommitBody();
+  const genIdRef = useRef(0);
+  const genSidRef = useRef<string | null>(null);
   const dir = useRef(getDirectory());
   const [gh, setGh] = useState(() => clampH(Number(localStorage.getItem(GH_KEY)) || GH_DEFAULT));
   const [dragging, setDragging] = useState(false);
@@ -202,8 +204,22 @@ export default function GitPanel() {
     [busy, refresh],
   );
 
+  const abortGen = useCallback(() => {
+    if (!gen) return;
+    genIdRef.current++;
+    const sid = genSidRef.current;
+    genSidRef.current = null;
+    setGen(false);
+    if (sid) {
+      opencode().then(({ client }) => client.session.abort({ path: { id: sid } }).catch(() => {})).catch(() => {});
+      dropSession(sid).catch(() => {});
+    }
+  }, [gen]);
+
   const commit = (thenPush = false, override?: string) =>
     act(async () => {
+      // heuristic commit: stop the still-streaming AI so it can't overwrite the cleared input
+      if (gen) abortGen();
       await invoke("git_commit", { dir: dir.current, message: (override ?? msg).trim() });
       // committed entries leave the lists immediately — don't wait for the
       // status roundtrip (a chained push failing must not resurrect them)
@@ -237,6 +253,7 @@ export default function GitPanel() {
     if (gen || busy || !staged.length) return "";
     const model = secondaryModel();
     const includeBody = commitBodyEnabled();
+    const myId = ++genIdRef.current;
     setGen(true);
     setErr("");
     // capture staged snapshot for this run
@@ -280,6 +297,7 @@ export default function GitPanel() {
       });
 
       const sid = await tempSession();
+      genSidRef.current = sid;
       let best = heuristic;
       let streamed = "";
       try {
@@ -296,7 +314,9 @@ export default function GitPanel() {
         const start = Date.now();
         const deadline = 60000; // hard cap; 4× previous (15s→60s) for quality
         while (Date.now() - start < deadline) {
+          if (genIdRef.current !== myId) break; // aborted by commit
           await new Promise((r) => setTimeout(r, 260));
+          if (genIdRef.current !== myId) break;
           try {
             const r: any = await client.session.messages({ path: { id: sid } });
             const list: any[] = (r.data ?? []) as any[];
@@ -308,6 +328,7 @@ export default function GitPanel() {
             if (!raw) continue;
             const cleaned = cleanCommitMessage(raw, includeBody);
             if (cleaned && cleaned !== streamed) {
+              if (genIdRef.current !== myId) break;
               streamed = cleaned;
               best = cleaned;
               setMsg(cleaned); // progressively fills the textarea
@@ -320,6 +341,7 @@ export default function GitPanel() {
           }
         }
 
+        if (genIdRef.current !== myId) return heuristicFallback; // commit won, don't overwrite
         if (!streamed) {
           // no AI delta arrived — keep heuristic, surface hint
           setErr("AI slow — using heuristic. Edit or retry.");
@@ -327,15 +349,17 @@ export default function GitPanel() {
         }
         return best;
       } finally {
+        if (genSidRef.current === sid) genSidRef.current = null;
         await dropSession(sid);
       }
     } catch (e) {
+      if (genIdRef.current !== myId) return heuristicFallback;
       const m = String(e).replace(/^Error:\s*/, "");
       setErr(m);
       // keep heuristic in box so voice commit can proceed
       return heuristicFallback;
     } finally {
-      setGen(false);
+      if (genIdRef.current === myId) setGen(false);
     }
   };
   const genMsg = () => void genMessage();

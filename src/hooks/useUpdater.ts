@@ -40,7 +40,7 @@ export function useUpdater() {
   // 1h cooldown cache is only for the silent launch check, so a just-fixed
   // release can't be hidden by a stale cached "no update"
   // forceCurrent=true treats the latest GitHub release as an update even if
-  // version == current — debug path for reinstall testing (Ctrl+Shift+Tab+Click)
+  // version == current — debug path for reinstall testing (RightCtrl+Click Check)
   const check = useCallback(async (force = false, forceCurrent = false): Promise<void> => {
     setBusy(true);
     setErr("");
@@ -66,9 +66,23 @@ export function useUpdater() {
         headers: { "User-Agent": "opencode-gui" },
         body: null,
       });
+      if (r.status === 304) {
+        // cached / not modified — keep existing latest
+        return;
+      }
+      if (r.status !== 200) {
+        let msg = r.body;
+        try {
+          const je = JSON.parse(r.body) as { message?: string };
+          if (je.message) msg = je.message;
+        } catch {}
+        throw new Error(`GitHub ${r.status}: ${String(msg).slice(0, 300)}`);
+      }
       const j = JSON.parse(r.body);
+      // flavor may still be "" if build_flavor hasn't resolved — fall back to win11 for lookup
+      const wantZip = ZIP(flavor || "win11");
       const asset = (j.assets ?? []).find(
-        (a: { name: string }) => a.name === ZIP(flavor),
+        (a: { name: string }) => a.name === wantZip,
       );
       const version = releaseVersion(String(j.tag_name ?? ""));
       const digest: string = asset?.digest ?? "";
@@ -83,6 +97,10 @@ export function useUpdater() {
             sha256,
           };
         }
+      } else if (asset) {
+        // asset exists but digest missing (old release or API lag) — surface as error
+        // so user knows why Check shows "up to date" unexpectedly
+        throw new Error(`release asset ${wantZip} has no sha256 digest — try again in a minute`);
       }
       localStorage.setItem("oc.upd", JSON.stringify({ at: now, info }));
       setLatest(info);
