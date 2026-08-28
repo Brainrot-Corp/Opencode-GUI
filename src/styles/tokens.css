@@ -61,28 +61,21 @@ body,
 body {
   font-family: var(--sans);
   color: var(--text);
-  /* animated high-contrast opaque gradient — theme + light/dark aware (whole window) */
-  background: linear-gradient(135deg,
-    color-mix(in srgb, var(--accent) 22%, rgb(var(--chrome-rgb))) 0%,
-    color-mix(in srgb, var(--accent) 58%, rgb(var(--chrome-rgb))) 22%,
-    var(--accent) 44%,
-    color-mix(in srgb, var(--accent-bright) 92%, rgb(var(--chrome-rgb))) 58%,
-    color-mix(in srgb, var(--accent) 68%, rgb(var(--chrome-rgb))) 78%,
-    color-mix(in srgb, var(--accent) 24%, rgb(var(--chrome-rgb))) 100%
-  );
-  background-size: 360% 360%;
-  animation: appGradient 8s ease infinite;
+  /* translucent base over the acrylic — color/transparency user-configurable */
+  background:
+    radial-gradient(1100px 700px at 50% -12%, color-mix(in srgb, var(--accent) calc(0.055 * 100%), transparent), transparent 62%),
+    radial-gradient(900px 640px at 88% 112%, color-mix(in srgb, var(--accent) calc(0.035 * 100%), transparent), transparent 60%),
+    linear-gradient(
+      180deg,
+      rgba(var(--base-rgb), var(--base-a)),
+      rgba(var(--base-rgb), min(1, calc(var(--base-a) * 1.06))) 70%
+    );
   background-attachment: fixed;
   overflow: hidden;
   overscroll-behavior: none;
   position: fixed;
   inset: 0;
   -webkit-font-smoothing: antialiased;
-}
-@keyframes appGradient{
-  0%{ background-position: 0% 50%; }
-  50%{ background-position: 100% 50%; }
-  100%{ background-position: 0% 50%; }
 }
 
 ::selection {

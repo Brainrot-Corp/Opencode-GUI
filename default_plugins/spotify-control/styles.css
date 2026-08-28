@@ -116,63 +116,28 @@
 .spotify-box .discord-in { font-size: 11px; }
 .sp-hint { line-height: 1.4; padding: 4px 2px; }
 
-/* lyrics floating window — blur behind gradient, not on top: blur layer (::before) behind crisp gradient layer (::after) */
+/* lyrics floating window — glass panel like notepad, no animated gradient */
 .lyrics-panel{
   position:fixed;
   z-index:40;
   display:flex;
   flex-direction:column;
-  background: transparent;
-  border:1px solid color-mix(in srgb, var(--accent) 32%, var(--line));
-  box-shadow:0 28px 72px -20px var(--accent-glow), 0 0 0 1px color-mix(in srgb, var(--accent) 16%, transparent), 0 10px 28px -12px rgba(0,0,0,0.45);
+  background: var(--surface);
+  border:1px solid color-mix(in srgb, var(--accent) 22%, var(--line));
+  box-shadow:0 24px 64px -24px var(--accent-glow);
+  backdrop-filter:blur(8px);
+  -webkit-backdrop-filter:blur(8px);
   will-change:transform;
   contain:layout style paint;
   transform:translateZ(0);
   overflow:hidden;
-  isolation: isolate;
-}
-.lyrics-panel::before{
-  content:"";
-  position:absolute;
-  inset:0;
-  backdrop-filter: blur(18px);
-  -webkit-backdrop-filter: blur(18px);
-  background: rgba(var(--chrome-rgb), 0.18);
-  z-index:-2;
-  pointer-events:none;
-}
-.lyrics-panel::after{
-  content:"";
-  position:absolute;
-  inset:0;
-  background: linear-gradient(135deg,
-    rgba(var(--chrome-rgb), 0.52) 0%,
-    color-mix(in srgb, var(--accent) 58%, rgba(var(--chrome-rgb), 0.52)) 22%,
-    color-mix(in srgb, var(--accent) 62%, transparent) 44%,
-    color-mix(in srgb, var(--accent-bright) 60%, transparent) 58%,
-    color-mix(in srgb, var(--accent) 62%, rgba(var(--chrome-rgb), 0.52)) 78%,
-    rgba(var(--chrome-rgb), 0.52) 100%
-  );
-  background-size: 360% 360%;
-  animation: lyricsGradient 8s ease infinite;
-  z-index:-1;
-  pointer-events:none;
-}
-@keyframes lyricsGradient{
-  0%{ background-position: 0% 50%; }
-  50%{ background-position: 100% 50%; }
-  100%{ background-position: 0% 50%; }
-}
-@media (prefers-reduced-motion: reduce){
-  .lyrics-panel{ animation: none; }
 }
 .lyrics-head{
   display:flex;
   align-items:center;
   gap:8px;
   padding:8px 8px 8px 10px;
-  border-bottom:1px solid color-mix(in srgb, var(--accent) 14%, var(--line));
-  background: color-mix(in srgb, rgb(var(--chrome-rgb)) 58%, transparent);
+  border-bottom:1px solid var(--line);
   cursor:grab;
   user-select:none;
   flex-shrink:0;
@@ -213,16 +178,15 @@
   font-family:var(--sans);
   font-size:13px;
   line-height:1.5;
-  color:var(--text);
+  color:var(--text-dim);
   padding:4px 8px;
   border-radius:4px;
   cursor:pointer;
   transition: color .15s, background .15s, transform .12s;
   border-left:2px solid transparent;
-  text-shadow: 0 1px 6px rgba(0,0,0,0.28);
 }
 .lyrics-line:hover{ color:var(--text); background: color-mix(in srgb, var(--accent) 6%, transparent); border-left-color: color-mix(in srgb, var(--accent) 30%, transparent); }
-.lyrics-line.past{ color:var(--text-faint); opacity:1; }
+.lyrics-line.past{ color:var(--text-faint); opacity:.85; }
 .lyrics-line.on{
   color: var(--accent-bright);
   background: color-mix(in srgb, var(--accent) 14%, transparent);
@@ -254,12 +218,9 @@
 }
 .lyrics-foot{
   flex-shrink:0;
-  margin:0;
-  padding:3px 10px 4px;
-  border-top:1px solid color-mix(in srgb, var(--accent) 12%, var(--line));
-  background: color-mix(in srgb, rgb(var(--chrome-rgb)) 60%, transparent);
+  padding:6px 10px;
+  border-top:1px solid var(--line);
   font-size:10px;
-  line-height:1.2;
   color:var(--text-faint);
   display:flex;
   align-items:center;
