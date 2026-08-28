@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { AppSettings, ColorSet } from "../hooks/useSettings";
-import { fetchTerminalProfiles, useTerminalProfiles, type TerminalProfile as TermProfile } from "../hooks/useTerminalProfiles";
+import { fetchTerminalProfiles, useTerminalProfiles } from "../hooks/useTerminalProfiles";
 import { useUpdater as useUpdaterInternal } from "../hooks/useUpdater";
 import type { ThemeMeta } from "../lib/themes";
 import type { SoundPrefs } from "../lib/sounds";
@@ -10,6 +10,7 @@ import { applyWorkspace, pickWorkspace } from "../lib/workspace";
 import { UI_SCALES } from "../lib/uiScale";
 import ThemeSelect from "./ThemeSelect";
 import SecondaryModelPicker from "./SecondaryModelPicker";
+import TerminalShellPicker from "./TerminalShellPicker";
 import VoicesDialog from "./VoicesDialog";
 import Onboarding from "./Onboarding";
 import AppearanceSettings from "./AppearanceSettings";
@@ -444,59 +445,13 @@ export default function SettingsDrawer({
                 <i className={`fa-solid ${termLoading ? "fa-spinner fa-spin" : "fa-rotate"}`} /> Detect again
               </button>
             </div>
-            <div className="setting-row" style={{ paddingTop: 0 }}>
-              <div className="setting-info" style={{ flex: 1 }}>
-                <select
-                  value={settings.terminal?.defaultProfileId ?? ""}
-                  onChange={(e) => {
-                    const v = e.target.value || null;
-                    update({ terminal: { ...settings.terminal, defaultProfileId: v } });
-                  }}
-                  className="discord-in"
-                  style={{ flex: 1, minWidth: 0, padding: "6px 8px" }}
-                >
-                  <option value="">System default (PowerShell)</option>
-                  {(() => {
-                    const groups: Record<string, TermProfile[]> = { probe: [], wsl: [], wt: [] };
-                    for (const p of termProfiles) {
-                      if (p.source === "wsl") groups.wsl.push(p);
-                      else if (p.source === "wt") groups.wt.push(p);
-                      else groups.probe.push(p);
-                    }
-                    const nodes: any[] = [];
-                    if (groups.probe.length) nodes.push(
-                      <optgroup key="probe" label="Installed shells">
-                        {groups.probe.map((p) => (
-                          <option key={p.id} value={p.id}>{p.name} — {p.path}{p.args.length ? " " + p.args.join(" ") : ""}</option>
-                        ))}
-                      </optgroup>
-                    );
-                    if (groups.wsl.length) nodes.push(
-                      <optgroup key="wsl" label="WSL distros">
-                        {groups.wsl.map((p) => (
-                          <option key={p.id} value={p.id}>{p.name} — {p.path}{p.args.length ? " " + p.args.join(" ") : ""}</option>
-                        ))}
-                      </optgroup>
-                    );
-                    if (groups.wt.length) nodes.push(
-                      <optgroup key="wt" label="Windows Terminal">
-                        {groups.wt.map((p) => (
-                          <option key={p.id} value={p.id}>{p.name} — {p.path}{p.args.length ? " " + p.args.join(" ") : ""}</option>
-                        ))}
-                      </optgroup>
-                    );
-                    const customs = settings.terminal?.customShells ?? [];
-                    if (customs.length) nodes.push(
-                      <optgroup key="custom" label="Custom">
-                        {customs.map((c) => (
-                          <option key={c.id} value={c.id}>Custom: {c.name} — {c.path}{c.args ? " " + c.args : ""}</option>
-                        ))}
-                      </optgroup>
-                    );
-                    return nodes;
-                  })()}
-                </select>
-              </div>
+            <div className="setting-row drop" style={{ paddingTop: 0 }}>
+              <TerminalShellPicker
+                value={settings.terminal?.defaultProfileId ?? ""}
+                onChange={(v) => update({ terminal: { ...settings.terminal, defaultProfileId: v || null } })}
+                profiles={termProfiles}
+                customShells={settings.terminal?.customShells ?? []}
+              />
             </div>
             {termErr && <div className="voice-err mono-hint" style={{ padding: "0 12px 6px" }}>{termErr}</div>}
             {!termLoading && termProfiles.length === 0 && !termErr && (

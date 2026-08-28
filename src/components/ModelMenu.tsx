@@ -33,6 +33,8 @@ export default function ModelMenu({
   needsModel,
   onPick,
   collapseKey = "oc.modelGroups.collapsed",
+  searchPlaceholder = "Filter models…",
+  emptyLabel = "No models match",
 }: {
   open: boolean;
   setOpen: (fn: (o: boolean) => boolean) => void;
@@ -47,6 +49,8 @@ export default function ModelMenu({
   needsModel?: boolean;
   onPick: (value: string) => void;
   collapseKey?: string;
+  searchPlaceholder?: string;
+  emptyLabel?: string;
 }) {
   const boxRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -167,13 +171,13 @@ export default function ModelMenu({
               ref={searchRef}
               className="model-search"
               type="text"
-              placeholder="Filter models…"
+              placeholder={searchPlaceholder}
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               spellCheck={false}
             />
           </div>
-          {entries.length === 0 && <div className="model-empty">No models match</div>}
+          {entries.length === 0 && <div className="model-empty">{emptyLabel}</div>}
           {entries.map((it, i) => {
             const showGroup = !!(it.group && entries[i - 1]?.group !== it.group);
             const group = it.group;
