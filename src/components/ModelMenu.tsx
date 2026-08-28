@@ -1,13 +1,24 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import DropdownPortal from "./DropdownPortal";
 
 export type ModelEntry = { value: string; label: string; group?: string };
+
+function loadCollapsed(key: string): Set<string> {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return new Set();
+    const arr = JSON.parse(raw);
+    if (Array.isArray(arr)) return new Set(arr.filter((x): x is string => typeof x === "string"));
+  } catch {}
+  return new Set();
+}
 
 // model picker dropdown: trigger button + filter input + grouped option
 // list. Selection state (open / highlight / query) is owned by the composer
 // so its single global keydown router keeps driving navigation; this
 // component owns only the outside-click close, search focus, and
-// highlight scroll-into-view.
+// highlight scroll-into-view. Groups are collapsible (persisted via
+// localStorage) — filtering temporarily expands all groups.
 export default function ModelMenu({
   open,
   setOpen,
@@ -21,6 +32,7 @@ export default function ModelMenu({
   disabled,
   needsModel,
   onPick,
+  collapseKey = "oc.modelGroups.collapsed",
 }: {
   open: boolean;
   setOpen: (fn: (o: boolean) => boolean) => void;
@@ -34,10 +46,63 @@ export default function ModelMenu({
   disabled?: boolean;
   needsModel?: boolean;
   onPick: (value: string) => void;
+  collapseKey?: string;
 }) {
   const boxRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
+  const [collapsed, setCollapsed] = useState<Set<string>>(() => loadCollapsed(collapseKey));
+  const isFiltering = query.trim().length > 0;
+
+  // keep collapsed set in sync if collapseKey changes (e.g. secondary picker)
+  useEffect(() => {
+    setCollapsed(loadCollapsed(collapseKey));
+  }, [collapseKey]);
+
+  const groupCounts = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const e of entries) if (e.group) m.set(e.group, (m.get(e.group) ?? 0) + 1);
+    return m;
+  }, [entries]);
+
+  function toggleGroup(group: string) {
+    const collapsing = !collapsed.has(group);
+    // hovering a model sets hi to its index — collapsing its own group would
+    // otherwise be immediately undone by the auto-expand-on-hi effect, so
+    // clear the highlight when the highlighted entry lives inside the group
+    // being collapsed (ponytail: minimal guard, keeps keyboard expand intact)
+    if (collapsing && hi >= 0 && hi < entries.length && entries[hi]?.group === group) {
+      setHi(() => -1);
+    }
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(group)) next.delete(group);
+      else next.add(group);
+      try {
+        localStorage.setItem(collapseKey, JSON.stringify([...next]));
+      } catch {}
+      return next;
+    });
+  }
+
+  // auto-expand the group that contains the highlighted entry — arrowing
+  // into a collapsed group reveals it instead of hiding the highlight
+  useEffect(() => {
+    if (!open || isFiltering) return;
+    if (hi < 0 || hi >= entries.length) return;
+    const g = entries[hi]?.group;
+    if (g && collapsed.has(g)) {
+      setCollapsed((prev) => {
+        if (!prev.has(g)) return prev;
+        const n = new Set(prev);
+        n.delete(g);
+        try {
+          localStorage.setItem(collapseKey, JSON.stringify([...n]));
+        } catch {}
+        return n;
+      });
+    }
+  }, [hi, entries, collapsed, open, isFiltering, collapseKey]);
 
   useEffect(() => {
     if (!open) return;
@@ -62,7 +127,7 @@ export default function ModelMenu({
     menuRef.current
       ?.querySelector('[data-hl="true"]')
       ?.scrollIntoView({ block: "nearest" });
-  }, [hi, open]);
+  }, [hi, open, collapsed]);
 
   // focus the filter when the menu opens so typing starts filtering at once
   useEffect(() => {
@@ -110,22 +175,38 @@ export default function ModelMenu({
           </div>
           {entries.length === 0 && <div className="model-empty">No models match</div>}
           {entries.map((it, i) => {
-            const showGroup = it.group && entries[i - 1]?.group !== it.group;
+            const showGroup = !!(it.group && entries[i - 1]?.group !== it.group);
+            const group = it.group;
+            const isCollapsed = !!group && !isFiltering && collapsed.has(group);
+            const count = group ? (groupCounts.get(group) ?? 0) : 0;
             return (
               <div key={`${it.group ?? ""}:${it.value || "def"}:${i}`}>
-                {showGroup && <div className="model-group-label">{it.group}</div>}
-                <button
-                  type="button"
-                  role="option"
-                  aria-selected={selected === it.value}
-                  data-hl={hi === i || undefined}
-                  className={`model-opt${selected === it.value ? " selected" : ""}${hi === i ? " hl" : ""}`}
-                  onClick={() => onPick(it.value)}
-                  onMouseEnter={() => setHi(() => i)}
-                >
-                  <span>{it.label}</span>
-                  {selected === it.value && <i className="fa-solid fa-check" />}
-                </button>
+                {showGroup && group && (
+                  <button
+                    type="button"
+                    className={`model-group-label${isCollapsed ? " collapsed" : ""}`}
+                    onClick={() => toggleGroup(group)}
+                    aria-expanded={!isCollapsed}
+                  >
+                    <i className={`fa-solid fa-chevron-${isCollapsed ? "right" : "down"}`} />
+                    <span>{group}</span>
+                    <span className="model-group-count">{count}</span>
+                  </button>
+                )}
+                {!isCollapsed && (
+                  <button
+                    type="button"
+                    role="option"
+                    aria-selected={selected === it.value}
+                    data-hl={hi === i || undefined}
+                    className={`model-opt${selected === it.value ? " selected" : ""}${hi === i ? " hl" : ""}`}
+                    onClick={() => onPick(it.value)}
+                    onMouseEnter={() => setHi(() => i)}
+                  >
+                    <span>{it.label}</span>
+                    {selected === it.value && <i className="fa-solid fa-check" />}
+                  </button>
+                )}
               </div>
             );
           })}

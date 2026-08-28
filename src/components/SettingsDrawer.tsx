@@ -6,10 +6,9 @@ import type { ThemeMeta } from "../lib/themes";
 import type { SoundPrefs } from "../lib/sounds";
 import type { CmdEntry } from "../hooks/useOpencode";
 import { applyWorkspace, pickWorkspace } from "../lib/workspace";
-import { splitModel } from "../lib/models";
 import { UI_SCALES } from "../lib/uiScale";
 import ThemeSelect from "./ThemeSelect";
-import ModelMenu, { type ModelEntry } from "./ModelMenu";
+import SecondaryModelPicker from "./SecondaryModelPicker";
 import VoicesDialog from "./VoicesDialog";
 import PluginsDialog from "./PluginsDialog";
 import Onboarding from "./Onboarding";
@@ -154,35 +153,6 @@ export default function SettingsDrawer({
   }
 
   const scales = UI_SCALES;
-
-  // secondary model picker — cheap model for commit messages, debriefs & long-answer summaries
-  const [gmOpen, setGmOpen] = useState(false);
-  const [gmHi, setGmHi] = useState(-1);
-  const [gmQuery, setGmQuery] = useState("");
-  const gmPretty = (sel: string) => {
-    if (!sel) return "Off";
-    const [pid, mid] = splitModel(sel);
-    const g = providers?.find((x) => x.id === pid);
-    const m = g?.models.find((x) => x.id === mid);
-    return g && m ? `${g.label} · ${m.label}` : sel;
-  };
-  const gmEntries: ModelEntry[] = [
-    { value: "", label: "Off — no secondary tasks" },
-    ...(providers ?? []).flatMap((g) =>
-      g.models.map((m) => ({ value: `${g.id}/${m.id}`, label: m.label, group: g.label })),
-    ),
-  ];
-  const gmFiltered = (() => {
-    const q = gmQuery.trim().toLowerCase();
-    return q
-      ? gmEntries.filter(
-          (e2) =>
-            e2.label.toLowerCase().includes(q) ||
-            e2.value.toLowerCase().includes(q) ||
-            (e2.group ?? "").toLowerCase().includes(q),
-        )
-      : gmEntries;
-  })();
 
   return (
     <>
@@ -352,22 +322,10 @@ export default function SettingsDrawer({
                 </div>
               </div>
               <div className="color-controls">
-                <ModelMenu
-                  open={gmOpen}
-                  setOpen={setGmOpen}
-                  hi={gmHi}
-                  setHi={setGmHi}
-                  entries={gmFiltered}
-                  query={gmQuery}
-                  setQuery={setGmQuery}
-                  selected={settings.secondaryModel}
-                  label={providers?.length ? gmPretty(settings.secondaryModel) : "loading models…"}
-                  onPick={(v) => {
-                    update({ secondaryModel: v });
-                    setGmOpen(false);
-                    setGmHi(-1);
-                    setGmQuery("");
-                  }}
+                <SecondaryModelPicker
+                  value={settings.secondaryModel}
+                  onChange={(v) => update({ secondaryModel: v })}
+                  providers={providers}
                 />
               </div>
             </div>
