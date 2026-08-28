@@ -17,19 +17,42 @@ pub struct TerminalProfile {
 }
 
 fn where_lookup(exe: &str) -> Option<String> {
-    let out = std::process::Command::new("where")
-        .arg(exe)
-        .output()
-        .ok()?;
-    if !out.status.success() {
-        return None;
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        let out = std::process::Command::new("where")
+            .arg(exe)
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+            .ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        let txt = String::from_utf8_lossy(&out.stdout);
+        let first = txt.lines().map(|l| l.trim()).find(|l| !l.is_empty())?;
+        if first.is_empty() {
+            None
+        } else {
+            Some(first.to_string())
+        }
     }
-    let txt = String::from_utf8_lossy(&out.stdout);
-    let first = txt.lines().map(|l| l.trim()).find(|l| !l.is_empty())?;
-    if first.is_empty() {
-        None
-    } else {
-        Some(first.to_string())
+    #[cfg(not(windows))]
+    {
+        let out = std::process::Command::new("where")
+            .arg(exe)
+            .output()
+            .ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        let txt = String::from_utf8_lossy(&out.stdout);
+        let first = txt.lines().map(|l| l.trim()).find(|l| !l.is_empty())?;
+        if first.is_empty() {
+            None
+        } else {
+            Some(first.to_string())
+        }
     }
 }
 

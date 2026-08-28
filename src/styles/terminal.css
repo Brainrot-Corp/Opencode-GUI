@@ -37,7 +37,8 @@
   border-color: transparent;
   box-shadow: none;
 }
-.term-dock.dragging {
+.term-dock.dragging,
+.term-dock.no-anim {
   transition: none;
 }
 

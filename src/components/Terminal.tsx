@@ -81,6 +81,12 @@ export default function TerminalPanel({
   const [maxErr, setMaxErr] = useState("");
   const { profiles } = useTerminalProfiles();
   const [addMenuOpen, setAddMenuOpen] = useState(false);
+  // prevent height transition on first paint — avoids flash open→close on app launch
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    const id = window.setTimeout(() => setMounted(true), 350);
+    return () => window.clearTimeout(id);
+  }, []);
   const addMenuRef = useRef<HTMLDivElement>(null);
   const addMenuPortalRef = useRef<HTMLDivElement>(null);
 
@@ -366,7 +372,7 @@ export default function TerminalPanel({
   }, [open, terms, activeId]);
 
   return (
-    <div className={`term-dock${open ? "" : " closed"}${dragging ? " dragging" : ""}`} style={{ height: open ? h : 0 }}>
+    <div className={`term-dock${open ? "" : " closed"}${dragging ? " dragging" : ""}${mounted ? "" : " no-anim"}`} style={{ height: open ? h : 0 }}>
       <div className="term-resize" data-tip="Drag to resize · double-click to reset" onMouseDown={startResize} onDoubleClick={resetSize}>
         <i className="fa-solid fa-grip-lines" aria-hidden="true" />
       </div>
