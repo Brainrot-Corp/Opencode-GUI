@@ -462,6 +462,79 @@ export default function Composer({
     return () => window.removeEventListener("keydown", onKey);
   });
 
+  // type-to-focus: when terminal isn't focused and a session is active,
+  // printable keys (and Backspace/Delete) that would otherwise go nowhere
+  // focus the composer at the caret position. Shortcuts and overlays are excluded.
+  useEffect(() => {
+    const onTypeToFocus = (e: KeyboardEvent) => {
+      if (!sessionId) return;
+      const ta = inputRef.current;
+      if (!ta || ta.disabled) return;
+      if (document.activeElement === ta) return;
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      if ((e as any).isComposing || e.keyCode === 229) return;
+      const isPrintable = e.key.length === 1;
+      const isEdit = e.key === "Backspace" || e.key === "Delete";
+      if (!isPrintable && !isEdit) return;
+      const target = e.target as HTMLElement | null;
+      const ae = document.activeElement as HTMLElement | null;
+      const isEditable = (el: HTMLElement | null) =>
+        !!el && (!!el.closest?.("input, textarea, select, [contenteditable]") || (el as HTMLElement).isContentEditable);
+      if (isEditable(target) || isEditable(ae)) return;
+      // terminal owns its keys — only block when the dock is open (not .closed)
+      const tDock = target?.closest?.(".term-dock") as HTMLElement | null;
+      const aeDock = ae?.closest?.(".term-dock") as HTMLElement | null;
+      const dock = tDock || aeDock;
+      if (dock && !dock.classList.contains("closed")) return;
+      if (ae?.closest?.(".xterm") || target?.closest?.(".xterm")) return;
+      // overlays own typing — blocked per user choice
+      if (document.querySelector(".cmd-menu, .model-menu, .ctx-menu, .dlg-scrim, .drawer-scrim.open, .permission-bar")) return;
+      e.preventDefault();
+      ta.focus();
+      const cur = inputRef2.current;
+      const start = ta.selectionStart ?? cur.length;
+      const end = ta.selectionEnd ?? cur.length;
+      let next: string;
+      let caret: number;
+      if (isPrintable) {
+        next = cur.slice(0, start) + e.key + cur.slice(end);
+        caret = start + 1;
+        playSound("type");
+      } else if (e.key === "Backspace") {
+        if (start !== end) {
+          next = cur.slice(0, start) + cur.slice(end);
+          caret = start;
+        } else if (start > 0) {
+          next = cur.slice(0, start - 1) + cur.slice(end);
+          caret = start - 1;
+        } else {
+          return;
+        }
+        playSound("erase");
+      } else {
+        // Delete
+        if (start !== end) {
+          next = cur.slice(0, start) + cur.slice(end);
+          caret = start;
+        } else if (start < cur.length) {
+          next = cur.slice(0, start) + cur.slice(end + 1);
+          caret = start;
+        } else {
+          return;
+        }
+        playSound("erase");
+      }
+      setInput(next);
+      requestAnimationFrame(() => {
+        try {
+          ta.setSelectionRange(caret, caret);
+        } catch {}
+      });
+    };
+    window.addEventListener("keydown", onTypeToFocus);
+    return () => window.removeEventListener("keydown", onTypeToFocus);
+  }, [sessionId]);
+
   const fillCmd = (c: CmdEntry) => {
     setInput(`/${c.name} `);
   };
