@@ -233,7 +233,6 @@ export default function FileTree({ dir = "" }: { dir?: string }) {
     const isDir = n.type === "directory";
     ctx.show(e.clientX, e.clientY, [
       ...(isDir ? [] : [{ label: "Open", icon: "fa-arrow-up-right-from-square", action: () => openFile(n) } as any]),
-      { label: "Reveal in Explorer", icon: "fa-folder-open", action: () => void invoke("file_reveal", { path: n.absolute }).catch((er)=> setError(String(er))) },
       { label: "Open With Default App", icon: "fa-up-right-from-square", action: () => void invoke("file_open", { path: n.absolute }).catch((er)=> setError(String(er))) },
       { separator: true },
       { label: "Copy Path", icon: "fa-link", action: () => void clipboardWrite(n.absolute) },
@@ -263,11 +262,6 @@ export default function FileTree({ dir = "" }: { dir?: string }) {
       { label: "New Folder", icon: "fa-folder-plus", action: () => void doCreate(true, null) },
       { separator: true },
       { label: "Refresh", icon: "fa-arrows-rotate", action: () => void load("", true) },
-      { label: "Reveal Workspace in Explorer", icon: "fa-folder-open", action: () => {
-        const root = workspaceRootAbs();
-        if (root) void invoke("file_reveal", { path: root }).catch((er)=> setError(String(er)));
-        else setError("No workspace open");
-      }},
       { label: "Copy Workspace Path", icon: "fa-link", action: () => {
         const root = workspaceRootAbs();
         if (root) void clipboardWrite(root);

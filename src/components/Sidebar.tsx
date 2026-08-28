@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Session } from "@opencode-ai/sdk/client";
-import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { playSound } from "../lib/sounds";
 import { useContextMenu } from "../hooks/useContextMenu";
@@ -406,7 +405,6 @@ export default function Sidebar({
                       <div className="gp-sect ws-head ws-head--large" role="button" tabIndex={0} draggable={!isPrimary} onDragStart={() => { if (!isPrimary) setDragReorder(extraIdx); }} onDragEnd={() => { setDragReorder(null); setDropIndex(null); }} onClick={() => toggleWs(dir)} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggleWs(dir); } }} data-tip={dir || "Server cwd"} style={!isPrimary ? { cursor: "grab" } : undefined}>
                         <span className="gp-sect-toggle ws-toggle--large"><i className={`fa-solid fa-chevron-${isCollapsed ? "right" : "down"} gp-sect-chev`} /><i className="fa-solid fa-folder" style={{ fontSize: 13, color: "var(--accent)", opacity: 0.9 }} /><span className="ws-title mono" style={{ maxWidth: 140, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{baseName(dir)}</span><span className="gp-sect-count">{dir ? "" : ""}</span></span>
                         <span className="gp-sect-acts ws-acts--large" onClick={(e) => e.stopPropagation()}>
-                          <button className="gp-sact ws-action--large" data-tip="Reveal in Explorer" onClick={() => { const p = dir || primaryDir; if (p) void invoke("file_reveal", { path: p }).catch(()=>{}); }}><i className="fa-solid fa-folder-open" /></button>
                           <button className="gp-sact ws-action--large" data-tip="Copy path" onClick={() => void clipboardWrite(dir)}><i className="fa-solid fa-link" /></button>
                           {!isPrimary && (
                             confirming ? (
