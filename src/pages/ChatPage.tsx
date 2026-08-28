@@ -221,6 +221,7 @@ export default function ChatPage() {
     onToggleSidebar: toggleSidebar,
     onOpenWorkspace: () => void pickWorkspace(),
     onNewInstance: () => void invoke("spawn_new_instance"),
+    onNewSession: () => void oc.newSession(),
   });
 
   // spoken rendering of a voice act — used to read embedded commands back
