@@ -142,7 +142,7 @@ export default function Composer({
   onCycleVariant?: () => void;
   hasVariants?: boolean;
   variantSel?: string;
-  securityMode?: "full" | "user" | "restricted";
+  securityMode?: "full" | "user" | "block";
   onCycleSecurity?: () => void;
   caps?: { attachment?: boolean; input?: string[] };
   usage?: { cost: number; tokens: number };
@@ -869,8 +869,8 @@ export default function Composer({
           data-tip={
             securityMode === "full"
               ? "Full control — no permission prompts (auto-allow)"
-              : securityMode === "restricted"
-                ? "Restricted — auto-deny permission requests"
+              : securityMode === "block"
+                ? "Block — auto-deny permission requests"
                 : "User mode — classic allow once / always prompts — click to cycle"
           }
           onClick={() => onCycleSecurity?.()}
@@ -879,12 +879,12 @@ export default function Composer({
             className={`fa-solid ${
               securityMode === "full"
                 ? "fa-bolt"
-                : securityMode === "restricted"
+                : securityMode === "block"
                   ? "fa-lock"
                   : "fa-user-shield"
             }`}
           />
-          {securityMode === "full" ? "Full" : securityMode === "restricted" ? "Restricted" : "User"}
+          {securityMode === "full" ? "Full" : securityMode === "block" ? "Block" : "User"}
         </button>
         {usage && usage.tokens > 0 && (
           <span

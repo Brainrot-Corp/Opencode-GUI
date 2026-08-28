@@ -56,12 +56,13 @@ export function useOpencode() {
   const [attentionIds, setAttentionIds] = useState<Set<string>>(new Set());
   const [attentionKinds, setAttentionKinds] = useState<Record<string, "permission" | "question" | "both">>({});
   // security mode: how permissions are handled — persisted globally
-  type SecurityMode = "full" | "user" | "restricted";
+  type SecurityMode = "full" | "user" | "block";
   const SECURITY_KEY = "oc.securityMode";
   const [securityMode, setSecurityMode] = useState<SecurityMode>(() => {
     try {
       const v = localStorage.getItem(SECURITY_KEY);
-      if (v === "full" || v === "restricted" || v === "user") return v;
+      if (v === "restricted") return "block"; // migrate legacy name
+      if (v === "full" || v === "block" || v === "user") return v;
     } catch {}
     return "user";
   });
@@ -70,7 +71,7 @@ export function useOpencode() {
   useEffect(() => { try { localStorage.setItem(SECURITY_KEY, securityMode); } catch {} }, [securityMode]);
   const cycleSecurityMode = useCallback(() => {
     setSecurityMode((cur) => {
-      const next: SecurityMode = cur === "user" ? "restricted" : cur === "restricted" ? "full" : "user";
+      const next: SecurityMode = cur === "user" ? "block" : cur === "block" ? "full" : "user";
       playSound("click");
       return next;
     });
@@ -318,7 +319,8 @@ export function useOpencode() {
   useEffect(() => {
     const onStorage = (e: StorageEvent) => {
       if (e.key !== SECURITY_KEY || !e.newValue) return;
-      if (e.newValue === "full" || e.newValue === "user" || e.newValue === "restricted") {
+      if (e.newValue === "restricted") { setSecurityMode("block"); return; }
+      if (e.newValue === "full" || e.newValue === "user" || e.newValue === "block") {
         setSecurityMode(e.newValue as SecurityMode);
       }
     };
@@ -559,7 +561,7 @@ export function useOpencode() {
             void autoRespondPermission(ask, "always");
             break;
           }
-          if (mode === "restricted") {
+          if (mode === "block") {
             void autoRespondPermission(ask, "reject");
             break;
           }
@@ -582,7 +584,7 @@ export function useOpencode() {
             void autoRespondPermission(ask, "always");
             break;
           }
-          if (mode2 === "restricted") {
+          if (mode2 === "block") {
             void autoRespondPermission(ask, "reject");
             break;
           }
@@ -824,7 +826,7 @@ export function useOpencode() {
         // same for permissions — best-effort (endpoint may not exist in older server)
         const handleBootPerms = (arr: any[]) => {
           const mode = securityModeRef.current;
-          if (mode === "full" || mode === "restricted") {
+          if (mode === "full" || mode === "block") {
             const resp: "always" | "reject" = mode === "full" ? "always" : "reject";
             for (const p of arr) {
               const ask: PermAsk = {

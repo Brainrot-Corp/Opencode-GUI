@@ -79,16 +79,16 @@
 .security-chip.sec-full i {
   color: var(--accent-bright);
 }
-.security-chip.sec-restricted {
+.security-chip.sec-block {
   background: color-mix(in srgb, var(--danger) calc(0.1 * 100%), transparent);
   border-color: color-mix(in srgb, var(--danger) calc(0.28 * 100%), transparent);
   color: var(--danger);
 }
-.security-chip.sec-restricted i {
+.security-chip.sec-block i {
   color: var(--danger);
   text-shadow: 0 0 7px rgba(224,143,143,0.5);
 }
-.security-chip.sec-restricted:hover {
+.security-chip.sec-block:hover {
   border-color: color-mix(in srgb, var(--danger) calc(0.5 * 100%), transparent);
   box-shadow: 0 0 12px -4px rgba(224,143,143,0.45);
 }
