@@ -116,13 +116,13 @@
 .spotify-box .discord-in { font-size: 11px; }
 .sp-hint { line-height: 1.4; padding: 4px 2px; }
 
-/* lyrics floating window — glass + draggable like notepad, timestamp-synced */
+/* lyrics floating window — glass panel like notepad, no animated gradient */
 .lyrics-panel{
   position:fixed;
   z-index:40;
   display:flex;
   flex-direction:column;
-  background:var(--surface);
+  background: var(--surface);
   border:1px solid color-mix(in srgb, var(--accent) 22%, var(--line));
   box-shadow:0 24px 64px -24px var(--accent-glow);
   backdrop-filter:blur(8px);

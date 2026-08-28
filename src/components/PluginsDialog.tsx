@@ -6,7 +6,6 @@ import type { LoadedPlugin } from "../lib/plugins";
 import { isNewer } from "../lib/plugins";
 import type { AppSettings } from "../hooks/useSettings";
 import {
-  loadPluginsCatalog,
   fetchPluginFiles,
   pluginRawUrl,
   normalizePluginUrl,
@@ -24,6 +23,10 @@ export default function PluginsDialog({
   onRemoved,
   settings,
   updatePlugin,
+  catalog,
+  catalogLoading,
+  catalogError,
+  onRefreshCatalog,
 }: {
   open: boolean;
   onClose: () => void;
@@ -32,16 +35,19 @@ export default function PluginsDialog({
   onRemoved: (id: string) => void;
   settings?: AppSettings;
   updatePlugin?: (id: string, patch: Record<string, unknown>) => void;
+  catalog?: PluginCatalogEntry[] | null;
+  catalogLoading?: boolean;
+  catalogError?: string;
+  onRefreshCatalog?: (force?: boolean) => Promise<unknown>;
 }) {
   const [tab, setTab] = useState<"installed" | "browse">("installed");
-  const [confirmId, setConfirmId] = useState<string | null>(null);
+  const [confirmKey, setConfirmKey] = useState<string | null>(null);
   const [removing, setRemoving] = useState<string | null>(null);
   const [err, setErr] = useState("");
 
-  // browse state
-  const [catalog, setCatalog] = useState<PluginCatalogEntry[] | null>(null);
-  const [catLoading, setCatLoading] = useState(false);
-  const [catErr, setCatErr] = useState("");
+  // catalog now owned by ChatPage (single source) — dialog is stateless for it
+  const catLoading = !!catalogLoading;
+  const catErr = catalogError ?? "";
   const [query, setQuery] = useState("");
   const [installing, setInstalling] = useState<string | null>(null);
   // url install
@@ -50,10 +56,15 @@ export default function PluginsDialog({
   const [urlErr, setUrlErr] = useState("");
   const [settingsId, setSettingsId] = useState<string | null>(null);
 
+  function armConfirm(key: string) {
+    setConfirmKey(key);
+    setTimeout(() => setConfirmKey((v) => (v === key ? null : v)), 4000);
+  }
+
   async function handleDelete(p: LoadedPlugin) {
-    if (confirmId !== p.dir) {
-      setConfirmId(p.dir);
-      setTimeout(() => setConfirmId((v) => (v === p.dir ? null : v)), 4000);
+    const key = `${p.dir}:delete`;
+    if (confirmKey !== key) {
+      armConfirm(key);
       return;
     }
     setRemoving(p.dir);
@@ -72,7 +83,7 @@ export default function PluginsDialog({
       await invoke("plugin_remove", { dir: p.dir });
       onRemoved(p.id);
       if (p.id !== p.dir) onRemoved(p.dir);
-      setConfirmId(null);
+      setConfirmKey(null);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -80,28 +91,24 @@ export default function PluginsDialog({
     }
   }
 
-  async function loadCatalog(force = false) {
-    setCatLoading(true);
-    setCatErr("");
-    try {
-      const entries = await loadPluginsCatalog(force);
-      setCatalog(entries);
-      if (!entries.length) setCatErr("No plugins found — check connection and try refresh");
-    } catch (e) {
-      setCatErr(e instanceof Error ? e.message : String(e));
-    } finally {
-      setCatLoading(false);
+  async function handleReinstall(p: LoadedPlugin) {
+    const key = `${p.dir}:reinstall`;
+    if (confirmKey !== key) {
+      armConfirm(key);
+      return;
     }
+    setConfirmKey(null);
+    const entry = catalog?.find((c) => c.id === p.id || c.id === p.dir);
+    if (!entry) {
+      setErr(`No catalog entry for ${p.id} — try Refresh or Install from URL`);
+      return;
+    }
+    await handleInstall(entry);
   }
 
-  // lazy load on first browse open (like VoicesDialog)
-  // eslint-disable-next-line react-hooks/rules-of-hooks
-  useEffect(() => {
-    if (!open) return;
-    if (tab !== "browse") return;
-    if (catalog !== null || catLoading) return;
-    void loadCatalog(false);
-  }, [open, tab, catalog, catLoading]);
+  function refreshCatalog(force = false) {
+    void onRefreshCatalog?.(force)?.catch(() => {});
+  }
 
   useEffect(() => {
     if (!open) setSettingsId(null);
@@ -110,7 +117,6 @@ export default function PluginsDialog({
   async function handleInstall(entry: PluginCatalogEntry) {
     setInstalling(entry.id);
     setErr("");
-    setCatErr("");
     try {
       const base = pluginRawUrl(entry.id, "").replace(/\/$/, "");
       // use shared fetch helper for consistency (handles css optional)
@@ -119,7 +125,7 @@ export default function PluginsDialog({
       await invoke("plugin_install_files", { dir, manifest, main, css });
       // watcher will reload; no need to manually refresh plugins prop
     } catch (e) {
-      setCatErr(e instanceof Error ? e.message : String(e));
+      setErr(e instanceof Error ? e.message : String(e));
     } finally {
       setInstalling(null);
     }
@@ -162,11 +168,14 @@ export default function PluginsDialog({
     }
   }
 
-  const q = query.trim().toLowerCase();
-  const filtered = (catalog ?? []).filter(
-    (e) => !q || e.id.toLowerCase().includes(q) || e.name.toLowerCase().includes(q) || (e.description ?? "").toLowerCase().includes(q),
-  );
   const getInstalled = (id: string) => plugins.find((p) => p.id === id || p.dir === id) ?? null;
+  const q = query.trim().toLowerCase();
+  const filtered = (catalog ?? []).filter((e) => {
+    if (getInstalled(e.id)) return false;
+    if (!q) return true;
+    return e.id.toLowerCase().includes(q) || e.name.toLowerCase().includes(q) || (e.description ?? "").toLowerCase().includes(q);
+  });
+  const availableCount = (catalog ?? []).filter((c) => !getInstalled(c.id)).length;
   // version-aware update check — catalog version newer than installed
   const hasUpdate = (id: string) => {
     const inst = getInstalled(id);
@@ -249,32 +258,48 @@ export default function PluginsDialog({
             </div>
           ) : (
             <>
-              {updateCount > 0 && (
-                <div className="browse-search" style={{ padding: "2px 0 0" }}>
-                  <div className="model-search-wrap" style={{ background: "color-mix(in srgb, var(--accent) 8%, var(--inset-bg))", borderColor: "color-mix(in srgb, var(--accent) 22%, var(--line))" }}>
-                    <i className="fa-solid fa-arrows-rotate" style={{ color: "var(--accent)" }} />
-                    <span className="mono-hint" style={{ flex: 1 }}>{updateCount} update{updateCount === 1 ? "" : "s"} available</span>
+              <div className="browse-search" style={{ padding: "2px 0 0" }}>
+                <div className="model-search-wrap">
+                  <i className={`fa-solid ${catLoading ? "fa-spinner fa-spin" : "fa-arrows-rotate"}`} style={{ color: updateCount ? "var(--accent)" : undefined }} />
+                  <span className="mono-hint" style={{ flex: 1 }}>
+                    {catLoading ? "Checking for updates…" : updateCount ? `${updateCount} update${updateCount === 1 ? "" : "s"} available` : catalog ? "All plugins up to date" : "Checking catalog…"}
+                  </span>
+                  {updateCount > 0 && (
                     <button
                       type="button"
                       className="reset-btn"
-                      disabled={!!installing}
+                      disabled={!!installing || catLoading}
                       onClick={async () => {
                         for (const p of plugins.filter((x) => hasUpdate(x.id))) await handleUpdate(p);
                       }}
                     >
                       <i className="fa-solid fa-download" /> Update all
                     </button>
-                  </div>
+                  )}
+                  <button
+                    type="button"
+                    className="reset-btn"
+                    data-tip="Force refresh catalog (bypass 12h cache)"
+                    disabled={catLoading}
+                    onClick={() => refreshCatalog(true)}
+                  >
+                    <i className={`fa-solid ${catLoading ? "fa-spinner fa-spin" : "fa-arrows-rotate"}`} />
+                    Refresh
+                  </button>
                 </div>
-              )}
+              </div>
+              {catalog != null && !catalog.length && !catLoading ? <div className="voice-err">No plugins found — check connection and try refresh</div> : catErr ? <div className="voice-err">{catErr}</div> : null}
               <div className="plugins-list">
                 {plugins.map((p) => {
                   const enabled = !p.disabled;
-                  const isConfirm = confirmId === p.dir;
                   const isRemoving = removing === p.dir;
                   const needsUpdate = hasUpdate(p.id);
                   const catEntry = catalog?.find((c) => c.id === p.id || c.id === p.dir);
                   const busy = installing === p.id || installing === p.dir;
+                  const reinstallKey = `${p.dir}:reinstall`;
+                  const deleteKey = `${p.dir}:delete`;
+                  const isReinstallArmed = confirmKey === reinstallKey;
+                  const isDeleteArmed = confirmKey === deleteKey;
                   return (
                     <div key={p.dir} className={`plugin-row${p.disabled ? " disabled" : ""}`}>
                       <div className="plugin-info">
@@ -339,16 +364,28 @@ export default function PluginsDialog({
                             Settings
                           </button>
                         ) : null}
-                        <button
-                          type="button"
-                          className={`reset-btn danger-btn${isConfirm ? " armed" : ""}`}
-                          data-tip={isConfirm ? "Click again to confirm delete" : "Delete plugin folder"}
-                          disabled={isRemoving || busy}
-                          onClick={() => void handleDelete(p)}
-                        >
-                          <i className={`fa-solid ${isConfirm ? "fa-triangle-exclamation" : "fa-trash-can"}`} />
-                          {isConfirm ? "Confirm" : "Delete"}
-                        </button>
+                        <div className="split-btn" aria-label="Reinstall or delete">
+                          <button
+                            type="button"
+                            className={`split-half reinstall${isReinstallArmed ? " armed" : ""}`}
+                            data-tip={isReinstallArmed ? "Click again to confirm reinstall" : "Reinstall from catalog"}
+                            disabled={isRemoving || busy}
+                            onClick={() => void handleReinstall(p)}
+                          >
+                            <i className={`fa-solid ${isReinstallArmed ? "fa-triangle-exclamation" : busy ? "fa-spinner fa-spin" : "fa-rotate"}`} />
+                            <span className="split-label">{isReinstallArmed ? "Confirm" : busy ? "…" : "Reinstall"}</span>
+                          </button>
+                          <button
+                            type="button"
+                            className={`split-half delete${isDeleteArmed ? " armed" : ""}`}
+                            data-tip={isDeleteArmed ? "Click again to confirm delete" : "Delete plugin folder"}
+                            disabled={isRemoving || busy}
+                            onClick={() => void handleDelete(p)}
+                          >
+                            <i className={`fa-solid ${isDeleteArmed ? "fa-triangle-exclamation" : "fa-trash-can"}`} />
+                            <span className="split-label">{isDeleteArmed ? "Confirm" : isRemoving ? "…" : "Delete"}</span>
+                          </button>
+                        </div>
                       </div>
                     </div>
                   );
@@ -403,7 +440,7 @@ export default function PluginsDialog({
               <input
                 className="model-search"
                 type="text"
-                placeholder={`Filter ${catalog?.length ?? "..."} plugins...`}
+                placeholder={`Filter ${catalog ? availableCount : "..."} available...`}
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 spellCheck={false}
@@ -411,9 +448,9 @@ export default function PluginsDialog({
               <button
                 type="button"
                 className="reset-btn"
-                data-tip="Force refresh catalog (bypass 1-day cache)"
+                data-tip="Force refresh catalog (bypass 12h cache)"
                 disabled={catLoading}
-                onClick={() => void loadCatalog(true)}
+                onClick={() => refreshCatalog(true)}
               >
                 <i className={`fa-solid ${catLoading ? "fa-spinner fa-spin" : "fa-arrows-rotate"}`} />
                 Refresh
@@ -425,24 +462,19 @@ export default function PluginsDialog({
             {catLoading && !catalog ? (
               <div className="model-empty">Loading catalog…</div>
             ) : filtered.length === 0 ? (
-              <div className="model-empty">{catalog?.length === 0 ? "No plugins in catalog" : "No plugins match"}</div>
+              <div className="model-empty">
+                {catalog?.length === 0 ? "No plugins in catalog" : q ? "No plugins match" : "All available plugins are installed"}
+              </div>
             ) : (
               filtered.map((e) => {
-                const inst = getInstalled(e.id);
-                const installed = !!inst;
                 const busy = installing === e.id;
-                const needsUpdate = installed && isNewer(inst?.version, e.version);
-                const isConfirm = inst ? confirmId === inst.dir : false;
-                const isRemoving = inst ? removing === inst.dir : false;
                 return (
-                  <div key={e.id} className={`plugin-row${installed && !needsUpdate ? " disabled" : ""}`} style={{ opacity: installed && !needsUpdate ? 0.9 : 1, borderStyle: installed && !needsUpdate ? "solid" : needsUpdate ? "solid" : undefined, borderColor: needsUpdate ? "color-mix(in srgb, var(--accent) 22%, var(--line))" : undefined }}>
+                  <div key={e.id} className="plugin-row">
                     <div className="plugin-info">
                       <div className="plugin-name">
                         <i className="fa-solid fa-puzzle-piece plugin-icon" />
                         <span>{e.name}</span>
                         {e.version && <span className="plugin-badge">{e.version}</span>}
-                        {inst?.version && e.version && inst.version !== e.version && <span className="mono-hint" style={{ fontSize: 10 }}>{inst.version} → {e.version}</span>}
-                        {needsUpdate ? <span className="plugin-badge" style={{ background: "color-mix(in srgb, var(--accent) 14%, transparent)", borderColor: "color-mix(in srgb, var(--accent) 40%, transparent)", color: "var(--accent-bright)" }}>update</span> : installed ? <span className="plugin-badge">installed</span> : null}
                       </div>
                       <div className="mono-hint plugin-id">{e.id}</div>
                       {e.description && <div className="mono-hint" style={{ fontSize: 11, lineHeight: 1.4 }}>{e.description}</div>}
@@ -451,25 +483,13 @@ export default function PluginsDialog({
                       <button
                         type="button"
                         className="reset-btn"
-                        disabled={busy || isRemoving}
-                        data-tip={needsUpdate ? `Update ${inst?.version ?? ""} → ${e.version}` : installed ? "Reinstall / update from catalog" : "Install from catalog"}
+                        disabled={busy}
+                        data-tip="Install from catalog"
                         onClick={() => void handleInstall(e)}
                       >
-                        <i className={`fa-solid ${busy ? "fa-spinner fa-spin" : needsUpdate ? "fa-arrows-rotate" : installed ? "fa-arrows-rotate" : "fa-download"}`} />
-                        {busy ? "Installing…" : needsUpdate ? "Update" : installed ? "Reinstall" : "Install"}
+                        <i className={`fa-solid ${busy ? "fa-spinner fa-spin" : "fa-download"}`} />
+                        {busy ? "Installing…" : "Install"}
                       </button>
-                      {installed && inst && (
-                        <button
-                          type="button"
-                          className={`reset-btn danger-btn${isConfirm ? " armed" : ""}`}
-                          data-tip={isConfirm ? "Click again to confirm delete" : "Uninstall plugin"}
-                          disabled={isRemoving || busy}
-                          onClick={() => void handleDelete(inst)}
-                        >
-                          <i className={`fa-solid ${isConfirm ? "fa-triangle-exclamation" : "fa-trash-can"}`} />
-                          {isConfirm ? "Confirm" : isRemoving ? "Removing…" : "Uninstall"}
-                        </button>
-                      )}
                     </div>
                   </div>
                 );
@@ -477,7 +497,7 @@ export default function PluginsDialog({
             )}
           </div>
           <p className="cmd-note mono-hint" style={{ padding: "4px 2px 0" }}>
-            Catalog cached for 1 day — <button type="button" className="linklike" onClick={() => void loadCatalog(true)} disabled={catLoading}>force refresh</button> to bypass. Sources from <code>github.com/Brainrot-Corp/Opencode-GUI/default_plugins</code>.
+            Catalog cached for 12h — <button type="button" className="linklike" onClick={() => refreshCatalog(true)} disabled={catLoading}>force refresh</button> to bypass. Sources from <code>github.com/Brainrot-Corp/Opencode-GUI/default_plugins</code>.
           </p>
         </>
       )}

@@ -146,9 +146,8 @@ pub fn pty_spawn(
     }
     let mut cmd = CommandBuilder::new(shell_cmd.clone());
     let low = shell_cmd.to_lowercase();
-    if (low.contains("powershell") || low.contains("pwsh")) && !extra_args.iter().any(|a| a == "-NoLogo" || a == "-NoExit") {
+    if (low.contains("powershell") || low.contains("pwsh")) && !extra_args.iter().any(|a| a == "-NoLogo") {
         cmd.arg("-NoLogo");
-        cmd.arg("-NoExit");
     }
     for a in &extra_args {
         cmd.arg(a);
@@ -169,16 +168,24 @@ pub fn pty_spawn(
     });
 
     let emitter = app.clone();
-    let killed = session.killed.clone();
+    let killed_reader = session.killed.clone();
+    let killed_waiter = session.killed.clone();
+    let session_clone = session.clone();
+    let exit_emitted = Arc::new(AtomicBool::new(false));
+    let exit_emitted_reader = exit_emitted.clone();
+    let exit_emitted_waiter = exit_emitted.clone();
     std::thread::spawn(move || {
+        let killed = killed_reader;
         let mut buf = [0u8; 8192];
         let mut total = 0usize;
         use base64::Engine as _;
         let mut reason = "eof";
+        let mut consecutive_errs: u32 = 0;
         loop {
             match reader.read(&mut buf) {
                 Ok(0) => break,
                 Ok(n) => {
+                    consecutive_errs = 0;
                     total += n;
                     let _ = emitter.emit(
                         "pty://frame",
@@ -194,13 +201,65 @@ pub fn pty_spawn(
                         reason = "killed";
                         break;
                     }
+                    // `exit` in cmd.exe on Windows often surfaces as repeated Err instead of Ok(0);
+                    // poll the child so we reliably emit `pty://exit` and let the UI auto-close the instance
+                    if let Ok(mut guard) = session_clone.child.try_lock() {
+                        if let Ok(Some(_status)) = guard.try_wait() {
+                            reason = "exit";
+                            break;
+                        }
+                    }
+                    consecutive_errs = consecutive_errs.saturating_add(1);
+                    if consecutive_errs > 50 {
+                        // ~1s of empty Errs — treat as exit if child is gone, otherwise as err
+                        if let Ok(mut guard) = session_clone.child.try_lock() {
+                            if let Ok(Some(_)) = guard.try_wait() {
+                                reason = "exit";
+                            } else {
+                                reason = "err";
+                            }
+                        }
+                        break;
+                    }
                     std::thread::sleep(Duration::from_millis(20));
                 }
             }
         }
         eprintln!("[pty] reader exit id={id} gen={gen} reason={reason} total={total}B");
-        let _ = emitter.emit("pty://exit", serde_json::json!({ "id": id, "g": gen }));
+        if !exit_emitted_reader.swap(true, Ordering::Relaxed) {
+            let _ = emitter.emit("pty://exit", serde_json::json!({ "id": id, "g": gen }));
+        }
     });
+    // fallback waiter: reader.read can block forever after child exits (ConPTY keeps master open),
+    // so poll child independently and emit exit even when reader is stuck
+    {
+        let emitter2 = app.clone();
+        let killed2 = killed_waiter;
+        let session2 = session.clone();
+        std::thread::spawn(move || {
+            loop {
+                std::thread::sleep(Duration::from_millis(200));
+                if exit_emitted_waiter.load(Ordering::Relaxed) {
+                    break;
+                }
+                if killed2.load(Ordering::Relaxed) {
+                    break;
+                }
+                let should_exit = if let Ok(mut guard) = session2.child.try_lock() {
+                    matches!(guard.try_wait(), Ok(Some(_)))
+                } else {
+                    false
+                };
+                if should_exit {
+                    if !exit_emitted_waiter.swap(true, Ordering::Relaxed) {
+                        eprintln!("[pty] waiter exit id={id} gen={gen}");
+                        let _ = emitter2.emit("pty://exit", serde_json::json!({ "id": id, "g": gen }));
+                    }
+                    break;
+                }
+            }
+        });
+    }
 
     {
         let mut map = state.inner().0.lock().unwrap_or_else(|e| e.into_inner());

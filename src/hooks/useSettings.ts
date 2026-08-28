@@ -4,6 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { setSoundPrefs, type SoundPrefs } from "../lib/sounds";
+import { getDirectory, setDirectory } from "../api";
 import {
   applyTheme,
   defaultThemesJson,
@@ -343,23 +344,41 @@ export function useSettings() {
     localStorage.setItem(KEY, JSON.stringify(settings));
   }, [settings]);
 
+  // keep Rust file + api directory in sync so local debug builds survive
+  // devUrl origin resets (localStorage for http://localhost:1420 vs
+  // tauri://localhost). applyWorkspace already writes, this covers any other
+  // path that mutates workspace.
+  useEffect(() => {
+    invoke("workspace_set", { path: settings.workspace }).catch(() => {});
+    if (getDirectory() !== settings.workspace) setDirectory(settings.workspace);
+  }, [settings.workspace]);
+
   useEffect(() => {
     setSoundPrefs(settings.sounds);
   }, [settings.sounds]);
 
+  // appearance overrides live entirely in-memory (never written to the
+  // persisted json). The json (DEFAULT_COLOR_SETS / themes.json) stays
+  // pristine and is the source of truth for Reset, while edits are pure
+  // CSS overrides via --base-* / --surf-*.
+  const [appearanceOverrides, setAppearanceOverrides] = useState<Partial<AppColors>>({});
+
   // theme + mode + appearance → DOM (CSS variables drive every surface).
-  // full palette comes from applyTheme; the user's per-theme color overrides
-  // layer on top of it afterwards
+  // full palette comes from applyTheme; the in-memory appearance overrides
+  // layer on top of it afterwards — no mutation of the persisted colors json.
   useEffect(() => {
     if (activeDef) applyTheme(activeId, activeDef, effectiveMode);
     else document.documentElement.dataset.mode = effectiveMode;
-    const cs = colorsFor(settings.colors, activeId)[effectiveMode];
+    const defaultCs =
+      DEFAULT_COLOR_SETS[activeId]?.[effectiveMode] ?? DEFAULT_COLOR_SETS.cyan[effectiveMode];
+    const overrideCs = (appearanceOverrides as AppColors)[activeId]?.[effectiveMode];
+    const cs = overrideCs ?? defaultCs;
     const s = document.documentElement.style;
     s.setProperty("--base-rgb", hexToRgb(cs.base));
     s.setProperty("--base-a", String(cs.baseA));
     s.setProperty("--surf-rgb", hexToRgb(cs.surface));
     s.setProperty("--surf-a", String(cs.surfaceA));
-  }, [activeDef, activeId, settings.mode, settings.colors, effectiveMode]);
+  }, [activeDef, activeId, effectiveMode, appearanceOverrides]);
 
   useEffect(() => {
     getCurrentWindow().setAlwaysOnTop(settings.alwaysOnTop).catch(() => {});
@@ -439,37 +458,65 @@ export function useSettings() {
     setSettings((s) => ({ ...s, sounds: { ...s.sounds, ...patch } }));
   }, []);
 
+  // Appearance edits are pure in-memory CSS overrides keyed by the
+  // *effective* theme/mode (the actual vars on <html>). They never touch
+  // the persisted json, so the json stays as the reset source.
   const updateColors = useCallback(
     (patch: Partial<ColorSet>) =>
-      setSettings((s) => {
-        const cur = colorsFor(s.colors, s.theme);
+      setAppearanceOverrides((prev) => {
+        const tid = activeId;
+        const mode = effectiveMode;
+        const defaultCs =
+          DEFAULT_COLOR_SETS[tid]?.[mode] ?? DEFAULT_COLOR_SETS.cyan[mode];
+        const cur = (prev as AppColors)[tid]?.[mode] ?? defaultCs;
+        const nextCs = { ...cur, ...patch };
+        const themePrev = (prev as AppColors)[tid] ?? {};
         return {
-          ...s,
-          colors: {
-            ...s.colors,
-            [s.theme]: {
-              ...cur,
-              [s.mode]: { ...cur[s.mode], ...patch },
-            },
-          },
-        };
+          ...(prev as AppColors),
+          [tid]: { ...themePrev, [mode]: nextCs },
+        } as Partial<AppColors>;
       }),
-    [],
+    [activeId, effectiveMode],
   );
 
+  // dynamic reset — clears the override for the *current* effective
+  // theme×mode so the CSS falls back to the json defaults for that exact
+  // theme/mode (not a hardcoded cyan).
   const resetColors = useCallback(
     () =>
-      setSettings((s) => ({
-        ...s,
-        colors: {
-          ...s.colors,
-          [s.theme]: structuredClone(DEFAULT_COLOR_SETS.cyan),
-        },
-      })),
-    [],
+      setAppearanceOverrides((prev) => {
+        const tid = activeId;
+        const mode = effectiveMode;
+        const next = { ...(prev as AppColors) } as AppColors;
+        if (!next[tid]) return prev;
+        const themeNext = { ...next[tid] };
+        delete (themeNext as Record<string, unknown>)[mode];
+        if (Object.keys(themeNext).length === 0) {
+          delete (next as Record<string, unknown>)[tid];
+        } else {
+          (next as Record<string, unknown>)[tid] = themeNext;
+        }
+        return next as Partial<AppColors>;
+      }),
+    [activeId, effectiveMode],
   );
 
   const themeList: ThemeMeta[] = Object.values(themes).map((t) => t.meta);
+
+  // merged view for the drawer: overrides win, otherwise json defaults.
+  // kept stable via callback so AppearanceSettings sees live slider values.
+  const mergedColorsFor = useCallback(
+    (theme: string) => {
+      const defaults = colorsFor(DEFAULT_COLOR_SETS as AppColors, theme);
+      const overrides = (appearanceOverrides as AppColors)[theme];
+      if (!overrides) return defaults;
+      return {
+        dark: overrides.dark ?? defaults.dark,
+        light: overrides.light ?? defaults.light,
+      } as Record<Mode, ColorSet>;
+    },
+    [appearanceOverrides],
+  );
 
   return {
     settings,
@@ -482,6 +529,6 @@ export function useSettings() {
     themeError,
     activeModes,
     effectiveMode,
-    colorsFor: (theme: string) => colorsFor(settings.colors, theme),
+    colorsFor: mergedColorsFor,
   };
 }

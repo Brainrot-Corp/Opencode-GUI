@@ -40,9 +40,51 @@ struct ServerState {
     error: Option<String>,
 }
 
+// workspace persistence — saved per local dev build so debug restarts reopen
+// the same project without relying on WebView localStorage (devUrl origin
+// differs from release, so localStorage would appear empty).
+fn workspace_file(app: &tauri::AppHandle) -> Option<PathBuf> {
+    app.path().app_config_dir().ok().map(|d| d.join("workspace"))
+}
+
+#[tauri::command]
+fn workspace_get(app: tauri::AppHandle) -> String {
+    workspace_file(&app)
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .unwrap_or_default()
+        .trim()
+        .to_string()
+}
+
+#[tauri::command]
+fn workspace_set(app: tauri::AppHandle, path: String) -> Result<(), String> {
+    let Some(file) = workspace_file(&app) else {
+        return Err("no config dir".into());
+    };
+    let t = path.trim();
+    if t.is_empty() {
+        let _ = std::fs::remove_file(&file);
+        return Ok(());
+    }
+    if let Some(dir) = file.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
+    std::fs::write(&file, t).map_err(|e| e.to_string())
+}
+
+fn read_saved_workspace(app: &tauri::AppHandle) -> Option<PathBuf> {
+    let raw = workspace_get(app.clone());
+    if raw.is_empty() {
+        return None;
+    }
+    let p = PathBuf::from(raw);
+    if p.is_dir() { Some(p) } else { None }
+}
+
 // ponytail: kill-on-exit handler covers normal close; a hard crash can orphan
 // the server. Windows Job Objects (KILL_ON_JOB_CLOSE) if that ever matters.
-fn spawn_server() -> std::io::Result<(Child, u16)> {    let port = TcpListener::bind("127.0.0.1:0")?.local_addr()?.port();
+fn spawn_server(workspace: Option<PathBuf>) -> std::io::Result<(Child, u16)> {
+    let port = TcpListener::bind("127.0.0.1:0")?.local_addr()?.port();
     let exe_dir = std::env::current_exe()?
         .parent()
         .expect("exe has parent")
@@ -51,7 +93,13 @@ fn spawn_server() -> std::io::Result<(Child, u16)> {    let port = TcpListener::
     let mut cmd = Command::new(exe_dir.join("opencode.exe"));
     cmd.args(["serve", "--port", &port.to_string(), "--hostname", "127.0.0.1"]);
     // ponytail: server reflects any Origin by default (verified), no --cors flags needed
-    if !home.is_empty() {
+    if let Some(ws) = workspace {
+        if ws.is_dir() {
+            cmd.current_dir(ws);
+        } else if !home.is_empty() {
+            cmd.current_dir(&home);
+        }
+    } else if !home.is_empty() {
         cmd.current_dir(&home);
     }
     #[cfg(debug_assertions)]
@@ -1398,6 +1446,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             server_url,
             os_glass,
+            workspace_get,
+            workspace_set,
             theme_config_read,
             theme_config_write,
             write_file,
@@ -1663,7 +1713,10 @@ pub fn run() {
             // don't wait for the sidecar to bind — hand out the URL
             // immediately; the frontend renders on templates and polls
             // silently until the server answers
-            let state = match spawn_server() {
+            // debug local builds restore last workspace as server CWD so
+            // file tree works even before the frontend's ?directory= hydrates
+            let saved_ws = read_saved_workspace(app.handle());
+            let state = match spawn_server(saved_ws) {
                 Ok((child, port)) => ServerState {
                     port,
                     child: Mutex::new(Some(child)),

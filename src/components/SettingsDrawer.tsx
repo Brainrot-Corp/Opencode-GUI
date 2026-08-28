@@ -57,8 +57,10 @@ export default function SettingsDrawer({
   upd?: ReturnType<typeof useUpdaterInternal>;
 }) {
   // custom themes have no stored color entry yet — cyan's shared base is the
-  // starting point until the user overrides it
-  const cs = (colorsFor?.(settings.theme) ?? settings.colors.cyan)[settings.mode];
+  // starting point until the user overrides it. Prefer effectiveMode when the
+  // theme locks to a single variation so the sliders match the actual CSS.
+  const displayMode = effectiveMode ?? settings.mode;
+  const cs = (colorsFor?.(settings.theme) ?? settings.colors.cyan)[displayMode];
   const [autoLaunch, setAutoLaunch] = useState<boolean | null>(null);
   const [infoOpen, setInfoOpen] = useState(false);
   const [voiceOpen, setVoiceOpen] = useState(false);
@@ -81,9 +83,12 @@ export default function SettingsDrawer({
     void fetchTerminalProfiles().catch(() => {});
   }, [open, termProfiles.length]);
 
-  const [debugLocalPath, setDebugLocalPath] = useState("");
+  const [debugLocalPath, setDebugLocalPath] = useState(() => {
+    try { return localStorage.getItem("oc.debugLocalPath") ?? ""; } catch { return ""; }
+  });
   const [debugLocalErr, setDebugLocalErr] = useState("");
   const [debugLocalBusy, setDebugLocalBusy] = useState(false);
+  useEffect(() => { try { localStorage.setItem("oc.debugLocalPath", debugLocalPath); } catch {} }, [debugLocalPath]);
   async function handleDebugLocal() {
     const folder = debugLocalPath.trim();
     if (!folder) return;

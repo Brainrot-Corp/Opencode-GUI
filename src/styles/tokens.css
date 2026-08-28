@@ -61,7 +61,7 @@ body,
 body {
   font-family: var(--sans);
   color: var(--text);
-  /* translucent base over the acrylic â€” color/transparency user-configurable */
+  /* translucent base over the acrylic — color/transparency user-configurable */
   background:
     radial-gradient(1100px 700px at 50% -12%, color-mix(in srgb, var(--accent) calc(0.055 * 100%), transparent), transparent 62%),
     radial-gradient(900px 640px at 88% 112%, color-mix(in srgb, var(--accent) calc(0.035 * 100%), transparent), transparent 60%),

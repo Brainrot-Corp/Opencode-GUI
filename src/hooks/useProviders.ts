@@ -8,10 +8,11 @@ type OcClient = Awaited<ReturnType<typeof import("../api").opencode>>["client"];
 // provider/model selection: boot-time loading + capability enrichment,
 // shared hand-picked model (localStorage oc.lastModel — synced across all
 // windows), server-default learning, per-session model memory
-// (oc.sessionModels — explicit picks only), and per-model thinking-effort
-// variants (oc.variants)
+// (oc.sessionModels — explicit picks only), and thinking-effort variants
+// (oc.variants global per-model + oc.sessionVariants per-session, like model/agent)
 const SESSION_MODELS_KEY = "oc.sessionModels";
 const LAST_MODEL_KEY = "oc.lastModel";
+const SESSION_VARIANTS_KEY = "oc.sessionVariants";
 
 function isReachable(model: string, groups: ProviderGroup[]): boolean {
   if (!model) return false;
@@ -45,6 +46,18 @@ export function useProviders(onError: (msg: string) => void, activeId: string) {
   const [variantMap, setVariantMap] = useState<Record<string, string>>(() => {
     try {
       const raw = JSON.parse(localStorage.getItem("oc.variants") ?? "{}");
+      return raw && typeof raw === "object" ? raw : {};
+    } catch {
+      return {};
+    }
+  });
+  // per-session thinking-effort memory (mirrors sessionModels/sessionAgents):
+  // explicit picks are remembered per session id; that session's choice
+  // outranks the global per-model map, so each session can keep its own
+  // effort (low/high/default) independent of other sessions
+  const [sessionVariants, setSessionVariants] = useState<Record<string, string>>(() => {
+    try {
+      const raw = JSON.parse(localStorage.getItem(SESSION_VARIANTS_KEY) ?? "{}");
       return raw && typeof raw === "object" ? raw : {};
     } catch {
       return {};
@@ -85,6 +98,13 @@ export function useProviders(onError: (msg: string) => void, activeId: string) {
   useEffect(() => {
     localStorage.setItem(SESSION_MODELS_KEY, JSON.stringify(sessionModels));
   }, [sessionModels]);
+
+  // persist the session->variant map
+  useEffect(() => {
+    try {
+      localStorage.setItem(SESSION_VARIANTS_KEY, JSON.stringify(sessionVariants));
+    } catch {}
+  }, [sessionVariants]);
 
   const learnDefault = useCallback((resolved: string) => {
     setDefaultModel((prev) => (prev === resolved ? prev : resolved));
@@ -262,14 +282,18 @@ export function useProviders(onError: (msg: string) => void, activeId: string) {
     return m ? { attachment: m.attachment, input: m.input } : undefined;
   }, [providers, modelSel]);
 
-  // current model's stored effort — kept if the option still exists, else
-  // default. never reset on switch: each model remembers its own
-  // ponytail: pass-through while providers are still loading (empty list);
-  // a pick for a model that later drops all variants rides along until then
+  // current effort: per-session pin outranks the global per-model map,
+  // so each session keeps its own thinking level and restores it on switch
+  // (like model/agent). Empty or unreachable values fall back to default.
+  // ponytail: single string per session, not per-model-per-session — if you
+  // pick "high" for model A then switch to model B in the same session,
+  // B sees "high" too when it has it; split to `${sid}:${model}` if that bites
   const variantSel = useMemo(() => {
+    const sess = sessionVariants[activeId] ?? "";
+    if (sess && (modelVariants.length === 0 || modelVariants.includes(sess))) return sess;
     const v = variantMap[modelSel] ?? "";
     return v && (modelVariants.length === 0 || modelVariants.includes(v)) ? v : "";
-  }, [variantMap, modelSel, modelVariants]);
+  }, [sessionVariants, activeId, variantMap, modelSel, modelVariants]);
 
   const setVariantSel = useCallback(
     (v: string) => {
@@ -285,8 +309,19 @@ export function useProviders(onError: (msg: string) => void, activeId: string) {
         }
         return next;
       });
+      if (!activeId) return;
+      setSessionVariants((prev) => {
+        if (!v) {
+          if (!(activeId in prev)) return prev;
+          const next = { ...prev };
+          delete next[activeId];
+          return next;
+        }
+        if (prev[activeId] === v) return prev;
+        return { ...prev, [activeId]: v };
+      });
     },
-    [modelSel],
+    [modelSel, activeId],
   );
 
   // chip click: effort cycles default -> low -> ... -> default

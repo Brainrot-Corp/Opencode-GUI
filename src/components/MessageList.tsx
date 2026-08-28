@@ -305,12 +305,13 @@ const MsgRow = memo(function MsgRow({
 }) {
   const err = m.info.role === "assistant" ? (m.info as any).error : null;
   const showErr = err && err.name !== "MessageAbortedError";
+  const isCmd = !!(m as any)._isCommand;
   const rawTs = (m.info as any).time?.completed ?? (m.info as any).time?.created;
   const short = fmtTime(rawTs);
   const full = fmtFull(rawTs);
   return (
-    <div className={`msg ${m.info.role}${showErr ? " msg-error" : ""}`}>
-      {m.info.role === "user" && (onRevert || onFork) && (
+    <div className={`msg ${m.info.role}${showErr ? " msg-error" : ""}${isCmd ? " msg-command" : ""}`}>
+      {m.info.role === "user" && !isCmd && (onRevert || onFork) && (
         <span className="msg-actions">
           {onFork && (
             <button
@@ -343,6 +344,7 @@ const MsgRow = memo(function MsgRow({
         <div className="msg-time" data-tip={full} data-tip-cursor="">
           <i className="fa-solid fa-clock" />
           {short}
+          {isCmd && <span className="msg-cmd-label">· command not sent</span>}
         </div>
       )}
     </div>

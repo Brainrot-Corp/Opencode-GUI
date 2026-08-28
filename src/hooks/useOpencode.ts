@@ -792,6 +792,11 @@ export function useOpencode() {
   const promptNow = useCallback(
     async (sid: string, text: string, files?: Attachment[]) => {
       if (!sid || (!text && !files?.length)) return;
+      // slash stays local — never prompt the model
+      if (!files?.length && text.trim().startsWith("/")) {
+        store.addCommand(sid, text.trim());
+        return;
+      }
       tracker.markBusy(sid, true);
       try {
         const { client } = await opencode();
@@ -823,6 +828,10 @@ export function useOpencode() {
       if (!activeId) return;
       const trimmed = text.trim();
       if (!trimmed && !files?.length) return;
+      if (!files?.length && trimmed.startsWith("/")) {
+        store.addCommand(activeId, trimmed);
+        return;
+      }
       if (busyRef.current.has(activeId)) {
         tracker.pushQueued(activeId, { text: trimmed, files });
         playSound("send");
@@ -1004,7 +1013,7 @@ export function useOpencode() {
   // earlier version. "" when there is nothing left to undo.
   const undoTarget = useMemo(() => {
     if (!activeId) return "";
-    const users = msgs.filter((m) => m.info.role === "user").map((m) => m.info.id);
+    const users = msgs.filter((m) => m.info.role === "user" && !(m as any)._isCommand).map((m) => m.info.id);
     const pos = revertId ? users.indexOf(revertId) : users.length;
     const t = revertId ? pos - 1 : pos - 2;
     return t >= 0 ? users[t] : "";
@@ -1019,6 +1028,7 @@ export function useOpencode() {
         await send(trimmed, files);
         return;
       }
+      const sidBefore = activeRef.current;
       const handled = await handleSlash(trimmed, {
         activeId: activeRef.current,
         sessions,
@@ -1045,7 +1055,14 @@ export function useOpencode() {
         refreshSessions,
         openSession,
       });
-      if (!handled) await send(text);
+      if (!handled) {
+        // any slash input stays local — display as command trace, never hit the model
+        if (trimmed.startsWith("/")) {
+          if (sidBefore) store.addCommand(sidBefore, trimmed);
+          return;
+        }
+        await send(text);
+      } else if (sidBefore) store.addCommand(sidBefore, trimmed);
     },
     [
       commands,

@@ -5,6 +5,41 @@ import "@fortawesome/fontawesome-free/css/all.min.css";
 import "./styles/tokens.css";
 import "./styles/syntax.css";
 import "./styles/layout.css";
+import { getDirectory, setDirectory } from "./api";
+
+// debug local builds use http://localhost:1420 origin — localStorage there is
+// separate from the release tauri://localhost origin, so the last workspace
+// would appear lost after a dev rebuild. Rust's app_config_dir file survives
+// both origins and seeds the frontend before first paint.
+async function hydrateWorkspace() {
+  try {
+    const saved = (await invoke<string>("workspace_get").catch(() => ""))?.trim() ?? "";
+    let lsWs = "";
+    try {
+      const raw = JSON.parse(localStorage.getItem("oc.settings") ?? "{}");
+      lsWs = typeof raw.workspace === "string" ? raw.workspace.trim() : "";
+    } catch {}
+    if (saved && !lsWs) {
+      // Rust has it, frontend doesn't (dev first launch) — seed both
+      try {
+        const raw = JSON.parse(localStorage.getItem("oc.settings") ?? "{}");
+        raw.workspace = saved;
+        localStorage.setItem("oc.settings", JSON.stringify(raw));
+      } catch {
+        localStorage.setItem("oc.settings", JSON.stringify({ workspace: saved }));
+      }
+      if (getDirectory().trim() !== saved) setDirectory(saved);
+    } else if (!saved && lsWs) {
+      // frontend has it, Rust doesn't (upgraded install) — backfill Rust
+      invoke("workspace_set", { path: lsWs }).catch(() => {});
+      if (getDirectory().trim() !== lsWs) setDirectory(lsWs);
+    } else if (saved && lsWs && saved !== lsWs) {
+      // both exist but diverged — trust localStorage (most recent UI) and
+      // push to Rust so next debug launch is consistent
+      invoke("workspace_set", { path: lsWs }).catch(() => {});
+    }
+  } catch {}
+}
 
 // no OS glass (Win10, Mica unavailable) → paint an opaque backdrop instead
 invoke<boolean>("os_glass")
@@ -37,6 +72,6 @@ console.error = (...a) => {
   origErr(...a);
 };
 
-ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
-  <App />,
-);
+hydrateWorkspace().finally(() => {
+  ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(<App />);
+});
