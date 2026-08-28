@@ -373,7 +373,7 @@ body.resizing * {
   border-radius: 0;
 }
 
-/* needs-attention: permission / question — distinct icon per kind */
+/* needs-attention: permission / question — bare icon + glow, mirrors .gp-gen hover */
 .row-attention {
   width: 18px;
   height: 18px;
@@ -382,28 +382,39 @@ body.resizing * {
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 3px;
+  border: none;
+  background: none;
+  border-radius: 0;
   font-size: 11px;
-  border: 1px solid transparent;
+  box-shadow: none;
   animation: attention-pop 0.34s var(--ease), attention-pulse 1.35s ease-in-out 0.34s infinite;
 }
 .row-attention.question {
-  color: var(--accent-bright);
-  background: color-mix(in srgb, var(--accent) 14%, transparent);
-  border-color: color-mix(in srgb, var(--accent) 32%, transparent);
-  box-shadow: 0 0 10px -4px var(--accent-glow);
+  color: var(--accent);
+  background: none;
+  border: none;
+  box-shadow: none;
+}
+.row-attention.question i {
+  text-shadow: 0 0 10px var(--accent-glow);
 }
 .row-attention.permission {
   color: var(--danger);
-  background: color-mix(in srgb, var(--danger) 14%, transparent);
-  border-color: color-mix(in srgb, var(--danger) 28%, transparent);
-  box-shadow: 0 0 10px -4px color-mix(in srgb, var(--danger) 45%, transparent);
+  background: none;
+  border: none;
+  box-shadow: none;
+}
+.row-attention.permission i {
+  text-shadow: 0 0 10px color-mix(in srgb, var(--danger) calc(0.55 * 100%), transparent);
 }
 .row-attention.both {
   color: var(--danger);
-  background: color-mix(in srgb, var(--danger) 16%, transparent);
-  border-color: color-mix(in srgb, var(--danger) 34%, transparent);
-  box-shadow: 0 0 12px -4px color-mix(in srgb, var(--danger) 55%, transparent);
+  background: none;
+  border: none;
+  box-shadow: none;
+}
+.row-attention.both i {
+  text-shadow: 0 0 10px color-mix(in srgb, var(--danger) calc(0.55 * 100%), transparent);
 }
 .session-row.attention {
   border-color: color-mix(in srgb, var(--accent) 22%, transparent);

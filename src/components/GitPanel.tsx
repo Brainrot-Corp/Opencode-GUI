@@ -117,10 +117,19 @@ export default function GitPanel() {
   const [gen, setGen] = useState(false); // AI message in flight
   const [diff, setDiff] = useState<{ path: string; patch: string; staged: boolean } | null>(null);
   const bodyOpt = useCommitBody();
+  const msgRef = useRef<HTMLTextAreaElement>(null);
   const genIdRef = useRef(0);
   const genSidRef = useRef<string | null>(null);
   const [genHover, setGenHover] = useState(false);
   const dir = useRef(getDirectory());
+  const autosizeMsg = useCallback(() => {
+    const el = msgRef.current;
+    if (!el) return;
+    // fallback for browsers without field-sizing:content
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight}px`;
+  }, []);
+  useEffect(() => { autosizeMsg(); }, [msg, bodyOpt, open, autosizeMsg]);
   const [gh, setGh] = useState(() => clampH(Number(localStorage.getItem(GH_KEY)) || GH_DEFAULT));
   const [dragging, setDragging] = useState(false);
   useEffect(() => {
@@ -550,6 +559,7 @@ export default function GitPanel() {
         <div className="gp-body" style={{ height: gh }}>
           <div className="gp-msgrow">
             <textarea
+              ref={msgRef}
               className="gp-msg"
               placeholder={
                 bodyOpt
@@ -557,8 +567,9 @@ export default function GitPanel() {
                   : `Message (${staged.length} staged)`
               }
               value={msg}
-              rows={bodyOpt || msg.includes("\n") ? 3 : 1}
+              rows={1}
               onChange={(e) => setMsg(e.target.value)}
+              onInput={autosizeMsg}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && !e.shiftKey) {
                   if (bodyOpt) {
