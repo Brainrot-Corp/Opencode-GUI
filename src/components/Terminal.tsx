@@ -211,8 +211,13 @@ export default function TerminalPanel({
   }, [terms, activeId]);
 
   // when panel is reopened empty (last was killed), seed fresh terminal
+  // guard: only seed on open transition, not when last instance exits/killed while open
+  // (otherwise exit on last term would re-create before onClose hides the panel)
+  const prevOpenRef = useRef(open);
   useEffect(() => {
-    if (open && terms.length === 0) {
+    const wasOpen = prevOpenRef.current;
+    prevOpenRef.current = open;
+    if (open && !wasOpen && terms.length === 0) {
       const id = nextIdRef.current++;
       const gen = genCounterRef.current++;
       const cwd = workspaceRef.current ?? "";
