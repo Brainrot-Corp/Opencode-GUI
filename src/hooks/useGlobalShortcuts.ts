@@ -381,8 +381,12 @@ export function useGlobalShortcuts({
     window.addEventListener("focus", onFocus);
 
     // Tauri window focus (more reliable than DOM after hide/show) + visibility show (Alt+Space / tray)
+    // + explicit Rust focus://restore (emitted from unpoison_input and WindowEvent::Focused)
+    // — the latter is the only signal that reliably fires after Alt+Tab when
+    // WebView2 swallows DOM focus/blur.
     let unWin: (() => void) | undefined;
     let unVis: (() => void) | undefined;
+    let unRestore: (() => void) | undefined;
     // dynamic import avoids hard failure if window api missing in tests
     void import("@tauri-apps/api/window")
       .then(({ getCurrentWindow }) => {
@@ -405,12 +409,18 @@ export function useGlobalShortcuts({
         unVis = f;
       })
       .catch(() => {});
+    void listen("focus://restore", () => rescueFocus())
+      .then((f) => {
+        unRestore = f;
+      })
+      .catch(() => {});
 
     return () => {
       window.removeEventListener("blur", onBlur);
       window.removeEventListener("focus", onFocus);
       unWin?.();
       unVis?.();
+      unRestore?.();
     };
   }, []);
 
