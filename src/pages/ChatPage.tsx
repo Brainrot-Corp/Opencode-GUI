@@ -50,6 +50,7 @@ export default function ChatPage() {
     updateSounds,
     updateColors,
     resetColors,
+    resetThemes,
     themes,
     themeError,
     activeModes,
@@ -996,6 +997,7 @@ export default function ChatPage() {
             updateSounds={updateSounds}
             updateColors={updateColors}
             resetColors={resetColors}
+            resetThemes={resetThemes}
             themes={themes}
             colorsFor={colorsFor}
             modes={activeModes}

@@ -591,6 +591,22 @@ export function useSettings() {
     [appearanceOverrides],
   );
 
+  // overwrite themes.json on disk with the built-in defaults — file watcher
+  // will also emit themes://changed, but we apply immediately for instant feedback
+  const resetThemes = useCallback(async () => {
+    const text = defaultThemesJson();
+    try {
+      await invoke("theme_config_write", { content: text });
+      const parsed = parseThemesConfig(text);
+      if (parsed) {
+        setThemes(parsed);
+        setThemeError("");
+      }
+    } catch (e) {
+      setThemeError(String(e));
+    }
+  }, [setThemeError]);
+
   return {
     settings,
     update,
@@ -598,6 +614,7 @@ export function useSettings() {
     updateSounds,
     updateColors,
     resetColors,
+    resetThemes,
     themes: themeList,
     themeError,
     activeModes,

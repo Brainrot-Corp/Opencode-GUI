@@ -27,6 +27,7 @@ export default function SettingsDrawer({
   updateSounds,
   updateColors,
   resetColors,
+  resetThemes,
   themes,
   colorsFor,
   modes,
@@ -43,6 +44,7 @@ export default function SettingsDrawer({
   updateSounds: (patch: Partial<SoundPrefs>) => void;
   updateColors: (patch: Partial<ColorSet>) => void;
   resetColors: () => void;
+  resetThemes?: () => void | Promise<void>;
   themes?: ThemeMeta[];
   colorsFor?: (theme: string) => Record<"dark" | "light", ColorSet>;
   // variations the active theme provides — Mode selector hidden when one
@@ -69,6 +71,7 @@ export default function SettingsDrawer({
   // clean state: two-click confirm, then wipe voice installs + every oc.*
   // preference and reload into the first-launch wizard
   const [confirmClean, setConfirmClean] = useState(false);
+  const [confirmThemes, setConfirmThemes] = useState(false);
   const upd = updProp ?? useUpdaterInternal();
 
   // terminal discovery — shared global cache (probes + WSL + WT via Rust)
@@ -216,6 +219,27 @@ export default function SettingsDrawer({
                 />
               </div>
             </div>
+            {resetThemes && (
+              <div style={{ padding: "0 12px 8px", display: "flex", justifyContent: "flex-end" }}>
+                <button
+                  type="button"
+                  className={`reset-btn${confirmThemes ? " danger-btn armed" : ""}`}
+                  data-tip="Restore themes.json to built-in defaults"
+                  onClick={() => {
+                    if (!confirmThemes) {
+                      setConfirmThemes(true);
+                      setTimeout(() => setConfirmThemes(false), 4000);
+                      return;
+                    }
+                    setConfirmThemes(false);
+                    void resetThemes();
+                  }}
+                >
+                  <i className={`fa-solid ${confirmThemes ? "fa-triangle-exclamation" : "fa-rotate-left"}`} />
+                  {confirmThemes ? "Click again to reset themes" : "Reset themes to defaults"}
+                </button>
+              </div>
+            )}
 
             {(!modes || modes.length > 1) && (
               <>
