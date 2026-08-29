@@ -198,7 +198,8 @@ fn plugins_scan() -> Vec<PluginDir> {
 }
 
 // generic https fetch for plugins (signing etc. happens JS-side) — plain
-// request/response envelope, no cookies, 10s timeout
+// request/response envelope, no cookies, 10s timeout.
+// Public http is blocked; private LAN http (Hue bridge etc.) is allowed.
 #[tauri::command]
 async fn http_json(
     method: String,
@@ -206,8 +207,29 @@ async fn http_json(
     headers: std::collections::HashMap<String, String>,
     body: Option<String>,
 ) -> Result<serde_json::Value, String> {
-    if !url.starts_with("https://") {
-        return Err("only https:// urls are allowed".into());
+    let is_https = url.starts_with("https://");
+    let is_private_http = url.starts_with("http://192.168.")
+        || url.starts_with("http://10.")
+        || url.starts_with("http://172.16.")
+        || url.starts_with("http://172.17.")
+        || url.starts_with("http://172.18.")
+        || url.starts_with("http://172.19.")
+        || url.starts_with("http://172.20.")
+        || url.starts_with("http://172.21.")
+        || url.starts_with("http://172.22.")
+        || url.starts_with("http://172.23.")
+        || url.starts_with("http://172.24.")
+        || url.starts_with("http://172.25.")
+        || url.starts_with("http://172.26.")
+        || url.starts_with("http://172.27.")
+        || url.starts_with("http://172.28.")
+        || url.starts_with("http://172.29.")
+        || url.starts_with("http://172.30.")
+        || url.starts_with("http://172.31.")
+        || url.starts_with("http://127.0.0.1")
+        || url.starts_with("http://localhost");
+    if !(is_https || is_private_http) {
+        return Err("only https:// and private http:// (Hue LAN) urls are allowed".into());
     }
     let m = reqwest::Method::from_bytes(method.as_bytes()).map_err(|e| e.to_string())?;
     let client = reqwest::Client::builder()

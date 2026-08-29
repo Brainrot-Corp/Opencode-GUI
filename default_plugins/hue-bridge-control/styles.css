@@ -1,0 +1,25 @@
+/* Hue bridge — credential fields (same glass/accent system as tuya) */
+.hue-fields {
+  display: grid;
+  gap: 6px;
+  padding: 4px 12px 10px;
+}
+.hue-in {
+  width: 100%;
+  padding: 5px 9px;
+  background: var(--inset-bg);
+  border: 1px solid color-mix(in srgb, var(--accent) calc(0.22 * 100%), transparent);
+  border-radius: 0;
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 11px;
+  transition: border-color 0.15s var(--ease), box-shadow 0.15s var(--ease);
+}
+.hue-in:focus {
+  outline: none;
+  border-color: color-mix(in srgb, var(--accent) calc(0.55 * 100%), transparent);
+  box-shadow: 0 0 18px -8px var(--accent-glow);
+}
+.hue-in::placeholder {
+  color: var(--text-faint);
+}

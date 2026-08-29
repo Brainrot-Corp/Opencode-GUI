@@ -1,0 +1,6 @@
+{
+  "id": "hue-bridge-control",
+  "name": "Hue",
+  "version": "1.0.0",
+  "description": "Local Hue Bridge lights + rooms — on/off, brightness, warm/cool, per-light color via the Bridge REST API (auto-discovery, voice + /hue slash)"
+}
