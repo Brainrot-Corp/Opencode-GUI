@@ -81,6 +81,8 @@ body.gp-resizing * {
   text-align: center;
 }
 .gp-head .mono {
+  flex: 1 1 0;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -88,6 +90,10 @@ body.gp-resizing * {
 /* when no arrows, push the badge right */
 .gp-head > .gp-badge:last-child {
   margin-left: auto;
+}
+/* when arrows + badge both present, badge sits next to arrows — don't split the auto space (would center the arrows) */
+.gp-head > .gp-ab + .gp-badge {
+  margin-left: 0;
 }
 
 /* drag handle — horizontal twin of .sb-resize / .term-resize */
