@@ -66,9 +66,23 @@
   color: var(--accent-bright);
   text-shadow: 0 0 10px var(--accent-glow);
 }
-/* agent dropdown — reuses model-menu glass, disabled rows dimmed */
+/* agent dropdown — reuses model-menu glass, disabled rows dimmed; height hugs content */
 .agent-menu-wrap { display: inline-flex; }
-.agent-menu { min-width: 240px; width: 300px; }
+.agent-menu {
+  min-width: 240px;
+  width: 300px;
+  height: auto;
+  min-height: 0;
+  max-height: min(320px, 50vh);
+  overflow-y: auto;
+}
+/* override fixed 300px from .model-menu when combined class is present */
+.model-menu.agent-menu {
+  height: auto;
+  min-height: 0;
+  max-height: min(320px, 50vh);
+  padding: 4px;
+}
 .agent-opt { gap: 8px; }
 .agent-opt-name { display: inline-flex; align-items: center; gap: 6px; flex: 1; min-width: 0; }
 .agent-opt-mode { font-size: 10px; color: var(--text-faint); text-transform: lowercase; margin-left: 2px; }
