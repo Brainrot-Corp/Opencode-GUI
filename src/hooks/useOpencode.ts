@@ -39,6 +39,11 @@ export type { CmdEntry } from "../lib/slashCommands";
 
 export function useOpencode() {
   const [error, setError] = useState("");
+  useEffect(() => {
+    if (!error) return;
+    const t = setTimeout(() => setError(""), 5000);
+    return () => clearTimeout(t);
+  }, [error]);
   const [sessions, setSessions] = useState<Session[]>([]);
   const [activeId, setActiveId] = useState("");
   const [msgs, setMsgs] = useState<Msg[]>([]);

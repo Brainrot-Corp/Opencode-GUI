@@ -361,6 +361,11 @@ export function useSettings() {
   // available themes — seeded from config at boot, hot-reloaded on file change
   const [themes, setThemes] = useState<Record<string, NormalizedTheme>>({});
   const [themeError, setThemeError] = useState("");
+  useEffect(() => {
+    if (!themeError) return;
+    const t = setTimeout(() => setThemeError(""), 5000);
+    return () => clearTimeout(t);
+  }, [themeError]);
 
   useEffect(() => {
     let disposed = false;

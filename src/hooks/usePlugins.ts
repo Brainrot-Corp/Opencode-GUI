@@ -18,6 +18,11 @@ import {
 export function usePlugins() {
   const [plugins, setPlugins] = useState<LoadedPlugin[]>([]);
   const [error, setError] = useState("");
+  useEffect(() => {
+    if (!error) return;
+    const t = setTimeout(() => setError(""), 5000);
+    return () => clearTimeout(t);
+  }, [error]);
   const prevRef = useRef<Map<string, LoadedPlugin>>(new Map());
 
   const clearDiscord = useCallback(() => {
