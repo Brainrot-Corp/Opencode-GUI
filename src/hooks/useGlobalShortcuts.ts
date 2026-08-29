@@ -397,88 +397,90 @@ export function useGlobalShortcuts({
     };
 
     const rescueFocus = () => {
-      // let the OS focus settle before poking the DOM (Alt+Tab posts focus async)
-      requestAnimationFrame(() => {
-        window.setTimeout(() => {
-          // visible dialog/drawer/menu owns focus — don't steal to composer
-          const overlay = document.querySelector(
-            ".dlg-scrim, .drawer-scrim.open, .ctx-menu, .cmd-menu, .model-menu",
-          ) as HTMLElement | null;
-          if (overlay) {
-            if (!overlay.contains(document.activeElement)) {
-              const focusable = overlay.querySelector(
-                "button, [href], input, select, textarea, [tabindex]:not([tabindex=\"-1\"])",
-              ) as HTMLElement | null;
-              // ensure DOM can receive keydowns even if overlay has no focusable
-              window.focus();
-              focusable?.focus({ preventScroll: true } as any);
-              if (document.hasFocus()) return;
-            } else {
-              // re-assert existing overlay focus so WebView2 re-routes keys
-              (document.activeElement as HTMLElement | null)?.focus?.({ preventScroll: true } as any);
-              window.focus();
-              return;
-            }
-          }
-
-          const ae = document.activeElement as HTMLElement | null;
-          const saved = savedRef.current;
-
-          // try saved element first (usually the composer textarea)
-          if (saved && document.contains(saved) && saved !== document.body) {
+      // shared core — called immediately and again after OS settle
+      const doRescue = () => {
+        // visible dialog/drawer/menu owns focus — don't steal to composer
+        const overlay = document.querySelector(
+          ".dlg-scrim, .drawer-scrim.open, .ctx-menu, .cmd-menu, .model-menu",
+        ) as HTMLElement | null;
+        if (overlay) {
+          if (!overlay.contains(document.activeElement)) {
+            const focusable = overlay.querySelector(
+              "button, [href], input, select, textarea, [tabindex]:not([tabindex=\"-1\"])",
+            ) as HTMLElement | null;
             window.focus();
-            try {
-              saved.focus({ preventScroll: true } as any);
-            } catch {}
-            if (document.hasFocus() && document.activeElement === saved) return;
-            // xterm / non-input saved targets may not take DOM focus — fall through
-          }
-
-          // current element still there but WebView2 lost its route — re-focus it
-          if (ae && ae !== document.body && document.contains(ae)) {
-            window.focus();
-            try {
-              ae.focus({ preventScroll: true } as any);
-            } catch {}
-            if (document.hasFocus()) return;
-          }
-
-          // fallback: keep keyboard alive. Priority is terminal helper when the
-          // dock is open and the saved focus was inside it, otherwise composer → file editor.
-          // .term-mount itself is not focusable (div), we need the xterm helper textarea.
-          const termHelper = document.querySelector(
-            ".term-dock:not(.closed) .xterm-helper-textarea",
-          ) as HTMLElement | null;
-          // was the user's last focus inside the terminal?
-          const savedWasTerm =
-            !!(saved && (saved as HTMLElement).closest?.(".xterm, .term-dock, .term-body, .term-mount"));
-          const aeWasTerm =
-            !!(ae && (ae as HTMLElement).closest?.(".xterm, .term-dock, .term-body, .term-mount"));
-          let fallback: HTMLElement | null = null;
-          if ((savedWasTerm || aeWasTerm) && termHelper) {
-            fallback = termHelper;
+            focusable?.focus({ preventScroll: true } as any);
+            if (document.hasFocus()) return true;
           } else {
-            fallback =
-              (document.querySelector(".composer textarea") as HTMLElement | null) ||
-              (document.querySelector(".fe-ta") as HTMLElement | null) ||
-              termHelper ||
-              document.body;
+            (document.activeElement as HTMLElement | null)?.focus?.({ preventScroll: true } as any);
+            window.focus();
+            return true;
           }
+        }
+
+        const ae = document.activeElement as HTMLElement | null;
+        const saved = savedRef.current;
+
+        if (saved && document.contains(saved) && saved !== document.body) {
           window.focus();
           try {
-            // xterm's helper textarea is the real input; focusing the wrapper div does nothing
-            fallback?.focus({ preventScroll: true } as any);
-            // if fallback was termHelper via composer path but we still have a term dock, ensure helper got it
-            if (fallback !== termHelper && termHelper && document.activeElement !== termHelper && (savedWasTerm || aeWasTerm)) {
-              termHelper.focus({ preventScroll: true } as any);
-            }
+            saved.focus({ preventScroll: true } as any);
           } catch {}
-          // last resort: ensure body is focusable so window keydowns fire
-          if (!document.hasFocus() && document.body) {
-            if (!document.body.hasAttribute("tabindex")) document.body.setAttribute("tabindex", "-1");
-            document.body.focus({ preventScroll: true } as any);
-            window.focus();
+          if (document.hasFocus() && document.activeElement === saved) return true;
+        }
+
+        if (ae && ae !== document.body && document.contains(ae)) {
+          window.focus();
+          try {
+            ae.focus({ preventScroll: true } as any);
+          } catch {}
+          if (document.hasFocus()) return true;
+        }
+
+        const termHelper = document.querySelector(
+          ".term-dock:not(.closed) .xterm-helper-textarea",
+        ) as HTMLElement | null;
+        const savedWasTerm =
+          !!(saved && (saved as HTMLElement).closest?.(".xterm, .term-dock, .term-body, .term-mount"));
+        const aeWasTerm =
+          !!(ae && (ae as HTMLElement).closest?.(".xterm, .term-dock, .term-body, .term-mount"));
+        // also respect the explicit marker set on blur (covers cases where savedRef stale)
+        const markerWasTerm = !!(window as any).__oc_lastWasTerm;
+        const wasTerm = savedWasTerm || aeWasTerm || markerWasTerm;
+        let fallback: HTMLElement | null = null;
+        if (wasTerm && termHelper) {
+          fallback = termHelper;
+        } else {
+          fallback =
+            (document.querySelector(".composer textarea") as HTMLElement | null) ||
+            (document.querySelector(".fe-ta") as HTMLElement | null) ||
+            termHelper ||
+            document.body;
+        }
+        window.focus();
+        try {
+          fallback?.focus({ preventScroll: true } as any);
+          if (fallback !== termHelper && termHelper && document.activeElement !== termHelper && wasTerm) {
+            termHelper.focus({ preventScroll: true } as any);
           }
+        } catch {}
+        if (document.hasFocus()) return true;
+        if (!document.hasFocus() && document.body) {
+          if (!document.body.hasAttribute("tabindex")) document.body.setAttribute("tabindex", "-1");
+          document.body.focus({ preventScroll: true } as any);
+          window.focus();
+        }
+        return document.hasFocus();
+      };
+
+      // immediate attempt — catches the first keystroke before the 20ms OS-settle delay
+      // (otherwise the first key hits body → Windows beep → second key works)
+      const ok = doRescue();
+      if (ok) return;
+      // let the OS focus settle before retrying (Alt+Tab posts focus async)
+      requestAnimationFrame(() => {
+        window.setTimeout(() => {
+          doRescue();
         }, 20);
       });
     };

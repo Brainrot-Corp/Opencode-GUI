@@ -670,6 +670,11 @@ export default function Composer({
       const dock = tDock || aeDock;
       if (dock && !dock.classList.contains("closed")) return;
       if (ae?.closest?.(".xterm") || target?.closest?.(".xterm")) return;
+      // if window was last focused in terminal, don't hijack first keystroke
+      // after Alt+Tab — let the global rescue / TermInstanceView refocus win
+      const wasTerm = !!(window as any).__oc_lastWasTerm;
+      const dockOpen = !!document.querySelector(".term-dock:not(.closed)");
+      if (wasTerm && dockOpen) return;
       // overlays own typing — blocked per user choice
       if (document.querySelector(".cmd-menu, .model-menu, .ctx-menu, .dlg-scrim, .drawer-scrim.open, .permission-bar")) return;
       e.preventDefault();

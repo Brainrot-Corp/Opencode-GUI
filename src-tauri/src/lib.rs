@@ -1123,6 +1123,14 @@ mod webfocus {
             // let normal activation routing run first...
             let r = DefSubclassProc(hwnd, msg, wparam, lparam);
             if (wparam as u16) != WA_INACTIVE {
+                // immediate child focus attempt — the deferred MoveFocus alone is
+                // one message loop late, so the very first keydown after Alt+Tab
+                // would hit the outer HWND, be swallowed and cause a Windows beep.
+                // Best-effort synchronous SetFocus on the Chrome_WidgetWin child
+                // plus the deferred MoveFocus covers both immediate and settled.
+                let _ = std::panic::catch_unwind(|| {
+                    super::wininput::focus_webview(hwnd);
+                });
                 PostMessageW(hwnd, MSG_REFOCUS, 0, 0);
             }
             return r;

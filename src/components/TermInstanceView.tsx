@@ -461,33 +461,35 @@ export default function TermInstanceView({
   // rescueFocus but guarantees the xterm helper textarea regains keyboard.
   useEffect(() => {
     if (!active) return;
+    const doRefocus = () => {
+      if (!activeRef.current || !openRef.current || !termRef.current) return false;
+      try { termRef.current!.focus(); } catch {}
+      const helper = document.querySelector(
+        ".term-dock:not(.closed) .xterm-helper-textarea",
+      ) as HTMLElement | null;
+      if (helper && document.activeElement !== helper) {
+        try { helper.focus({ preventScroll: true } as any); } catch {}
+      }
+      return document.activeElement === helper || document.hasFocus();
+    };
     const refocus = () => {
       if (!activeRef.current || !openRef.current || !termRef.current) return;
-      // only steal back focus if the last blur was from the terminal; otherwise
-      // the user was in composer/editor and Alt+Tab should return there (global
-      // rescue handles that). Marker is set by useGlobalShortcuts saveFocus.
       const wasTerm = !!(window as any).__oc_lastWasTerm;
-      // also allow if current activeElement is already inside terminal (click case)
       const ae = document.activeElement as HTMLElement | null;
       const aeWasTerm = !!ae?.closest?.(".xterm, .term-dock, .term-body, .term-mount");
       if (!wasTerm && !aeWasTerm) return;
-      // term.focus() is xterm's helper-textarea focus path; do it after OS settle
+      // immediate attempt — must beat first keystroke (~0-10ms after OS focus)
+      const ok = doRefocus();
+      if (ok) return;
+      // retry after OS settle (Alt+Tab posts focus async, WebView2 child HWND needs MoveFocus)
       requestAnimationFrame(() => {
         window.setTimeout(() => {
           if (!activeRef.current || !openRef.current || !termRef.current) return;
-          // re-check marker after settle — user may have clicked elsewhere in the meantime
           const stillTerm = !!(window as any).__oc_lastWasTerm;
           const curAe = document.activeElement as HTMLElement | null;
           const curAeTerm = !!curAe?.closest?.(".xterm, .term-dock");
           if (!stillTerm && !curAeTerm) return;
-          try { termRef.current!.focus(); } catch {}
-          // WebView2 poison fix can leave focus on outer HWND; ensure helper textarea is DOM-focused
-          const helper = document.querySelector(
-            ".term-dock:not(.closed) .xterm-helper-textarea",
-          ) as HTMLElement | null;
-          if (helper && document.activeElement !== helper) {
-            try { helper.focus({ preventScroll: true } as any); } catch {}
-          }
+          doRefocus();
         }, 20);
       });
     };
@@ -508,6 +510,49 @@ export default function TermInstanceView({
     const onFocusReq = () => { if (active && termRef.current) termRef.current.focus(); };
     window.addEventListener("oc:term-focus", onFocusReq as any);
     return () => window.removeEventListener("oc:term-focus", onFocusReq as any);
+  }, [active]);
+
+  // safety net: first keystroke after window reactivation can arrive before
+  // WebView2 HWND focus has settled (outer HWND still owns keyboard → Windows
+  // beep, key never reaches xterm). Capture it in capture phase, focus the
+  // helper and deliver directly to the pty so nothing is lost.
+  useEffect(() => {
+    if (!active) return;
+    const onCapture = (e: KeyboardEvent) => {
+      if (!activeRef.current || !openRef.current || !termRef.current) return;
+      const wasTerm = !!(window as any).__oc_lastWasTerm;
+      if (!wasTerm) return;
+      const ae = document.activeElement as HTMLElement | null;
+      const inTerm = !!ae?.closest?.(".xterm, .term-dock");
+      if (inTerm) return;
+      // only when focus is lost (body) — otherwise let normal handlers run
+      if (ae !== document.body && ae !== null) return;
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      if ((e as any).isComposing || e.keyCode === 229) return;
+      const isPrintable = e.key.length === 1;
+      const isEdit = e.key === "Backspace" || e.key === "Delete" || e.key === "Enter";
+      if (!isPrintable && !isEdit) return;
+      if (!document.querySelector(".term-dock:not(.closed)")) return;
+      e.preventDefault();
+      e.stopPropagation();
+      (e as any).stopImmediatePropagation?.();
+      // focus synchronously so subsequent keys land correctly
+      try { termRef.current!.focus(); } catch {}
+      const helper = document.querySelector(".term-dock:not(.closed) .xterm-helper-textarea") as HTMLElement | null;
+      try { helper?.focus({ preventScroll: true } as any); } catch {}
+      // deliver this keystroke directly — xterm's helper didn't receive it
+      let data = e.key;
+      if (isEdit) {
+        if (e.key === "Enter") data = "\r";
+        else if (e.key === "Backspace") data = "\x7f";
+        else if (e.key === "Delete") data = "\x1b[3~";
+      }
+      void invoke("pty_write", { id: idRef.current, data }).catch(() => {});
+      // next keys should go via normal path
+      try { (window as any).__oc_lastWasTerm = false; } catch {}
+    };
+    window.addEventListener("keydown", onCapture, true);
+    return () => window.removeEventListener("keydown", onCapture, true);
   }, [active]);
 
   // expose dead/err for dock's header? parent tracks via callbacks, but also keep local for potential future header per view
