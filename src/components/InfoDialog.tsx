@@ -134,14 +134,14 @@ const Groups = ({ data }: { data: Group[] }) => (
   </>
 );
 
-const PillGroups = ({ data }: { data: Group[] }) => (
+const PillGroups = ({ data, left }: { data: Group[]; left?: boolean }) => (
   <>
     {data.map(([g, rows]) => (
-      <div key={g} className="cmd-group cmd-group--pills">
+      <div key={g} className={`cmd-group cmd-group--pills${left ? " left" : ""}`}>
         <div className="cmd-group-label">{g}</div>
         {rows.map(([l, r]) => (
           <div key={l} className="cmd-row hk-row static">
-            <span className="mono cmd-name hk-pill fixed">{l}</span>
+            <span className={`mono cmd-name hk-pill fixed${left ? " left" : ""}`}>{l}</span>
             <span className="cmd-desc">{r}</span>
           </div>
         ))}
@@ -506,7 +506,7 @@ export default function InfoDialog({
       {tab === "voice" && (
         <>
           <EqualWrap deps={[tab, JSON.stringify(VOICE), JSON.stringify(pluginDocs)]}>
-            <PillGroups data={[...VOICE, ...docGroups(pluginDocs, "voice")]} />
+            <PillGroups data={[...VOICE, ...docGroups(pluginDocs, "voice")]} left />
           </EqualWrap>
           <p className="cmd-note">
             Phrasing works in any language whisper understands — an unmatched

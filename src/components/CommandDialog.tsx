@@ -40,11 +40,11 @@ export function CommandRows({ commands }: { commands: CmdEntry[] }) {
   return (
     <div ref={ref}>
       {[...groups.entries()].map(([g, list]) => (
-        <div key={g} className="cmd-group cmd-group--pills">
+        <div key={g} className="cmd-group cmd-group--pills left">
           <div className="cmd-group-label">{g}</div>
           {list.map((c) => (
             <div key={c.name} className="cmd-row hk-row static">
-              <span className="mono cmd-name hk-pill fixed">/{c.name}</span>
+              <span className="mono cmd-name hk-pill fixed left">/{c.name}</span>
               <span className="cmd-desc">{c.description || "—"}</span>
             </div>
           ))}

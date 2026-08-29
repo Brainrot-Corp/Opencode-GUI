@@ -265,7 +265,7 @@
 
 /* equal-width pills — JS sets inline width to longest pill; keep flex row intact so pill stays left and desc stays right in one line */
 .cmd-group--pills .hk-pill {
-  justify-content: center;
+  justify-content: flex-start;
   flex-shrink: 0;
   box-sizing: border-box;
 }
