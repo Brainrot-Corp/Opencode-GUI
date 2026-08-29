@@ -5,7 +5,7 @@ import FileEditor from "./FileEditor";
 // single always-mounted owner of the centered file editor — sidebar tree rows
 // and chat tool-call references both open through oc:open-file so two modals
 // can never fight over one dirty buffer
-export default function FileEditorHost() {
+export default function FileEditorHost({ hotkeys }: { hotkeys?: Record<string, string | null> }) {
   const [openPath, setOpenPath] = useState<{ path: string; absolute: string } | null>(null);
   const dirtyRef = useRef(false);
   const openRef = useRef(openPath);
@@ -46,6 +46,7 @@ export default function FileEditorHost() {
       key={openPath.path}
       path={openPath.path}
       absolute={openPath.absolute}
+      hotkeys={hotkeys}
       onDirty={(v) => (dirtyRef.current = v)}
       onClose={() => {
         dirtyRef.current = false;

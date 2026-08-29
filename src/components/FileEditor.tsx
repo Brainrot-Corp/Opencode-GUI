@@ -23,12 +23,14 @@ export default function FileEditor({
   absolute,
   onDirty,
   onClose,
+  hotkeys,
 }: {
   path: string;
   absolute: string;
   // lets the tree ask before replacing a dirty editor with another file
   onDirty?: (dirty: boolean) => void;
   onClose: () => void;
+  hotkeys?: Record<string, string | null>;
 }) {
   const [saved, setSaved] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
@@ -400,7 +402,7 @@ export default function FileEditor({
       redo();
       return;
     }
-    if (handleEditorKeys(e, ta, draft, applyEdit, { path, allowInsert: true })) return;
+    if (handleEditorKeys(e, ta, draft, applyEdit, { path, allowInsert: true, hotkeys: hotkeys ?? (()=>{ try{ return JSON.parse(localStorage.getItem("oc.settings")||"{}").hotkeys; }catch{ return undefined; }})() })) return;
     if (e.key === "Tab") {
       e.preventDefault();
       const s = ta.selectionStart;

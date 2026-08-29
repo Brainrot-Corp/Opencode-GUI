@@ -16,9 +16,37 @@ export type HotkeyId =
   | "zoomIn"
   | "zoomOut"
   | "zoomReset"
-  | "cycleAgent";
+  | "cycleAgent"
+  | "editorCopyLine"
+  | "editorCutLine"
+  | "editorDeleteLine"
+  | "editorSelectLine"
+  | "editorToggleComment"
+  | "editorMoveUp"
+  | "editorMoveDown"
+  | "editorDuplicateUp"
+  | "editorDuplicateDown"
+  | "editorInsertBelow"
+  | "editorInsertAbove";
 
 export type HotkeysMap = Record<HotkeyId, string | null>;
+
+// plugin hotkeys live in a separate map keyed by "pluginId:hotkeyId" (flat for simple lpersistence)
+export type PluginHotkeyId = `${string}:${string}`;
+export type PluginHotkeysMap = Record<string, string | null>;
+export type PluginHotkeyDef = { id: string; default: string | null; label: string; description?: string };
+export const pluginHotkeyKey = (pluginId: string, hotkeyId: string): string => `${pluginId}:${hotkeyId}`;
+export function getPluginHotkeyBinding(
+  map: PluginHotkeysMap | undefined,
+  pluginId: string,
+  def: PluginHotkeyDef,
+): string | null {
+  const k = pluginHotkeyKey(pluginId, def.id);
+  const v = map?.[k];
+  if (v === null) return null;
+  if (typeof v === "string") return v;
+  return def.default ? normalizeBinding(def.default) : null;
+}
 
 export const DEFAULT_HOTKEYS: HotkeysMap = {
   toggleSidebar: "Ctrl+B",
@@ -36,6 +64,17 @@ export const DEFAULT_HOTKEYS: HotkeysMap = {
   zoomOut: "Ctrl+-",
   zoomReset: "Ctrl+0",
   cycleAgent: "Tab",
+  editorCopyLine: "Ctrl+C",
+  editorCutLine: "Ctrl+X",
+  editorDeleteLine: "Ctrl+Shift+K",
+  editorSelectLine: "Ctrl+L",
+  editorToggleComment: "Ctrl+/",
+  editorMoveUp: "Alt+ArrowUp",
+  editorMoveDown: "Alt+ArrowDown",
+  editorDuplicateUp: "Shift+Alt+ArrowUp",
+  editorDuplicateDown: "Shift+Alt+ArrowDown",
+  editorInsertBelow: "Ctrl+Enter",
+  editorInsertAbove: "Ctrl+Shift+Enter",
 };
 
 export const HOTKEY_META: Record<HotkeyId, { group: string; desc: string }> = {
@@ -54,6 +93,17 @@ export const HOTKEY_META: Record<HotkeyId, { group: string; desc: string }> = {
   zoomOut: { group: "In the app", desc: "zoom out" },
   zoomReset: { group: "In the app", desc: "reset zoom" },
   cycleAgent: { group: "In the app", desc: "cycle agent" },
+  editorCopyLine: { group: "Editor", desc: "copy line (no selection)" },
+  editorCutLine: { group: "Editor", desc: "cut line (no selection)" },
+  editorDeleteLine: { group: "Editor", desc: "delete line" },
+  editorSelectLine: { group: "Editor", desc: "select line" },
+  editorToggleComment: { group: "Editor", desc: "toggle line comment" },
+  editorMoveUp: { group: "Editor", desc: "move line up" },
+  editorMoveDown: { group: "Editor", desc: "move line down" },
+  editorDuplicateUp: { group: "Editor", desc: "duplicate line up" },
+  editorDuplicateDown: { group: "Editor", desc: "duplicate line down" },
+  editorInsertBelow: { group: "Editor", desc: "insert line below" },
+  editorInsertAbove: { group: "Editor", desc: "insert line above" },
 };
 
 // order used in the Help dialog (mirrors the former KEYS list)
@@ -73,6 +123,17 @@ export const HOTKEY_ORDER: HotkeyId[] = [
   "zoomOut",
   "zoomReset",
   "cycleAgent",
+  "editorCopyLine",
+  "editorCutLine",
+  "editorDeleteLine",
+  "editorSelectLine",
+  "editorToggleComment",
+  "editorMoveUp",
+  "editorMoveDown",
+  "editorDuplicateUp",
+  "editorDuplicateDown",
+  "editorInsertBelow",
+  "editorInsertAbove",
 ];
 
 // normalize for display/storage: Ctrl+Shift+N style, mods sorted Ctrl/Shift/Alt/Meta
@@ -111,6 +172,11 @@ export function normalizeBinding(raw: string): string | null {
   else if (k.toLowerCase() === "tab") k = "Tab";
   else if (k.toLowerCase() === "escape" || k.toLowerCase() === "esc") k = "Escape";
   else if (k.toLowerCase() === "enter") k = "Enter";
+  else if (/^arrowup$/i.test(k)) k = "ArrowUp";
+  else if (/^arrowdown$/i.test(k)) k = "ArrowDown";
+  else if (/^arrowleft$/i.test(k)) k = "ArrowLeft";
+  else if (/^arrowright$/i.test(k)) k = "ArrowRight";
+  else if (/^f\d+$/i.test(k)) k = k.toUpperCase();
   else {
     // keep as is but capitalize first for display consistency when word
     if (/^[a-z]+$/i.test(k) && k.length > 1) k = cap(k);

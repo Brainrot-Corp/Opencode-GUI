@@ -177,11 +177,33 @@ export default function activate(api){
 
   function TitlebarBtn(){
     const [open, setOpen] = useState(()=> load().open);
+    const [binding, setBinding] = useState(()=>{
+      try{
+        const s=api.settings();
+        const ph=s.pluginHotkeys||{};
+        const v=ph["notepad:toggle"];
+        if(v===null) return null;
+        if(typeof v==="string" && v) return v;
+        return "Alt+N";
+      }catch{ return "Alt+N"; }
+    });
     useEffect(()=>{
-      const sync = ()=> setOpen(load().open);
+      const sync = ()=> {
+        setOpen(load().open);
+        try{
+          const s=api.settings();
+          const ph=s.pluginHotkeys||{};
+          const v=ph["notepad:toggle"];
+          setBinding(v===null?null:(typeof v==="string"&&v?v:"Alt+N"));
+        }catch{}
+      };
       window.addEventListener("oc:notepad:changed", sync);
       window.addEventListener("storage", sync);
-      return ()=>{ window.removeEventListener("oc:notepad:changed", sync); window.removeEventListener("storage", sync); };
+      // also listen for settings changes (hotkey rebind)
+      const onSettings = ()=> sync();
+      window.addEventListener("storage", onSettings);
+      // custom event when settings updated? use interval fallback via storage
+      return ()=>{ window.removeEventListener("oc:notepad:changed", sync); window.removeEventListener("storage", sync); window.removeEventListener("storage", onSettings); };
     },[]);
     const toggle = ()=>{
       const s = load();
@@ -190,9 +212,10 @@ export default function activate(api){
       setOpen(s.open);
       try{ api.playSound(s.open ? "expand" : "collapse"); }catch{}
     };
+    const tip = binding ? `${open ? "Hide" : "Show"} notepad (${binding})` : (open ? "Hide notepad" : "Show notepad");
     return h("button", {
       className: `icon-btn${open ? " on" : ""}`,
-      "data-tip": open ? "Hide notepad" : "Show notepad",
+      "data-tip": tip,
       "aria-pressed": open,
       onClick: toggle
     }, h("i", { className:"fa-solid fa-note-sticky" }));
@@ -357,26 +380,44 @@ export default function activate(api){
       const text = ta.value;
       const hasSel = ta.selectionStart !== ta.selectionEnd;
       const pos = ta.selectionStart ?? 0;
-      const selEnd = ta.selectionEnd ?? 0;
-      const ctrl = e.ctrlKey || e.metaKey;
-      const key = e.key;
-      const code = e.code;
-      if(ctrl && !e.altKey && key.toLowerCase()==="z" && !e.shiftKey){
-        e.preventDefault();
-        undoNotepad();
+      const ctrlAny = e.ctrlKey || e.metaKey;
+      const keyLc = (e.key||"").toLowerCase();
+      // let native undo/redo (Ctrl+Z/Y) pass through — textarea history
+      if(ctrlAny && !e.altKey && (keyLc==="z" || keyLc==="y")) {
+        // still handle notepad's own undo stack for line ops? keep native for now
+        // but intercept for notepad undo/redo only if we have history?
+        // preserve prior behaviour: Ctrl+Z without shift -> undo, Ctrl+Y or Ctrl+Shift+Z -> redo
+        if(keyLc==="z" && !e.shiftKey){
+          // let browser handle if no notepad history? we have history, so handle
+          if(historyRef.current.length){
+            e.preventDefault();
+            undoNotepad();
+          }
+          return;
+        }
+        if(keyLc==="y" || (keyLc==="z" && e.shiftKey)){
+          if(futureRef.current.length){
+            e.preventDefault();
+            redoNotepad();
+          }
+          return;
+        }
         return;
       }
-      if(ctrl && !e.altKey && (key.toLowerCase()==="y" || (key.toLowerCase()==="z" && e.shiftKey))){
-        e.preventDefault();
-        redoNotepad();
-        return;
-      }
-      // Ctrl+C copy line when no selection
-      if(ctrl && !e.altKey && !e.shiftKey && key.toLowerCase()==="c" && !hasSel){
+      let hkMap = {};
+      try{ hkMap = (api.settings().hotkeys||{}); }catch{}
+      const eff = (id, def)=>{
+        const v = hkMap[id];
+        if(v===null) return null;
+        if(typeof v==="string" && v) return v;
+        return def;
+      };
+      const m = (b)=> b ? api.matchesEvent(e, b) : false;
+      if(!hasSel && m(eff("editorCopyLine","Ctrl+C"))){
         const line = npOpCopyLine(text, pos);
         if(line!=null){ e.preventDefault(); npCopyToClipboard(line); return; }
       }
-      if(ctrl && !e.altKey && !e.shiftKey && key.toLowerCase()==="x" && !hasSel){
+      if(!hasSel && m(eff("editorCutLine","Ctrl+X"))){
         const line=npOpCopyLine(text,pos);
         const cut=npOpCutLine(text,pos);
         e.preventDefault();
@@ -385,48 +426,66 @@ export default function activate(api){
         requestAnimationFrame(()=>{ try{ ta.setSelectionRange(cut.caret, cut.caret);}catch{} });
         return;
       }
-      if(ctrl && e.shiftKey && !e.altKey && key.toLowerCase()==="k"){
+      if(m(eff("editorDeleteLine","Ctrl+Shift+K"))){
         e.preventDefault();
         const r=npOpDeleteLine(text, ta.selectionStart??0, ta.selectionEnd??0);
         updateContent(r.text);
         requestAnimationFrame(()=>{ try{ ta.setSelectionRange(r.caret,r.caret);}catch{} });
         return;
       }
-      if(ctrl && !e.altKey && !e.shiftKey && key.toLowerCase()==="l"){
+      if(m(eff("editorSelectLine","Ctrl+L"))){
         e.preventDefault();
         const {start,end}=npOpSelectLine(text,pos);
         requestAnimationFrame(()=>{ try{ ta.setSelectionRange(start,end);}catch{} });
         return;
       }
-      const isSlash = key==="/" || code==="Slash" || code==="NumpadDivide";
-      if(ctrl && !e.altKey && !e.shiftKey && isSlash){
+      if(m(eff("editorToggleComment","Ctrl+/"))){
         e.preventDefault();
         const r=npOpToggleComment(text, ta.selectionStart??0, ta.selectionEnd??0);
         updateContent(r.text);
         requestAnimationFrame(()=>{ try{ ta.setSelectionRange(r.caret, r.selEnd);}catch{} });
         return;
       }
-      if(e.altKey && !ctrl && (key==="ArrowUp" || key==="ArrowDown")){
+      if(m(eff("editorMoveUp","Alt+ArrowUp"))){
         e.preventDefault();
-        const isDup=e.shiftKey;
-        if(isDup){
-          const dir=key==="ArrowUp"?"up":"down";
-          const r=npOpDuplicate(text, ta.selectionStart??0, ta.selectionEnd??0, dir);
-          updateContent(r.text);
-          requestAnimationFrame(()=>{ try{ ta.setSelectionRange(r.caret,r.caret);}catch{} });
-        } else {
-          const dir=key==="ArrowUp"?"up":"down";
-          const r=npOpMoveLine(text, ta.selectionStart??0, ta.selectionEnd??0, dir);
-          if(!r) return;
-          updateContent(r.text);
-          requestAnimationFrame(()=>{ try{ ta.setSelectionRange(r.caret,r.caret);}catch{} });
-        }
+        const r=npOpMoveLine(text, ta.selectionStart??0, ta.selectionEnd??0, "up");
+        if(!r) return;
+        updateContent(r.text);
+        requestAnimationFrame(()=>{ try{ ta.setSelectionRange(r.caret,r.caret);}catch{} });
         return;
       }
-      if(ctrl && key==="Enter"){
+      if(m(eff("editorMoveDown","Alt+ArrowDown"))){
         e.preventDefault();
-        const dir=e.shiftKey?"above":"below";
-        const r=npOpInsertLine(text,pos,dir);
+        const r=npOpMoveLine(text, ta.selectionStart??0, ta.selectionEnd??0, "down");
+        if(!r) return;
+        updateContent(r.text);
+        requestAnimationFrame(()=>{ try{ ta.setSelectionRange(r.caret,r.caret);}catch{} });
+        return;
+      }
+      if(m(eff("editorDuplicateUp","Shift+Alt+ArrowUp"))){
+        e.preventDefault();
+        const r=npOpDuplicate(text, ta.selectionStart??0, ta.selectionEnd??0, "up");
+        updateContent(r.text);
+        requestAnimationFrame(()=>{ try{ ta.setSelectionRange(r.caret,r.caret);}catch{} });
+        return;
+      }
+      if(m(eff("editorDuplicateDown","Shift+Alt+ArrowDown"))){
+        e.preventDefault();
+        const r=npOpDuplicate(text, ta.selectionStart??0, ta.selectionEnd??0, "down");
+        updateContent(r.text);
+        requestAnimationFrame(()=>{ try{ ta.setSelectionRange(r.caret,r.caret);}catch{} });
+        return;
+      }
+      if(m(eff("editorInsertBelow","Ctrl+Enter"))){
+        e.preventDefault();
+        const r=npOpInsertLine(text,pos,"below");
+        updateContent(r.text);
+        requestAnimationFrame(()=>{ try{ ta.setSelectionRange(r.caret,r.caret);}catch{} });
+        return;
+      }
+      if(m(eff("editorInsertAbove","Ctrl+Shift+Enter"))){
+        e.preventDefault();
+        const r=npOpInsertLine(text,pos,"above");
         updateContent(r.text);
         requestAnimationFrame(()=>{ try{ ta.setSelectionRange(r.caret,r.caret);}catch{} });
         return;
@@ -646,11 +705,26 @@ export default function activate(api){
     );
   }
 
+  function toggleNotepad(){
+    try{
+      const s = load();
+      s.open = !s.open;
+      save(s);
+      try{ api.playSound(s.open ? "expand" : "collapse"); }catch{}
+    }catch{}
+  }
+
   return {
     Titlebar: TitlebarBtn,
     Overlay: Overlay,
+    hotkeys: [
+      { id: "toggle", default: "Alt+N", label: "toggle notepad", description: "Show/hide floating notepad" },
+    ],
+    onHotkey(id){
+      if(id === "toggle") toggleNotepad();
+    },
     info:{ keys:[
-      ["Notepad (Titlebar)","Toggle floating notepad (sticky-note icon) — Titlebar only"],
+      ["Alt+N / Notepad (Titlebar)","Toggle floating notepad (sticky-note icon) — rebindable in Hotkeys"],
       ["Ctrl+C / Ctrl+X (no selection)","Copy / cut current line"],
       ["Ctrl+Shift+K","Delete line"],
       ["Alt+↑ / Alt+↓","Move line up / down"],

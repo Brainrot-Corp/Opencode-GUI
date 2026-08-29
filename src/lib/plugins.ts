@@ -9,6 +9,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { stripComments } from "./themes";
 import { setPluginLexicon } from "./voiceLexicon";
 import { playSound as hostPlaySound } from "./sounds";
+import { matchesEvent as hostMatchesEvent, normalizeBinding as hostNormalizeBinding } from "./hotkeys";
 
 export type PluginApi = {
   id: string;
@@ -20,6 +21,9 @@ export type PluginApi = {
   // the live oc.settings blob (persisted synchronously on every change)
   settings: () => Record<string, unknown>;
   playSound: (kind: string) => void;
+  // hotkey helpers — same as core (so plugins respect user rebinds)
+  matchesEvent: typeof hostMatchesEvent;
+  normalizeBinding: typeof hostNormalizeBinding;
 };
 
 export type PluginExt = {
@@ -69,6 +73,17 @@ export type PluginExt = {
     takesArgs?: boolean;
     handle: (args: string) => Promise<string | void> | string | void;
   }[];
+  // app-wide hotkeys contributed by the plugin — appear as rebindable pills
+  // in the keybinds menu (same as core hotkeys). Handled via onHotkey or
+  // per-entry handle, dispatched centrally through matchesEvent.
+  hotkeys?: {
+    id: string;
+    default: string | null;
+    label: string;
+    description?: string;
+    handle?: () => void | Promise<void>;
+  }[];
+  onHotkey?: (id: string) => void | Promise<void>;
 };
 
 export type LoadedPlugin = {
@@ -239,6 +254,8 @@ async function loadOne(d: { dir: string; manifest: string; main: string; css: st
     playSound: (kind: string) => {
       try { (hostPlaySound as unknown as (k: string) => void)(kind as never); } catch {}
     },
+    matchesEvent: hostMatchesEvent,
+    normalizeBinding: hostNormalizeBinding,
   };
   const raw = typeof mod.default === "function" ? await mod.default(api) : null;
   if (!raw) {

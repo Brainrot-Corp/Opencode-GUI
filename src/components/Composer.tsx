@@ -128,6 +128,7 @@ export default function Composer({
   onVoiceToggle,
   sessionId,
   cycleAgentHotkey,
+  hotkeys,
 }: {
   busy: boolean;
   // double-Escape stop gesture armed — the stop button shows its countdown
@@ -169,6 +170,7 @@ export default function Composer({
   onVoiceToggle?: () => void;
   sessionId?: string;
   cycleAgentHotkey?: string | null;
+  hotkeys?: Record<string, string | null>;
 }) {
   const [input, setInput] = useState(() => getDraft(sessionId ?? ""));
   const [open, setOpen] = useState(false);
@@ -1164,7 +1166,7 @@ export default function Composer({
                       redoComposer();
                       return;
                     }
-                    if (handleComposerKeys(e, el, input, setInput)) return;
+                    if (handleComposerKeys(e, el, input, setInput, hotkeys ?? (()=>{ try{ return JSON.parse(localStorage.getItem("oc.settings")||"{}").hotkeys; }catch{ return undefined; }})())) return;
                     // typing sounds only — all key ROUTING (menus, send,
                     // agent cycle) lives in the single global handler
                     if (!e.ctrlKey && !e.metaKey && !e.altKey) {

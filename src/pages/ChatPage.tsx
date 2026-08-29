@@ -24,6 +24,7 @@ import { HelpDialog, ShareDialog, VariantsDialog } from "../components/CommandDi
 import { useOpencode } from "../hooks/useOpencode";
 import { useSettings } from "../hooks/useSettings";
 import { useGlobalShortcuts } from "../hooks/useGlobalShortcuts";
+import { usePluginHotkeys } from "../hooks/usePluginHotkeys";
 import { useVoice } from "../hooks/useVoice";
 import { routeVoice, routerInput, type VoiceAct } from "../lib/voiceRouter";
 import { ensureDict } from "../lib/dictWords";
@@ -255,6 +256,7 @@ export default function ChatPage() {
       void (oc as any).newSession();
     },
   });
+  usePluginHotkeys({ settings, plugins });
 
   // spoken rendering of a voice act — used to read embedded commands back
   // before they run
@@ -1003,6 +1005,7 @@ export default function ChatPage() {
             modes={activeModes}
             effectiveMode={effectiveMode}
             pluginDocs={pluginDocs}
+            plugins={plugins}
           />
         </Suspense>
         <PluginsDialog
@@ -1188,6 +1191,7 @@ export default function ChatPage() {
                   workspace={settings.workspace}
                   commands={oc.cmdList}
                   cycleAgentHotkey={settings.hotkeys.cycleAgent}
+                  hotkeys={settings.hotkeys}
                   onCommandsOpen={oc.refreshCommands}
                   agents={oc.agents}
                   agentSel={oc.agentSel}
@@ -1242,7 +1246,7 @@ export default function ChatPage() {
         )}
         {diffOpen && oc.activeId && <DiffPanel sessionId={oc.activeId} onClose={() => setDiffOpen(false)} />}
         <Suspense fallback={null}>
-          <FileEditorHost />
+          <FileEditorHost hotkeys={settings.hotkeys} />
         </Suspense>
         {overlays.map((w) => {
           const C = w.Overlay!;

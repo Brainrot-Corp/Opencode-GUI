@@ -14,7 +14,7 @@ import {
   type NormalizedTheme,
   type ThemeMeta,
 } from "../lib/themes";
-import { DEFAULT_HOTKEYS, normalizeBinding, type HotkeysMap } from "../lib/hotkeys";
+import { DEFAULT_HOTKEYS, normalizeBinding, type HotkeysMap, type PluginHotkeysMap } from "../lib/hotkeys";
 
 export type ThemeName = string;
 export type Mode = "dark" | "light";
@@ -124,6 +124,7 @@ export type AppSettings = {
   // opaque per-plugin config blobs — each plugin validates its own shape
   plugins: Record<string, Record<string, unknown>>;
   hotkeys: HotkeysMap;
+  pluginHotkeys: PluginHotkeysMap;
 };
 
 const KEY = "oc.settings";
@@ -166,6 +167,7 @@ const DEFAULTS: AppSettings = {
   terminal: { defaultProfileId: null, customShells: [] },
   plugins: {},
   hotkeys: structuredClone(DEFAULT_HOTKEYS),
+  pluginHotkeys: {},
 };
 
 function num(v: unknown, def: number, min: number, max: number) {
@@ -336,6 +338,21 @@ export function useSettings() {
           if (src && typeof src === "object" && !Array.isArray(src)) {
             for (const k of Object.keys(DEFAULT_HOTKEYS) as (keyof HotkeysMap)[]) {
               const v = src[k];
+              if (v === null) out[k] = null;
+              else if (typeof v === "string") {
+                const n = normalizeBinding(v);
+                out[k] = n;
+              }
+            }
+          }
+          return out;
+        })(),
+        pluginHotkeys: (() => {
+          const out: PluginHotkeysMap = {};
+          const src = (p as any).pluginHotkeys;
+          if (src && typeof src === "object" && !Array.isArray(src)) {
+            for (const [k, v] of Object.entries(src as Record<string, unknown>)) {
+              if (typeof k !== "string" || !k.includes(":")) continue;
               if (v === null) out[k] = null;
               else if (typeof v === "string") {
                 const n = normalizeBinding(v);

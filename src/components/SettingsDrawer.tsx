@@ -15,7 +15,7 @@ import VoicesDialog from "./VoicesDialog";
 import Onboarding from "./Onboarding";
 import AppearanceSettings from "./AppearanceSettings";
 import SoundsSettings from "./SoundsSettings";
-import InfoDialog from "./InfoDialog";
+import InfoDialog, { HotkeysTab } from "./InfoDialog";
 import type { ProviderGroup } from "../types";
 import "../styles/settings.css";
 
@@ -35,6 +35,7 @@ export default function SettingsDrawer({
   providers,
   commands,
   pluginDocs,
+  plugins,
   upd: updProp,
 }: {
   open: boolean;
@@ -56,6 +57,7 @@ export default function SettingsDrawer({
   commands?: CmdEntry[];
   // plugin documentation rows for the Info dialog
   pluginDocs?: { name: string; info: NonNullable<import("../lib/plugins").PluginExt["info"]> }[];
+  plugins?: import("../lib/plugins").LoadedPlugin[];
   upd?: ReturnType<typeof useUpdaterInternal>;
 }) {
   // custom themes have no stored color entry yet — cyan's shared base is the
@@ -681,6 +683,28 @@ export default function SettingsDrawer({
             </div>
           </section>
 
+          {/* ── Keybinds ── */}
+          <section className="settings-section" aria-label="Keybinds">
+            <div className="settings-section-title">
+              <i className="fa-solid fa-keyboard" /> Keybinds
+            </div>
+            <div className="setting-row">
+              <div className="setting-info">
+                <i className="fa-solid fa-keyboard setting-icon" />
+                <div>
+                  <div className="setting-name">Hotkeys</div>
+                  <div className="setting-desc">Click a binding to rebind — Esc to clear (unbound = disabled). Includes Editor and plugin hotkeys.</div>
+                </div>
+              </div>
+              <button type="button" className="reset-btn" data-tip="Open full hotkeys reference" onClick={() => setInfoOpen(true)}>
+                <i className="fa-solid fa-circle-info" /> Info
+              </button>
+            </div>
+            <div style={{ padding: "0 6px" }}>
+              <HotkeysTab settings={settings} update={update} plugins={plugins} />
+            </div>
+          </section>
+
           {/* ── Danger Zone ── */}
           <section className="settings-section settings-section--danger" aria-label="Danger zone">
             <div className="settings-section-title">
@@ -716,7 +740,7 @@ export default function SettingsDrawer({
         </div>
       </aside>
         {infoOpen && (
-          <InfoDialog commands={commands ?? []} pluginDocs={pluginDocs} settings={settings} update={update} onClose={() => setInfoOpen(false)} />
+          <InfoDialog commands={commands ?? []} pluginDocs={pluginDocs} plugins={plugins} settings={settings} update={update} onClose={() => setInfoOpen(false)} />
         )}
         {wizOpen && (
           <Onboarding
