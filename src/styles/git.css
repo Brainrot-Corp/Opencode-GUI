@@ -161,13 +161,16 @@ body.gp-resizing * {
   box-shadow: 0 0 14px -6px var(--accent-glow);
 }
 
-/* AI generate — sits inside the input's right edge */
+/* AI generate — sits inside the input's right edge, vertically centered */
 .gp-gen {
   position: absolute;
   right: 4px;
-  top: 8px;
+  top: 50%;
+  transform: translateY(-50%);
   width: 24px;
   height: 24px;
+  display: grid;
+  place-items: center;
   border: none;
   border-radius: 4px;
   background: none;

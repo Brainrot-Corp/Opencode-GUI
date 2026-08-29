@@ -116,9 +116,7 @@ export default function Composer({
   hasVariants,
   variantSel,
   modelVariants,
-  disabledVariants,
   onSelectVariant,
-  onToggleDisabledVariant,
   securityMode,
   onCycleSecurity,
   onSelectSecurity,
@@ -159,9 +157,7 @@ export default function Composer({
   hasVariants?: boolean;
   variantSel?: string;
   modelVariants?: string[];
-  disabledVariants?: Set<string>;
   onSelectVariant?: (v: string) => void;
-  onToggleDisabledVariant?: (v: string) => void;
   securityMode?: "full" | "user" | "block";
   onCycleSecurity?: () => void;
   onSelectSecurity?: (m: "full" | "user" | "block") => void;
@@ -877,9 +873,7 @@ export default function Composer({
             <VariantMenu
               variants={modelVariants ?? []}
               variantSel={variantSel ?? ""}
-              disabled={disabledVariants ?? new Set<string>()}
               onSelect={(v) => onSelectVariant(v)}
-              onToggleDisabled={(v) => onToggleDisabledVariant?.(v)}
             />
           ) : (
             <button

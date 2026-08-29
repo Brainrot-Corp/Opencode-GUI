@@ -1553,8 +1553,6 @@ export function useOpencode() {
     setVariantSel: prov.setVariantSel,
     modelVariants: prov.modelVariants,
     modelCaps: prov.modelCaps,
-    disabledVariants: prov.disabledVariants,
-    toggleDisabledVariant: prov.toggleDisabledVariant,
     queueCounts,
     sessionUsage,
     abort,

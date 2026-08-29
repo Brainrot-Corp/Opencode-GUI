@@ -13,7 +13,6 @@ type OcClient = Awaited<ReturnType<typeof import("../api").opencode>>["client"];
 const SESSION_MODELS_KEY = "oc.sessionModels";
 const LAST_MODEL_KEY = "oc.lastModel";
 const SESSION_VARIANTS_KEY = "oc.sessionVariants";
-const DISABLED_VARIANTS_KEY = "oc.disabledVariants";
 
 function isReachable(model: string, groups: ProviderGroup[]): boolean {
   if (!model) return false;
@@ -64,13 +63,7 @@ export function useProviders(onError: (msg: string) => void, activeId: string) {
       return {};
     }
   });
-  // ponytail: global disabled set for thinking-effort cycle (frontend override like agents)
-  const [disabledVariants, setDisabledVariants] = useState<Set<string>>(() => {
-    try {
-      const raw = JSON.parse(localStorage.getItem(DISABLED_VARIANTS_KEY) ?? "[]");
-      return new Set(Array.isArray(raw) ? raw.filter((x: unknown) => typeof x === "string") : []);
-    } catch { return new Set<string>(); }
-  });
+
 
   // shared last hand-picked model — visible to every window/instance via
   // localStorage (cross-window "storage" events keep live windows in sync).
@@ -114,20 +107,7 @@ export function useProviders(onError: (msg: string) => void, activeId: string) {
     } catch {}
   }, [sessionVariants]);
 
-  useEffect(() => {
-    try { localStorage.setItem(DISABLED_VARIANTS_KEY, JSON.stringify([...disabledVariants])); } catch {}
-  }, [disabledVariants]);
-  useEffect(() => {
-    const onStorage = (e: StorageEvent) => {
-      if (e.key !== DISABLED_VARIANTS_KEY) return;
-      try {
-        const arr = JSON.parse(e.newValue ?? "[]");
-        setDisabledVariants(new Set(Array.isArray(arr) ? arr.filter((x: unknown) => typeof x === "string") : []));
-      } catch {}
-    };
-    window.addEventListener("storage", onStorage);
-    return () => window.removeEventListener("storage", onStorage);
-  }, []);
+
 
   const learnDefault = useCallback((resolved: string) => {
     setDefaultModel((prev) => (prev === resolved ? prev : resolved));
@@ -347,33 +327,13 @@ export function useProviders(onError: (msg: string) => void, activeId: string) {
     [modelSel, activeId],
   );
 
-  const toggleDisabledVariant = useCallback((name: string) => {
-    setDisabledVariants((prev) => {
-      const next = new Set(prev);
-      if (next.has(name)) next.delete(name);
-      else next.add(name);
-      playSound("click");
-      return next;
-    });
-  }, []);
-
-  // chip click: effort cycles default -> low -> ... -> default (skips disabled)
+  // chip click: effort cycles default -> low -> ... -> default
   const cycleVariant = useCallback(() => {
     if (!modelVariants.length) return;
     const opts = ["", ...modelVariants];
-    const enabled = opts.filter((o) => !disabledVariants.has(o));
-    if (!enabled.length) return;
-    let idx = opts.indexOf(variantSel);
-    if (idx < 0) idx = 0;
-    for (let step = 1; step <= opts.length; step++) {
-      const cand = opts[(idx + step) % opts.length];
-      if (!disabledVariants.has(cand)) {
-        setVariantSel(cand);
-        playSound("click");
-        return;
-      }
-    }
-  }, [modelVariants, variantSel, disabledVariants, setVariantSel]);
+    setVariantSel(opts[(opts.indexOf(variantSel) + 1) % opts.length]);
+    playSound("click");
+  }, [modelVariants, variantSel, setVariantSel]);
 
   return {
     providers,
@@ -390,8 +350,6 @@ export function useProviders(onError: (msg: string) => void, activeId: string) {
     variantSel,
     setVariantSel,
     cycleVariant,
-    disabledVariants,
-    toggleDisabledVariant,
   };
 }
 
