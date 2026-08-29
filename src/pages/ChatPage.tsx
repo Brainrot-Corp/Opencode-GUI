@@ -1190,6 +1190,10 @@ export default function ChatPage() {
                   agents={oc.agents}
                   agentSel={oc.agentSel}
                   onCycleAgent={oc.cycleAgent}
+                  disabledAgents={(oc as any).disabledAgents}
+                  onSelectAgent={(oc as any).setAgentSel}
+                  onToggleDisabled={(oc as any).toggleDisabledAgent}
+                  onRefreshAgents={(oc as any).refreshAgents}
                   onCycleVariant={oc.cycleVariant}
                   hasVariants={oc.modelVariants.length > 0}
                   variantSel={oc.variantSel}

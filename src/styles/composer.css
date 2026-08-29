@@ -66,6 +66,16 @@
   color: var(--accent-bright);
   text-shadow: 0 0 10px var(--accent-glow);
 }
+/* agent dropdown — reuses model-menu glass, disabled rows dimmed */
+.agent-menu-wrap { display: inline-flex; }
+.agent-menu { min-width: 240px; width: 300px; }
+.agent-opt { gap: 8px; }
+.agent-opt-name { display: inline-flex; align-items: center; gap: 6px; flex: 1; min-width: 0; }
+.agent-opt-mode { font-size: 10px; color: var(--text-faint); text-transform: lowercase; margin-left: 2px; }
+.agent-opt.disabled { opacity: 0.45; }
+.agent-opt.disabled span:first-child { text-decoration: line-through; text-decoration-color: var(--text-faint); }
+.agent-opt.disabled.hl { opacity: 0.7; background: color-mix(in srgb, var(--danger) calc(0.08 * 100%), transparent); }
+.agent-disabled-badge { margin-left: auto; font-size: 9px; letter-spacing: 0.06em; color: var(--text-faint); border: 1px solid var(--line); padding: 1px 5px; border-radius: 4px; background: color-mix(in srgb, var(--danger) calc(0.08 * 100%), transparent); }
 /* usage readout is informational, not a button */
 .usage-chip {
   cursor: default;

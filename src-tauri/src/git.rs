@@ -134,17 +134,38 @@ pub async fn git_discard(dir: String, paths: Vec<String>) -> Result<(), String> 
 }
 
 #[tauri::command]
-pub async fn git_commit(dir: String, message: String) -> Result<String, String> {
+pub async fn git_commit(dir: String, message: String, amend: Option<bool>, all: Option<bool>) -> Result<String, String> {
+    let use_amend = amend.unwrap_or(false);
+    let use_all = all.unwrap_or(false);
     // body opt-in sends "subject\n\nbody" — pass as two -m to preserve paragraph
     let trimmed = message.trim();
+    let build_args = |subject: &str, body: Option<&str>| -> Vec<String> {
+        let mut a: Vec<String> = vec!["commit".to_string()];
+        if use_amend { a.push("--amend".to_string()); }
+        if use_all { a.push("-a".to_string()); }
+        a.push("-m".to_string());
+        a.push(subject.trim().to_string());
+        if let Some(b) = body {
+            let bt = b.trim();
+            if !bt.is_empty() {
+                a.push("-m".to_string());
+                a.push(bt.to_string());
+            }
+        }
+        a
+    };
     if let Some(idx) = trimmed.find("\n\n") {
         let (subject, body) = trimmed.split_at(idx);
         let body = body.trim();
         if !body.is_empty() {
-            return run(&dir, &["commit", "-m", subject.trim(), "-m", body]);
+            let args = build_args(subject.trim(), Some(body));
+            let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+            return run(&dir, &refs);
         }
     }
-    run(&dir, &["commit", "-m", trimmed])
+    let args = build_args(trimmed, None);
+    let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    run(&dir, &refs)
 }
 
 #[tauri::command]
@@ -155,6 +176,11 @@ pub async fn git_push(dir: String) -> Result<String, String> {
 #[tauri::command]
 pub async fn git_pull(dir: String) -> Result<String, String> {
     run(&dir, &["pull", "--no-edit"])
+}
+
+#[tauri::command]
+pub async fn git_fetch(dir: String) -> Result<String, String> {
+    run(&dir, &["fetch"])
 }
 
 #[tauri::command]

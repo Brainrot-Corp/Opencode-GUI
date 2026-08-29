@@ -17,7 +17,7 @@ tts_remove_voice, tts_speak, tts_status, voice_download, voice_remove_all, voice
     voice_status, voice_transcribe};
 
 mod git;
-use git::{git_commit, git_diff, git_diff_stat, git_discard, git_log, git_pull, git_push, git_stage, git_status, git_unstage};
+use git::{git_commit, git_diff, git_diff_stat, git_discard, git_fetch, git_log, git_pull, git_push, git_stage, git_status, git_unstage};
 
 mod pty;
 use pty::{kill_all as pty_kill_all, pty_kill, pty_resize, pty_spawn, pty_write, PtyState};
@@ -1547,6 +1547,7 @@ pub fn run() {
             git_commit,
             git_push,
             git_pull,
+            git_fetch,
             git_diff,
             git_diff_stat,
             git_log,

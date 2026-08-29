@@ -30,6 +30,7 @@ import type { Msg, OpenCodeEvent, PermAsk, ProviderGroup, Attachment, QuestionAs
 // per-session agent memory + shared global agent (mirrors useProviders model logic)
 const SESSION_AGENTS_KEY = "oc.sessionAgents";
 const LAST_AGENT_KEY = "oc.lastAgent";
+const DISABLED_AGENTS_KEY = "oc.disabledAgents";
 function isAgentReachable(name: string, list: { name: string }[]): boolean {
   return !!name && list.some((a) => a.name === name);
 }
@@ -98,6 +99,14 @@ export function useOpencode() {
   // never goes stale even if the oc:plugin-slash event fires before mount.
   const [agents, setAgents] = useState<{ name: string; mode: string }[]>([]);
   const [agentSel, setAgentSel] = useState("");
+  // frontend override: disabled agents are hidden from Tab cycle but still selectable via dropdown
+  // ponytail: global Set, per-workspace map if workspaces diverge
+  const [disabledAgents, setDisabledAgents] = useState<Set<string>>(() => {
+    try {
+      const raw = JSON.parse(localStorage.getItem(DISABLED_AGENTS_KEY) ?? "[]");
+      return new Set(Array.isArray(raw) ? raw.filter((x: unknown) => typeof x === "string") : []);
+    } catch { return new Set<string>(); }
+  });
   // per-session agent memory: only entries that were EXPLICITLY picked for
   // that session get stored; everything else follows the global selection.
   // keyed by session id -> agent name. boot-load prunes vanished agents
@@ -126,6 +135,7 @@ export function useOpencode() {
   sessionsRef.current = sessions;
   // command-registry refetch throttle for file-watcher bursts
   const cmdFetchAt = useRef(0);
+  const agentFetchAt = useRef(0);
 
   // authoritative per-session message stores (SSE mutations land here
   // synchronously; only the active session mirrors into React state)
@@ -196,6 +206,22 @@ export function useOpencode() {
     } catch {}
   }, [sessionAgents]);
 
+  // persist disabled agents + cross-window sync
+  useEffect(() => {
+    try { localStorage.setItem(DISABLED_AGENTS_KEY, JSON.stringify([...disabledAgents])); } catch {}
+  }, [disabledAgents]);
+  useEffect(() => {
+    const onStorage = (e: StorageEvent) => {
+      if (e.key !== DISABLED_AGENTS_KEY) return;
+      try {
+        const arr = JSON.parse(e.newValue ?? "[]");
+        setDisabledAgents(new Set(Array.isArray(arr) ? arr.filter((x: unknown) => typeof x === "string") : []));
+      } catch {}
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
+
   const rememberAgentSession = useCallback((sid: string, value: string) => {
     if (!sid) return;
     setSessionAgents((prev) => {
@@ -239,7 +265,7 @@ export function useOpencode() {
     }
   }, [activeId, agents, sessionAgents]);
 
-  // prune vanished agents from the map + global
+  // prune vanished agents from the map + global + disabled override
   useEffect(() => {
     if (!agents.length) return;
     setSessionAgents((prev) => {
@@ -251,6 +277,12 @@ export function useOpencode() {
           changed = true;
         }
       }
+      return changed ? next : prev;
+    });
+    setDisabledAgents((prev) => {
+      let changed = false;
+      const next = new Set(prev);
+      for (const name of prev) if (!isAgentReachable(name, agents)) { next.delete(name); changed = true; }
       return changed ? next : prev;
     });
     try {
@@ -745,8 +777,8 @@ export function useOpencode() {
         }
         case "file.watcher.updated":
           // something changed under the workspace — if it could be a command
-          // file, refresh the registry (debounced; new files still need an
-          // app restart per server behavior, edits/deletes of loaded ones show up)
+          // or agent file, refresh the registry (debounced; new files may need
+          // an app restart per server behavior, edits/deletes show up)
           {
             const path = `${p.file ?? p.path ?? ""}`;
             // relay for the file viewer's external-change detection
@@ -754,6 +786,11 @@ export function useOpencode() {
             if (path.includes(".opencode") && Date.now() - cmdFetchAt.current > 1000) {
               cmdFetchAt.current = Date.now();
               refreshCommands().catch(() => {});
+            }
+            const isAgentPath = path.includes("agent") || path.endsWith(".md");
+            if (isAgentPath && Date.now() - agentFetchAt.current > 1000) {
+              agentFetchAt.current = Date.now();
+              refreshAgents().catch(() => {});
             }
           }
           break;
@@ -911,13 +948,14 @@ export function useOpencode() {
   useEffect(() => {
     const onFocus = () => {
       refreshCommands().catch(() => {});
+      refreshAgents().catch(() => {});
       opencode()
         .then(({ client }) => prov.loadProviders(client))
         .catch(() => {});
     };
     window.addEventListener("focus", onFocus);
     return () => window.removeEventListener("focus", onFocus);
-  }, [refreshCommands, prov.loadProviders]);
+  }, [refreshCommands, refreshAgents, prov.loadProviders]);
 
   // periodic nudge while any session needs attention — pop every 10s until acted on
   // ponytail: nudge interval tuning lives here
@@ -1158,25 +1196,43 @@ export function useOpencode() {
     await openSession(id).catch(() => {});
   }, [refreshSessions, openSession]);
 
+  const toggleDisabledAgent = useCallback((name: string) => {
+    setDisabledAgents((prev) => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      playSound("click");
+      return next;
+    });
+  }, []);
+
   const cycleAgent = useCallback(() => {
     if (!agents.length) return;
+    const enabled = agents.filter((a) => !disabledAgents.has(a.name));
+    if (!enabled.length) return;
     const cur = agentSel || agents[0].name;
-    const i = agents.findIndex((a) => a.name === cur);
-    const next = agents[(i + 1) % agents.length].name;
-    rememberAgentSession(activeRef.current, next);
-    setAgentSel(next);
-    playSound("click");
-  }, [agents, agentSel, rememberAgentSession]);
+    let idx = agents.findIndex((a) => a.name === cur);
+    if (idx < 0) idx = 0;
+    for (let step = 1; step <= agents.length; step++) {
+      const cand = agents[(idx + step) % agents.length];
+      if (!disabledAgents.has(cand.name)) {
+        rememberAgentSession(activeRef.current, cand.name);
+        setAgentSel(cand.name);
+        playSound("click");
+        return;
+      }
+    }
+  }, [agents, agentSel, disabledAgents, rememberAgentSession]);
 
   // direct pick (mirrors selectModel) — remembers per-session and globally
   const selectAgent = useCallback(
     (v: string) => {
       rememberAgentSession(activeRef.current, v);
       setAgentSel(v);
+      playSound("click");
     },
     [rememberAgentSession],
   );
-  void selectAgent;
 
   // picker entry: applies the choice globally AND remembers it for the
   // session it was made in (so switching back re-applies it)
@@ -1489,6 +1545,9 @@ export function useOpencode() {
     agentSel,
     setAgentSel: selectAgent,
     cycleAgent,
+    disabledAgents,
+    toggleDisabledAgent,
+    refreshAgents,
     cycleVariant: prov.cycleVariant,
     variantSel: prov.variantSel,
     setVariantSel: prov.setVariantSel,

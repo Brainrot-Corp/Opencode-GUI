@@ -10,6 +10,7 @@ import { handleComposerKeys } from "../lib/editorKeys";
 import { findMatches, highlightFindInHtml } from "../lib/find";
 import { matchesEvent } from "../lib/hotkeys";
 import ModelMenu, { type ModelEntry } from "./ModelMenu";
+import AgentMenu from "./AgentMenu";
 import SlashMenu from "./SlashMenu";
 import { playSound } from "../lib/sounds";
 import { getDraft, setDraft } from "../lib/drafts";
@@ -105,6 +106,10 @@ export default function Composer({
   agents,
   agentSel,
   onCycleAgent,
+  disabledAgents,
+  onSelectAgent,
+  onToggleDisabled,
+  onRefreshAgents,
   onCycleVariant,
   hasVariants,
   variantSel,
@@ -139,6 +144,10 @@ export default function Composer({
   agents?: { name: string; mode: string }[];
   agentSel?: string;
   onCycleAgent?: () => void;
+  disabledAgents?: Set<string>;
+  onSelectAgent?: (name: string) => void;
+  onToggleDisabled?: (name: string) => void;
+  onRefreshAgents?: () => void;
   onCycleVariant?: () => void;
   hasVariants?: boolean;
   variantSel?: string;
@@ -606,14 +615,14 @@ export default function Composer({
         return;
       }
 
-      // --- cycleAgent hotkey — default Tab ---
+      // --- cycleAgent hotkey — default Tab (skip when agent menu open — its own Arrows/Enter own Tab)
       if (onCycleAgent) {
+        if (document.querySelector(".agent-menu")) return;
         const b = cycleAgentHotkey ?? "Tab";
         const should = b ? matchesEvent(e as any, b) : e.key === "Tab" && !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey;
         if (should) {
           const t = e.target as HTMLElement | null;
           if (t && (t.tagName === "INPUT" || t.tagName === "SELECT" || t.isContentEditable)) {
-            // allow native tab in inputs/selects unless rebind is explicitly that
             if (b === "Tab") return;
           }
           e.preventDefault();
@@ -841,16 +850,15 @@ export default function Composer({
     >
       <div className="model-row">
         <span>{currentLabel()}</span>
-        {onCycleAgent && agents && (
-          <button
-            type="button"
-            className="agent-chip"
-            data-tip={`Agent — Tab to cycle (${agents.length} available)`}
-            onClick={() => onCycleAgent()}
-          >
-            <i className="fa-solid fa-robot" />
-            {agentSel || agents[0]?.name || "build"}
-          </button>
+        {agents && agents.length > 0 && (
+          <AgentMenu
+            agents={agents}
+            agentSel={agentSel}
+            disabled={disabledAgents ?? new Set<string>()}
+            onSelect={(n) => (onSelectAgent ? onSelectAgent(n) : onCycleAgent?.())}
+            onToggleDisabled={(n) => onToggleDisabled?.(n)}
+            onRefresh={onRefreshAgents}
+          />
         )}
         {(variantSel || hasVariants) && (
           <button

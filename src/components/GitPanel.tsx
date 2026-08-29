@@ -9,11 +9,14 @@ import { heuristicCommit } from "../lib/commitHeuristic";
 import { buildCommitPrompt, cleanCommitMessage } from "../lib/commitPrompt";
 import Dialog from "./Dialog";
 import { DiffLines } from "./DiffPanel";
+import DropdownPortal from "./DropdownPortal";
 import "../styles/git.css";
 
 const GH_KEY = "oc.git.h";
 const GH_MIN = 120;
 const GH_DEFAULT = 220;
+const PRIMARY_KEY = "oc.git.primary";
+const AMEND_KEY = "oc.git.amend";
 const clampH = (h: number) =>
   Math.min(Math.max(GH_MIN, Math.floor(h)), Math.floor(window.innerHeight * 0.6));
 
@@ -29,6 +32,20 @@ type GitStatus = {
 const CLEAN: GitStatus = { repo: false, branch: "", ahead: 0, behind: 0, files: [] };
 
 const base = (p: string) => p.replace(/\/$/, "").slice(p.replace(/\/$/, "").lastIndexOf("/") + 1);
+
+// primary commit actions — persisted as the split-button's current action
+type PrimaryAction =
+  | "staged"
+  | "all"
+  | "stagedPush"
+  | "allPush"
+  | "stagedSync"
+  | "allSync";
+function loadPrimary(): PrimaryAction {
+  const v = localStorage.getItem(PRIMARY_KEY);
+  if (v === "all" || v === "stagedPush" || v === "allPush" || v === "stagedSync" || v === "allSync") return v as PrimaryAction;
+  return "staged";
+}
 
 // secondary model + commitBody from the settings blob — read at click time
 function secondaryModel(): string {
@@ -56,7 +73,6 @@ function cachedVariant(sel: string): string | undefined {
 }
 async function variantFast(client: any, providerID: string, modelID: string, fallback?: string): Promise<string | undefined> {
   if (fallback) return fallback;
-  // quick probe with deadline 700ms — don't block prompt on it
   try {
     const pr: any = await Promise.race([
       client.config.providers(),
@@ -74,8 +90,16 @@ async function variantFast(client: any, providerID: string, modelID: string, fal
 // staged = index column meaningful; changes = worktree column or untracked
 const stagedOf = (files: GitFile[]) => files.filter((f) => f.x !== " " && f.x !== "?");
 const changedOf = (files: GitFile[]) => files.filter((f) => f.y !== " ");
+const isTracked = (f: GitFile) => !(f.x === "?" && f.y === "?");
+const isUntracked = (f: GitFile) => f.x === "?" && f.y === "?";
+const allTrackedDirtyOf = (files: GitFile[]) => files.filter((f) => isTracked(f) && (f.x !== " " || f.y !== " "));
 
-  // keep body toggle reactive without prop drilling — poll localStorage
+function dedupFiles(files: GitFile[]): GitFile[] {
+  const m = new Map<string, GitFile>();
+  for (const f of files) m.set(f.path, f);
+  return [...m.values()];
+}
+
 function useCommitBody(): boolean {
   const [v, setV] = useState(() => commitBodyEnabled());
   useEffect(() => {
@@ -92,8 +116,6 @@ function useCommitBody(): boolean {
   return v;
 }
 
-// status letter → css tint class (VS Code-style: M/T amber, A green,
- // D red, untracked green-U, conflicts purple, renames blue, rest dim)
 const xcls = (l: string) =>
   l === "M" || l === "T"
     ? "mod"
@@ -113,8 +135,8 @@ export default function GitPanel() {
   const [msg, setMsg] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
-  const [confirmPath, setConfirmPath] = useState(""); // discard two-step
-  const [gen, setGen] = useState(false); // AI message in flight
+  const [confirmPath, setConfirmPath] = useState("");
+  const [gen, setGen] = useState(false);
   const [diff, setDiff] = useState<{ path: string; patch: string; staged: boolean } | null>(null);
   const bodyOpt = useCommitBody();
   const msgRef = useRef<HTMLTextAreaElement>(null);
@@ -125,28 +147,40 @@ export default function GitPanel() {
   const autosizeMsg = useCallback(() => {
     const el = msgRef.current;
     if (!el) return;
-    // fallback for browsers without field-sizing:content
     el.style.height = "auto";
     el.style.height = `${el.scrollHeight}px`;
   }, []);
   useEffect(() => { autosizeMsg(); }, [msg, bodyOpt, open, autosizeMsg]);
   const [gh, setGh] = useState(() => clampH(Number(localStorage.getItem(GH_KEY)) || GH_DEFAULT));
   const [dragging, setDragging] = useState(false);
+  useEffect(() => { localStorage.setItem(GH_KEY, String(gh)); }, [gh]);
+  const [stagedCollapsed, setStagedCollapsed] = useState(() => localStorage.getItem("oc.git.stagedCollapsed") === "1");
+  const [changesCollapsed, setChangesCollapsed] = useState(() => localStorage.getItem("oc.git.changesCollapsed") === "1");
+  useEffect(() => { localStorage.setItem("oc.git.stagedCollapsed", stagedCollapsed ? "1" : "0"); }, [stagedCollapsed]);
+  useEffect(() => { localStorage.setItem("oc.git.changesCollapsed", changesCollapsed ? "1" : "0"); }, [changesCollapsed]);
+  const [commitMenuOpen, setCommitMenuOpen] = useState(false);
+  const [moreMenuOpen, setMoreMenuOpen] = useState(false);
+  const [amend, setAmend] = useState(() => localStorage.getItem(AMEND_KEY) === "1");
+  const [primary, setPrimary] = useState<PrimaryAction>(() => loadPrimary());
+  const commitAnchorRef = useRef<HTMLDivElement>(null);
+  const moreAnchorRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => { localStorage.setItem(AMEND_KEY, amend ? "1" : "0"); }, [amend]);
+  useEffect(() => { localStorage.setItem(PRIMARY_KEY, primary); }, [primary]);
   useEffect(() => {
-    localStorage.setItem(GH_KEY, String(gh));
-  }, [gh]);
-  const [stagedCollapsed, setStagedCollapsed] = useState(
-    () => localStorage.getItem("oc.git.stagedCollapsed") === "1",
-  );
-  const [changesCollapsed, setChangesCollapsed] = useState(
-    () => localStorage.getItem("oc.git.changesCollapsed") === "1",
-  );
-  useEffect(() => {
-    localStorage.setItem("oc.git.stagedCollapsed", stagedCollapsed ? "1" : "0");
-  }, [stagedCollapsed]);
-  useEffect(() => {
-    localStorage.setItem("oc.git.changesCollapsed", changesCollapsed ? "1" : "0");
-  }, [changesCollapsed]);
+    if (!commitMenuOpen && !moreMenuOpen) return;
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as HTMLElement;
+      if (t.closest(".gp-menu") || t.closest(".gp-split") || t.closest(".gp-more-wrap")) return;
+      setCommitMenuOpen(false);
+      setMoreMenuOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") { setCommitMenuOpen(false); setMoreMenuOpen(false); }
+    };
+    window.addEventListener("mousedown", onDown);
+    window.addEventListener("keydown", onKey);
+    return () => { window.removeEventListener("mousedown", onDown); window.removeEventListener("keydown", onKey); };
+  }, [commitMenuOpen, moreMenuOpen]);
   const startResize = useCallback(
     (e: React.MouseEvent) => {
       e.preventDefault();
@@ -192,9 +226,6 @@ export default function GitPanel() {
     }
   }, []);
 
-  // one serialized wrapper for every mutating action: run, ALWAYS refresh
-  // (even on failure — e.g. commit-ok/push-fail must reconcile), surface
-  // errors; returns whether it succeeded
   const act = useCallback(
     async (fn: () => Promise<unknown>) => {
       if (busy) return false;
@@ -204,14 +235,21 @@ export default function GitPanel() {
       try {
         await fn();
       } catch (e) {
-        setErr(String(e).replace(/^Error:\s*/, ""));
+        const raw = String(e).replace(/^Error:\s*/, "");
+        if (/has no upstream branch|no upstream branch|set upstream/i.test(raw)) {
+          setErr(raw + "\nTip: Push with --set-upstream or set remote via git push -u origin " + (st.branch || "<branch>"));
+        } else if (/nothing to commit|no changes added to commit/i.test(raw) && !amend) {
+          setErr(raw + " — try Commit All (includes tracked changes) or Stage first.");
+        } else {
+          setErr(raw);
+        }
         ok = false;
       }
       await refresh();
       setBusy(false);
       return ok;
     },
-    [busy, refresh],
+    [busy, refresh, st.branch, amend],
   );
 
   const abortGen = useCallback(() => {
@@ -231,77 +269,59 @@ export default function GitPanel() {
     if (!gen) setGenHover(false);
   }, [gen]);
 
-  const commit = (thenPush = false, override?: string) =>
-    act(async () => {
-      // heuristic commit: stop the still-streaming AI so it can't overwrite the cleared input
-      if (gen) abortGen();
-      await invoke("git_commit", { dir: dir.current, message: (override ?? msg).trim() });
-      // committed entries leave the lists immediately — don't wait for the
-      // status roundtrip (a chained push failing must not resurrect them)
-      setSt((s) => ({
-        ...s,
-        files: s.files.filter((f) => f.x === " " || f.x === "?"),
-      }));
-      setMsg("");
-      if (thenPush) await invoke("git_push", { dir: dir.current });
-    });
+  // derived file sets — keep before commit/gen helpers so deps exist
+  const staged = stagedOf(st.files);
+  const changes = changedOf(st.files);
+  const allTrackedDirty = allTrackedDirtyOf(st.files);
+  const canCommitStaged = !!msg.trim() && staged.length > 0 && !busy;
+  const canCommitAll = !!msg.trim() && allTrackedDirty.length > 0 && !busy;
 
-  // push with visible progress: spinner while running, check + glow briefly
-  // once confirmed
-  const [pushed, setPushed] = useState<"idle" | "run" | "ok">("idle");
-  const doPush = async () => {
-    if (pushed !== "idle") return;
-    setPushed("run");
-    const ok = await act(() => invoke("git_push", { dir: dir.current }));
-    setPushed(ok ? "ok" : "idle");
-  };
-  useEffect(() => {
-    if (pushed !== "ok") return;
-    const t = setTimeout(() => setPushed("idle"), 1800);
-    return () => clearTimeout(t);
-  }, [pushed]);
-
-  // AI commit message: instant heuristic fill + streaming AI upgrade.
-  // Heuristic shows in <50ms; AI via promptAsync poll fills the textarea
-  // progressively (target 5s). Voice "commit" chains it straight into git_commit.
-  const genMessage = async (): Promise<string> => {
-    if (gen || busy || !staged.length) return "";
+  // unified commit helper covering VS variants: staged vs all (-a), amend, push, sync
+  const genMessage = async (opts?: { all?: boolean }): Promise<string> => {
+    const useAll = !!opts?.all;
+    const allDirty = allTrackedDirtyOf(st.files);
+    const srcFiles = useAll ? dedupFiles(allDirty) : [...staged];
+    const genFiles = srcFiles;
+    if (gen || busy || !genFiles.length) {
+      if (!genFiles.length) setErr(useAll ? "Nothing to commit (tracked)." : "Nothing staged to generate from.");
+      return "";
+    }
     const model = secondaryModel();
     const includeBody = commitBodyEnabled();
     const myId = ++genIdRef.current;
     setGen(true);
     setErr("");
-    // capture staged snapshot for this run
-    const stagedSnap = [...staged];
+    const stagedSnap = [...genFiles];
     const branchSnap = st.branch;
     let heuristicFallback = heuristicCommit({ staged: stagedSnap, branch: branchSnap });
     try {
-      // parallel: diff + stat + log (stat/log are cheap, diff may be large)
-      const [diffRaw, statRaw, logRaw] = await Promise.all([
-        invoke<string>("git_diff", { dir: dir.current, path: "", staged: true }).catch(() => ""),
+      const diffPromises: Promise<string>[] = [];
+      if (useAll) {
+        diffPromises.push(
+          invoke<string>("git_diff", { dir: dir.current, path: "", staged: true }).catch(() => ""),
+          invoke<string>("git_diff", { dir: dir.current, path: "", staged: false }).catch(() => ""),
+        );
+      } else {
+        diffPromises.push(invoke<string>("git_diff", { dir: dir.current, path: "", staged: true }).catch(() => ""));
+      }
+      const diffRaws = await Promise.all(diffPromises);
+      const diffRaw = diffRaws.join("\n");
+      const [statRaw, logRaw] = await Promise.all([
         invoke<string>("git_diff_stat", { dir: dir.current }).catch(() => ""),
         invoke<string>("git_log", { dir: dir.current }).catch(() => ""),
       ]);
       if (!diffRaw.trim() && !statRaw.trim()) {
-        setErr("Staged diff is empty.");
+        setErr("Diff is empty.");
         return "";
       }
-      // heuristic fills instantly — user sees a message immediately
       const heuristic = heuristicCommit({ staged: stagedSnap, stat: statRaw, diff: diffRaw.slice(0, 4000), branch: branchSnap });
       heuristicFallback = heuristic;
       setMsg(heuristic);
-
-      if (!model) {
-        // no AI configured — heuristic is the result (quality local fallback)
-        return heuristic;
-      }
-
+      if (!model) return heuristic;
       const { client } = await opencode();
       const [providerID, modelID] = splitModel(model);
       const cached = cachedVariant(model);
-      // don't block on providers probe — race 700ms
       const variant = await variantFast(client, providerID, modelID, cached);
-
       const promptText = buildCommitPrompt({
         staged: stagedSnap.map((f) => ({ path: f.path, x: f.x })),
         branch: branchSnap,
@@ -310,7 +330,6 @@ export default function GitPanel() {
         log: logRaw,
         includeBody,
       });
-
       const sid = await tempSession();
       genSidRef.current = sid;
       let best = heuristic;
@@ -324,12 +343,10 @@ export default function GitPanel() {
             ...(variant ? { variant } : {}),
           },
         } as any);
-
-        // poll session messages for progressive fill (perceived streaming)
         const start = Date.now();
-        const deadline = 60000; // hard cap; 4× previous (15s→60s) for quality
+        const deadline = 60000;
         while (Date.now() - start < deadline) {
-          if (genIdRef.current !== myId) break; // aborted by commit
+          if (genIdRef.current !== myId) break;
           await new Promise((r) => setTimeout(r, 260));
           if (genIdRef.current !== myId) break;
           try {
@@ -346,19 +363,14 @@ export default function GitPanel() {
               if (genIdRef.current !== myId) break;
               streamed = cleaned;
               best = cleaned;
-              setMsg(cleaned); // progressively fills the textarea
+              setMsg(cleaned);
             }
             if (last.info?.time?.completed) break;
-            // early exit if we already have a good subject within 5s
             if (streamed && Date.now() - start > 5000 && last.info?.time?.completed) break;
-          } catch {
-            // transient fetch error — keep polling
-          }
+          } catch {}
         }
-
-        if (genIdRef.current !== myId) return heuristicFallback; // commit won, don't overwrite
+        if (genIdRef.current !== myId) return heuristicFallback;
         if (!streamed) {
-          // no AI delta arrived — keep heuristic, surface hint
           setErr("AI slow — using heuristic. Edit or retry.");
           return heuristic;
         }
@@ -371,20 +383,87 @@ export default function GitPanel() {
       if (genIdRef.current !== myId) return heuristicFallback;
       const m = String(e).replace(/^Error:\s*/, "");
       setErr(m);
-      // keep heuristic in box so voice commit can proceed
       return heuristicFallback;
     } finally {
       if (genIdRef.current === myId) setGen(false);
     }
   };
-  const genMsg = () => void genMessage();
+  const genMsg = (useAll?: boolean) => void genMessage({ all: !!useAll });
+
+  const doCommit = useCallback(async (opts: { all?: boolean; push?: boolean; sync?: boolean; override?: string }) => {
+    const useAll = !!opts.all;
+    const usePush = !!opts.push;
+    const useSync = !!opts.sync;
+    let message = (opts.override ?? msg).trim();
+    if (!message) {
+      const m = await genMessage({ all: useAll });
+      if (!m) return false;
+      message = m;
+    }
+    if (!message) {
+      setErr("Enter a commit message or generate one.");
+      return false;
+    }
+    const hasStaged = staged.length > 0;
+    const hasAll = allTrackedDirty.length > 0;
+    if (!amend) {
+      if (useAll && !hasAll) { setErr("Nothing to commit — working tree clean (tracked files)."); return false; }
+      if (!useAll && !hasStaged) { setErr("Nothing staged to commit — Stage files or use Commit All."); return false; }
+    }
+    if (gen) abortGen();
+    const ok = await act(async () => {
+      await invoke("git_commit", { dir: dir.current, message, amend, all: useAll });
+      if (useAll) {
+        setSt((s) => ({
+          ...s,
+          files: s.files.filter((f) => isUntracked(f)),
+        }));
+      } else {
+        setSt((s) => ({
+          ...s,
+          files: s.files.filter((f) => f.x === " " || f.x === "?"),
+        }));
+      }
+      setMsg("");
+      if (useSync) {
+        await invoke("git_pull", { dir: dir.current });
+        await invoke("git_push", { dir: dir.current });
+      } else if (usePush) {
+        await invoke("git_push", { dir: dir.current });
+      }
+    });
+    return ok;
+  }, [msg, staged, allTrackedDirty, amend, gen, act, abortGen]);
+
+  const [pushed, setPushed] = useState<"idle" | "run" | "ok">("idle");
+  const doPush = async () => {
+    if (pushed !== "idle") return;
+    setPushed("run");
+    const ok = await act(() => invoke("git_push", { dir: dir.current }));
+    setPushed(ok ? "ok" : "idle");
+  };
+  useEffect(() => {
+    if (pushed !== "ok") return;
+    const t = setTimeout(() => setPushed("idle"), 1800);
+    return () => clearTimeout(t);
+  }, [pushed]);
+  const doFetch = async () => {
+    await act(() => invoke("git_fetch", { dir: dir.current }));
+    setMoreMenuOpen(false);
+  };
+  const doSync = async () => {
+    await act(async () => {
+      await invoke("git_pull", { dir: dir.current });
+      await invoke("git_push", { dir: dir.current });
+    });
+    setMoreMenuOpen(false);
+  };
 
   const rowAct = (cmd: string, path: string) => {
     setConfirmPath("");
     return act(() => invoke(cmd, { dir: dir.current, paths: [path] }));
   };
 
-  // bulk revert — tracked files only; untracked need `git clean`, not restore
   const discardAll = () => {
     const paths = changes
       .filter((f) => !(f.x === "?" && f.y === "?"))
@@ -403,10 +482,10 @@ export default function GitPanel() {
     setDiff({ path: f.path, patch, staged: isStaged });
   };
 
-  // initial status + poll while expanded + refresh on window focus
   useEffect(() => {
     refresh();
-  }, [refresh]);  useEffect(() => {
+  }, [refresh]);
+  useEffect(() => {
     if (!open || !st.repo) return;
     refresh();
     const t = setInterval(refresh, 4000);
@@ -418,9 +497,6 @@ export default function GitPanel() {
     };
   }, [open, st.repo, refresh]);
 
-  // voice commands ("push", "commit", "stage all"…) — dispatched by
-  // ChatPage's voice router; the ref keeps the latest closures reachable
-  // without re-registering the listener on every render
   const gitCmdRef = useRef<(cmd: string) => void>(() => {});
   useEffect(() => {
     const h = (e: Event) => gitCmdRef.current((e as CustomEvent<string>).detail);
@@ -438,9 +514,41 @@ export default function GitPanel() {
       </div>
     );
 
-  const staged = stagedOf(st.files);
-  const changes = changedOf(st.files);
-  const canCommit = !!msg.trim() && staged.length > 0 && !busy;
+  const primaryLabelMap: Record<PrimaryAction, string> = {
+    staged: "Commit Staged",
+    all: "Commit All",
+    stagedPush: "Commit Staged + Push",
+    allPush: "Commit All + Push",
+    stagedSync: "Commit Staged + Sync",
+    allSync: "Commit All + Sync",
+  };
+  const primaryHintMap: Record<PrimaryAction, string> = {
+    staged: "Commit staged changes",
+    all: "Commit all tracked changes (-a, skip untracked)",
+    stagedPush: "Commit staged and push",
+    allPush: "Commit all tracked and push",
+    stagedSync: "Commit staged and sync (pull then push)",
+    allSync: "Commit all tracked and sync",
+  };
+  const runPrimary = () => {
+    switch (primary) {
+      case "staged": void doCommit({ all: false }); break;
+      case "all": void doCommit({ all: true }); break;
+      case "stagedPush": void doCommit({ all: false, push: true }); break;
+      case "allPush": void doCommit({ all: true, push: true }); break;
+      case "stagedSync": void doCommit({ all: false, sync: true }); break;
+      case "allSync": void doCommit({ all: true, sync: true }); break;
+    }
+  };
+  const hint = (() => {
+    if (busy || gen) return "";
+    if (!msg.trim() && staged.length > 0) return "Tip: generate a message or type one.";
+    if (!msg.trim() && allTrackedDirty.length > 0 && staged.length === 0) return "No staged changes — use Commit All or Stage All.";
+    if (!staged.length && allTrackedDirty.length > 0) return "No staged changes. Commit All will commit tracked changes (−a, skips untracked).";
+    if (!allTrackedDirty.length && !staged.length && st.files.length === 0) return "";
+    if (!allTrackedDirty.length) return "";
+    return "";
+  })();
 
   gitCmdRef.current = (cmd: string) => {
     setOpen(true);
@@ -457,14 +565,14 @@ export default function GitPanel() {
       void act(() => invoke("git_stage", { dir: dir.current, paths: changes.map((f) => f.path) }));
       return;
     }
-    // commit — typed message wins; otherwise generate one and commit it
     if (busy || gen) return;
-    if (!staged.length) {
-      setErr("Nothing staged to commit.");
+    if (!staged.length && !allTrackedDirty.length) {
+      setErr("Nothing to commit.");
       return;
     }
-    if (msg.trim()) void commit(false);
-    else void genMessage().then((m) => { if (m) void commit(false, m); });
+    const useAll = !staged.length && allTrackedDirty.length > 0;
+    if (msg.trim()) void doCommit({ all: useAll });
+    else void genMessage({ all: useAll }).then((m) => { if (m) void doCommit({ all: useAll, override: m }); });
   };
 
   const toggleOpen = () => {
@@ -476,7 +584,6 @@ export default function GitPanel() {
 
   const row = (f: GitFile, isStaged: boolean) => {
     const raw = isStaged ? f.x : f.y;
-    // porcelain marks untracked as "?" — show VS Code's "U" instead
     const letter = raw === "?" ? "U" : raw;
     const untracked = f.x === "?" && f.y === "?";
     const confirming = confirmPath === f.path;
@@ -528,6 +635,56 @@ export default function GitPanel() {
     );
   };
 
+  const commitMenu = (
+    <div className="gp-menu">
+      <label className="gp-menu-check">
+        <input type="checkbox" checked={amend} onChange={(e) => { setAmend(e.target.checked); playSound("click"); }} />
+        <span>Amend previous commit</span>
+      </label>
+      <div className="gp-menu-sep" />
+      <button className="gp-menu-item" disabled={busy} onClick={() => { setPrimary("staged"); setCommitMenuOpen(false); setErr(""); void doCommit({ all: false }); }}>
+        <i className="fa-solid fa-check" /> Commit Staged
+        {!staged.length && !amend && <span className="gp-menu-hint">no staged</span>}
+      </button>
+      <button className="gp-menu-item" disabled={busy} onClick={() => { setPrimary("all"); setCommitMenuOpen(false); void doCommit({ all: true }); }}>
+        <i className="fa-solid fa-layer-group" /> Commit All
+        <span className="gp-menu-hint">−a, skip untracked</span>
+      </button>
+      <div className="gp-menu-sep" />
+      <button className="gp-menu-item" disabled={busy} onClick={() => { setPrimary("stagedPush"); setCommitMenuOpen(false); void doCommit({ all: false, push: true }); }}>
+        <i className="fa-solid fa-check-double" /> Commit Staged and Push
+      </button>
+      <button className="gp-menu-item" disabled={busy} onClick={() => { setPrimary("allPush"); setCommitMenuOpen(false); void doCommit({ all: true, push: true }); }}>
+        <i className="fa-solid fa-cloud-arrow-up" /> Commit All and Push
+      </button>
+      <button className="gp-menu-item" disabled={busy} onClick={() => { setPrimary("stagedSync"); setCommitMenuOpen(false); void doCommit({ all: false, sync: true }); }}>
+        <i className="fa-solid fa-rotate" /> Commit Staged and Sync
+      </button>
+      <button className="gp-menu-item" disabled={busy} onClick={() => { setPrimary("allSync"); setCommitMenuOpen(false); void doCommit({ all: true, sync: true }); }}>
+        <i className="fa-solid fa-arrows-rotate" /> Commit All and Sync
+      </button>
+      {hint && <div className="gp-menu-hintline">{hint}</div>}
+    </div>
+  );
+
+  const moreMenu = (
+    <div className="gp-menu">
+      <button className="gp-menu-item" disabled={busy} onClick={doFetch}>
+        <i className="fa-solid fa-cloud-arrow-down" /> Fetch
+      </button>
+      <button className="gp-menu-item" disabled={busy} onClick={doSync}>
+        <i className="fa-solid fa-rotate" /> Sync <span className="gp-menu-hint">Pull then Push</span>
+      </button>
+      <div className="gp-menu-sep" />
+      <button className="gp-menu-item" disabled={busy} onClick={() => { setMoreMenuOpen(false); void act(() => invoke("git_stage", { dir: dir.current, paths: changes.filter(isTracked).map(f=>f.path) })); }}>
+        <i className="fa-solid fa-plus" /> Stage all tracked
+      </button>
+      <button className="gp-menu-item" disabled={busy || !allTrackedDirty.length} onClick={() => { setMoreMenuOpen(false); void genMessage({ all: true }); }}>
+        <i className="fa-solid fa-wand-magic-sparkles" /> Generate message (All)
+      </button>
+    </div>
+  );
+
   return (
     <div className={`git-panel${dragging ? " dragging" : ""}`}>
       {open && (
@@ -563,8 +720,8 @@ export default function GitPanel() {
               className="gp-msg"
               placeholder={
                 bodyOpt
-                  ? `Message + body (${staged.length} staged) — Ctrl+Enter to commit`
-                  : `Message (${staged.length} staged)`
+                  ? `Message + body (${staged.length} staged, ${allTrackedDirty.length} tracked) — Ctrl+Enter to commit`
+                  : `Message (${staged.length} staged / ${allTrackedDirty.length} tracked)`
               }
               value={msg}
               rows={1}
@@ -573,13 +730,13 @@ export default function GitPanel() {
               onKeyDown={(e) => {
                 if (e.key === "Enter" && !e.shiftKey) {
                   if (bodyOpt) {
-                    if ((e.ctrlKey || e.metaKey) && canCommit) {
-                      e.preventDefault();
-                      commit(false);
+                    if ((e.ctrlKey || e.metaKey)) {
+                      const can = primary.includes("all") ? canCommitAll || amend : canCommitStaged || amend;
+                      if (can || msg.trim()) { e.preventDefault(); runPrimary(); }
                     }
-                  } else if (canCommit) {
-                    e.preventDefault();
-                    commit(false);
+                  } else {
+                    const can = primary.includes("all") ? canCommitAll || amend : canCommitStaged || amend;
+                    if (can || msg.trim()) { e.preventDefault(); runPrimary(); }
                   }
                 }
               }}
@@ -591,17 +748,17 @@ export default function GitPanel() {
                 gen
                   ? "Stop generation"
                   : secondaryModel()
-                    ? `Generate message (${secondaryModel()})${bodyOpt ? " + body" : ""}`
+                    ? `Generate message (${secondaryModel()})${bodyOpt ? " + body" : ""} — for ${primary.includes("all") ? "All (−a)" : "Staged"}`
                     : "Heuristic only — pick a Secondary model for AI"
               }
-              disabled={busy || (!gen && !staged.length)}
+              disabled={busy || (!gen && !(primary.includes("all") ? allTrackedDirty.length : staged.length))}
               onMouseEnter={() => gen && setGenHover(true)}
               onMouseLeave={() => setGenHover(false)}
               onClick={() => {
                 if (gen) {
                   abortGen();
                 } else {
-                  genMsg();
+                  genMsg(primary.includes("all"));
                 }
               }}
             >
@@ -609,18 +766,29 @@ export default function GitPanel() {
             </button>
           </div>
           <div className="gp-actions">
-            <button data-tip="Commit staged" disabled={!canCommit} onClick={() => commit(false)}>
-              <i className="fa-solid fa-check" />
-              Commit
-            </button>
-            <button data-tip="Commit staged and push" disabled={!canCommit} onClick={() => commit(true)}>
-              <i className="fa-solid fa-check-double" />
-              Commit + Push
-            </button>
+            <div className="gp-split" ref={commitAnchorRef}>
+              <button
+                className="gp-commit-main"
+                data-tip={primaryHintMap[primary] + (amend ? " — amend" : "")}
+                disabled={busy || (!amend && (primary.includes("all") ? !allTrackedDirty.length : !staged.length))}
+                onClick={runPrimary}
+              >
+                <i className={`fa-solid ${primary.includes("Push") ? "fa-cloud-arrow-up" : primary.includes("Sync") ? "fa-rotate" : "fa-check"}`} />
+                {primaryLabelMap[primary]}{amend ? " (Amend)" : ""}
+              </button>
+              <button
+                className="gp-commit-drop"
+                data-tip="More commit actions"
+                aria-expanded={commitMenuOpen}
+                onClick={() => { setCommitMenuOpen(o=>!o); setMoreMenuOpen(false); playSound("click"); }}
+              >
+                <i className={`fa-solid fa-chevron-${commitMenuOpen ? "up" : "down"}`} />
+              </button>
+            </div>
             <button
               className={`push${pushed === "ok" ? " pushed" : ""}`}
               data-tip="Push to remote"
-              disabled={busy || pushed === "run" || (!st.ahead && !staged.length)}
+              disabled={busy || pushed === "run" || (!st.ahead && !staged.length && !allTrackedDirty.length)}
               onClick={doPush}
             >
               <i
@@ -638,8 +806,19 @@ export default function GitPanel() {
               <i className="fa-solid fa-arrow-down" />
               Pull
             </button>
+            <button ref={moreAnchorRef as any} className="gp-more" data-tip="More actions (Fetch, Sync)" aria-expanded={moreMenuOpen} onClick={()=>{ setMoreMenuOpen(o=>!o); setCommitMenuOpen(false); playSound("click"); }}>
+              <i className="fa-solid fa-ellipsis" />
+            </button>
           </div>
+          <DropdownPortal anchor={commitAnchorRef} open={commitMenuOpen} prefer="up" align="left">
+            {commitMenu}
+          </DropdownPortal>
+          <DropdownPortal anchor={moreAnchorRef} open={moreMenuOpen} prefer="up" align="right">
+            {moreMenu}
+          </DropdownPortal>
           {err && <div className="gp-err mono">{err}</div>}
+          {!err && hint && <div className="gp-hint mono">{hint}</div>}
+          {amend && <div className="gp-hint mono">Amend mode — next commit amends the previous commit.</div>}
 
           {staged.length > 0 && (
             <>
@@ -700,7 +879,7 @@ export default function GitPanel() {
                 <>
                   <button
                     className="gp-sact"
-                    data-tip="Stage all"
+                    data-tip="Stage all (includes untracked)"
                     disabled={busy}
                     onClick={(e) => {
                       e.stopPropagation();
@@ -710,7 +889,6 @@ export default function GitPanel() {
                     <i className="fa-solid fa-plus" />
                     Stage all
                   </button>
-                  {/* revert-all: tracked files only — untracked need git clean */}
                   {changes.some((f) => !(f.x === "?" && f.y === "?")) &&
                     (confirmPath === "*" ? (
                       <>
@@ -764,9 +942,6 @@ export default function GitPanel() {
         </div>
       )}
 
-      {/* portal: the sidebar's backdrop-filter makes it the containing block
-          for position:fixed — without this the dialog centers inside the
-          sidebar instead of the window */}
       {diff &&
         createPortal(
           <Dialog
