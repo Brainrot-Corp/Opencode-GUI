@@ -262,3 +262,21 @@
 .cmd-row.hk-row.static {
   opacity: 0.95;
 }
+
+/* equal-width pills — JS sets inline width to longest pill; keep flex row intact so pill stays left and desc stays right in one line */
+.cmd-group--pills .hk-pill {
+  justify-content: center;
+  flex-shrink: 0;
+  box-sizing: border-box;
+}
+.cmd-group--pills .cmd-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 4px 6px;
+}
+.cmd-group--pills .cmd-desc,
+.cmd-group--pills .hk-desc {
+  flex: 1;
+  min-width: 0;
+}

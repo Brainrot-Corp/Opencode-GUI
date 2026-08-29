@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import Dialog from "./Dialog";
 import type { CmdEntry } from "../hooks/useOpencode";
 
@@ -11,10 +11,36 @@ export function CommandRows({ commands }: { commands: CmdEntry[] }) {
     if (!groups.has(g)) groups.set(g, []);
     groups.get(g)!.push(c);
   }
+  const ref = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const root = ref.current;
+    if (!root) return;
+    const update = () => {
+      const pills = Array.from(root.querySelectorAll<HTMLElement>(".hk-pill"));
+      if (!pills.length) return;
+      pills.forEach((p) => (p.style.width = ""));
+      let max = 0;
+      pills.forEach((p) => { max = Math.max(max, p.offsetWidth); });
+      max = Math.min(max, 220);
+      if (max > 0) pills.forEach((p) => (p.style.width = `${max}px`));
+    };
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(root);
+    const mo = new MutationObserver(update);
+    mo.observe(root, { childList: true, subtree: true });
+    window.addEventListener("resize", update);
+    (document as any).fonts?.ready?.then?.(update);
+    return () => {
+      ro.disconnect();
+      mo.disconnect();
+      window.removeEventListener("resize", update);
+    };
+  }, [commands]);
   return (
-    <>
+    <div ref={ref}>
       {[...groups.entries()].map(([g, list]) => (
-        <div key={g} className="cmd-group">
+        <div key={g} className="cmd-group cmd-group--pills">
           <div className="cmd-group-label">{g}</div>
           {list.map((c) => (
             <div key={c.name} className="cmd-row hk-row static">
@@ -24,7 +50,7 @@ export function CommandRows({ commands }: { commands: CmdEntry[] }) {
           ))}
         </div>
       ))}
-    </>
+    </div>
   );
 }
 

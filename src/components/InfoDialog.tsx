@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import Dialog from "./Dialog";
 import { CommandRows } from "./CommandDialog";
 import type { CmdEntry } from "../hooks/useOpencode";
@@ -137,7 +137,7 @@ const Groups = ({ data }: { data: Group[] }) => (
 const PillGroups = ({ data }: { data: Group[] }) => (
   <>
     {data.map(([g, rows]) => (
-      <div key={g} className="cmd-group">
+      <div key={g} className="cmd-group cmd-group--pills">
         <div className="cmd-group-label">{g}</div>
         {rows.map(([l, r]) => (
           <div key={l} className="cmd-row hk-row static">
@@ -149,6 +149,42 @@ const PillGroups = ({ data }: { data: Group[] }) => (
     ))}
   </>
 );
+
+function useEqualPills(deps: React.DependencyList) {
+  const ref = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const root = ref.current;
+    if (!root) return;
+    const update = () => {
+      const pills = Array.from(root.querySelectorAll<HTMLElement>(".hk-pill"));
+      if (!pills.length) return;
+      pills.forEach((p) => (p.style.width = ""));
+      let max = 0;
+      pills.forEach((p) => { max = Math.max(max, p.offsetWidth); });
+      max = Math.min(max, 220);
+      if (max > 0) pills.forEach((p) => (p.style.width = `${max}px`));
+    };
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(root);
+    // watch for pills added/removed (plugin on/off) without size change
+    const mo = new MutationObserver(update);
+    mo.observe(root, { childList: true, subtree: true });
+    window.addEventListener("resize", update);
+    (document as any).fonts?.ready?.then?.(update);
+    return () => {
+      ro.disconnect();
+      mo.disconnect();
+      window.removeEventListener("resize", update);
+    };
+  }, deps);
+  return ref;
+}
+
+function EqualWrap({ children, deps }: { children: React.ReactNode; deps?: React.DependencyList }) {
+  const ref = useEqualPills(deps ?? []);
+  return <div ref={ref}>{children}</div>;
+}
 
 export function HotkeysTab({
   settings,
@@ -285,7 +321,7 @@ export function HotkeysTab({
   })();
 
   const renderCoreGroup = (group: string, ids: HotkeyId[]) => (
-    <div key={group} className="cmd-group">
+    <div key={group} className="cmd-group cmd-group--pills">
       <div className="cmd-group-label">{group}</div>
       {ids.map((id) => {
         const meta = HOTKEY_META[id];
@@ -337,13 +373,15 @@ export function HotkeysTab({
     </div>
   );
 
+  const equalRef = useEqualPills([rec, JSON.stringify(effectiveHotkeys), JSON.stringify(phk), JSON.stringify(plugins?.map((p) => [p.id, p.disabled, p.ext?.hotkeys])), allUnchanged]);
+
   const pluginGroups =
     plugins
       ?.filter((p) => p.ext?.hotkeys?.length && !p.disabled)
       .map((p) => {
         const defs = p.ext!.hotkeys!;
         return (
-          <div key={p.id} className="cmd-group">
+          <div key={p.id} className="cmd-group cmd-group--pills">
             <div className="cmd-group-label">{p.name} — plugin</div>
             {defs.map((def) => {
               const k = pluginHotkeyKey(p.id, def.id);
@@ -393,7 +431,7 @@ export function HotkeysTab({
       }) ?? null;
 
   return (
-    <>
+    <div ref={equalRef}>
       {/* System-wide — non-rebindable but pill-styled */}
       <PillGroups data={[["System-wide", SYSTEM_KEYS]]} />
 
@@ -419,7 +457,7 @@ export function HotkeysTab({
       <PillGroups data={[["Composer", COMPOSER_KEYS]]} />
       {/* Legacy editor static kept for reference when no core settings? now pills cover editor so keep minimal note */}
       <p className="cmd-note">Click a binding to record a new combo — Esc clears it (unbound = disabled). Conflicts are shown but not blocked. Zoom shortcuts scale the whole interface; WebView2's own page zoom stays disabled.</p>
-    </>
+    </div>
   );
 }
 
@@ -467,7 +505,9 @@ export default function InfoDialog({
       )}
       {tab === "voice" && (
         <>
-          <PillGroups data={[...VOICE, ...docGroups(pluginDocs, "voice")]} />
+          <EqualWrap deps={[tab, JSON.stringify(VOICE), JSON.stringify(pluginDocs)]}>
+            <PillGroups data={[...VOICE, ...docGroups(pluginDocs, "voice")]} />
+          </EqualWrap>
           <p className="cmd-note">
             Phrasing works in any language whisper understands — an unmatched
             utterance gets a second, translating pass (Settings › Voice).
@@ -484,7 +524,7 @@ export default function InfoDialog({
           {settings && update ? (
             <HotkeysTab settings={settings} update={update} plugins={plugins} />
           ) : (
-            <>
+            <EqualWrap deps={[tab]}>
               <PillGroups
                 data={[
                   ["System-wide", SYSTEM_KEYS],
@@ -494,7 +534,7 @@ export default function InfoDialog({
                 ]}
               />
               <p className="cmd-note">Zoom shortcuts scale the whole interface (same presets as Settings) — WebView2's own page zoom stays disabled.</p>
-            </>
+            </EqualWrap>
           )}
         </>
       )}
