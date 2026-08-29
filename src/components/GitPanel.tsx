@@ -698,18 +698,20 @@ export default function GitPanel() {
       <button className="gp-head" onClick={toggleOpen} data-tip={open ? "Collapse git" : "Expand git"}>
         <i className={`fa-solid fa-chevron-${open ? "down" : "right"} gp-chev`} />
         <i className="fa-solid fa-code-branch" />
-        <span className="mono">{st.branch}</span>
-        {(st.ahead > 0 || st.behind > 0) && (
-          <span className="gp-ab mono">
-            {st.ahead > 0 && (
-              <em>
-                ↑{st.ahead}
-              </em>
-            )}
-            {st.behind > 0 && <em className="down">↓{st.behind}</em>}
-          </span>
-        )}
-        {!!st.files.length && <span className="gp-badge">{st.files.length}</span>}
+        <span className="gp-right">
+          {!!st.files.length && <span className="gp-badge">{st.files.length}</span>}
+          {(st.ahead > 0 || st.behind > 0) && (
+            <span className="gp-ab mono">
+              {st.ahead > 0 && (
+                <em>
+                  ↑{st.ahead}
+                </em>
+              )}
+              {st.behind > 0 && <em className="down">↓{st.behind}</em>}
+            </span>
+          )}
+          <span className="mono gp-branch-name">{st.branch}</span>
+        </span>
       </button>
 
       {open && (
