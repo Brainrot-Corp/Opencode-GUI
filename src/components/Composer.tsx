@@ -11,6 +11,8 @@ import { findMatches, highlightFindInHtml } from "../lib/find";
 import { matchesEvent } from "../lib/hotkeys";
 import ModelMenu, { type ModelEntry } from "./ModelMenu";
 import AgentMenu from "./AgentMenu";
+import VariantMenu from "./VariantMenu";
+import SecurityMenu from "./SecurityMenu";
 import SlashMenu from "./SlashMenu";
 import { playSound } from "../lib/sounds";
 import { getDraft, setDraft } from "../lib/drafts";
@@ -113,8 +115,13 @@ export default function Composer({
   onCycleVariant,
   hasVariants,
   variantSel,
+  modelVariants,
+  disabledVariants,
+  onSelectVariant,
+  onToggleDisabledVariant,
   securityMode,
   onCycleSecurity,
+  onSelectSecurity,
   usage,
   caps,
   voicePhase,
@@ -151,8 +158,13 @@ export default function Composer({
   onCycleVariant?: () => void;
   hasVariants?: boolean;
   variantSel?: string;
+  modelVariants?: string[];
+  disabledVariants?: Set<string>;
+  onSelectVariant?: (v: string) => void;
+  onToggleDisabledVariant?: (v: string) => void;
   securityMode?: "full" | "user" | "block";
   onCycleSecurity?: () => void;
+  onSelectSecurity?: (m: "full" | "user" | "block") => void;
   caps?: { attachment?: boolean; input?: string[] };
   usage?: { cost: number; tokens: number };
   voicePhase?: "idle" | "recording" | "transcribing";
@@ -860,40 +872,54 @@ export default function Composer({
             onRefresh={onRefreshAgents}
           />
         )}
-        {(variantSel || hasVariants) && (
+        {(variantSel || hasVariants || (modelVariants && modelVariants.length > 0)) ? (
+          onSelectVariant ? (
+            <VariantMenu
+              variants={modelVariants ?? []}
+              variantSel={variantSel ?? ""}
+              disabled={disabledVariants ?? new Set<string>()}
+              onSelect={(v) => onSelectVariant(v)}
+              onToggleDisabled={(v) => onToggleDisabledVariant?.(v)}
+            />
+          ) : (
+            <button
+              type="button"
+              className="agent-chip"
+              data-tip={`Thinking effort: ${variantSel || "default"} — click to cycle`}
+              onClick={() => onCycleVariant?.()}
+            >
+              <i className="fa-solid fa-gauge-high" />
+              {variantSel || "default"}
+            </button>
+          )
+        ) : null}
+        {onSelectSecurity ? (
+          <SecurityMenu securityMode={securityMode} onSelect={(m) => onSelectSecurity(m)} />
+        ) : (
           <button
             type="button"
-            className="agent-chip"
-            data-tip={`Thinking effort: ${variantSel || "default"} — click to cycle`}
-            onClick={() => onCycleVariant?.()}
+            className={`agent-chip security-chip sec-${securityMode ?? "user"}`}
+            data-tip={
+              securityMode === "full"
+                ? "Full control — no permission prompts (auto-allow)"
+                : securityMode === "block"
+                  ? "Block — auto-deny permission requests"
+                  : "User mode — classic allow once / always prompts — click to cycle"
+            }
+            onClick={() => onCycleSecurity?.()}
           >
-            <i className="fa-solid fa-gauge-high" />
-            {variantSel || "default"}
+            <i
+              className={`fa-solid ${
+                securityMode === "full"
+                  ? "fa-bolt"
+                  : securityMode === "block"
+                    ? "fa-lock"
+                    : "fa-user-shield"
+              }`}
+            />
+            {securityMode === "full" ? "Full" : securityMode === "block" ? "Block" : "User"}
           </button>
         )}
-        <button
-          type="button"
-          className={`agent-chip security-chip sec-${securityMode ?? "user"}`}
-          data-tip={
-            securityMode === "full"
-              ? "Full control — no permission prompts (auto-allow)"
-              : securityMode === "block"
-                ? "Block — auto-deny permission requests"
-                : "User mode — classic allow once / always prompts — click to cycle"
-          }
-          onClick={() => onCycleSecurity?.()}
-        >
-          <i
-            className={`fa-solid ${
-              securityMode === "full"
-                ? "fa-bolt"
-                : securityMode === "block"
-                  ? "fa-lock"
-                  : "fa-user-shield"
-            }`}
-          />
-          {securityMode === "full" ? "Full" : securityMode === "block" ? "Block" : "User"}
-        </button>
         {usage && usage.tokens > 0 && (
           <span
             className="agent-chip usage-chip"

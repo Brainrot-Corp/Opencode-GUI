@@ -1199,8 +1199,13 @@ export default function ChatPage() {
                   onCycleVariant={oc.cycleVariant}
                   hasVariants={oc.modelVariants.length > 0}
                   variantSel={oc.variantSel}
+                  modelVariants={oc.modelVariants}
+                  disabledVariants={(oc as any).disabledVariants}
+                  onSelectVariant={(oc as any).setVariantSel}
+                  onToggleDisabledVariant={(oc as any).toggleDisabledVariant}
                   securityMode={(oc as any).securityMode ?? "user"}
                   onCycleSecurity={(oc as any).cycleSecurityMode}
+                  onSelectSecurity={(oc as any).setSecurityMode}
                   usage={oc.sessionUsage}
                   caps={oc.modelCaps}
                   voicePhase={voice.phase}
