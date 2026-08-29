@@ -38,10 +38,19 @@ function isAgentReachable(name: string, list: { name: string }[]): boolean {
 export type { CmdEntry } from "../lib/slashCommands";
 
 export function useOpencode() {
-  const [error, setError] = useState("");
+  const [error, _setError] = useState("");
+  const setError = useCallback((v: string) => {
+    _setError((prev) => {
+      if (v && prev === v) {
+        queueMicrotask(() => _setError(v));
+        return "";
+      }
+      return v;
+    });
+  }, []);
   useEffect(() => {
     if (!error) return;
-    const t = setTimeout(() => setError(""), 5000);
+    const t = setTimeout(() => _setError(""), 5000);
     return () => clearTimeout(t);
   }, [error]);
   const [sessions, setSessions] = useState<Session[]>([]);

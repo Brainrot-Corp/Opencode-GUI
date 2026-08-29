@@ -1065,9 +1065,24 @@ export default function ChatPage() {
             }
           />
           <div className="main">
-            {oc.error && <div className="banner">{oc.error}</div>}
-            {themeError && <div className="banner">{themeError}</div>}
-            {pluginError && <div className="banner">{pluginError}</div>}
+            {oc.error && (
+              <div key={oc.error} className="banner">
+                <span>{oc.error}</span>
+                <div className="banner-progress" aria-hidden />
+              </div>
+            )}
+            {themeError && (
+              <div key={themeError} className="banner">
+                <span>{themeError}</span>
+                <div className="banner-progress" aria-hidden />
+              </div>
+            )}
+            {pluginError && (
+              <div key={pluginError} className="banner">
+                <span>{pluginError}</span>
+                <div className="banner-progress" aria-hidden />
+              </div>
+            )}
             {!oc.activeId && !oc.booting && (
               <div className="messages">
                 <p className="empty">

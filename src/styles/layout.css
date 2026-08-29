@@ -302,15 +302,34 @@ button.debrief-indicator.idle .debrief-dot {
 }
 
 .banner {
+  position: relative;
   width: 100%;
   margin: 0 0 6px;
-  padding: 9px 16px;
+  padding: 9px 16px 11px;
   border-radius: 0;
   background: rgba(224, 143, 143, 0.07);
   border: 1px solid rgba(224, 143, 143, 0.25);
   color: var(--danger);
   font-size: 12.5px;
   letter-spacing: 0.02em;
+  overflow: hidden;
+}
+.banner-progress {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  background: var(--danger);
+  opacity: 0.95;
+  /* starts full on the right, depletes toward the left (right edge -> left) */
+  transform-origin: left;
+  animation: banner-shrink 5s linear forwards;
+  pointer-events: none;
+}
+@keyframes banner-shrink {
+  from { transform: scaleX(1); }
+  to { transform: scaleX(0); }
 }
 
 .empty {

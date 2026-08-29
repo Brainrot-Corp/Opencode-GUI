@@ -360,10 +360,19 @@ export function useSettings() {
 
   // available themes — seeded from config at boot, hot-reloaded on file change
   const [themes, setThemes] = useState<Record<string, NormalizedTheme>>({});
-  const [themeError, setThemeError] = useState("");
+  const [themeError, _setThemeError] = useState("");
+  const setThemeError = useCallback((v: string) => {
+    _setThemeError((prev) => {
+      if (v && prev === v) {
+        queueMicrotask(() => _setThemeError(v));
+        return "";
+      }
+      return v;
+    });
+  }, []);
   useEffect(() => {
     if (!themeError) return;
-    const t = setTimeout(() => setThemeError(""), 5000);
+    const t = setTimeout(() => _setThemeError(""), 5000);
     return () => clearTimeout(t);
   }, [themeError]);
 

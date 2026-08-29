@@ -17,10 +17,19 @@ import {
 
 export function usePlugins() {
   const [plugins, setPlugins] = useState<LoadedPlugin[]>([]);
-  const [error, setError] = useState("");
+  const [error, _setError] = useState("");
+  const setError = useCallback((v: string) => {
+    _setError((prev) => {
+      if (v && prev === v) {
+        queueMicrotask(() => _setError(v));
+        return "";
+      }
+      return v;
+    });
+  }, []);
   useEffect(() => {
     if (!error) return;
-    const t = setTimeout(() => setError(""), 5000);
+    const t = setTimeout(() => _setError(""), 5000);
     return () => clearTimeout(t);
   }, [error]);
   const prevRef = useRef<Map<string, LoadedPlugin>>(new Map());
