@@ -134,6 +134,22 @@ const Groups = ({ data }: { data: Group[] }) => (
   </>
 );
 
+const PillGroups = ({ data }: { data: Group[] }) => (
+  <>
+    {data.map(([g, rows]) => (
+      <div key={g} className="cmd-group">
+        <div className="cmd-group-label">{g}</div>
+        {rows.map(([l, r]) => (
+          <div key={l} className="cmd-row hk-row static">
+            <span className="mono cmd-name hk-pill fixed">{l}</span>
+            <span className="cmd-desc">{r}</span>
+          </div>
+        ))}
+      </div>
+    ))}
+  </>
+);
+
 export function HotkeysTab({
   settings,
   update,
@@ -306,13 +322,13 @@ export function HotkeysTab({
       })}
       {group === "In the app" && (
         <>
-          <div className="cmd-row">
-            <span className="mono cmd-name">Ctrl+wheel</span>
+          <div className="cmd-row hk-row static">
+            <span className="mono cmd-name hk-pill fixed">Ctrl+wheel</span>
             <span className="cmd-desc">zoom the UI in / out</span>
           </div>
           {STATIC_APP_KEYS.map(([l, r]) => (
-            <div key={l} className="cmd-row">
-              <span className="mono cmd-name">{l}</span>
+            <div key={l} className="cmd-row hk-row static">
+              <span className="mono cmd-name hk-pill fixed">{l}</span>
               <span className="cmd-desc">{r}</span>
             </div>
           ))}
@@ -378,8 +394,8 @@ export function HotkeysTab({
 
   return (
     <>
-      {/* System-wide — rendered exactly as before (non-rebindable) */}
-      <Groups data={[["System-wide", SYSTEM_KEYS]]} />
+      {/* System-wide — non-rebindable but pill-styled */}
+      <PillGroups data={[["System-wide", SYSTEM_KEYS]]} />
 
       {/* Core hotkeys grouped */}
       {orderedGroups.map(([g, ids]) => renderCoreGroup(g, ids))}
@@ -399,8 +415,8 @@ export function HotkeysTab({
         </div>
       )}
 
-      {/* Static reference groups no longer needed for editor since now rebindable, but keep composer static */}
-      <Groups data={[["Composer", COMPOSER_KEYS]]} />
+      {/* Composer — non-rebindable reference, same pill material */}
+      <PillGroups data={[["Composer", COMPOSER_KEYS]]} />
       {/* Legacy editor static kept for reference when no core settings? now pills cover editor so keep minimal note */}
       <p className="cmd-note">Click a binding to record a new combo — Esc clears it (unbound = disabled). Conflicts are shown but not blocked. Zoom shortcuts scale the whole interface; WebView2's own page zoom stays disabled.</p>
     </>
@@ -451,7 +467,7 @@ export default function InfoDialog({
       )}
       {tab === "voice" && (
         <>
-          <Groups data={[...VOICE, ...docGroups(pluginDocs, "voice")]} />
+          <PillGroups data={[...VOICE, ...docGroups(pluginDocs, "voice")]} />
           <p className="cmd-note">
             Phrasing works in any language whisper understands — an unmatched
             utterance gets a second, translating pass (Settings › Voice).
@@ -469,7 +485,7 @@ export default function InfoDialog({
             <HotkeysTab settings={settings} update={update} plugins={plugins} />
           ) : (
             <>
-              <Groups
+              <PillGroups
                 data={[
                   ["System-wide", SYSTEM_KEYS],
                   ["In the app", ORIGINAL_APP_KEYS],

@@ -1060,7 +1060,7 @@ fn unpoison_input(app: &tauri::AppHandle) {
         let _ = app.run_on_main_thread(move || {
             if let Some(w) = app4.get_webview_window("main") {
                 let _ = w.eval(
-                    "setTimeout(()=>{ try{ window.focus(); var a=document.activeElement; if(!a||a===document.body){ var f=document.querySelector('.composer textarea')||document.querySelector('.fe-ta')||document.body; if(f){ if(!f.hasAttribute('tabindex')&&f===document.body) f.setAttribute('tabindex','-1'); f.focus({preventScroll:true}); } } else { try{a.focus({preventScroll:true});}catch(e){} } window.focus(); }catch(e){} }, 0)",
+                    "setTimeout(()=>{ try{ window.focus(); var a=document.activeElement; if(!a||a===document.body){ var isTerm=!!window.__oc_lastWasTerm; var term=document.querySelector('.term-dock:not(.closed) .xterm-helper-textarea'); var comp=document.querySelector('.composer textarea'); var f=(isTerm&&term)?term:(comp||term||document.querySelector('.fe-ta')||document.body); if(f){ if(!f.hasAttribute('tabindex')&&f===document.body) f.setAttribute('tabindex','-1'); f.focus({preventScroll:true}); } } else { try{a.focus({preventScroll:true});}catch(e){} } window.focus(); }catch(e){} }, 0)",
                 );
             }
         });

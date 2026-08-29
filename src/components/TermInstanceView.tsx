@@ -455,6 +455,54 @@ export default function TermInstanceView({
     if (active && open && termRef.current) setTimeout(() => termRef.current?.focus(), 50);
   }, [active, open]);
 
+  // re-focus active terminal after OS window reactivation (Alt+Tab, Alt+Space, tray)
+  // WebView2 loses DOM focus routing after hide/show; without this the first key after
+  // refocus hits body → Windows beep → second key works. Mirrors the global
+  // rescueFocus but guarantees the xterm helper textarea regains keyboard.
+  useEffect(() => {
+    if (!active) return;
+    const refocus = () => {
+      if (!activeRef.current || !openRef.current || !termRef.current) return;
+      // only steal back focus if the last blur was from the terminal; otherwise
+      // the user was in composer/editor and Alt+Tab should return there (global
+      // rescue handles that). Marker is set by useGlobalShortcuts saveFocus.
+      const wasTerm = !!(window as any).__oc_lastWasTerm;
+      // also allow if current activeElement is already inside terminal (click case)
+      const ae = document.activeElement as HTMLElement | null;
+      const aeWasTerm = !!ae?.closest?.(".xterm, .term-dock, .term-body, .term-mount");
+      if (!wasTerm && !aeWasTerm) return;
+      // term.focus() is xterm's helper-textarea focus path; do it after OS settle
+      requestAnimationFrame(() => {
+        window.setTimeout(() => {
+          if (!activeRef.current || !openRef.current || !termRef.current) return;
+          // re-check marker after settle — user may have clicked elsewhere in the meantime
+          const stillTerm = !!(window as any).__oc_lastWasTerm;
+          const curAe = document.activeElement as HTMLElement | null;
+          const curAeTerm = !!curAe?.closest?.(".xterm, .term-dock");
+          if (!stillTerm && !curAeTerm) return;
+          try { termRef.current!.focus(); } catch {}
+          // WebView2 poison fix can leave focus on outer HWND; ensure helper textarea is DOM-focused
+          const helper = document.querySelector(
+            ".term-dock:not(.closed) .xterm-helper-textarea",
+          ) as HTMLElement | null;
+          if (helper && document.activeElement !== helper) {
+            try { helper.focus({ preventScroll: true } as any); } catch {}
+          }
+        }, 20);
+      });
+    };
+    window.addEventListener("focus", refocus);
+    let unRestore: (() => void) | undefined;
+    let unVis: (() => void) | undefined;
+    void listen("focus://restore", refocus).then((f) => { unRestore = f; }).catch(() => {});
+    void listen<boolean>("visibility://changed", (e) => { if (e.payload) refocus(); }).then((f) => { unVis = f; }).catch(() => {});
+    return () => {
+      window.removeEventListener("focus", refocus);
+      unRestore?.();
+      unVis?.();
+    };
+  }, [active]);
+
   // allow Terminal dock to focus active terminal via Ctrl+J from composer
   useEffect(() => {
     const onFocusReq = () => { if (active && termRef.current) termRef.current.focus(); };
@@ -466,7 +514,7 @@ export default function TermInstanceView({
   void deadLocal; void errLocal;
 
   return (
-    <div className="term-body" ref={bodyRef} style={{ display: active ? "flex" : "none", flex: 1, minHeight: 0 }}>
+    <div className="term-body" ref={bodyRef} style={{ display: active ? "flex" : "none", flex: 1, minHeight: 0 }} onMouseDown={() => { if (active && termRef.current) termRef.current.focus(); }}>
       <div className="term-mount" ref={mountRef} />
     </div>
   );

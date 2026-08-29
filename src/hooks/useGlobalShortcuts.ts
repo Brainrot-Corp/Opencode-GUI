@@ -391,6 +391,8 @@ export function useGlobalShortcuts({
         // don't remember transient menu items that will be unmounted
         if (ae.closest(".ctx-menu, .cmd-menu, .model-menu")) return;
         savedRef.current = ae;
+        // marker for Rust eval fallback (runs when JS listener not yet mounted)
+        try { (window as any).__oc_lastWasTerm = !!ae.closest(".xterm, .term-dock, .term-body, .term-mount"); } catch {}
       }
     };
 
@@ -441,16 +443,35 @@ export function useGlobalShortcuts({
             if (document.hasFocus()) return;
           }
 
-          // fallback: composer → file editor → body. Any focused element inside
-          // the document re-enables window `keydown` bubbling for global shortcuts.
-          const fallback =
-            (document.querySelector(".composer textarea") as HTMLElement | null) ||
-            (document.querySelector(".fe-ta") as HTMLElement | null) ||
-            (document.querySelector(".term-mount") as HTMLElement | null) ||
-            document.body;
+          // fallback: keep keyboard alive. Priority is terminal helper when the
+          // dock is open and the saved focus was inside it, otherwise composer → file editor.
+          // .term-mount itself is not focusable (div), we need the xterm helper textarea.
+          const termHelper = document.querySelector(
+            ".term-dock:not(.closed) .xterm-helper-textarea",
+          ) as HTMLElement | null;
+          // was the user's last focus inside the terminal?
+          const savedWasTerm =
+            !!(saved && (saved as HTMLElement).closest?.(".xterm, .term-dock, .term-body, .term-mount"));
+          const aeWasTerm =
+            !!(ae && (ae as HTMLElement).closest?.(".xterm, .term-dock, .term-body, .term-mount"));
+          let fallback: HTMLElement | null = null;
+          if ((savedWasTerm || aeWasTerm) && termHelper) {
+            fallback = termHelper;
+          } else {
+            fallback =
+              (document.querySelector(".composer textarea") as HTMLElement | null) ||
+              (document.querySelector(".fe-ta") as HTMLElement | null) ||
+              termHelper ||
+              document.body;
+          }
           window.focus();
           try {
+            // xterm's helper textarea is the real input; focusing the wrapper div does nothing
             fallback?.focus({ preventScroll: true } as any);
+            // if fallback was termHelper via composer path but we still have a term dock, ensure helper got it
+            if (fallback !== termHelper && termHelper && document.activeElement !== termHelper && (savedWasTerm || aeWasTerm)) {
+              termHelper.focus({ preventScroll: true } as any);
+            }
           } catch {}
           // last resort: ensure body is focusable so window keydowns fire
           if (!document.hasFocus() && document.body) {

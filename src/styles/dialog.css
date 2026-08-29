@@ -171,12 +171,12 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 3px 8px;
+  padding: 4px 8px;
   border: 1px solid var(--line);
   background: var(--inset-bg);
   border-radius: 4px;
   font-size: 11.5px;
-  line-height: 1;
+  line-height: 1.35;
   color: var(--text);
   cursor: pointer;
   transition: border-color 0.15s var(--ease), background 0.15s var(--ease), box-shadow 0.2s var(--ease), color 0.15s var(--ease);
