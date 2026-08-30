@@ -253,9 +253,6 @@ export default function TerminalPanel({
   const onTitle = useCallback((id: number, title: string) => {
     setTerms((prev) => prev.map((t) => (t.id === id ? { ...t, title: title.slice(0, 80) } : t)));
   }, []);
-  const onDead = useCallback((id: number, dead: boolean) => {
-    setTerms((prev) => prev.map((t) => (t.id === id ? { ...t, dead } : t)));
-  }, []);
   const onErr = useCallback((id: number, err: string) => {
     setTerms((prev) => prev.map((t) => (t.id === id ? { ...t, err } : t)));
   }, []);
@@ -276,6 +273,14 @@ export default function TerminalPanel({
       return next;
     });
   }, [activeId, onClose]);
+  const onDead = useCallback((id: number, dead: boolean) => {
+    if (!dead) {
+      setTerms((prev) => prev.map((t) => (t.id === id ? { ...t, dead } : t)));
+      return;
+    }
+    // any exited terminal instance should be closed — auto-remove instead of lingering as "exited"
+    onExit(id);
+  }, [onExit]);
 
   const addTerm = useCallback((profileId?: string | null) => {
     let createdId: number | null = null;
