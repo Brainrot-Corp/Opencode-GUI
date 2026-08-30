@@ -109,6 +109,14 @@ export default function TermInstanceView({
   useEffect(() => { argsRef.current = args; }, [args]);
   useEffect(() => { activeRef.current = active; }, [active]);
   useEffect(() => { openRef.current = open; }, [open]);
+  const onTitleRef = useRef(onTitle);
+  const onDeadRef = useRef(onDead);
+  const onErrRef = useRef(onErr);
+  const onExitRef = useRef(onExit);
+  useEffect(() => { onTitleRef.current = onTitle; }, [onTitle]);
+  useEffect(() => { onDeadRef.current = onDead; }, [onDead]);
+  useEffect(() => { onErrRef.current = onErr; }, [onErr]);
+  useEffect(() => { onExitRef.current = onExit; }, [onExit]);
   // void to avoid unused warning for shellName prop (used only for display in parent)
   void shellName;
 
@@ -139,9 +147,9 @@ export default function TermInstanceView({
     // hidden spawn uses 80x24 fallback and is resized on next open (no GUI on launch to not disturb user)
     spawnedGenRef.current = curGen;
     setErrLocal("");
-    onErr(curId, "");
+    onErrRef.current(curId, "");
     setDeadLocal(false);
-    onDead(curId, false);
+    onDeadRef.current(curId, false);
     termRef.current?.reset();
     const curCwd = cwdRef.current ?? "";
     // propose current xterm size so ConPTY is created at the right dimensions
@@ -180,22 +188,22 @@ export default function TermInstanceView({
         if (retriesRef.current >= 2) {
           const msg = "shell produced no output";
           setErrLocal(msg);
-          onErr(curId, msg);
+          onErrRef.current(curId, msg);
           return;
         }
         retriesRef.current += 1;
         console.error(`[term] no output id=${curId} gen=${curGen} — respawning via parent`);
         // parent will handle respawn via gen bump; just mark dead so UI shows
         setDeadLocal(true);
-        onDead(curId, true);
+        onDeadRef.current(curId, true);
       }, 5000);
     } catch (e) {
       aliveRef.current = false;
       const msg = e instanceof Error ? e.message : String(e);
       setErrLocal(msg);
-      onErr(curId, msg);
+      onErrRef.current(curId, msg);
     }
-  }, [onDead, onErr]);
+  }, []);
 
   const boot = useCallback(() => {
     if (bootedRef.current || !mountRef.current) return;
@@ -242,55 +250,59 @@ export default function TermInstanceView({
       // @ts-ignore — onTitleChange exists in xterm 5.x
       if (typeof (term as any).onTitleChange === "function") {
         (term as any).onTitleChange((t: string) => {
-          if (t && t.trim()) onTitle(idRef.current, t.trim());
+          if (t && t.trim()) onTitleRef.current(idRef.current, t.trim());
         });
       }
     } catch {}
 
     hlRef.current = new TermHighlighter((s) => term.write(s));
-  }, [onTitle]);
+  }, []);
 
-  // transport — filter by id+gen
+  // transport — filter by id+gen (stable; uses refs so StrictMode remount doesn't leak listeners)
   useEffect(() => {
-    const unsubs = [
-      listen<{ id: number; g: number; d: string }>("pty://frame", (e) => {
+    let cancelled = false;
+    const unlistenFns: (() => void)[] = [];
+    const setup = async () => {
+      const f1 = await listen<{ id: number; g: number; d: string }>("pty://frame", (e) => {
         if (e.payload.id !== idRef.current || e.payload.g !== genRef.current || !hlRef.current) return;
         const bin = atob(e.payload.d);
         const bytes = new Uint8Array(bin.length);
         for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
         frameAtRef.current = performance.now();
-        // also scan raw bytes for OSC title as fallback (xterm may miss if highlighter consumes)
-        // Do lightweight string scan on decoded text for fallback title
         try {
           const txt = new TextDecoder().decode(bytes);
-          // OSC 0 / 2 title: \x1b]0;title\x07 or \x1b]2;title\x07 (BEL or ST \x1b\\)
-          // BEL \x07 and ST \x1b\\ both terminate OSC
           const re = /\x1b\]0;([^\x07\x1b]*?)(?:\x07|\x1b\\)|\x1b\]2;([^\x07\x1b]*?)(?:\x07|\x1b\\)/g;
           let m: RegExpExecArray | null;
           while ((m = re.exec(txt)) !== null) {
             const title = (m[1] ?? m[2] ?? "").trim();
             if (title) {
-              // avoid noisy full paths as titles? Keep as is — dock truncates
-              onTitle(idRef.current, title);
-              break; // only first per frame
+              onTitleRef.current(idRef.current, title);
+              break;
             }
           }
         } catch {}
         hlRef.current.write(bytes);
-      }),
-      listen<{ id: number; g: number }>("pty://exit", (e) => {
+      });
+      if (cancelled) { f1(); return; }
+      unlistenFns.push(f1);
+      const f2 = await listen<{ id: number; g: number }>("pty://exit", (e) => {
         if (e.payload.id !== idRef.current || e.payload.g !== genRef.current || suppressExitRef.current) return;
         aliveRef.current = false;
         setDeadLocal(true);
-        // exit via `exit` command should auto-close the instance; watchdog/err stays via onDead
-        if (onExit) onExit(idRef.current);
-        else onDead(idRef.current, true);
-      }),
-    ];
-    return () => {
-      for (const u of unsubs) u.then((f) => f()).catch(() => {});
+        const ex = onExitRef.current;
+        if (ex) ex(idRef.current);
+        else onDeadRef.current(idRef.current, true);
+      });
+      if (cancelled) { f2(); return; }
+      unlistenFns.push(f2);
     };
-  }, [onDead, onTitle, onExit]);
+    void setup();
+    return () => {
+      cancelled = true;
+      for (const fn of unlistenFns) try { fn(); } catch {}
+      // also handle promises that haven't resolved yet — they will self-cancel via `cancelled` flag
+    };
+  }, []);
 
   const fitNow = useCallback(() => {
     const el = mountRef.current ?? bodyRef.current;
@@ -557,19 +569,12 @@ export default function TermInstanceView({
       if (!isPrintable && !isEdit) return;
       if (!document.querySelector(".term-dock:not(.closed)")) return;
       const wasTerm = !!(window as any).__oc_lastWasTerm;
+      if (!wasTerm) return;
       const isEditable = !!(ae?.closest?.("input, textarea, select, [contenteditable], [contenteditable=\"true\"], [contenteditable=\"\"]") || (ae as any)?.isContentEditable);
       if (isEditable) return;
       const isBody = ae === document.body || ae === null;
       const isButton = ae?.tagName === "BUTTON";
-      if (isButton) {
-        // composer-first on launch: if composer exists, let it own the keystroke
-        if (document.querySelector(".composer textarea")) return;
-      } else if (isBody) {
-        if (document.querySelector(".composer textarea")) return;
-        if (!wasTerm) return;
-      } else {
-        return;
-      }
+      if (!isBody && !isButton) return;
       e.preventDefault();
       e.stopPropagation();
       (e as any).stopImmediatePropagation?.();

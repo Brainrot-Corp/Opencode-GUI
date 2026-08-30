@@ -248,13 +248,18 @@ export default function FileEditor({
     return findMatches(draft, query, matchCase);
   }, [draft, query, matchCase, findOpen]);
 
+  const rafRef = useRef<number | null>(null);
   const syncScroll = useCallback(() => {
-    const hl = hlRef.current;
-    const ta = taRef.current;
-    if (!hl || !ta) return;
-    hl.scrollTop = ta.scrollTop;
-    hl.scrollLeft = ta.scrollLeft;
+    if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
+    rafRef.current = requestAnimationFrame(() => {
+      const hl = hlRef.current;
+      const ta = taRef.current;
+      if (!hl || !ta) return;
+      hl.scrollTop = ta.scrollTop;
+      hl.scrollLeft = ta.scrollLeft;
+    });
   }, []);
+  useEffect(() => () => { if (rafRef.current !== null) cancelAnimationFrame(rafRef.current); }, []);
   useEffect(() => {
     syncScroll();
   }, [draft, syncScroll]);

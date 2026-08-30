@@ -286,7 +286,7 @@ export default function TerminalPanel({
   }, [onExit]);
 
   const addTerm = useCallback((profileId?: string | null) => {
-    if (terms.length >= 8) {
+    if (termsRef.current.length >= 8) {
       setMaxErr("max 8 terminals");
       window.setTimeout(() => setMaxErr(""), 2500);
       playSound("click");
@@ -305,7 +305,7 @@ export default function TerminalPanel({
     setActiveId(id);
     playSound("click");
     setAddMenuOpen(false);
-  }, [terms.length, terminal?.defaultProfileId, resolveProfile]);
+  }, [terminal?.defaultProfileId, resolveProfile]);
 
   const reloadTerm = useCallback(async (id: number) => {
     const t = termsRef.current.find((x) => x.id === id);

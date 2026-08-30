@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { Attachment, ProviderGroup } from "../types";
 import { prettySize, iconFor } from "../lib/attachments";
@@ -210,21 +210,22 @@ export default function Composer({
     else if (findCur >= compMatches.length) setFindCur(compMatches.length - 1);
   }, [compMatches.length, findCur]);
 
-  // live highlight layer: rebuilt synchronously. Plain text bypasses the
-  // overlay entirely (hasCode gate) so many newlines never drift; code
-  // blocks keep the trailing "\n" sentinel to make pre-wrap render the last
-  // empty line (textarea shows it natively).
+  // live highlight layer: deferred so typing stays 60fps — hlHtml runs
+  // lowlight auto-detect per fenced block which blocks the main thread.
+  // Plain text bypasses the overlay entirely (hasCode gate) so many
+  // newlines never drift; code blocks keep the trailing "\n" sentinel.
+  const deferredInput = useDeferredValue(input);
   const rawMarkup = useMemo(() => {
-    if (!input) return "";
-    const base = draftHtml(input);
-    const needsSentinel = base.includes("comp-codeblock") && /\n$/.test(input);
+    if (!deferredInput) return "";
+    const base = draftHtml(deferredInput);
+    const needsSentinel = base.includes("comp-codeblock") && /\n$/.test(deferredInput);
     return needsSentinel ? base + "\n" : base;
-  }, [input]);
+  }, [deferredInput]);
   const hasCode = rawMarkup.includes("comp-codeblock");
-  const hasFind = findOpen && findQuery.length > 0;
-  const hasOverlay = (hasCode || hasFind) && input.length > 0;
+  const hasFind = findOpen && findQuery.length > 0 && deferredInput.length > 0;
+  const hasOverlay = (hasCode || hasFind) && deferredInput.length > 0;
   const markup = useMemo(() => {
-    if (!input) return "";
+    if (!deferredInput) return "";
     let base = rawMarkup;
     // when find is active but no code block, base is still plain escaped text
     // draftHtml already produced it; if somehow empty (plain without code, still has content)
@@ -241,7 +242,7 @@ export default function Composer({
       base = highlightFindInHtml(base, findQuery, findCase, findCur);
     }
     return base;
-  }, [input, rawMarkup, hasFind, hasCode, findQuery, findCase, findCur]);
+  }, [deferredInput, rawMarkup, hasFind, hasCode, findQuery, findCase, findCur]);
 
   // the composer used to be drag-resizable (oc.comp.h) — clear any stale
   // stored height so old installs fall back to auto sizing
@@ -277,12 +278,21 @@ export default function Composer({
   }, [input]);
 
   // keep highlight overlay scroll in sync — onScroll alone misses auto-grow
-  // height changes (many newlines -> permanent offset)
+  // height changes (many newlines -> permanent offset). rAF avoids jitter
+  // when markup re-creates the overlay DOM via dangerouslySetInnerHTML
+  const rafRef = useRef<number | null>(null);
+  const syncHl = () => {
+    if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
+    rafRef.current = requestAnimationFrame(() => {
+      if (hlRef.current && inputRef.current) {
+        hlRef.current.scrollTop = inputRef.current.scrollTop;
+        hlRef.current.scrollLeft = inputRef.current.scrollLeft;
+      }
+    });
+  };
+  useEffect(() => () => { if (rafRef.current !== null) cancelAnimationFrame(rafRef.current); }, []);
   useEffect(() => {
-    if (hlRef.current && inputRef.current) {
-      hlRef.current.scrollTop = inputRef.current.scrollTop;
-      hlRef.current.scrollLeft = inputRef.current.scrollLeft;
-    }
+    syncHl();
   }, [input, markup]);
 
   // per-session draft: input is restored when returning to a session
@@ -388,10 +398,7 @@ export default function Composer({
     const line = (input.slice(0, start).match(/\n/g) ?? []).length;
     try {
       ta.scrollTop = Math.max(0, line * lh - ta.clientHeight / 2);
-      if (hlRef.current) {
-        hlRef.current.scrollTop = ta.scrollTop;
-        hlRef.current.scrollLeft = ta.scrollLeft;
-      }
+      syncHl();
     } catch {}
   };
 
@@ -1148,10 +1155,15 @@ export default function Composer({
                     }
                   }}
                   onScroll={(e) => {
-                    if (hlRef.current) {
-                      hlRef.current.scrollTop = e.currentTarget.scrollTop;
-                      hlRef.current.scrollLeft = e.currentTarget.scrollLeft;
-                    }
+                    const st = e.currentTarget.scrollTop;
+                    const sl = e.currentTarget.scrollLeft;
+                    if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
+                    rafRef.current = requestAnimationFrame(() => {
+                      if (hlRef.current) {
+                        hlRef.current.scrollTop = st;
+                        hlRef.current.scrollLeft = sl;
+                      }
+                    });
                   }}
                   onKeyDown={(e) => {
                     if (findOpen && e.key === "Escape") {
