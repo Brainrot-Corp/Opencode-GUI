@@ -207,6 +207,7 @@
 .agent-block{
   position:absolute;
   top:0;
+  left:0;
   width:156px;
   height:100%;
   max-height:46px;
@@ -219,8 +220,11 @@
   border:1px solid var(--line);
   border-left:2px solid var(--line-strong);
   cursor:pointer;
-  transition: border-color 0.25s var(--ease), box-shadow 0.35s var(--ease), background 0.25s var(--ease), transform 0.12s linear;
-  will-change: left;
+  transition: border-color 0.25s var(--ease), box-shadow 0.35s var(--ease), background 0.25s var(--ease);
+  will-change: transform;
+  transform: translateZ(0);
+  backface-visibility:hidden;
+  contain:layout style paint;
   overflow:hidden;
   user-select:none;
   z-index:2;
@@ -326,7 +330,8 @@
   bottom:0;
   height:2px;
   background:var(--accent);
-  transition: width 0.12s linear;
+  /* width driven by rAF — no transition lag */
+  will-change: width;
   opacity:0.9;
 }
 .agent-block.done .agent-block-bar{ background:#9fce8f; }

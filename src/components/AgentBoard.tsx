@@ -24,9 +24,11 @@ const LOOP_MS = 10_000;
 type Geom = { x: number; y: number; w: number; h: number };
 function clamp(n: number, a: number, b: number) { return Math.min(Math.max(n, a), b); }
 function defaultGeom(): Geom {
-  const w = 620, h = 380;
-  const x = Math.max(12, Math.floor((window.innerWidth - w) / 2 + 80));
-  const y = Math.max(42 + 12, Math.floor((window.innerHeight - h) / 2 - 10));
+  const vw = window.innerWidth, vh = window.innerHeight;
+  const w = clamp(MAX_W, MIN_W, vw - 12);
+  const h = clamp(MAX_H, MIN_H, vh - 12);
+  const x = clamp(Math.floor((vw - w) / 2), 0, Math.max(0, vw - w - 6));
+  const y = clamp(Math.floor((vh - h) / 2 + 12), 0, Math.max(0, vh - h - 6));
   return { x, y, w, h };
 }
 function loadGeom(): Geom {
@@ -35,11 +37,13 @@ function loadGeom(): Geom {
     if (!raw) return defaultGeom();
     const g = JSON.parse(raw);
     const vw = window.innerWidth, vh = window.innerHeight;
+    const isMaxDefault = Number(g.w) === 620 && Number(g.h) === 380;
+    if (isMaxDefault) return defaultGeom();
     return {
       x: clamp(Number(g.x) || 0, 0, Math.max(0, vw - MIN_W)),
       y: clamp(Number(g.y) || 0, 0, Math.max(0, vh - 80)),
-      w: clamp(Number(g.w) || 620, MIN_W, Math.min(MAX_W, vw - 12)),
-      h: clamp(Number(g.h) || 380, MIN_H, Math.min(MAX_H, vh - 12)),
+      w: clamp(Number(g.w) || MAX_W, MIN_W, Math.min(MAX_W, vw - 12)),
+      h: clamp(Number(g.h) || MAX_H, MIN_H, Math.min(MAX_H, vh - 12)),
     };
   } catch { return defaultGeom(); }
 }
@@ -78,7 +82,8 @@ export default function AgentBoard({ open, onClose, sessions, busyIds, compactin
   const dragRef = useRef<{ startX: number; startY: number; g0: Geom } | null>(null);
   const resizeRef = useRef<{ dir: string; sx: number; sy: number; g0: Geom } | null>(null);
   const [simRunning, setSimRunning] = useState(false);
-  const [tick, setTick] = useState(0);
+  const [nowMs, setNowMs] = useState(() => performance.now());
+  const rafRef = useRef<number | null>(null);
 
   // keep geom clamped on viewport resize
   useEffect(() => {
@@ -120,12 +125,24 @@ export default function AgentBoard({ open, onClose, sessions, busyIds, compactin
     return () => window.removeEventListener("keydown", key);
   }, [open, onClose]);
 
-  // 10s loop ticker
+  // 60fps rAF ticker — smooth vs 12fps setInterval
   useEffect(() => {
-    if (!simRunning) return;
-    const id = window.setInterval(() => setTick(t => t + 1), 80);
-    return () => clearInterval(id);
-  }, [simRunning]);
+    if (!open || !simRunning) {
+      if (rafRef.current != null) cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+      return;
+    }
+    loopBaseRef.current = performance.now();
+    const loop = () => {
+      setNowMs(performance.now());
+      rafRef.current = requestAnimationFrame(loop);
+    };
+    rafRef.current = requestAnimationFrame(loop);
+    return () => {
+      if (rafRef.current != null) cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+    };
+  }, [open, simRunning]);
 
   // build simulated lane nodes — 4 default, each with staggered phase offset
   const simNodes: SimNode[] = useMemo(() => {
@@ -151,21 +168,13 @@ export default function AgentBoard({ open, onClose, sessions, busyIds, compactin
     });
   }, [agents, sessions, getDirForSession]);
 
-  // compute per-node progress 0..1 over LOOP_MS with phase offset
-  const now = useMemo(() => Date.now(), [tick, simRunning]);
-  // anchor loop to mount so phases are stable; but tick drives progress
-  const loopBaseRef = useRef<number>(Date.now());
-  useEffect(() => { if (simRunning) loopBaseRef.current = Date.now(); }, [simRunning]);
-  const loopElapsed = simRunning ? (now - loopBaseRef.current) % LOOP_MS : 0;
-  function progressFor(node: SimNode): number {
-    if (!simRunning) {
-      // when idle, show staged preview — small working chunk
-      const staged = [0.18, 0.42, 0.66, 0.08];
-      return staged[node.lane] ?? 0.3;
-    }
+  // per-node progress 0..1 over LOOP_MS with phase offset — driven by rAF
+  const loopBaseRef = useRef<number>(performance.now());
+  const loopElapsed = simRunning ? (nowMs - loopBaseRef.current) % LOOP_MS : 0;
+  const progressFor = useCallback((node: SimNode): number => {
     const t = (loopElapsed / LOOP_MS + node.phase) % 1;
     return t;
-  }
+  }, [loopElapsed]);
 
   // real background agents — busy/compacting/attention sessions
   const liveNodes = useMemo(() => {
@@ -199,33 +208,30 @@ export default function AgentBoard({ open, onClose, sessions, busyIds, compactin
     setSimRunning(next);
     playSound(next ? "expand" : "collapse");
     if (next) {
-      loopBaseRef.current = Date.now();
-      setTick(t => t + 1);
+      loopBaseRef.current = performance.now();
+      setNowMs(performance.now());
     }
   }, [simRunning]);
 
-  // derived node positions for graph overlay (pixel coords inside grid)
+  // derived node positions for graph overlay (pixel coords inside grid) — only when simulating
   const nodePos = useMemo(() => {
-    if (!gridSize.w || !gridSize.h) return [] as { x: number; y: number; prog: number; status: SimStatus }[];
+    if (!simRunning || !gridSize.w || !gridSize.h) return [] as { x: number; y: number; prog: number; status: SimStatus }[];
     const W = gridSize.w, H = gridSize.h;
     const pad = 6, gap = 6;
     const laneH = (H - 2 * pad - (LANE_COUNT - 1) * gap) / LANE_COUNT;
-    // track inset: lane has 6px pad left/right, track width = laneW -12
-    // gridW - 2*pad = laneW
     const trackLeft = pad + 6; // 12
     const trackW = W - 2 * pad - 12; // W -24
     const blockW = 156;
     const avail = Math.max(0, trackW - blockW);
     return simNodes.map(n => {
       const prog = progressFor(n);
-      const status = simRunning ? statusFor(prog) : ("working" as SimStatus);
+      const status = statusFor(prog);
       const laneTop = pad + n.lane * (laneH + gap);
       const cy = laneTop + laneH / 2;
       const cx = trackLeft + prog * avail + blockW / 2;
       return { x: cx, y: cy, prog, status };
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gridSize, simNodes, tick, simRunning, loopElapsed]);
+  }, [gridSize, simNodes, simRunning, loopElapsed, progressFor]);
 
   // drag header — direct DOM at 60fps, commit on mouseup
   const onDragStart = useCallback((e: React.MouseEvent) => {
@@ -321,7 +327,10 @@ export default function AgentBoard({ open, onClose, sessions, busyIds, compactin
 
   if (!open) return null;
 
-  const totalBlocks = LANE_COUNT;
+  const totalBlocks = simRunning ? LANE_COUNT : liveNodes.length;
+  const showSim = simRunning;
+  const showLive = !simRunning && liveNodes.length > 0;
+  const showEmpty = !simRunning && liveNodes.length === 0;
 
   return (
     <div
@@ -336,7 +345,7 @@ export default function AgentBoard({ open, onClose, sessions, busyIds, compactin
         <span className="agent-board-title">
           <i className="fa-solid fa-diagram-project" />
           Agents
-          <span className="agent-board-count" data-tip={`${totalBlocks} lanes · 10s loop`}>{totalBlocks} lanes</span>
+          <span className="agent-board-count" data-tip={simRunning ? `${totalBlocks} lanes · 10s loop` : `${totalBlocks} live`}>{simRunning ? `${totalBlocks} lanes` : `${totalBlocks} live`}</span>
         </span>
         <div className="agent-board-actions">
           <button
@@ -354,7 +363,7 @@ export default function AgentBoard({ open, onClose, sessions, busyIds, compactin
       </div>
 
       <div className="agent-board-body">
-        {liveNodes.length > 0 && (
+        {liveNodes.length > 0 && !simRunning && (
           <div className="agent-live-row">
             <span className="agent-live-dot" aria-hidden />
             <span>{liveNodes.length} live</span>
@@ -366,97 +375,141 @@ export default function AgentBoard({ open, onClose, sessions, busyIds, compactin
           </div>
         )}
 
-        <div className="agent-grid" ref={gridRef} role="list" aria-label="Agent lanes">
-          {/* graph edges — DAG behind lanes, animated dash for working flows */}
-          {gridSize.w > 0 && gridSize.h > 0 && nodePos.length === LANE_COUNT && (
-            <svg className="agent-edges" width={gridSize.w} height={gridSize.h} viewBox={`0 0 ${gridSize.w} ${gridSize.h}`} preserveAspectRatio="none" aria-hidden>
-              <defs>
-                <marker id="ag-arr" viewBox="0 0 6 6" refX={5} refY={3} markerWidth={6} markerHeight={6} orient="auto">
-                  <path d="M0,0 L6,3 L0,6 z" fill="#7fd4d4" opacity={0.95} />
-                </marker>
-                <marker id="ag-arr-done" viewBox="0 0 6 6" refX={5} refY={3} markerWidth={6} markerHeight={6} orient="auto">
-                  <path d="M0,0 L6,3 L0,6 z" fill="#9fce8f" opacity={0.95} />
-                </marker>
-                <marker id="ag-arr-queued" viewBox="0 0 6 6" refX={5} refY={3} markerWidth={6} markerHeight={6} orient="auto">
-                  <path d="M0,0 L6,3 L0,6 z" fill="#5b6c76" opacity={0.6} />
-                </marker>
-              </defs>
-              {EDGES.map(([a, b], idx) => {
-                const s = nodePos[a], t = nodePos[b];
-                if (!s || !t) return null;
-                const sx = s.x, sy = s.y, tx = t.x, ty = t.y;
-                // control offset scales with lane distance and horizontal gap
-                const dx = Math.abs(tx - sx);
-                const dy = Math.abs(ty - sy);
-                const cOff = Math.min(64, Math.max(28, dx * 0.22 + dy * 0.12));
-                // direction-aware controls: bend outward
-                const c1x = sx + cOff, c1y = sy;
-                const c2x = tx - cOff, c2y = ty;
-                const d = `M ${sx} ${sy} C ${c1x} ${c1y}, ${c2x} ${c2y}, ${tx} ${ty}`;
-                // edge status derived from source node (pipeline flow)
-                const st = s.status;
-                const cls = st === "done" ? "done" : st === "queued" ? "queued" : "working";
-                const marker = st === "done" ? "url(#ag-arr-done)" : st === "queued" ? "url(#ag-arr-queued)" : "url(#ag-arr)";
-                return <path key={idx} d={d} className={`agent-edge ${cls}`} markerEnd={marker} />;
-              })}
-            </svg>
-          )}
-          {simNodes.map(node => {
-            const prog = progressFor(node);
-            const status = simRunning ? statusFor(prog) : ("working" as SimStatus);
-            const leftPct = Math.max(0, Math.min(1, prog));
-            const barPct = status === "queued" ? Math.max(6, prog * 100) : status === "done" ? 100 : Math.round(prog * 100);
-            const isRealLinked = sessions.some(s => s.id === node.sessionId);
-            return (
-              <div key={node.id} className="agent-lane" role="listitem" aria-label={`${node.name} — ${status}`}>
-                <div className="agent-lane-label" title={`${node.name} · ${node.dirLabel || "workspace"}`}>
-                  <i className="fa-solid fa-robot" />
-                  <span>{node.name}</span>
-                  <span style={{ color: "var(--text-faint)", fontSize: 9, textTransform: "none", letterSpacing: "0.02em" }}>
-                    · {node.dirLabel || "workspace"}
-                  </span>
-                </div>
-                <div className="agent-lane-track">
-                  <div
-                    className={`agent-block ${status}${isRealLinked ? " real" : ""}`}
-                    style={{ left: `calc(${leftPct * 100}% - ${leftPct * 156}px)` }}
-                    data-tip={`${node.name} → ${node.sessionTitle}`}
-                    onClick={() => {
-                      if (isRealLinked && onOpenSession) {
-                        playSound("click");
-                        onOpenSession(node.sessionId);
-                      }
-                    }}
-                    role={isRealLinked ? "button" : undefined}
-                    tabIndex={isRealLinked ? 0 : -1}
-                    onKeyDown={e => {
-                      if (!isRealLinked || !onOpenSession) return;
-                      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); playSound("click"); onOpenSession(node.sessionId); }
-                    }}
-                  >
-                    <div className="agent-block-head">
-                      <span className="agent-block-dot" aria-hidden />
-                      <span className="agent-block-name">{node.name}</span>
-                      <span className="agent-block-status">{status}</span>
+        {showSim ? (
+          <div className="agent-grid" ref={gridRef} role="list" aria-label="Agent lanes">
+            {/* graph edges — DAG behind lanes, animated dash for working flows */}
+            {gridSize.w > 0 && gridSize.h > 0 && nodePos.length === LANE_COUNT && (
+              <svg className="agent-edges" width={gridSize.w} height={gridSize.h} viewBox={`0 0 ${gridSize.w} ${gridSize.h}`} preserveAspectRatio="none" aria-hidden>
+                <defs>
+                  <marker id="ag-arr" viewBox="0 0 6 6" refX={5} refY={3} markerWidth={6} markerHeight={6} orient="auto">
+                    <path d="M0,0 L6,3 L0,6 z" fill="#7fd4d4" opacity={0.95} />
+                  </marker>
+                  <marker id="ag-arr-done" viewBox="0 0 6 6" refX={5} refY={3} markerWidth={6} markerHeight={6} orient="auto">
+                    <path d="M0,0 L6,3 L0,6 z" fill="#9fce8f" opacity={0.95} />
+                  </marker>
+                  <marker id="ag-arr-queued" viewBox="0 0 6 6" refX={5} refY={3} markerWidth={6} markerHeight={6} orient="auto">
+                    <path d="M0,0 L6,3 L0,6 z" fill="#5b6c76" opacity={0.6} />
+                  </marker>
+                </defs>
+                {EDGES.map(([a, b], idx) => {
+                  const s = nodePos[a], t = nodePos[b];
+                  if (!s || !t) return null;
+                  const sx = s.x, sy = s.y, tx = t.x, ty = t.y;
+                  const dx = Math.abs(tx - sx);
+                  const dy = Math.abs(ty - sy);
+                  const cOff = Math.min(64, Math.max(28, dx * 0.22 + dy * 0.12));
+                  const c1x = sx + cOff, c1y = sy;
+                  const c2x = tx - cOff, c2y = ty;
+                  const d = `M ${sx} ${sy} C ${c1x} ${c1y}, ${c2x} ${c2y}, ${tx} ${ty}`;
+                  const st = s.status;
+                  const cls = st === "done" ? "done" : st === "queued" ? "queued" : "working";
+                  const marker = st === "done" ? "url(#ag-arr-done)" : st === "queued" ? "url(#ag-arr-queued)" : "url(#ag-arr)";
+                  return <path key={idx} d={d} className={`agent-edge ${cls}`} markerEnd={marker} />;
+                })}
+              </svg>
+            )}
+            {simNodes.map(node => {
+              const prog = progressFor(node);
+              const status = statusFor(prog);
+              const leftPct = Math.max(0, Math.min(1, prog));
+              const barPct = status === "queued" ? Math.max(6, prog * 100) : status === "done" ? 100 : Math.round(prog * 100);
+              const isRealLinked = sessions.some(s => s.id === node.sessionId);
+              const avail = Math.max(0, (gridSize.w || 600) - 24 - 156);
+              const leftPx = leftPct * avail;
+              return (
+                <div key={node.id} className="agent-lane" role="listitem" aria-label={`${node.name} — ${status}`}>
+                  <div className="agent-lane-label" title={`${node.name} · ${node.dirLabel || "workspace"}`}>
+                    <i className="fa-solid fa-robot" />
+                    <span>{node.name}</span>
+                    <span style={{ color: "var(--text-faint)", fontSize: 9, textTransform: "none", letterSpacing: "0.02em" }}>
+                      · {node.dirLabel || "workspace"}
+                    </span>
+                  </div>
+                  <div className="agent-lane-track">
+                    <div
+                      className={`agent-block ${status}${isRealLinked ? " real" : ""}`}
+                      style={{ transform: `translate3d(${leftPx}px,0,0)` }}
+                      data-tip={`${node.name} → ${node.sessionTitle}`}
+                      onClick={() => {
+                        if (isRealLinked && onOpenSession) {
+                          playSound("click");
+                          onOpenSession(node.sessionId);
+                        }
+                      }}
+                      role={isRealLinked ? "button" : undefined}
+                      tabIndex={isRealLinked ? 0 : -1}
+                      onKeyDown={e => {
+                        if (!isRealLinked || !onOpenSession) return;
+                        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); playSound("click"); onOpenSession(node.sessionId); }
+                      }}
+                    >
+                      <div className="agent-block-head">
+                        <span className="agent-block-dot" aria-hidden />
+                        <span className="agent-block-name">{node.name}</span>
+                        <span className="agent-block-status">{status}</span>
+                      </div>
+                      <div className="agent-block-session" title={node.sessionTitle}>
+                        <i className="fa-solid fa-link" />
+                        <span>{node.sessionTitle}</span>
+                      </div>
+                      <i className="agent-block-bar" style={{ width: `${barPct}%` }} aria-hidden />
                     </div>
-                    <div className="agent-block-session" title={node.sessionTitle}>
-                      <i className="fa-solid fa-link" />
-                      <span>{node.sessionTitle}</span>
-                    </div>
-                    <i className="agent-block-bar" style={{ width: `${barPct}%` }} aria-hidden />
                   </div>
                 </div>
-              </div>
-            );
-          })}
-        </div>
-
-        {!sessions.length && !simRunning && (
+              );
+            })}
+          </div>
+        ) : showLive ? (
+          <div className="agent-grid agent-grid--live" role="list" aria-label="Live agents">
+            {liveNodes.map(s => {
+              const dir = getDirForSession?.(s.id) ?? "";
+              const isBusy = !!busyIds?.has(s.id);
+              const isCompact = !!compactingIds?.has(s.id);
+              const isAttn = !!attentionIds?.has(s.id);
+              const status: SimStatus = isBusy || isCompact ? "working" : isAttn ? "queued" : "working";
+              const agentName = agents?.[0]?.name ?? "agent";
+              return (
+                <div key={s.id} className="agent-lane" role="listitem" aria-label={`${s.title || s.id} — ${status}`}>
+                  <div className="agent-lane-label" title={`${agentName} · ${baseName(dir)}`}>
+                    <i className="fa-solid fa-robot" />
+                    <span>{agentName}</span>
+                    <span style={{ color: "var(--text-faint)", fontSize: 9, textTransform: "none", letterSpacing: "0.02em" }}>
+                      · {baseName(dir) || "workspace"}
+                    </span>
+                  </div>
+                  <div className="agent-lane-track">
+                    <div
+                      className={`agent-block ${status} real`}
+                      style={{ transform: "translate3d(0,0,0)" }}
+                      data-tip={`${s.title || s.id}`}
+                      onClick={() => { playSound("click"); onOpenSession?.(s.id); }}
+                      role="button"
+                      tabIndex={0}
+                      onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); playSound("click"); onOpenSession?.(s.id); } }}
+                    >
+                      <div className="agent-block-head">
+                        <span className="agent-block-dot" aria-hidden />
+                        <span className="agent-block-name" title={s.title || s.id}>{s.title || s.id.slice(0, 12)}</span>
+                        <span className="agent-block-status">{status}</span>
+                      </div>
+                      <div className="agent-block-session" title={dir || s.id}>
+                        <i className="fa-solid fa-link" />
+                        <span>{dir ? baseName(dir) + " · " : ""}{s.id.slice(0, 8)}</span>
+                      </div>
+                      <i className="agent-block-bar" style={{ width: status === "working" ? "62%" : "28%" }} aria-hidden />
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : showEmpty ? (
           <div className="agent-empty">
             <i className="fa-solid fa-circle-nodes" />
-            <span>No sessions yet — simulation uses placeholder links</span>
+            <span>No background agents</span>
+            <span style={{ fontSize: 10, color: "var(--text-faint)" }}>Busy sessions appear here — or click Simulate to preview the 10s pipeline</span>
           </div>
-        )}
+        ) : null}
       </div>
 
       <div className="agent-handle n" onMouseDown={onResizeStart("n")} />
