@@ -1,6 +1,6 @@
 [package]
 name = "opencode-gui"
-version = "2.0.0"
+version = "2.0.5"
 description = "Lightweight GUI client for opencode serve"
 authors = ["you"]
 edition = "2021"

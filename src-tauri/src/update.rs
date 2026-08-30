@@ -10,59 +10,15 @@ use std::sync::Mutex;
 static STAGED: Mutex<Option<PathBuf>> = Mutex::new(None);
 static ARMED: AtomicBool = AtomicBool::new(false);
 
-fn validated_version(version: &str) -> Result<(), String> {
-    if version.is_empty() || version.len() > 64 {
-        return Err("bad version".into());
-    }
-    if version.contains("..") || version.contains('/') || version.contains('\\') || version.contains(':') {
-        return Err("bad version".into());
-    }
-    // whitelist BA-11: ^[A-Za-z0-9._-]+$
-    if !version
-        .chars()
-        .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '_' || c == '-')
-    {
-        return Err("bad version".into());
-    }
-    Ok(())
-}
-
-fn staging_dir(version: &str) -> Result<PathBuf, String> {
-    validated_version(version)?;
-    let base = std::env::temp_dir().join("oc-update");
-    let staged = base.join(version);
-    // BA-11: ensure staged is still under base (path traversal guard)
-    // canonicalize base; staged may not exist yet so fallback to prefix check
-    if let Ok(canon_base) = base.canonicalize().or_else(|_| {
-        let _ = std::fs::create_dir_all(&base);
-        base.canonicalize()
-    }) {
-        if let Ok(canon_staged) = staged.canonicalize() {
-            if !canon_staged.starts_with(&canon_base) {
-                return Err("bad version path".into());
-            }
-        } else if !staged.starts_with(&base) {
-            return Err("bad version path".into());
-        }
-    } else if !staged.starts_with(&base) {
-        return Err("bad version path".into());
-    }
-    Ok(staged)
+fn staging_dir(version: &str) -> PathBuf {
+    std::env::temp_dir().join("oc-update").join(version)
 }
 
 fn sha256_of(path: &PathBuf) -> Result<String, String> {
     use sha2::{Digest, Sha256};
-    use std::io::Read;
-    let mut file = std::fs::File::open(path).map_err(|e| e.to_string())?;
+    let data = std::fs::read(path).map_err(|e| e.to_string())?;
     let mut h = Sha256::new();
-    let mut buf = [0u8; 8192];
-    loop {
-        let n = file.read(&mut buf).map_err(|e| e.to_string())?;
-        if n == 0 {
-            break;
-        }
-        h.update(&buf[..n]);
-    }
+    h.update(&data);
     Ok(format!("{:x}", h.finalize()))
 }
 
@@ -86,33 +42,12 @@ pub async fn update_download(url: String, sha256: String, version: String) -> Re
     if !url.starts_with("https://") {
         return Err("bad download url".into());
     }
-    validated_version(&version)?;
-    let dir = staging_dir(&version)?;
+    let dir = staging_dir(&version);
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    // BA-11: post-create canonical verification (staged now exists)
-    {
-        let base = std::env::temp_dir().join("oc-update");
-        if let (Ok(canon_base), Ok(canon_staged)) = (base.canonicalize(), dir.canonicalize()) {
-            if !canon_staged.starts_with(&canon_base) {
-                let _ = std::fs::remove_dir_all(&dir);
-                return Err("bad version path".into());
-            }
-        }
-    }
     let zip_path = dir.join("update.zip");
 
     let mut cmd = std::process::Command::new("curl.exe");
-    cmd.args([
-        "-L",
-        "--fail",
-        "--silent",
-        "--show-error",
-        "--max-time",
-        "1800",
-        "--max-filesize",
-        "629145600",
-        "-o",
-    ]);
+    cmd.args(["-L", "--fail", "--silent", "--show-error", "--max-time", "1800", "-o"]);
     cmd.arg(&zip_path).arg(&url);
     // release: no console flash next to the frameless window
     #[cfg(all(windows, not(debug_assertions)))]
@@ -129,27 +64,15 @@ pub async fn update_download(url: String, sha256: String, version: String) -> Re
         return Err(format!("download failed: {}", err.trim()));
     }
 
-    // EH-12: cap size before unzip (stream instead of read whole file)
-    if let Ok(meta) = std::fs::metadata(&zip_path) {
-        if meta.len() > 629145600 {
-            let _ = std::fs::remove_dir_all(&dir);
-            return Err("download too large (cap 600M)".into());
-        }
-        if meta.len() == 0 {
-            let _ = std::fs::remove_dir_all(&dir);
-            return Err("empty download".into());
-        }
-    }
-
     let actual = sha256_of(&zip_path)?;
     if !actual.eq_ignore_ascii_case(&sha256) {
         let _ = std::fs::remove_dir_all(&dir);
         return Err("checksum mismatch — download corrupted or tampered".into());
     }
 
-    let file = std::fs::File::open(&zip_path).map_err(|e| e.to_string())?;
-    let reader = std::io::BufReader::new(file);
-    let mut archive = zip::ZipArchive::new(reader).map_err(|e| e.to_string())?;
+    let data = std::fs::read(&zip_path).map_err(|e| e.to_string())?;
+    let _ = std::fs::remove_file(&zip_path);
+    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(data)).map_err(|e| e.to_string())?;
     // flatten: both zips pack the exes at the root; tolerate wrapper dirs
     let (mut has_exe, mut has_sidecar) = (false, false);
     for i in 0..archive.len() {
@@ -171,8 +94,6 @@ pub async fn update_download(url: String, sha256: String, version: String) -> Re
         let mut w = std::fs::File::create(dir.join(fname)).map_err(|e| e.to_string())?;
         std::io::copy(&mut f, &mut w).map_err(|e| e.to_string())?;
     }
-    drop(archive);
-    let _ = std::fs::remove_file(&zip_path);
     if !has_exe || !has_sidecar {
         let _ = std::fs::remove_dir_all(&dir);
         return Err("release zip missing opencode-gui.exe or opencode.exe".into());
@@ -225,19 +146,9 @@ pub fn update_stage_local(folder: String, version: String) -> Result<(), String>
     } else {
         version.trim().to_string()
     };
-    validated_version(&ver)?;
-    let dir = staging_dir(&ver)?;
+    let dir = staging_dir(&ver);
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    {
-        let base = std::env::temp_dir().join("oc-update");
-        if let (Ok(canon_base), Ok(canon_staged)) = (base.canonicalize(), dir.canonicalize()) {
-            if !canon_staged.starts_with(&canon_base) {
-                let _ = std::fs::remove_dir_all(&dir);
-                return Err("bad version path".into());
-            }
-        }
-    }
     std::fs::copy(&gui_src, dir.join("opencode-gui.exe")).map_err(|e| e.to_string())?;
     if let Some(side) = sidecar_src {
         let _ = std::fs::copy(&side, dir.join("opencode.exe"));
