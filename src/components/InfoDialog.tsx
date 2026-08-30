@@ -166,21 +166,32 @@ const Groups = ({ data }: { data: Group[] }) => (
     ))}
   </>
 );
+void Groups; // kept for external use / legacy — info tab now uses vc-row cards
 
-const PillGroups = ({ data, left }: { data: Group[]; left?: boolean }) => (
-  <>
+const PillGroups = ({ data }: { data: Group[] }) => (
+  <div className="vc-frame">
     {data.map(([g, rows]) => (
-      <div key={g} className={`cmd-group cmd-group--pills${left ? " left" : ""}`}>
-        <div className="cmd-group-label">{g}</div>
-        {rows.map(([l, r]) => (
-          <div key={l} className="cmd-row hk-row static">
-            <span className={`mono cmd-name hk-pill fixed${left ? " left" : ""}`}>{l}</span>
-            <span className="cmd-desc">{r}</span>
-          </div>
-        ))}
+      <div key={g} className="vc-section">
+        <div className="vc-section-head" style={{ cursor: "default" }}>
+          <i className="fa-solid fa-keyboard" style={{ opacity: 0.6 }} />
+          <span>{g}</span>
+          <span className="vc-count">{rows.length}</span>
+        </div>
+        <div className="vc-list">
+          {rows.map(([l, r]) => (
+            <div key={l} className="vc-row hk static locked">
+              <span className="kc-group" style={{ flexShrink: 0 }}>
+                <KcCaps raw={l} />
+              </span>
+              <span className="hk-lock" data-tip="Not rebindable — fixed"><i className="fa-solid fa-lock" /></span>
+              <span className="vc-desc">{r}</span>
+              <span className="vc-badge" style={{ marginLeft: "auto" }}>fixed</span>
+            </div>
+          ))}
+        </div>
       </div>
     ))}
-  </>
+  </div>
 );
 
 // richer voice rendering — icon header, accent command text (no pill), description + example line, collapsable groups
@@ -294,6 +305,114 @@ function EqualWrap({ children, deps }: { children: React.ReactNode; deps?: React
   const ref = useEqualPills(deps ?? []);
   return <div ref={ref}>{children}</div>;
 }
+void EqualWrap; // kept for legacy — hotkeys now use keycaps + vc-frame
+
+// keycap helpers — each physical key is its own cap with + between
+function KcCaps({ raw, isOff }: { raw: string; isOff?: boolean }) {
+  // handle multi-bind strings like "Ctrl+= · Ctrl+-" or "Ctrl+C / Ctrl+X"
+  if (raw.includes("·")) {
+    const parts = raw.split(/\s*·\s*/);
+    return (
+      <span className="kc-group">
+        {parts.map((p, i) => (
+          <span key={i} style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+            {i > 0 && <span className="kc-sep">·</span>}
+            <SingleCaps raw={p} isOff={isOff} />
+          </span>
+        ))}
+      </span>
+    );
+  }
+  if (raw.includes(" / ")) {
+    const parts = raw.split(/\s*\/\s*/);
+    return (
+      <span className="kc-group">
+        {parts.map((p, i) => (
+          <span key={i} style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+            {i > 0 && <span className="kc-sep">/</span>}
+            <SingleCaps raw={p} isOff={isOff} />
+          </span>
+        ))}
+      </span>
+    );
+  }
+  return <SingleCaps raw={raw} isOff={isOff} />;
+}
+function SingleCaps({ raw, isOff }: { raw: string; isOff?: boolean }) {
+  const trimmed = raw.trim();
+  if (!trimmed || trimmed === "—") return <span className={`kc${isOff ? " off" : ""}`}>—</span>;
+  // handle " / + ↑↓ Tab Enter Esc" style with spaces + plus
+  const hasPlusSpaced = trimmed.includes(" + ");
+  const hasSpace = trimmed.includes(" ");
+  if (hasPlusSpaced || (hasSpace && trimmed.includes("+") && trimmed.split(/\s+/).length > 2)) {
+    const tokens = trimmed.split(/\s+/).filter(Boolean);
+    return (
+      <span className="kc-group">
+        {tokens.map((tok, i) => {
+          if (tok === "+") return <span key={i} className="kc-plus">+</span>;
+          // keep parentheses hint as faint text outside caps
+          if (tok.startsWith("(")) return <span key={i} className="kc-hint">{tok}</span>;
+          return <span key={i} className={`kc${isOff ? " off" : ""}`}>{tok}</span>;
+        })}
+      </span>
+    );
+  }
+  if (hasSpace) {
+    const m = trimmed.match(/^(.+?)\s+(\(.+\))$/);
+    if (m) {
+      const bindingPart = m[1];
+      const hint = m[2];
+      const parts = bindingPart.split("+").map((s) => s.trim()).filter(Boolean);
+      return (
+        <span className="kc-group">
+          {parts.map((p, i) => (
+            <span key={i} style={{ display: "inline-flex", alignItems: "center", gap: 0 }}>
+              {i > 0 && <span className="kc-plus">+</span>}
+              <span className={`kc${isOff ? " off" : ""}`}>{p}</span>
+            </span>
+          ))}
+          <span className="kc-hint" style={{ marginLeft: 6 }}>{hint}</span>
+        </span>
+      );
+    }
+    // e.g. "Esc ×2 (within 4s)" or "Ctrl+wheel"
+    const firstSpace = trimmed.indexOf(" ");
+    const first = trimmed.slice(0, firstSpace);
+    const rest = trimmed.slice(firstSpace).trim();
+    if (first.includes("+")) {
+      const parts = first.split("+").map((s) => s.trim()).filter(Boolean);
+      return (
+        <span className="kc-group">
+          {parts.map((p, i) => (
+            <span key={i} style={{ display: "inline-flex", alignItems: "center", gap: 0 }}>
+              {i > 0 && <span className="kc-plus">+</span>}
+              <span className={`kc${isOff ? " off" : ""}`}>{p}</span>
+            </span>
+          ))}
+          <span className="kc-hint" style={{ marginLeft: 6 }}>{rest}</span>
+        </span>
+      );
+    }
+    return (
+      <span className="kc-group">
+        <span className={`kc${isOff ? " off" : ""}`}>{first}</span>
+        <span className="kc-hint" style={{ marginLeft: 6 }}>{rest}</span>
+      </span>
+    );
+  }
+  const parts = trimmed.split("+").map((s) => s.trim()).filter(Boolean);
+  if (parts.length <= 1) return <span className={`kc${isOff ? " off" : ""}`}>{trimmed}</span>;
+  return (
+    <span className="kc-group">
+      {parts.map((p, i) => (
+        <span key={i} style={{ display: "inline-flex", alignItems: "center", gap: 0 }}>
+          {i > 0 && <span className="kc-plus">+</span>}
+          <span className={`kc${isOff ? " off" : ""}`}>{p}</span>
+        </span>
+      ))}
+    </span>
+  );
+}
 
 export function HotkeysTab({
   settings,
@@ -305,6 +424,17 @@ export function HotkeysTab({
   plugins?: LoadedPlugin[];
 }) {
   const [rec, setRec] = useState<string | null>(null);
+  const [hkQ, setHkQ] = useState("");
+  const [hkCollapsed, setHkCollapsed] = useState<Set<string>>(() => new Set());
+  const hkNeedle = hkQ.trim().toLowerCase();
+  const isHkFiltering = !!hkNeedle;
+  const toggleHk = (k: string) =>
+    setHkCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(k)) next.delete(k);
+      else next.add(k);
+      return next;
+    });
 
   // capture next key while recording (core or plugin)
   useEffect(() => {
@@ -341,7 +471,7 @@ export function HotkeysTab({
     // mousedown outside cancels
     const onMouse = (e: MouseEvent) => {
       const t = e.target as HTMLElement | null;
-      if (t?.closest?.(".hk-pill")) return;
+      if (t?.closest?.(".kc-btn") || t?.closest?.(".hk-pill") || t?.closest?.(".kc")) return;
       setRec(null);
     };
     window.addEventListener("keydown", onDown, { capture: true } as any);
@@ -429,70 +559,119 @@ export function HotkeysTab({
     return order.map((g) => [g, map.get(g)!] as const);
   })();
 
-  const renderCoreGroup = (group: string, ids: HotkeyId[]) => (
-    <div key={group} className="cmd-group cmd-group--pills">
-      <div className="cmd-group-label">{group}</div>
-      {ids.map((id) => {
-        const meta = HOTKEY_META[id];
-        const binding = effectiveHotkeys[id];
-        const def = DEFAULT_HOTKEYS[id];
-        const isRec = rec === id;
-        const conflict = conflictFor(id);
-        const isUnbound = !binding;
-        const isChanged = binding !== def;
-        const display = isRec ? "press keys… Esc to clear" : binding ?? "—";
-        return (
-          <div key={id} className={`cmd-row hk-row${isRec ? " rec" : ""}${isUnbound ? " unbound" : ""}${conflict ? " conflict" : ""}`}>
-            <button
-              type="button"
-              className={`mono cmd-name hk-pill${isRec ? " rec" : ""}${isUnbound ? " off" : ""}`}
-              onClick={() => setRec(isRec ? null : id)}
-              data-tip={isRec ? "Press a combo — Esc to clear" : "Click to rebind"}
-              aria-label={`Rebind ${meta.desc}`}
-            >
-              <span className="hk-key">{display}</span>
-              {!isRec && isChanged && <span className="hk-dot" title={binding ? `Default: ${def}` : `Default: ${def} — currently unbound`} />}
-            </button>
-            <span className="cmd-desc hk-desc">
-              {meta.desc}
-              {conflict && <span className="hk-warn" title={`Same as ${conflict}`}> · conflicts with {conflict}</span>}
-            </span>
-            {isChanged && !isRec && (
-              <button type="button" className="hk-reset" onClick={() => update({ hotkeys: { ...((settings.hotkeys ?? {}) as any), [id]: def } })} data-tip={`Reset to ${def}`}>
-                <i className="fa-solid fa-rotate-left" />
-              </button>
-            )}
-          </div>
-        );
-      })}
-      {group === "In the app" && (
-        <>
-          <div className="cmd-row hk-row static">
-            <span className="mono cmd-name hk-pill fixed">Ctrl+wheel</span>
-            <span className="cmd-desc">zoom the UI in / out</span>
-          </div>
-          {STATIC_APP_KEYS.map(([l, r]) => (
-            <div key={l} className="cmd-row hk-row static">
-              <span className="mono cmd-name hk-pill fixed">{l}</span>
-              <span className="cmd-desc">{r}</span>
+  const renderCoreGroup = (group: string, ids: HotkeyId[]) => {
+    const needle = hkNeedle;
+    const filteredIds = !needle
+      ? ids
+      : ids.filter((id) => {
+          const meta = HOTKEY_META[id];
+          const binding = effectiveHotkeys[id] ?? "";
+          return `${group} ${meta.desc} ${binding}`.toLowerCase().includes(needle);
+        });
+    const staticCandidates: [string, string][] = group === "In the app" ? [["Ctrl+wheel", "zoom the UI in / out"], ...STATIC_APP_KEYS] : [];
+    const filteredStatic = !needle
+      ? staticCandidates
+      : staticCandidates.filter(([l, r]) => `${l} ${r}`.toLowerCase().includes(needle));
+    if (needle && filteredIds.length === 0 && filteredStatic.length === 0) return null;
+    const isCollapsed = !isHkFiltering && hkCollapsed.has(group);
+    const iconMap: Record<string, string> = { "In the app": "fa-window-maximize", Editor: "fa-code" };
+    const groupIcon = iconMap[group] ?? "fa-keyboard";
+    const totalInGroup = filteredIds.length + filteredStatic.length;
+    return (
+      <div key={group} className={`vc-section${isCollapsed ? " collapsed" : ""}`}>
+        <button type="button" className="vc-section-head" onClick={() => toggleHk(group)} aria-expanded={!isCollapsed}>
+          <i className="fa-solid fa-chevron-down vc-chevron" />
+          <i className={`fa-solid ${groupIcon}`} />
+          <span>{group}</span>
+          <span className="vc-count">{totalInGroup}</span>
+        </button>
+        <div className="vc-list">
+          {filteredIds.map((id) => {
+            const meta = HOTKEY_META[id];
+            const binding = effectiveHotkeys[id];
+            const def = DEFAULT_HOTKEYS[id];
+            const isRec = rec === id;
+            const conflict = conflictFor(id);
+            const isUnbound = !binding;
+            const isChanged = binding !== def;
+            return (
+              <div key={id} className={`vc-row hk${isRec ? " rec" : ""}${conflict ? " conflict" : ""}`}>
+                <button
+                  type="button"
+                  className={`kc-btn${isRec ? " rec" : ""}${isUnbound ? " off" : ""}${conflict ? " conflict" : ""}`}
+                  onClick={() => setRec(isRec ? null : id)}
+                  data-tip={isRec ? "Press a combo — Esc to clear" : "Click to rebind"}
+                  aria-label={`Rebind ${meta.desc}`}
+                >
+                  {isRec ? (
+                    <span className="kc-rec-text">press keys… Esc to clear</span>
+                  ) : binding ? (
+                    <KcCaps raw={binding} isOff={isUnbound} />
+                  ) : (
+                    <span className="kc off">—</span>
+                  )}
+                  {!isRec && isChanged && <span className="hk-dot" title={binding ? `Default: ${def}` : `Default: ${def} — currently unbound`} />}
+                </button>
+                <span className="hk-rebind-hint" data-tip="Click to rebind"><i className="fa-solid fa-pen" /></span>
+                <span className="vc-desc">
+                  {meta.desc}
+                  {conflict && <span className="hk-warn" title={`Same as ${conflict}`}> · conflicts with {conflict}</span>}
+                </span>
+                {isChanged && !isRec && (
+                  <button type="button" className="hk-reset" onClick={() => update({ hotkeys: { ...((settings.hotkeys ?? {}) as any), [id]: def } })} data-tip={`Reset to ${def}`}>
+                    <i className="fa-solid fa-rotate-left" />
+                  </button>
+                )}
+              </div>
+            );
+          })}
+          {filteredStatic.map(([l, r]) => (
+            <div key={l} className="vc-row hk static locked">
+              <span className="kc-group" style={{ flexShrink: 0 }}>
+                <KcCaps raw={l} />
+              </span>
+              <span className="hk-lock" data-tip="Not rebindable — fixed"><i className="fa-solid fa-lock" /></span>
+              <span className="vc-desc">{r}</span>
+              <span className="vc-badge" style={{ marginLeft: "auto" }}>fixed</span>
             </div>
           ))}
-        </>
-      )}
-    </div>
-  );
+        </div>
+      </div>
+    );
+  };
 
-  const equalRef = useEqualPills([rec, JSON.stringify(effectiveHotkeys), JSON.stringify(phk), JSON.stringify(plugins?.map((p) => [p.id, p.disabled, p.ext?.hotkeys])), allUnchanged]);
-
-  const pluginGroups =
-    plugins
-      ?.filter((p) => p.ext?.hotkeys?.length && !p.disabled)
-      .map((p) => {
-        const defs = p.ext!.hotkeys!;
-        return (
-          <div key={p.id} className="cmd-group cmd-group--pills">
-            <div className="cmd-group-label">{p.name} — plugin</div>
-            {defs.map((def) => {
+  // filtered plugin groups — keycap style, collapsable
+  const pluginGroupsFiltered = (() => {
+    const list = plugins?.filter((p) => p.ext?.hotkeys?.length && !p.disabled) ?? [];
+    const filtered = !hkNeedle
+      ? list
+      : list.filter((p) => {
+          const name = p.name.toLowerCase();
+          return (
+            name.includes(hkNeedle) ||
+            (p.ext!.hotkeys ?? []).some((d) => `${d.label} ${d.description ?? ""} ${getPluginHotkeyBinding(phk ?? {}, p.id, d) ?? ""}`.toLowerCase().includes(hkNeedle))
+          );
+        });
+    return filtered.map((p) => {
+      const defs = p.ext!.hotkeys!;
+      const filteredDefs = !hkNeedle
+        ? defs
+        : defs.filter((def) => {
+            const binding = getPluginHotkeyBinding(phk ?? {}, p.id, def) ?? "";
+            return `${def.label} ${def.description ?? ""} ${binding}`.toLowerCase().includes(hkNeedle);
+          });
+      if (hkNeedle && filteredDefs.length === 0) return null;
+      const isCollapsed = !isHkFiltering && hkCollapsed.has(p.id);
+      return (
+        <div key={p.id} className={`vc-section${isCollapsed ? " collapsed" : ""}`}>
+          <button type="button" className="vc-section-head" onClick={() => toggleHk(p.id)} aria-expanded={!isCollapsed}>
+            <i className="fa-solid fa-chevron-down vc-chevron" />
+            <i className="fa-solid fa-puzzle-piece" />
+            <span>{p.name} — plugin</span>
+            <span className="vc-count">{filteredDefs.length}</span>
+          </button>
+          <div className="vc-list">
+            {filteredDefs.map((def) => {
               const k = pluginHotkeyKey(p.id, def.id);
               const binding = getPluginHotkeyBinding(phk ?? {}, p.id, def);
               const defNorm = def.default ? normalizeBinding(def.default) : null;
@@ -500,20 +679,26 @@ export function HotkeysTab({
               const conflict = conflictFor(k);
               const isUnbound = !binding;
               const isChanged = binding !== defNorm;
-              const display = isRec ? "press keys… Esc to clear" : binding ?? "—";
               return (
-                <div key={k} className={`cmd-row hk-row${isRec ? " rec" : ""}${isUnbound ? " unbound" : ""}${conflict ? " conflict" : ""}`}>
+                <div key={k} className={`vc-row hk${isRec ? " rec" : ""}${conflict ? " conflict" : ""}`}>
                   <button
                     type="button"
-                    className={`mono cmd-name hk-pill${isRec ? " rec" : ""}${isUnbound ? " off" : ""}`}
+                    className={`kc-btn${isRec ? " rec" : ""}${isUnbound ? " off" : ""}${conflict ? " conflict" : ""}`}
                     onClick={() => setRec(isRec ? null : k)}
                     data-tip={isRec ? "Press a combo — Esc to clear" : "Click to rebind"}
                     aria-label={`Rebind ${def.label}`}
                   >
-                    <span className="hk-key">{display}</span>
+                    {isRec ? (
+                      <span className="kc-rec-text">press keys… Esc to clear</span>
+                    ) : binding ? (
+                      <KcCaps raw={binding} isOff={isUnbound} />
+                    ) : (
+                      <span className="kc off">—</span>
+                    )}
                     {!isRec && isChanged && <span className="hk-dot" title={binding ? `Default: ${defNorm ?? "—"}` : `Default: ${defNorm ?? "—"} — currently unbound`} />}
                   </button>
-                  <span className="cmd-desc hk-desc">
+                  <span className="hk-rebind-hint" data-tip="Click to rebind"><i className="fa-solid fa-pen" /></span>
+                  <span className="vc-desc">
                     {def.label}
                     {def.description ? ` — ${def.description}` : ""}
                     {conflict && <span className="hk-warn" title={`Same as ${conflict}`}> · conflicts with {conflict}</span>}
@@ -536,20 +721,103 @@ export function HotkeysTab({
               );
             })}
           </div>
-        );
-      }) ?? null;
+        </div>
+      );
+    }).filter(Boolean) as React.ReactNode[];
+  })();
+
+  const systemFiltered = !hkNeedle ? SYSTEM_KEYS : SYSTEM_KEYS.filter(([l, r]) => `${l} ${r}`.toLowerCase().includes(hkNeedle));
+  const composerFiltered = !hkNeedle ? COMPOSER_KEYS : COMPOSER_KEYS.filter(([l, r]) => `${l} ${r}`.toLowerCase().includes(hkNeedle));
+  const hasSystem = systemFiltered.length > 0;
+  const hasComposer = composerFiltered.length > 0;
+  const coreVisibleCount = orderedGroups.reduce((n, [g, ids]) => {
+    const rendered = renderCoreGroup(g, ids);
+    return n + (rendered ? 1 : 0);
+  }, 0);
+  const anyVisible = hasSystem || hasComposer || coreVisibleCount > 0 || pluginGroupsFiltered.length > 0;
 
   return (
-    <div ref={equalRef}>
-      {/* System-wide — non-rebindable but pill-styled */}
-      <PillGroups data={[["System-wide", SYSTEM_KEYS]]} />
-
-      {/* Core hotkeys grouped */}
-      {orderedGroups.map(([g, ids]) => renderCoreGroup(g, ids))}
-
-      {/* Plugin hotkeys (rebindable) */}
-      {pluginGroups}
-
+    <div>
+      <div className="vc-tip">
+        <i className="fa-solid fa-keyboard" />
+        <span>
+          <strong>Keycaps</strong> — each key is a cap, <strong>+</strong> between keys. Click a chord to rebind, <strong>Esc</strong> clears (unbound = disabled). <i className="fa-solid fa-lock" style={{ margin: "0 2px", fontSize: 9 }} /> = not rebindable (fixed). Conflicts are shown but not blocked.
+        </span>
+      </div>
+      <div className="browse-search vc-search">
+        <label className="model-search-wrap" style={{ cursor: "text" }}>
+          <i className="fa-solid fa-magnifying-glass" />
+          <input
+            className="model-search"
+            placeholder="Filter hotkeys…  e.g. sidebar, Ctrl+B, copy line"
+            value={hkQ}
+            onChange={(e) => setHkQ(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Escape" && hkQ) {
+                e.stopPropagation();
+                setHkQ("");
+              }
+            }}
+          />
+          {hkQ && (
+            <button type="button" className="reset-btn" onClick={() => setHkQ("")} data-tip="Clear filter">
+              <i className="fa-solid fa-xmark" />
+            </button>
+          )}
+        </label>
+      </div>
+      {!anyVisible ? (
+        <div className="vc-empty">No hotkeys match “{hkQ}”</div>
+      ) : (
+        <div className="vc-frame">
+          {hasSystem && (
+            <div className={`vc-section${!isHkFiltering && hkCollapsed.has("__system") ? " collapsed" : ""}`}>
+              <button type="button" className="vc-section-head" onClick={() => toggleHk("__system")} aria-expanded={isHkFiltering || !hkCollapsed.has("__system")}>
+                <i className="fa-solid fa-chevron-down vc-chevron" />
+                <i className="fa-solid fa-globe" />
+                <span>System-wide</span>
+                <span className="vc-count">{systemFiltered.length}</span>
+              </button>
+              <div className="vc-list">
+                {systemFiltered.map(([l, r]) => (
+                  <div key={l} className="vc-row hk static locked">
+                    <span className="kc-group" style={{ flexShrink: 0 }}>
+                      <KcCaps raw={l} />
+                    </span>
+                    <span className="hk-lock" data-tip="Not rebindable — fixed"><i className="fa-solid fa-lock" /></span>
+                    <span className="vc-desc">{r}</span>
+                    <span className="vc-badge" style={{ marginLeft: "auto" }}>fixed</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          {orderedGroups.map(([g, ids]) => renderCoreGroup(g, ids))}
+          {pluginGroupsFiltered}
+          {hasComposer && (
+            <div className={`vc-section${!isHkFiltering && hkCollapsed.has("__composer") ? " collapsed" : ""}`}>
+              <button type="button" className="vc-section-head" onClick={() => toggleHk("__composer")} aria-expanded={isHkFiltering || !hkCollapsed.has("__composer")}>
+                <i className="fa-solid fa-chevron-down vc-chevron" />
+                <i className="fa-solid fa-comment" />
+                <span>Composer</span>
+                <span className="vc-count">{composerFiltered.length}</span>
+              </button>
+              <div className="vc-list">
+                {composerFiltered.map(([l, r]) => (
+                  <div key={l} className="vc-row hk static locked">
+                    <span className="kc-group" style={{ flexShrink: 0 }}>
+                      <KcCaps raw={l} />
+                    </span>
+                    <span className="hk-lock" data-tip="Not rebindable — fixed"><i className="fa-solid fa-lock" /></span>
+                    <span className="vc-desc">{r}</span>
+                    <span className="vc-badge" style={{ marginLeft: "auto" }}>fixed</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
       {!allUnchanged && (
         <div className="hk-actions">
           <button
@@ -561,10 +829,6 @@ export function HotkeysTab({
           </button>
         </div>
       )}
-
-      {/* Composer — non-rebindable reference, same pill material */}
-      <PillGroups data={[["Composer", COMPOSER_KEYS]]} />
-      {/* Legacy editor static kept for reference when no core settings? now pills cover editor so keep minimal note */}
       <p className="cmd-note">Click a binding to record a new combo — Esc clears it (unbound = disabled). Conflicts are shown but not blocked. Zoom shortcuts scale the whole interface; WebView2's own page zoom stays disabled.</p>
     </div>
   );
@@ -588,6 +852,8 @@ export default function InfoDialog({
 }) {
   const [tab, setTab] = useState<"info" | "voice" | "cmds" | "keys">("info");
   const [voiceQ, setVoiceQ] = useState("");
+  const [infoQ, setInfoQ] = useState("");
+  const [infoCollapsed, setInfoCollapsed] = useState<Set<string>>(() => new Set());
   const voiceData = [...VOICE, ...docGroups(pluginDocs, "voice")] as Group[];
   return (
     <Dialog title="Info" onClose={onClose} top wide>
@@ -607,11 +873,165 @@ export default function InfoDialog({
       </div>
       {tab === "info" && (
         <>
-          {pluginDocs && docGroups(pluginDocs, "keys").length > 0 ? (
-            <Groups data={docGroups(pluginDocs, "keys")} />
-          ) : (
-            <p className="cmd-note">No plugins installed — plugin hotkeys and slash docs will appear here.</p>
-          )}
+          <div className="vc-tip">
+            <i className="fa-solid fa-circle-info" />
+            <span>
+              <strong>App & plugins</strong> — overview of what's installed, what's enabled, and docs contributed by plugins. Matches the style of <strong>Voice</strong> and <strong>Commands</strong>.
+            </span>
+          </div>
+          <div className="browse-search vc-search">
+            <label className="model-search-wrap" style={{ cursor: "text" }}>
+              <i className="fa-solid fa-magnifying-glass" />
+              <input
+                className="model-search"
+                placeholder="Filter info…  e.g. plugin name, doc, id"
+                value={infoQ}
+                onChange={(e) => setInfoQ(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape" && infoQ) {
+                    e.stopPropagation();
+                    setInfoQ("");
+                  }
+                }}
+              />
+              {infoQ && (
+                <button type="button" className="reset-btn" onClick={() => setInfoQ("")} data-tip="Clear filter">
+                  <i className="fa-solid fa-xmark" />
+                </button>
+              )}
+            </label>
+          </div>
+          {(() => {
+            const q = infoQ.trim().toLowerCase();
+            const isFiltering = !!q;
+            const toggleInfo = (key: string) =>
+              setInfoCollapsed((prev) => {
+                const next = new Set(prev);
+                if (next.has(key)) next.delete(key);
+                else next.add(key);
+                return next;
+              });
+            const docGroupsKeys = docGroups(pluginDocs, "keys") as Group[];
+            const filteredDocs: Group[] = q
+              ? docGroupsKeys
+                  .map(([g, rows]): Group => [
+                    g,
+                    rows.filter(([l, r]) => `${l} ${r} ${g}`.toLowerCase().includes(q)),
+                  ])
+                  .filter(([, rows]) => rows.length > 0)
+              : docGroupsKeys;
+            const filteredPlugins = (plugins ?? []).filter((p) => {
+              if (!q) return true;
+              return `${p.name} ${p.id} ${p.dir} ${p.description ?? ""} ${p.version ?? ""}`.toLowerCase().includes(q);
+            });
+            const hasPlugins = (plugins ?? []).length > 0;
+            const hasDocs = docGroupsKeys.length > 0;
+            const hasAny = filteredPlugins.length > 0 || filteredDocs.length > 0;
+            if (isFiltering && !hasAny) {
+              return <div className="vc-empty">No matches for “{infoQ}”</div>;
+            }
+            if (!hasPlugins && !hasDocs) {
+              return (
+                <div className="vc-frame">
+                  <div className="info-hero">
+                    <i className="fa-solid fa-puzzle-piece" />
+                    <div>
+                      <div className="info-hero-title">No plugins installed</div>
+                      <div className="info-hero-desc">
+                        Plugins add voice phrases, slash commands, hotkeys and settings. Drop a folder with <strong>plugin.json</strong> + <strong>main.js</strong> into the plugins folder or browse the catalog.
+                      </div>
+                      <div className="info-stat-row">
+                        <span className="info-stat"><i className="fa-solid fa-folder-open" /><strong>plugins</strong> folder</span>
+                        <span className="info-stat"><i className="fa-solid fa-store" />Browse catalog</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            }
+            return (
+              <div className="vc-frame">
+                {/* overview hero — always visible */}
+                <div className="info-hero">
+                  <i className="fa-solid fa-layer-group" />
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div className="info-hero-title">OpenCode GUI</div>
+                    <div className="info-hero-desc">
+                      Lightweight Tauri client for <strong>opencode</strong> — voice + slash + hotkeys, plugin host, glass UI. Data below is live from installed plugins.
+                    </div>
+                    <div className="info-stat-row">
+                      <span className="info-stat"><i className="fa-solid fa-puzzle-piece" /><strong>{plugins?.length ?? 0}</strong> plugins</span>
+                      <span className="info-stat"><i className="fa-solid fa-toggle-on" /><strong>{plugins?.filter((p) => !p.disabled).length ?? 0}</strong> enabled</span>
+                      <span className="info-stat"><i className="fa-solid fa-book" /><strong>{filteredDocs.reduce((n, [, rows]) => n + rows.length, 0)}</strong> docs</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* installed plugins — collapsable */}
+                {hasPlugins && (
+                  <div className={`vc-section${!isFiltering && infoCollapsed.has("__plugins") ? " collapsed" : ""}`}>
+                    <button type="button" className="vc-section-head" onClick={() => toggleInfo("__plugins")} aria-expanded={isFiltering || !infoCollapsed.has("__plugins")}>
+                      <i className="fa-solid fa-chevron-down vc-chevron" />
+                      <i className="fa-solid fa-puzzle-piece" />
+                      <span>Installed plugins</span>
+                      <span className="vc-count">{filteredPlugins.length}{q ? ` / ${plugins!.length}` : ""}</span>
+                    </button>
+                    <div className="vc-list">
+                      {filteredPlugins.length === 0 ? (
+                        <div className="vc-empty">No plugins match “{infoQ}”</div>
+                      ) : (
+                        filteredPlugins.map((p) => (
+                          <div key={p.dir} className="vc-row" style={p.disabled ? { opacity: 0.72 } : undefined}>
+                            <div className="vc-name">
+                              {p.name}
+                              {p.version && <span className="vc-badge accent">{p.version}</span>}
+                              {p.disabled && <span className="vc-badge">disabled</span>}
+                              {p.error && <span className="vc-badge danger">error</span>}
+                            </div>
+                            <div className="vc-desc">{p.description || "—"}</div>
+                            {p.error && (
+                              <div className="vc-ex" style={{ color: "var(--danger)" }}>
+                                <i className="fa-solid fa-triangle-exclamation" />
+                                <span>{p.error}</span>
+                              </div>
+                            )}
+                            <div className="vc-ex">
+                              <i className="fa-solid fa-fingerprint" />
+                              <span>{p.id}{p.id !== p.dir ? ` · ${p.dir}` : ""}</span>
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* plugin-contributed docs — one collapsable section per plugin */}
+                {filteredDocs.map(([g, rows]) => {
+                  const isCollapsed = !isFiltering && infoCollapsed.has(g);
+                  return (
+                    <div key={g} className={`vc-section${isCollapsed ? " collapsed" : ""}`}>
+                      <button type="button" className="vc-section-head" onClick={() => toggleInfo(g)} aria-expanded={!isCollapsed}>
+                        <i className="fa-solid fa-chevron-down vc-chevron" />
+                        <i className="fa-solid fa-puzzle-piece" />
+                        <span>{g}</span>
+                        <span className="vc-count">{rows.length}</span>
+                      </button>
+                      <div className="vc-list">
+                        {rows.map(([l, r]) => (
+                          <div key={l} className="vc-row">
+                            <div className="vc-name">{l}</div>
+                            <div className="vc-desc">{r || "—"}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })()}
+          <p className="cmd-note">Plugins live in <code>%USERPROFILE%\.config\.opencode-gui\plugins\</code> — toggle disables without deleting, delete removes the folder. Docs above come from each plugin's <code>info</code> export.</p>
         </>
       )}
       {tab === "voice" && (
@@ -657,7 +1077,13 @@ export default function InfoDialog({
           {settings && update ? (
             <HotkeysTab settings={settings} update={update} plugins={plugins} />
           ) : (
-            <EqualWrap deps={[tab]}>
+            <>
+              <div className="vc-tip">
+                <i className="fa-solid fa-keyboard" />
+                <span>
+                  <strong>Keycaps</strong> — each key is a cap, <strong>+</strong> between keys. Reference only — connect settings to rebind.
+                </span>
+              </div>
               <PillGroups
                 data={[
                   ["System-wide", SYSTEM_KEYS],
@@ -667,7 +1093,7 @@ export default function InfoDialog({
                 ]}
               />
               <p className="cmd-note">Zoom shortcuts scale the whole interface (same presets as Settings) — WebView2's own page zoom stays disabled.</p>
-            </EqualWrap>
+            </>
           )}
         </>
       )}

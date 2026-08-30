@@ -542,7 +542,6 @@ export default function GitPanel() {
   };
   const hint = (() => {
     if (busy || gen) return "";
-    if (!msg.trim() && staged.length > 0) return "Tip: generate a message or type one.";
     if (!msg.trim() && allTrackedDirty.length > 0 && staged.length === 0) return "No staged changes — use Commit All or Stage All.";
     if (!staged.length && allTrackedDirty.length > 0) return "No staged changes. Commit All will commit tracked changes (−a, skips untracked).";
     if (!allTrackedDirty.length && !staged.length && st.files.length === 0) return "";
@@ -663,7 +662,6 @@ export default function GitPanel() {
       <button className="gp-menu-item" disabled={busy} onClick={() => { setPrimary("allSync"); setCommitMenuOpen(false); void doCommit({ all: true, sync: true }); }}>
         <i className="fa-solid fa-arrows-rotate" /> Commit All and Sync
       </button>
-      {hint && <div className="gp-menu-hintline">{hint}</div>}
     </div>
   );
 
