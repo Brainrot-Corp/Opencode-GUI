@@ -1244,6 +1244,10 @@ export default function ChatPage() {
           agents={oc.agents}
           getDirForSession={(id: string) => (oc as any).getDirForSession?.(id) ?? ""}
           onOpenSession={(id) => void oc.openSession(id)}
+          activeId={oc.activeId}
+          msgs={oc.msgs as any}
+          activeChildren={oc.activeChildren as any}
+          childTaskCosts={oc.childTaskCosts as any}
         />
         <Suspense fallback={null}>
           <FileEditorHost hotkeys={settings.hotkeys} />

@@ -1104,7 +1104,13 @@ export function useOpencode() {
     // pin current chip values to the new session so it starts with last used
     // per-session values and doesn't flip when global changes later
     try {
-      if (prov.modelSel) prov.rememberSession(s.id, prov.modelSel);
+      // remember current model as if picked — fallback to stored global /
+      // server default so a new session is always pinned even before
+      // providers finish loading (prevents following later global picks)
+      let m = prov.modelSel;
+      if (!m) try { m = localStorage.getItem("oc.lastModel") || ""; } catch {}
+      if (!m) m = prov.defaultModel || "";
+      if (m) prov.rememberSession(s.id, m);
       if (agentSel) rememberAgentSession(s.id, agentSel);
       if (securityModeRef.current) rememberSecuritySession(s.id, securityModeRef.current);
       if (prov.variantSel) prov.rememberVariantSession(s.id, prov.variantSel);
@@ -1114,7 +1120,7 @@ export function useOpencode() {
     setPermission(null);
     setQuestion(null);
     return s.id;
-  }, [prov.modelSel, prov.variantSel, agentSel]);
+  }, [prov.modelSel, prov.defaultModel, prov.variantSel, agentSel]);
 
   // session-wide token/cost totals — summed from the authoritative store
   // (not the revert-filtered view) so rewinding doesn't rewrite history;
@@ -1614,7 +1620,12 @@ export function useOpencode() {
     try {
       const srcModel = (prov as any).sessionModels?.[id];
       if (srcModel) prov.rememberSession(s.id, srcModel);
-      else if (prov.modelSel) prov.rememberSession(s.id, prov.modelSel);
+      else {
+        let m: string = prov.modelSel || "";
+        if (!m) try { m = localStorage.getItem("oc.lastModel") || ""; } catch {}
+        if (!m) m = prov.defaultModel || "";
+        if (m) prov.rememberSession(s.id, m);
+      }
       const srcAgent = sessionAgents[id];
       if (srcAgent) rememberAgentSession(s.id, srcAgent);
       else if (agentSel) rememberAgentSession(s.id, agentSel);
@@ -1628,7 +1639,7 @@ export function useOpencode() {
     await refreshSessions();
     await openSession(s.id);
     return s.id;
-  }, [refreshSessions, openSession, sessionAgents, sessionSecurity, agentSel]);
+  }, [refreshSessions, openSession, sessionAgents, sessionSecurity, agentSel, prov.modelSel, prov.defaultModel, prov.variantSel]);
 
   const forkFrom = useCallback(async (messageID: string) => {
     const id = activeRef.current;
@@ -1655,7 +1666,12 @@ export function useOpencode() {
     try {
       const srcModel = (prov as any).sessionModels?.[id];
       if (srcModel) prov.rememberSession(s.id, srcModel);
-      else if (prov.modelSel) prov.rememberSession(s.id, prov.modelSel);
+      else {
+        let m: string = prov.modelSel || "";
+        if (!m) try { m = localStorage.getItem("oc.lastModel") || ""; } catch {}
+        if (!m) m = prov.defaultModel || "";
+        if (m) prov.rememberSession(s.id, m);
+      }
       const srcAgent = sessionAgents[id];
       if (srcAgent) rememberAgentSession(s.id, srcAgent);
       else if (agentSel) rememberAgentSession(s.id, agentSel);
@@ -1676,7 +1692,7 @@ export function useOpencode() {
       window.dispatchEvent(new CustomEvent("oc:rewind-input", { detail: pasteText }));
     }
     return s.id;
-  }, [refreshSessions, openSession, msgs, sessionAgents, sessionSecurity, agentSel]);
+  }, [refreshSessions, openSession, msgs, sessionAgents, sessionSecurity, agentSel, prov.modelSel, prov.defaultModel, prov.variantSel]);
 
   const togglePin = useCallback((id: string) => {
     try {

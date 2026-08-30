@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useMemo, useCallback } from "react";
 import type { Session } from "@opencode-ai/sdk/client";
+import type { Msg } from "../types";
 import { playSound } from "../lib/sounds";
 import "../styles/agent-board.css";
 
@@ -13,6 +14,10 @@ type Props = {
   agents?: { name: string; mode: string }[];
   getDirForSession?: (id: string) => string;
   onOpenSession?: (id: string) => void;
+  activeId?: string;
+  msgs?: Msg[];
+  activeChildren?: Session[];
+  childTaskCosts?: Record<string, { cost: number; tokens: number; title?: string }>;
 };
 
 const KEY = "oc.agentBoard.geom";
@@ -76,7 +81,7 @@ function statusFor(progress: number): SimStatus {
   return "done";
 }
 
-export default function AgentBoard({ open, onClose, sessions, busyIds, compactingIds, attentionIds, agents, getDirForSession, onOpenSession }: Props) {
+export default function AgentBoard({ open, onClose, sessions, busyIds, compactingIds, attentionIds, agents, getDirForSession, onOpenSession, activeId, msgs, activeChildren, childTaskCosts }: Props) {
   const [geom, setGeom] = useState<Geom>(() => loadGeom());
   const panelRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{ startX: number; startY: number; g0: Geom } | null>(null);
@@ -185,6 +190,62 @@ export default function AgentBoard({ open, onClose, sessions, busyIds, compactin
     return [...set].map(id => sessions.find(s => s.id === id)).filter(Boolean) as Session[];
   }, [busyIds, compactingIds, attentionIds, sessions]);
 
+  // --- sub-agent tasks (parentID child sessions + task tool parts) ---
+  // user reported 3 parallel tasks not showing — they are child sessions with
+  // parentID filtered from `sessions`, plus live tool parts with tool==="task"
+  function fmtTok(n: number) { return n >= 1000 ? `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k` : `${n}`; }
+  const taskLanes = useMemo(() => {
+    type Lane = { id: string; label: string; details: string; status: SimStatus; agent: string; cost?: number; tokens?: number; duration?: string; rawId: string };
+    const out: Lane[] = [];
+    const seen = new Set<string>();
+    // 1) live task tool parts from the active session's messages (most accurate: description + status)
+    if (msgs && msgs.length) {
+      for (const m of msgs as any[]) {
+        for (const p of (m.parts ?? []) as any[]) {
+          if (p?.type !== "tool") continue;
+          if (String(p.tool ?? "").toLowerCase() !== "task") continue;
+          const st = (p as any).state ?? {};
+          const rawStatus = String(st.status ?? "running").toLowerCase();
+          // only live tasks — completed tasks are historical, not background agents
+          if (rawStatus === "completed" || rawStatus === "error" || rawStatus === "failed") continue;
+          const pid = String(p.id ?? st.id ?? "");
+          if (pid && seen.has(pid)) continue;
+          if (pid) seen.add(pid);
+          const desc = String(st.input?.description ?? st.input?.prompt ?? st.title ?? p.description ?? "task").trim() || "task";
+          const agent = String(st.input?.subagentType ?? st.input?.agent ?? agents?.[0]?.name ?? "task");
+          const ms = st.time?.start && st.time?.end ? st.time.end - st.time.start : null;
+          const duration = ms != null ? (ms < 10000 ? `${(ms / 1000).toFixed(2)}s` : `${Math.round(ms / 1000)}s`) : undefined;
+          // cost lookup: try output ses_ id, then part id, then childTaskCosts direct
+          let tid: string | null = null;
+          try {
+            const outTxt = String(st.output ?? "");
+            const mm = outTxt.match(/ses_[a-zA-Z0-9_-]+/);
+            tid = mm ? mm[0] : null;
+          } catch {}
+          const ci = (tid && childTaskCosts?.[tid]) || (pid && childTaskCosts?.[pid]) || null;
+          const label = desc.length > 42 ? desc.slice(0, 42) + "…" : desc;
+          const details = pid ? pid.slice(0, 8) : agent;
+          out.push({ id: pid || tid || `task-${out.length}`, label, details, status: rawStatus === "pending" ? "queued" : "working", agent, cost: ci?.cost, tokens: ci?.tokens, duration, rawId: tid ?? pid ?? "" });
+        }
+      }
+    }
+    if (out.length) return out;
+    // 2) fallback: child sessions of the active (busy) session — covers cases where tool parts not yet parsed
+    if (activeId && busyIds?.has(activeId) && activeChildren && activeChildren.length) {
+      for (const ch of activeChildren) {
+        const id = (ch as any).id as string;
+        if (seen.has(id)) continue;
+        const ci = childTaskCosts?.[id];
+        const title = (ch as any).title?.trim() ? String((ch as any).title) : ci?.title ?? id.slice(0, 8);
+        const label = title.length > 42 ? title.slice(0, 42) + "…" : title;
+        // heuristic: if cost/tokens present and parent still busy, treat as working; else done
+        const status: SimStatus = "working";
+        out.push({ id, label, details: id.slice(0, 8), status, agent: agents?.[0]?.name ?? "subagent", cost: ci?.cost ?? (ch as any).cost, tokens: ci?.tokens ?? ((ch as any).tokens ? ((ch as any).tokens.input ?? 0) + ((ch as any).tokens.output ?? 0) : undefined), duration: undefined, rawId: id });
+      }
+    }
+    return out;
+  }, [msgs, activeChildren, childTaskCosts, busyIds, activeId, agents]);
+
   // graph edges — DAG across lanes
   const EDGES: [number, number][] = useMemo(() => [[0,1],[1,2],[2,3],[0,2],[1,3]], []);
   const gridRef = useRef<HTMLDivElement>(null);
@@ -196,12 +257,12 @@ export default function AgentBoard({ open, onClose, sessions, busyIds, compactin
     ro.observe(el);
     setGridSize({ w: el.clientWidth, h: el.clientHeight });
     return () => ro.disconnect();
-  }, [geom, open]);
-  // keep gridSize in sync on geom change (drag/resize commits)
+  }, [geom, open, simRunning, taskLanes.length]);
+  // keep gridSize in sync on geom change (drag/resize commits) + task/sim switch
   useEffect(() => {
     if (!gridRef.current) return;
     setGridSize({ w: gridRef.current.clientWidth, h: gridRef.current.clientHeight });
-  }, [geom.w, geom.h]);
+  }, [geom.w, geom.h, simRunning, taskLanes.length]);
 
   const toggleSim = useCallback(() => {
     const next = !simRunning;
@@ -232,6 +293,38 @@ export default function AgentBoard({ open, onClose, sessions, busyIds, compactin
       return { x: cx, y: cy, prog, status };
     });
   }, [gridSize, simNodes, simRunning, loopElapsed, progressFor]);
+
+  // positions for real tasks from the same parent — same grid, linked with animated edges
+  const taskNodePos = useMemo(() => {
+    if (simRunning || !gridSize.w || !gridSize.h || taskLanes.length === 0) return [] as { x: number; y: number; prog: number; status: SimStatus }[];
+    const N = taskLanes.length;
+    if (!N) return [];
+    const W = gridSize.w, H = gridSize.h;
+    const pad = 6, gap = 6;
+    const laneH = (H - 2 * pad - (N - 1) * gap) / N;
+    const trackLeft = pad + 6;
+    const trackW = W - 2 * pad - 12;
+    const blockW = 156;
+    const avail = Math.max(0, trackW - blockW);
+    return taskLanes.map((t, i) => {
+      const prog = t.status === "queued" ? 0.18 : t.status === "done" ? 0.88 : 0.52;
+      const laneTop = pad + i * (laneH + gap);
+      const cy = laneTop + laneH / 2;
+      const cx = trackLeft + prog * avail + blockW / 2;
+      return { x: cx, y: cy, prog, status: t.status };
+    });
+  }, [gridSize, taskLanes, simRunning]);
+  const taskEdges = useMemo(() => {
+    const N = taskLanes.length;
+    if (N < 2) return [] as [number, number][];
+    // keep same DAG shape as sim when N matches, otherwise chain + fan-out
+    const base = EDGES.filter(([a, b]) => a < N && b < N) as [number, number][];
+    if (base.length) return base;
+    const chain: [number, number][] = [];
+    for (let i = 0; i < N - 1; i++) chain.push([i, i + 1]);
+    if (N > 2) chain.push([0, 2]);
+    return chain;
+  }, [taskLanes, EDGES]);
 
   // drag header — direct DOM at 60fps, commit on mouseup
   const onDragStart = useCallback((e: React.MouseEvent) => {
@@ -327,10 +420,13 @@ export default function AgentBoard({ open, onClose, sessions, busyIds, compactin
 
   if (!open) return null;
 
-  const totalBlocks = simRunning ? LANE_COUNT : liveNodes.length;
+  const taskCount = taskLanes.length;
+  const liveCount = liveNodes.length;
+  const totalBlocks = simRunning ? LANE_COUNT : (taskCount || liveCount);
   const showSim = simRunning;
-  const showLive = !simRunning && liveNodes.length > 0;
-  const showEmpty = !simRunning && liveNodes.length === 0;
+  const showTask = !simRunning && taskCount > 0;
+  const showLive = !simRunning && taskCount === 0 && liveCount > 0;
+  const showEmpty = !simRunning && taskCount === 0 && liveCount === 0;
 
   return (
     <div
@@ -345,7 +441,7 @@ export default function AgentBoard({ open, onClose, sessions, busyIds, compactin
         <span className="agent-board-title">
           <i className="fa-solid fa-diagram-project" />
           Agents
-          <span className="agent-board-count" data-tip={simRunning ? `${totalBlocks} lanes · 10s loop` : `${totalBlocks} live`}>{simRunning ? `${totalBlocks} lanes` : `${totalBlocks} live`}</span>
+          <span className="agent-board-count" data-tip={simRunning ? `${totalBlocks} lanes · 10s loop` : taskCount ? `${taskCount} task${taskCount !== 1 ? "s" : ""}${liveCount ? ` · ${liveCount} session${liveCount !== 1 ? "s" : ""}` : " live"}` : `${liveCount} live`}>{simRunning ? `${totalBlocks} lanes` : taskCount ? `${taskCount} task${taskCount !== 1 ? "s" : ""}` : `${liveCount} live`}</span>
         </span>
         <div className="agent-board-actions">
           <button
@@ -363,7 +459,18 @@ export default function AgentBoard({ open, onClose, sessions, busyIds, compactin
       </div>
 
       <div className="agent-board-body">
-        {liveNodes.length > 0 && !simRunning && (
+        {taskCount > 0 && !simRunning && (
+          <div className="agent-live-row">
+            <span className="agent-live-dot" aria-hidden />
+            <span>{taskCount} task{taskCount !== 1 ? "s" : ""} running</span>
+            <span style={{ color: "var(--text-faint)", textTransform: "none", letterSpacing: "0.02em" }}>
+              {taskLanes.slice(0, 2).map(t => t.label).join(" · ")}
+              {taskLanes.length > 2 ? ` +${taskLanes.length - 2}` : ""}
+            </span>
+            <span className="agent-live-count">{taskCount} active</span>
+          </div>
+        )}
+        {liveNodes.length > 0 && taskCount === 0 && !simRunning && (
           <div className="agent-live-row">
             <span className="agent-live-dot" aria-hidden />
             <span>{liveNodes.length} live</span>
@@ -453,6 +560,77 @@ export default function AgentBoard({ open, onClose, sessions, busyIds, compactin
                         <span>{node.sessionTitle}</span>
                       </div>
                       <i className="agent-block-bar" style={{ width: `${barPct}%` }} aria-hidden />
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : showTask ? (
+          <div className="agent-grid agent-grid--live" ref={gridRef} role="list" aria-label="Running tasks">
+            {gridSize.w > 0 && gridSize.h > 0 && taskNodePos.length === taskLanes.length && taskEdges.length > 0 && (
+              <svg className="agent-edges" width={gridSize.w} height={gridSize.h} viewBox={`0 0 ${gridSize.w} ${gridSize.h}`} preserveAspectRatio="none" aria-hidden>
+                <defs>
+                  <marker id="ag-arr-task" viewBox="0 0 6 6" refX={5} refY={3} markerWidth={6} markerHeight={6} orient="auto">
+                    <path d="M0,0 L6,3 L0,6 z" fill="#7fd4d4" opacity={0.95} />
+                  </marker>
+                  <marker id="ag-arr-task-done" viewBox="0 0 6 6" refX={5} refY={3} markerWidth={6} markerHeight={6} orient="auto">
+                    <path d="M0,0 L6,3 L0,6 z" fill="#9fce8f" opacity={0.95} />
+                  </marker>
+                  <marker id="ag-arr-task-queued" viewBox="0 0 6 6" refX={5} refY={3} markerWidth={6} markerHeight={6} orient="auto">
+                    <path d="M0,0 L6,3 L0,6 z" fill="#5b6c76" opacity={0.6} />
+                  </marker>
+                </defs>
+                {taskEdges.map(([a, b], idx) => {
+                  const s = taskNodePos[a], t = taskNodePos[b];
+                  if (!s || !t) return null;
+                  const sx = s.x, sy = s.y, tx = t.x, ty = t.y;
+                  const dx = Math.abs(tx - sx), dy = Math.abs(ty - sy);
+                  const cOff = Math.min(64, Math.max(28, dx * 0.22 + dy * 0.12));
+                  const c1x = sx + cOff, c1y = sy;
+                  const c2x = tx - cOff, c2y = ty;
+                  const d = `M ${sx} ${sy} C ${c1x} ${c1y}, ${c2x} ${c2y}, ${tx} ${ty}`;
+                  const st = s.status;
+                  const cls = st === "done" ? "done" : st === "queued" ? "queued" : "working";
+                  const marker = st === "done" ? "url(#ag-arr-task-done)" : st === "queued" ? "url(#ag-arr-task-queued)" : "url(#ag-arr-task)";
+                  return <path key={idx} d={d} className={`agent-edge ${cls}`} markerEnd={marker} />;
+                })}
+              </svg>
+            )}
+            {taskLanes.map((t, idx) => {
+              const dir = activeId ? (getDirForSession?.(activeId) ?? "") : "";
+              const pos = taskNodePos[idx];
+              const prog = pos ? pos.prog : t.status === "queued" ? 0.18 : t.status === "done" ? 0.88 : 0.52;
+              const avail = Math.max(0, (gridSize.w || 600) - 24 - 156);
+              const leftPx = prog * avail;
+              return (
+                <div key={t.id} className="agent-lane" role="listitem" aria-label={`${t.label} — ${t.status}`}>
+                  <div className="agent-lane-label" title={`${t.agent} · ${baseName(dir) || "workspace"}`}>
+                    <i className="fa-solid fa-robot" />
+                    <span>{t.agent}</span>
+                    <span style={{ color: "var(--text-faint)", fontSize: 9, textTransform: "none", letterSpacing: "0.02em" }}>
+                      · {baseName(dir) || "workspace"}
+                    </span>
+                  </div>
+                  <div className="agent-lane-track">
+                    <div
+                      className={`agent-block ${t.status} real`}
+                      style={{ transform: `translate3d(${leftPx}px,0,0)` }}
+                      data-tip={`${t.label}${t.details ? ` · ${t.details}` : ""}${t.duration ? ` · ${t.duration}` : ""}${t.tokens ? ` · ${fmtTok(t.tokens)} tok` : ""}${t.cost ? ` · $${t.cost.toFixed(4)}` : ""}`}
+                    >
+                      <div className="agent-block-head">
+                        <span className="agent-block-dot" aria-hidden />
+                        <span className="agent-block-name" title={t.label}>{t.label}</span>
+                        <span className="agent-block-status">{t.status}</span>
+                      </div>
+                      <div className="agent-block-session" title={t.details || t.rawId}>
+                        <i className="fa-solid fa-diagram-project" />
+                        <span>{t.details || t.rawId.slice(0, 8)}</span>
+                        {t.duration && <span style={{ marginLeft: 6, color: "var(--text-faint)" }}>{t.duration}</span>}
+                        {t.tokens ? <span style={{ marginLeft: 6, color: "var(--text-faint)" }}>{fmtTok(t.tokens)} tok</span> : null}
+                        {t.cost ? <span style={{ marginLeft: 4, color: "var(--text-faint)" }}>${t.cost.toFixed(4)}</span> : null}
+                      </div>
+                      <i className="agent-block-bar" style={{ width: t.status === "working" ? "68%" : t.status === "queued" ? "28%" : "100%" }} aria-hidden />
                     </div>
                   </div>
                 </div>
