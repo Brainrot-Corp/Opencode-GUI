@@ -73,10 +73,11 @@ export function useOpencode() {
   // sidebar attention: which sessions need a click (permission or question)
   const [attentionIds, setAttentionIds] = useState<Set<string>>(new Set());
   const [attentionKinds, setAttentionKinds] = useState<Record<string, "permission" | "question" | "both">>({});
-  // security mode: how permissions are handled — persisted globally
+  // security mode: per-session override + global last (mirrors model/agent)
   type SecurityMode = "full" | "user" | "block";
   const SECURITY_KEY = "oc.securityMode";
-  const [securityMode, setSecurityMode] = useState<SecurityMode>(() => {
+  const SESSION_SECURITY_KEY = "oc.sessionSecurityMode";
+  const [securityMode, _setSecurityMode] = useState<SecurityMode>(() => {
     try {
       const v = localStorage.getItem(SECURITY_KEY);
       if (v === "restricted") return "block"; // migrate legacy name
@@ -87,13 +88,55 @@ export function useOpencode() {
   const securityModeRef = useRef<SecurityMode>(securityMode);
   useEffect(() => { securityModeRef.current = securityMode; }, [securityMode]);
   useEffect(() => { try { localStorage.setItem(SECURITY_KEY, securityMode); } catch {} }, [securityMode]);
-  const cycleSecurityMode = useCallback(() => {
-    setSecurityMode((cur) => {
-      const next: SecurityMode = cur === "user" ? "block" : cur === "block" ? "full" : "user";
-      playSound("click");
-      return next;
-    });
+  const [sessionSecurity, setSessionSecurity] = useState<Record<string, SecurityMode>>(() => {
+    try {
+      const raw = JSON.parse(localStorage.getItem(SESSION_SECURITY_KEY) ?? "{}");
+      return raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, SecurityMode>) : {};
+    } catch { return {}; }
+  });
+  const sessionSecurityRef = useRef(sessionSecurity);
+  useEffect(() => { sessionSecurityRef.current = sessionSecurity; }, [sessionSecurity]);
+  useEffect(() => { try { localStorage.setItem(SESSION_SECURITY_KEY, JSON.stringify(sessionSecurity)); } catch {} }, [sessionSecurity]);
+  const getSecurityModeFor = useCallback((sid: string): SecurityMode => {
+    const stored = sessionSecurityRef.current[sid];
+    if (stored === "full" || stored === "block" || stored === "user") return stored;
+    try {
+      const g = localStorage.getItem(SECURITY_KEY);
+      if (g === "restricted") return "block";
+      if (g === "full" || g === "block" || g === "user") return g as SecurityMode;
+    } catch {}
+    return "user";
   }, []);
+  const rememberSecuritySession = useCallback((sid: string, value: SecurityMode) => {
+    if (!sid) return;
+    setSessionSecurity((prev) => (prev[sid] === value ? prev : { ...prev, [sid]: value }));
+  }, []);
+  const setSecurityMode = useCallback((m: SecurityMode) => {
+    _setSecurityMode(m);
+    if (activeId) rememberSecuritySession(activeId, m);
+    playSound("click");
+  }, [activeId, rememberSecuritySession]);
+  const cycleSecurityMode = useCallback(() => {
+    const cur = securityModeRef.current;
+    const next: SecurityMode = cur === "user" ? "block" : cur === "block" ? "full" : "user";
+    _setSecurityMode(next);
+    if (activeId) rememberSecuritySession(activeId, next);
+    playSound("click");
+  }, [activeId, rememberSecuritySession]);
+  useEffect(() => {
+    if (!activeId) return;
+    const remembered = sessionSecurity[activeId];
+    if (remembered === "full" || remembered === "block" || remembered === "user") {
+      _setSecurityMode((cur) => (cur === remembered ? cur : remembered));
+      return;
+    }
+    let global: string | null = null;
+    try { global = localStorage.getItem(SECURITY_KEY); } catch {}
+    if (global === "restricted") global = "block";
+    if (global === "full" || global === "block" || global === "user") {
+      _setSecurityMode((cur) => (cur === global ? cur as SecurityMode : (global as SecurityMode)));
+    }
+  }, [activeId, sessionSecurity]);
   const [commands, setCommands] = useState<Cmd[]>([]);
   // plugin slash commands are aggregated in src/lib/plugins.ts slashStore;
   // cmdList is built from that store directly each render so autocomplete
@@ -355,25 +398,48 @@ export function useOpencode() {
     }
   }, []);
 
-  // when security mode leaves "user", flush any already-pending asks
+  // when a session's effective mode leaves "user", flush its pending asks
   useEffect(() => {
-    if (securityMode === "user") return;
-    const response: "always" | "reject" = securityMode === "full" ? "always" : "reject";
     for (const ask of [...permissionsRef.current.values()]) {
+      const mode = getSecurityModeFor(ask.sessionID);
+      if (mode === "user") continue;
+      const response: "always" | "reject" = mode === "full" ? "always" : "reject";
       permissionsRef.current.delete(ask.sessionID);
       syncAttention(ask.sessionID);
       void autoRespondPermission(ask, response);
     }
-    setPermission(null);
-  }, [securityMode, autoRespondPermission, syncAttention]);
+    if (permission && getSecurityModeFor(permission.sessionID) !== "user") {
+      setPermission(null);
+    }
+  }, [securityMode, sessionSecurity, autoRespondPermission, syncAttention, getSecurityModeFor, permission]);
 
-  // cross-window sync
+  // cross-window sync — global + per-session
   useEffect(() => {
     const onStorage = (e: StorageEvent) => {
-      if (e.key !== SECURITY_KEY || !e.newValue) return;
-      if (e.newValue === "restricted") { setSecurityMode("block"); return; }
-      if (e.newValue === "full" || e.newValue === "user" || e.newValue === "block") {
-        setSecurityMode(e.newValue as SecurityMode);
+      if (e.key === SECURITY_KEY && e.newValue) {
+        if (e.newValue === "restricted") { _setSecurityMode("block"); return; }
+        if (e.newValue === "full" || e.newValue === "user" || e.newValue === "block") {
+          const remembered = sessionSecurityRef.current[activeRef.current];
+          if (remembered === "full" || remembered === "block" || remembered === "user") return;
+          _setSecurityMode(e.newValue as SecurityMode);
+        }
+        return;
+      }
+      if (e.key === SESSION_SECURITY_KEY) {
+        try {
+          const raw = JSON.parse(e.newValue ?? "{}");
+          const map = raw && typeof raw === "object" && !Array.isArray(raw) ? raw as Record<string, SecurityMode> : {};
+          setSessionSecurity(map);
+          const cur = map[activeRef.current];
+          if (cur === "full" || cur === "block" || cur === "user") _setSecurityMode(cur);
+          else if (e.newValue) {
+            try {
+              const g = localStorage.getItem(SECURITY_KEY);
+              if (g === "restricted") _setSecurityMode("block");
+              else if (g === "full" || g === "block" || g === "user") _setSecurityMode(g as SecurityMode);
+            } catch {}
+          }
+        } catch {}
       }
     };
     window.addEventListener("storage", onStorage);
@@ -610,7 +676,7 @@ export function useOpencode() {
               (p.patterns ?? []).join(", ") ||
               (p.permission ?? p.action ?? p.type ?? "permission"),
           };
-          const mode = securityModeRef.current;
+          const mode = getSecurityModeFor(p.sessionID);
           if (mode === "full") {
             void autoRespondPermission(ask, "always");
             break;
@@ -633,7 +699,7 @@ export function useOpencode() {
             title: p.title ?? p.type ?? p.permission ?? "permission",
           };
           if (!ask.sessionID || !ask.id) break;
-          const mode2 = securityModeRef.current;
+          const mode2 = getSecurityModeFor(p.sessionID);
           if (mode2 === "full") {
             void autoRespondPermission(ask, "always");
             break;
@@ -768,6 +834,19 @@ export function useOpencode() {
             questionsRef.current.delete(delId);
             permissionsRef.current.delete(delId);
             clearAttention(delId);
+            setSessionSecurity((prev) => {
+              if (!(delId in prev)) return prev;
+              const next = { ...prev };
+              delete next[delId];
+              return next;
+            });
+            setSessionAgents((prev) => {
+              if (!(delId in prev)) return prev;
+              const next = { ...prev };
+              delete next[delId];
+              return next;
+            });
+            prov.rememberSession(delId, "");
             if (delId === activeRef.current) {
               setQuestion(null);
               setPermission(null);
@@ -887,29 +966,28 @@ export function useOpencode() {
           .catch(() => {});
         // same for permissions — best-effort (endpoint may not exist in older server)
         const handleBootPerms = (arr: any[]) => {
-          const mode = securityModeRef.current;
-          if (mode === "full" || mode === "block") {
-            const resp: "always" | "reject" = mode === "full" ? "always" : "reject";
-            for (const p of arr) {
+          const touched = new Set<string>();
+          for (const p of arr) {
+            if (!p.sessionID || !p.id) continue;
+            const mode = getSecurityModeFor(p.sessionID);
+            if (mode === "full" || mode === "block") {
+              const resp: "always" | "reject" = mode === "full" ? "always" : "reject";
               const ask: PermAsk = {
                 id: p.id,
                 sessionID: p.sessionID,
                 type: p.permission ?? p.type ?? p.action ?? "permission",
                 title: p.metadata?.command ?? p.metadata?.title ?? p.title ?? p.type ?? "permission",
               };
-              if (ask.sessionID && ask.id) void autoRespondPermission(ask, resp);
+              void autoRespondPermission(ask, resp);
+              continue;
             }
-            return;
-          }
-          const touched = new Set<string>();
-          for (const p of arr) {
             const ask: PermAsk = {
               id: p.id,
               sessionID: p.sessionID,
               type: p.permission ?? p.type ?? "permission",
               title: p.metadata?.command ?? p.metadata?.title ?? p.title ?? p.type ?? "permission",
             };
-            if (ask.sessionID && ask.id) { permissionsRef.current.set(ask.sessionID, ask); touched.add(ask.sessionID); }
+            permissionsRef.current.set(ask.sessionID, ask); touched.add(ask.sessionID);
           }
           for (const sid of touched) syncAttention(sid);
           showPermission(activeRef.current);
@@ -1349,6 +1427,19 @@ export function useOpencode() {
       markCompacting(id, false);
       tracker.reset(id);
       clearDraft(id);
+      setSessionSecurity((prev) => {
+        if (!(id in prev)) return prev;
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+      setSessionAgents((prev) => {
+        if (!(id in prev)) return prev;
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+      prov.rememberSession(id, "");
       if (activeRef.current === id) {
         setActiveId("");
         store.clearStashes();
@@ -1357,6 +1448,7 @@ export function useOpencode() {
         setPermission(null);
       }
     },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [markCompacting, clearAttention],
   );
 
@@ -1470,6 +1562,19 @@ export function useOpencode() {
       tracker.reset(id);
       clearDraft(id);
     }
+    setSessionSecurity((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      for (const id of ids) if (id in next) { delete next[id]; changed = true; }
+      return changed ? next : prev;
+    });
+    setSessionAgents((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      for (const id of ids) if (id in next) { delete next[id]; changed = true; }
+      return changed ? next : prev;
+    });
+    for (const id of ids) prov.rememberSession(id, "");
     setSessions((prev) => prev.filter((s) => !ids.includes(s.id)));
     if (activeRef.current && ids.includes(activeRef.current)) {
       setActiveId("");
@@ -1479,6 +1584,7 @@ export function useOpencode() {
       setPermission(null);
       setCompactingIds(new Set());
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [store, tracker, markCompacting, clearAttention]);
 
   // clear every session across all workspaces
@@ -1500,12 +1606,16 @@ export function useOpencode() {
       tracker.reset(id);
       clearDraft(id);
     }
+    setSessionSecurity((prev) => (Object.keys(prev).length ? {} : prev));
+    setSessionAgents((prev) => (Object.keys(prev).length ? {} : prev));
+    for (const id of ids) prov.rememberSession(id, "");
     setActiveId("");
     store.clearStashes();
     setMsgs([]);
     setQuestion(null);
     setPermission(null);
     setCompactingIds(new Set());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [store, tracker, markCompacting, clearAttention]);
 
   // the active session's busy/compacting state, derived from per-session sets
@@ -1562,7 +1672,7 @@ export function useOpencode() {
     abort,
     respondToPermission,
     securityMode,
-    setSecurityMode: (m: "full" | "user" | "block") => { setSecurityMode(m); try { playSound("click"); } catch {} },
+    setSecurityMode,
     cycleSecurityMode,
     removeSession,
     renameSession,
