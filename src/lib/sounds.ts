@@ -63,7 +63,6 @@ function ac(): AudioContext | null {
       ctx = new (window.AudioContext ||
         (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
     }
-    if (ctx.state === "suspended") void ctx.resume();
     return ctx;
   } catch {
     return null;
@@ -73,17 +72,24 @@ function ac(): AudioContext | null {
 function tone(from: number, to: number, dur: number, vol: number, delay = 0) {
   const c = ac();
   if (!c) return;
-  const t = c.currentTime + delay;
-  const o = c.createOscillator();
-  o.type = "sine";
-  o.frequency.setValueAtTime(from, t);
-  o.frequency.exponentialRampToValueAtTime(Math.max(1, to), t + dur);
-  const g = c.createGain();
-  g.gain.setValueAtTime(vol, t);
-  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-  o.connect(g).connect(c.destination);
-  o.start(t);
-  o.stop(t + dur + 0.02);
+  const schedule = () => {
+    const t = c.currentTime + delay;
+    const o = c.createOscillator();
+    o.type = "sine";
+    o.frequency.setValueAtTime(from, t);
+    o.frequency.exponentialRampToValueAtTime(Math.max(1, to), t + dur);
+    const g = c.createGain();
+    g.gain.setValueAtTime(vol, t);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    o.connect(g).connect(c.destination);
+    o.start(t);
+    o.stop(t + dur + 0.02);
+  };
+  if (c.state === "suspended") {
+    c.resume().then(schedule).catch(schedule);
+    return;
+  }
+  schedule();
 }
 
 // which preference gate controls each playable kind

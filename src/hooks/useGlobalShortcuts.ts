@@ -36,6 +36,7 @@ export function useGlobalShortcuts({
   onOpenWorkspace,
   onNewInstance,
   onNewSession,
+  onToggleAgents,
 }: {
   settings: AppSettings;
   update: (patch: Partial<AppSettings>) => void;
@@ -65,6 +66,8 @@ export function useGlobalShortcuts({
   onNewInstance?: () => void;
   // Ctrl+N creates a new session — app-wide like Ctrl+B/O/W
   onNewSession?: () => void;
+  // Alt+A toggles the agents board
+  onToggleAgents?: () => void;
 }) {
   // double-Escape stop gesture — armed by the first free Escape (the stop
   // button surfaces the window as a draining countdown ring), landed by the
@@ -366,6 +369,21 @@ export function useGlobalShortcuts({
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
   }, [onNewSession, settings.hotkeys.newSession]);
+
+  // Toggle agents board — rebindable (default Alt+A)
+  useEffect(() => {
+    if (!onToggleAgents) return;
+    const b = settings.hotkeys.toggleAgents;
+    if (!b) return;
+    const key = (e: KeyboardEvent) => {
+      if (!matchesEvent(e, b)) return;
+      e.preventDefault();
+      playSound("click");
+      onToggleAgents();
+    };
+    window.addEventListener("keydown", key);
+    return () => window.removeEventListener("keydown", key);
+  }, [onToggleAgents, settings.hotkeys.toggleAgents]);
 
   // Rust emits visibility://changed on tray click / Alt+Space / tray menu
   useEffect(() => {

@@ -26,6 +26,7 @@ import {
 import { getPluginSlash } from "../lib/plugins";
 import { useProviders } from "./useProviders";
 import { clearDraft, setDraft } from "../lib/drafts";
+import { pushToast } from "./useToast";
 import type { Msg, OpenCodeEvent, PermAsk, ProviderGroup, Attachment, QuestionAsk, Cmd } from "../types";
 
 // per-session agent memory + shared global agent (mirrors useProviders model logic)
@@ -40,21 +41,6 @@ function isAgentReachable(name: string, list: { name: string }[]): boolean {
 export type { CmdEntry } from "../lib/slashCommands";
 
 export function useOpencode() {
-  const [error, _setError] = useState("");
-  const setError = useCallback((v: string) => {
-    _setError((prev) => {
-      if (v && prev === v) {
-        queueMicrotask(() => _setError(v));
-        return "";
-      }
-      return v;
-    });
-  }, []);
-  useEffect(() => {
-    if (!error) return;
-    const t = setTimeout(() => _setError(""), 5000);
-    return () => clearTimeout(t);
-  }, [error]);
   const [sessions, setSessions] = useState<Session[]>([]);
   const [activeId, setActiveId] = useState("");
   const [msgs, setMsgs] = useState<Msg[]>([]);
@@ -186,7 +172,7 @@ export function useOpencode() {
   const [live, setLive] = useState(false);
   const [booting, setBooting] = useState(true);
 
-  const prov = useProviders(setError, activeId);
+  const prov = useProviders(activeId);
 
   const activeRef = useRef(activeId);
   activeRef.current = activeId;
@@ -230,7 +216,7 @@ export function useOpencode() {
         }),
       onSettle: (sid) => {
         tracker.markBusy(sid, false);
-        if (sid === activeRef.current) playSound("reply");
+        playSound("reply");
         flushRef.current(sid);
       },
     });
@@ -434,11 +420,9 @@ export function useOpencode() {
         body: { response },
       });
     } catch (e) {
-      setError(String(e));
+      pushToast(String(e));
     }
   }, []);
-
-  // when a session's effective mode leaves "user", flush its pending asks
   useEffect(() => {
     for (const ask of [...permissionsRef.current.values()]) {
       const mode = getSecurityModeFor(ask.sessionID);
@@ -694,6 +678,11 @@ export function useOpencode() {
           const part = p.part;
           if (!part) return;
           store.applyPart(part);
+          // sub-agent task finished — pull its cost so per-task chip + total update without waiting for poll
+          const ap = part as any;
+          if (ap.tool === "task" && ap.state?.status === "completed") {
+            setTimeout(() => void refreshChildrenRef.current(activeRef.current), 400);
+          }
           break;
         }
         case "message.part.delta": {
@@ -828,7 +817,11 @@ export function useOpencode() {
         case "session.created": {
           const s = p.info as Session | undefined;
           if (!s?.id) break;
-          if ((s as any).parentID) break;
+          const parent = (s as any).parentID;
+          if (parent) {
+            if (parent === activeRef.current) void refreshChildrenRef.current(activeRef.current);
+            break;
+          }
           if (hiddenSessions.has(s.id) || s.title === HIDDEN_TITLE) break;
           const dir = dirHint ?? getDirectory();
           sessionDirRef.current.set(s.id, dir);
@@ -845,7 +838,11 @@ export function useOpencode() {
           // first reply, pin/archive flags — must reach the sidebar live
           const s = p.info as Session | undefined;
           if (!s?.id) break;
-          if ((s as any).parentID) break;
+          const parent2 = (s as any).parentID;
+          if (parent2) {
+            if (parent2 === activeRef.current) void refreshChildrenRef.current(activeRef.current);
+            break;
+          }
           if (hiddenSessions.has(s.id) || s.title === HIDDEN_TITLE) break;
           const overrides = getTitleOverrides();
           const pinned = getPinned();
@@ -933,7 +930,7 @@ export function useOpencode() {
           // Rust now retries ports + waits for health (up to ~30s worst-case
           // on a contested port); give it a bit more than the old 20s.
           if (Date.now() - bootStarted > 30_000 && !disposed) {
-            setError(`Server not responding: ${e}`);
+            pushToast(`Server not responding: ${e}`);
             break;
           }
           // if the cached base was a dead port, clear it so the next
@@ -987,7 +984,7 @@ export function useOpencode() {
 
         if (!disposed) await prov.loadProviders(client).catch(() => {});
       } catch (e) {
-        if (!disposed) setError(`Connection error: ${e}`);
+        if (!disposed) pushToast(`Connection error: ${e}`);
       } finally {
         // command registry is optional chrome — never block boot on it
         refreshCommands().catch(() => {});
@@ -1122,6 +1119,61 @@ export function useOpencode() {
   // session-wide token/cost totals — summed from the authoritative store
   // (not the revert-filtered view) so rewinding doesn't rewrite history;
   // msgs in deps is the recompute trigger (the store mutates alongside it)
+  // + all descendant sub-agent sessions (via /session/{id}/children) so the
+  // footer shows the real spend, not just the primary agent.
+  const [activeChildren, setActiveChildren] = useState<Session[]>([]);
+  const refreshActiveChildren = useCallback(async (sid: string) => {
+    if (!sid) { setActiveChildren([]); return; }
+    try {
+      const dir = sessionDirRef.current.get(sid) ?? getDirectory();
+      const { client } = dir ? await opencodeFor(dir) : await opencode();
+      const r = await (client.session as any).children({ path: { id: sid } });
+      const raw = (r as any)?.data ?? (r as any)?.value ?? r;
+      const list: Session[] = Array.isArray(raw) ? raw : Array.isArray((r as any)?.data) ? (r as any).data : [];
+      // ponytail: one-level fetch; recurse if nesting matters (rare)
+      // fetch grandchildren best-effort so nested sub-agents are not missed
+      if (list.length) {
+        try {
+          const deeper = await Promise.all(list.map(async (c: any) => {
+            try {
+              const rr = await (client.session as any).children({ path: { id: c.id } });
+              const dd = (rr as any)?.data ?? (rr as any)?.value ?? [];
+              return Array.isArray(dd) ? dd : [];
+            } catch { return []; }
+          }));
+          const extra = deeper.flat() as Session[];
+          // dedup by id
+          const seen = new Set(list.map((s: any) => s.id));
+          for (const ch of extra) if (!seen.has((ch as any).id)) { seen.add((ch as any).id); list.push(ch); }
+        } catch {}
+      }
+      setActiveChildren(list);
+    } catch {
+      // keep previous on error (transient)
+    }
+  }, []);
+  const refreshChildrenRef = useRef(refreshActiveChildren);
+  useEffect(() => { refreshChildrenRef.current = refreshActiveChildren; }, [refreshActiveChildren]);
+  useEffect(() => {
+    if (!activeId) { setActiveChildren([]); return; }
+    void refreshActiveChildren(activeId);
+  }, [activeId, refreshActiveChildren]);
+  // while the session is busy sub-agents may still be streaming — poll the
+  // children cost every 3s so the total climbs live instead of snapping at the end
+  useEffect(() => {
+    if (!activeId || !busyIds.has(activeId)) return;
+    const iv = window.setInterval(() => void refreshActiveChildren(activeId), 3000);
+    return () => clearInterval(iv);
+  }, [activeId, busyIds, refreshActiveChildren]);
+  // when the turn settles (busy → idle) the last task's final cost lands right
+  // after the last delta — pull once more so total is not stale for 3s
+  const prevBusyRef = useRef(false);
+  useEffect(() => {
+    const was = prevBusyRef.current;
+    const isBusy = !!activeId && busyIds.has(activeId);
+    prevBusyRef.current = isBusy;
+    if (was && !isBusy && activeId) void refreshActiveChildren(activeId);
+  }, [busyIds, activeId, refreshActiveChildren]);
   const sessionUsage = useMemo(() => {
     const s = activeId ? store.cached(activeId) : null;
     let cost = 0;
@@ -1133,8 +1185,24 @@ export function useOpencode() {
       const t = info.tokens ?? {};
       tokens += (t.input ?? 0) + (t.output ?? 0) + (t.reasoning ?? 0);
     }
+    for (const ch of activeChildren) {
+      const c = ch as any;
+      cost += c.cost ?? 0;
+      const t = c.tokens ?? {};
+      tokens += (t.input ?? 0) + (t.output ?? 0) + (t.reasoning ?? 0);
+    }
     return { cost, tokens };
-  }, [msgs, activeId]);
+  }, [msgs, activeId, activeChildren]);
+  const childTaskCosts = useMemo(() => {
+    const m: Record<string, { cost: number; tokens: number; title?: string }> = {};
+    for (const ch of activeChildren) {
+      const c = ch as any;
+      const t = c.tokens ?? {};
+      const tok = (t.input ?? 0) + (t.output ?? 0) + (t.reasoning ?? 0);
+      m[c.id] = { cost: c.cost ?? 0, tokens: tok, title: c.title };
+    }
+    return m;
+  }, [activeChildren]);
 
   // fire a prompt on a specific session — callers ensure it isn't busy
   const promptNow = useCallback(
@@ -1162,9 +1230,9 @@ export function useOpencode() {
         await (client.session as any).promptAsync({ path: { id: sid }, body });
       } catch (e) {
         tracker.markBusy(sid, false);
-        // surface it in the history (synthetic error bubble) + the banner
+        // surface it in the history (synthetic error bubble) + toast
         store.addError(sid, String(e));
-        setError(String(e));
+        pushToast(String(e));
       }
     },
     [prov.modelSel, prov.variantSel, agentSel],
@@ -1229,7 +1297,7 @@ export function useOpencode() {
           path: { id: perm.sessionID, permissionID: perm.id },
           body: { response },
         })
-        .catch((e) => setError(String(e)));
+        .catch((e) => pushToast(String(e)));
     },
     [permission, syncAttention],
   );
@@ -1249,9 +1317,9 @@ export function useOpencode() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ answers }),
         });
-        if (!r.ok) setError(`Failed to send answer (${r.status})`);
+        if (!r.ok) pushToast(`Failed to send answer (${r.status})`);
       } catch (e) {
-        setError(String(e));
+        pushToast(String(e));
       }
     },
     [question, syncAttention],
@@ -1414,7 +1482,7 @@ export function useOpencode() {
         revertId,
         isBusy: (id) => busyRef.current.has(id),
         setBusy: (id, on) => tracker.markBusy(id, on),
-        setError,
+        setError: pushToast,
         openDialog: setDialog,
         onRegistryCommand: () => {
           prov.sentExplicitModel.current = false;
@@ -1712,7 +1780,6 @@ export function useOpencode() {
   const compacting = compactingIds.has(activeId);
 
   return {
-    error,
     live,
     booting,
     sessions,
@@ -1758,6 +1825,9 @@ export function useOpencode() {
     modelCaps: prov.modelCaps,
     queueCounts,
     sessionUsage,
+    activeChildren,
+    childTaskCosts,
+    refreshActiveChildren,
     abort,
     respondToPermission,
     securityMode,

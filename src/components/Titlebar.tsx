@@ -16,6 +16,9 @@ export default function Titlebar({
   talking,
   debriefing,
   titlebarExtras,
+  onToggleAgents,
+  agentsOpen,
+  agentsHotkey,
 }: {
   pinned?: boolean;
   onTogglePin?: () => void;
@@ -29,6 +32,9 @@ export default function Titlebar({
   debriefing?: boolean;
   // plugin-provided titlebar icons (e.g. Notepad) rendered before Settings
   titlebarExtras?: React.ReactNode;
+  onToggleAgents?: () => void;
+  agentsOpen?: boolean;
+  agentsHotkey?: string | null;
 }) {
   // invisible drag bar: when a dialog/drawer scrim covers the titlebar, its
   // presses would normally die on the dim layer. This capture listener
@@ -87,6 +93,14 @@ export default function Titlebar({
       </div>
       <div className="win-controls">
         {titlebarExtras}
+        <button
+          className={`icon-btn${agentsOpen ? " on" : ""}`}
+          data-tip={agentsHotkey ? `Agents (${agentsHotkey})` : "Agents"}
+          aria-pressed={!!agentsOpen}
+          onClick={() => onToggleAgents?.()}
+        >
+          <i className="fa-solid fa-diagram-project" />
+        </button>
         <button className="icon-btn" data-tip={hasPluginUpdate ? "Plugins — updates available" : "Plugins"} onClick={() => onOpenPlugins?.()}>
           <i className="fa-solid fa-puzzle-piece" />
           {hasPluginUpdate && <span className="plugin-update-dot" aria-hidden="true" />}

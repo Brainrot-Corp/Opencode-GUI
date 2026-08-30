@@ -53,6 +53,253 @@ function AnsweredSummary({ text }: { text: string }) {
   );
 }
 
+// <task id="..." state="completed"><task_result>...markdown...</task_result></task>
+// appears as a fenced perl block in text parts. Render it like other tool
+// calls — tool-block chrome with markdown body instead of raw XML/dump.
+const TASK_RE = /(?:```\w*\s*)?<task\b[^>]*>[\s\S]*?<\/task>(?:\s*```)?/gi;
+
+function extractTaskEntries(text: string): { id?: string; state?: string; result: string; raw: string }[] | null {
+  const out: { id?: string; state?: string; result: string; raw: string }[] = [];
+  let m: RegExpExecArray | null;
+  const re = new RegExp(TASK_RE.source, "gi");
+  while ((m = re.exec(text))) {
+    const raw = m[0];
+    const id = raw.match(/\bid\s*=\s*["']([^"']+)["']/)?.[1] ?? raw.match(/\bid\s*=\s*([^\s>]+)/)?.[1];
+    const state = raw.match(/\bstate\s*=\s*["']([^"']+)["']/)?.[1] ?? raw.match(/\bstate\s*=\s*([^\s>]+)/)?.[1];
+    const inner = raw.match(/<task_result>([\s\S]*?)<\/task_result>/i)?.[1]
+      ?? raw.replace(/<task\b[^>]*>/i, "").replace(/<\/task>/i, "").replace(/```\w*\s*/g, "").replace(/```/g, "").trim();
+    out.push({ id, state, result: inner.trim(), raw });
+  }
+  return out.length ? out : null;
+}
+
+function TaskResultBlock({
+  id,
+  state,
+  result,
+  collapsedDefault,
+  taskCosts,
+}: {
+  id?: string;
+  state?: string;
+  result: string;
+  collapsedDefault?: boolean;
+  taskCosts?: Record<string, { cost: number; tokens: number }>;
+}) {
+  const [manual, setManual] = useState<boolean | null>(null);
+  const isErr = state === "failed" || state === "error";
+  const open = manual ?? (isErr || !collapsedDefault);
+  const [copied, setCopied] = useState(false);
+  const doCopy = () => {
+    if (!result.trim()) return;
+    navigator.clipboard.writeText(result).then(
+      () => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1200);
+      },
+      () => {},
+    );
+  };
+  const shortId = id ? (id.length > 20 ? `${id.slice(0, 8)}…${id.slice(-4)}` : id) : "";
+  return (
+    <div className={`tool-block task-result ${state ?? ""}${open ? " open" : ""}${isErr ? " error" : ""}`}>
+      <div
+        role="button"
+        tabIndex={0}
+        className="tool-head mono"
+        onClick={() => setManual(!open)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            setManual(!open);
+          }
+        }}
+      >
+        <i
+          className={`fa-solid ${isErr ? "fa-triangle-exclamation" : state === "completed" ? "fa-circle-check" : "fa-diagram-project"} tool-ico`}
+        />
+        <span className="tool-name">task</span>
+        {shortId && (
+          <span className="tool-title" data-tip={id}>
+            {shortId}
+          </span>
+        )}
+        {state && (
+          <span className="tool-stat mono">
+            <em className={isErr ? "del" : ""}>{state}</em>
+          </span>
+        )}
+        {(() => {
+          const tc = id ? taskCosts?.[id] : null;
+          if (!tc || (!tc.cost && !tc.tokens)) return null;
+          const tok = tc.tokens ? fmtTok(tc.tokens) : "";
+          return (
+            <span className="tool-cost mono" data-tip={`${tc.tokens.toLocaleString()} tokens${tc.cost ? ` · $${tc.cost.toFixed(4)}` : ""}`}>
+              {tok && `${tok} tok`}
+              {tok && tc.cost ? " · " : ""}
+              {tc.cost ? `$${tc.cost.toFixed(4)}` : ""}
+            </span>
+          );
+        })()}
+        <span style={{ flex: 1 }} />
+        {result.trim() && (
+          <button
+            type="button"
+            className="tool-eye"
+            data-tip={copied ? "Copied" : "Copy result"}
+            aria-label="Copy task result"
+            onClick={(e) => {
+              e.stopPropagation();
+              doCopy();
+            }}
+          >
+            <i className={`fa-solid ${copied ? "fa-check" : "fa-copy"}`} />
+          </button>
+        )}
+        <button
+          type="button"
+          className="tool-eye"
+          data-tip={open ? "Collapse" : "Expand"}
+          aria-label={open ? "Collapse" : "Expand"}
+          onClick={(e) => {
+            e.stopPropagation();
+            setManual(!open);
+          }}
+        >
+          <i className={`fa-solid ${open ? "fa-eye" : "fa-eye-slash"}`} />
+        </button>
+      </div>
+      {open && (
+        <div className="tool-body mono">
+          {result.trim() ? (
+            <div className="task-report">
+              <Markdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]} components={mdComponents}>
+                {result}
+              </Markdown>
+            </div>
+          ) : (
+            <span className="part-note mono" style={{ opacity: 0.6 }}>
+              no result
+            </span>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TaskMixed({ text, collapsedDefault, taskCosts }: { text: string; collapsedDefault: boolean; taskCosts?: Record<string, { cost: number; tokens: number }> }) {
+  const parts: React.ReactNode[] = [];
+  let last = 0;
+  let idx = 0;
+  const re = new RegExp(TASK_RE.source, "gi");
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text))) {
+    const before = text.slice(last, m.index);
+    if (before.trim()) {
+      parts.push(
+        <Markdown
+          key={`pre-${idx++}`}
+          remarkPlugins={[remarkGfm]}
+          rehypePlugins={[rehypeHighlight]}
+          components={mdComponents}
+        >
+          {before}
+        </Markdown>,
+      );
+    }
+    const raw = m[0];
+    const id = raw.match(/\bid\s*=\s*["']([^"']+)["']/)?.[1] ?? raw.match(/\bid\s*=\s*([^\s>]+)/)?.[1];
+    const state = raw.match(/\bstate\s*=\s*["']([^"']+)["']/)?.[1] ?? raw.match(/\bstate\s*=\s*([^\s>]+)/)?.[1];
+    const result =
+      raw.match(/<task_result>([\s\S]*?)<\/task_result>/i)?.[1]?.trim() ??
+      raw.replace(/<task\b[^>]*>/i, "").replace(/<\/task>/i, "").replace(/```\w*\s*/g, "").replace(/```/g, "").trim();
+    parts.push(
+      <TaskResultBlock
+        key={`task-${idx++}`}
+        id={id}
+        state={state}
+        result={result}
+        collapsedDefault={collapsedDefault}
+        taskCosts={taskCosts}
+      />,
+    );
+    last = re.lastIndex;
+  }
+  const after = text.slice(last);
+  if (after.trim()) {
+    parts.push(
+      <Markdown
+        key={`post-${idx++}`}
+        remarkPlugins={[remarkGfm]}
+        rehypePlugins={[rehypeHighlight]}
+        components={mdComponents}
+      >
+        {after}
+      </Markdown>,
+    );
+  }
+  return <>{parts}</>;
+}
+
+function SubtaskBlock({ part, collapsedDefault }: { part: any; collapsedDefault: boolean }) {
+  const [manual, setManual] = useState<boolean | null>(null);
+  const prompt: string = typeof part.prompt === "string" ? part.prompt : "";
+  const desc: string = typeof part.description === "string" ? part.description : "";
+  const name: string = part.name ?? part.agent ?? "agent";
+  const isSub = part.type === "subtask";
+  const hasBody = !!prompt.trim();
+  const open = manual ?? (!collapsedDefault && hasBody);
+  return (
+    <div className={`tool-block subtask${open ? " open" : ""}`}>
+      <div
+        role="button"
+        tabIndex={0}
+        className="tool-head mono"
+        onClick={() => hasBody && setManual(!open)}
+        onKeyDown={(e) => {
+          if (!hasBody) return;
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            setManual(!open);
+          }
+        }}
+        style={!hasBody ? { cursor: "default" } : undefined}
+      >
+        <i className="fa-solid fa-diagram-project tool-ico" />
+        <span className="tool-name">{isSub ? "subtask" : "agent"}</span>
+        <span className="tool-title">{name}</span>
+        {desc && (
+          <span className="tool-title" style={{ opacity: 0.65 }}>
+            — {desc}
+          </span>
+        )}
+        {hasBody && (
+          <button
+            type="button"
+            className="tool-eye"
+            data-tip={open ? "Collapse" : "Expand"}
+            aria-label={open ? "Collapse" : "Expand"}
+            onClick={(e) => {
+              e.stopPropagation();
+              setManual(!open);
+            }}
+          >
+            <i className={`fa-solid ${open ? "fa-eye" : "fa-eye-slash"}`} />
+          </button>
+        )}
+      </div>
+      {open && hasBody && (
+        <div className="tool-body mono">
+          <div className="task-report" style={{ whiteSpace: "pre-wrap" }}>
+            {prompt}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // fenced code block with a fast copy button — textContent is read at click
 // time so highlight spans / inline markup can never corrupt the copied source
 function CodePre(props: React.HTMLAttributes<HTMLPreElement> & { node?: unknown }) {
@@ -152,11 +399,17 @@ function renderPart(
   key: number,
   collapsedDefault?: boolean,
   onImage?: (url: string) => void,
+  taskCosts?: Record<string, { cost: number; tokens: number }>,
 ) {
   if (part.type === "text") {
     const t = (part as any).text ?? "";
     if (!t.trim()) return null;
     if (parseAnsweredSummary(t)) return <AnsweredSummary key={key} text={t} />;
+    // agent final reports land as fenced <task> XML — render them in the
+    // same collapsible tool-block chrome instead of raw code dump
+    if (/<task\b/i.test(t) && extractTaskEntries(t)) {
+      return <TaskMixed key={key} text={t} collapsedDefault={!!collapsedDefault} taskCosts={taskCosts} />;
+    }
     return (
       <Markdown key={key} remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]} components={mdComponents}>
         {t}
@@ -167,7 +420,7 @@ function renderPart(
     return <Reasoning key={(part as any).id || key} part={part} defaultOpen={!collapsedDefault} />;
   }
   if (part.type === "tool") {
-    return <ToolBlock key={(part as any).id || key} part={part} collapsedDefault={!!collapsedDefault} />;
+    return <ToolBlock key={(part as any).id || key} part={part} collapsedDefault={!!collapsedDefault} taskCosts={taskCosts} />;
   }
   if (part.type === "step-finish") {
     const sf = part as any;
@@ -219,14 +472,7 @@ function renderPart(
     );
   }
   if (part.type === "agent" || part.type === "subtask") {
-    const a = part as any;
-    return (
-      <div key={key} className="part-note mono">
-        <i className="fa-solid fa-robot" />
-        {a.name || a.agent}
-        {a.description ? ` — ${a.description}` : ""}
-      </div>
-    );
+    return <SubtaskBlock key={(part as any).id || key} part={part as any} collapsedDefault={!!collapsedDefault} />;
   }
   if (part.type === "file") {
     const f = part as any;
@@ -296,12 +542,14 @@ const MsgRow = memo(function MsgRow({
   onRevert,
   onFork,
   onImage,
+  taskCosts,
 }: {
   m: Msg;
   collapsed?: boolean;
   onRevert?: (messageID: string) => void;
   onFork?: (messageID: string) => void;
   onImage?: (url: string) => void;
+  taskCosts?: Record<string, { cost: number; tokens: number }>;
 }) {
   const err = m.info.role === "assistant" ? (m.info as any).error : null;
   const showErr = err && err.name !== "MessageAbortedError";
@@ -339,7 +587,7 @@ const MsgRow = memo(function MsgRow({
           <span>{errText(err)}</span>
         </div>
       )}
-      {m.parts.map((part, i) => renderPart(part, i, collapsed, onImage))}
+      {m.parts.map((part, i) => renderPart(part, i, collapsed, onImage, taskCosts))}
       {short && (
         <div className="msg-time" data-tip={full} data-tip-cursor="">
           <i className="fa-solid fa-clock" />
@@ -371,6 +619,7 @@ export default function MessageList({
   onFindClose,
   onFindNext,
   onFindPrev,
+  taskCosts,
 }: {
   msgs: Msg[];
   busy: boolean;
@@ -392,6 +641,7 @@ export default function MessageList({
   onFindClose?: () => void;
   onFindNext?: () => void;
   onFindPrev?: () => void;
+  taskCosts?: Record<string, { cost: number; tokens: number }>;
 }) {
   const [lightbox, setLightbox] = useState<string | null>(null);
   useEffect(() => {
@@ -656,7 +906,7 @@ export default function MessageList({
         )}
         {!loading && msgs.length === 0 && !busy && <p className="empty">Say something…</p>}
         {msgs.filter(rowVisible).map((m) => (
-          <MsgRow key={m.info.id} m={m} collapsed={collapsed} onRevert={onRevert} onFork={onFork} onImage={setLightbox} />
+          <MsgRow key={m.info.id} m={m} collapsed={collapsed} onRevert={onRevert} onFork={onFork} onImage={setLightbox} taskCosts={taskCosts} />
         ))}
         {compacting && (
           <div className="compacting">

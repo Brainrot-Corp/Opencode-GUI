@@ -14,24 +14,10 @@ import {
   syncPluginVocabAndSlash,
   type LoadedPlugin,
 } from "../lib/plugins";
+import { pushToast } from "./useToast";
 
 export function usePlugins() {
   const [plugins, setPlugins] = useState<LoadedPlugin[]>([]);
-  const [error, _setError] = useState("");
-  const setError = useCallback((v: string) => {
-    _setError((prev) => {
-      if (v && prev === v) {
-        queueMicrotask(() => _setError(v));
-        return "";
-      }
-      return v;
-    });
-  }, []);
-  useEffect(() => {
-    if (!error) return;
-    const t = setTimeout(() => _setError(""), 5000);
-    return () => clearTimeout(t);
-  }, [error]);
   const prevRef = useRef<Map<string, LoadedPlugin>>(new Map());
 
   const clearDiscord = useCallback(() => {
@@ -81,7 +67,7 @@ export function usePlugins() {
     // also seed prev on first load from current ps (already done via comparison)
     setPlugins(ps);
     const errs = ps.filter((p) => p.error);
-    setError(errs.length ? errs.map((p) => `${p.name}: ${p.error}`).join(" · ") : "");
+    if (errs.length) pushToast(errs.map((p) => `${p.name}: ${p.error}`).join(" · "));
   }, [clearDiscord]);
 
   useEffect(() => {
@@ -115,7 +101,7 @@ export function usePlugins() {
           syncPluginVocabAndSlash(next);
           prevRef.current = new Map(next.map((p) => [p.id, p] as const));
           const errs = next.filter((p) => p.error);
-          setError(errs.length ? errs.map((p) => `${p.name}: ${p.error}`).join(" · ") : "");
+          if (errs.length) pushToast(errs.map((p) => `${p.name}: ${p.error}`).join(" · "));
           return next;
         });
         if (id === "discord-rich-presence") clearDiscord();
@@ -138,7 +124,7 @@ export function usePlugins() {
             syncPluginVocabAndSlash(next);
             prevRef.current = new Map(next.map((x) => [x.id, x] as const));
             const errs = next.filter((x) => x.error);
-            setError(errs.length ? errs.map((x) => `${x.name}: ${x.error}`).join(" · ") : "");
+            if (errs.length) pushToast(errs.map((x) => `${x.name}: ${x.error}`).join(" · "));
             return next;
           });
           return;
@@ -161,5 +147,5 @@ export function usePlugins() {
   const titlebarItems = plugins.flatMap((p) => (p.disabled ? [] : p.ext?.Titlebar ? [p.ext] : []));
   const overlays = plugins.flatMap((p) => (p.disabled ? [] : p.ext?.Overlay ? [p.ext] : []));
 
-  return { plugins, exts, sections, sidebarWidgets, titlebarItems, overlays, error, reload, toggleEnabled, removeDisabled };
+  return { plugins, exts, sections, sidebarWidgets, titlebarItems, overlays, reload, toggleEnabled, removeDisabled };
 }

@@ -10,6 +10,7 @@ export type HotkeyId =
   | "pinOnTop"
   | "newSession"
   | "toggleTerm"
+  | "toggleAgents"
   | "cycleNext"
   | "cyclePrev"
   | "closeSession"
@@ -57,6 +58,7 @@ export const DEFAULT_HOTKEYS: HotkeysMap = {
   pinOnTop: "Ctrl+P",
   newSession: "Ctrl+N",
   toggleTerm: "Ctrl+`",
+  toggleAgents: "Alt+A",
   cycleNext: "Ctrl+Tab",
   cyclePrev: "Ctrl+Shift+Tab",
   closeSession: "Ctrl+W",
@@ -85,6 +87,7 @@ export const HOTKEY_META: Record<HotkeyId, { group: string; desc: string }> = {
   newWindow: { group: "In the app", desc: "open new window" },
   pinOnTop: { group: "In the app", desc: "pin window on top" },
   toggleTerm: { group: "In the app", desc: "toggle terminal" },
+  toggleAgents: { group: "In the app", desc: "toggle agents board" },
   newSession: { group: "In the app", desc: "new session" },
   cycleNext: { group: "In the app", desc: "next session" },
   cyclePrev: { group: "In the app", desc: "previous session" },
@@ -115,6 +118,7 @@ export const HOTKEY_ORDER: HotkeyId[] = [
   "newWindow",
   "pinOnTop",
   "toggleTerm",
+  "toggleAgents",
   "newSession",
   "cycleNext",
   "cyclePrev",

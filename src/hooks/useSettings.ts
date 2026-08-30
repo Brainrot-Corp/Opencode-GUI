@@ -15,6 +15,7 @@ import {
   type ThemeMeta,
 } from "../lib/themes";
 import { DEFAULT_HOTKEYS, normalizeBinding, type HotkeysMap, type PluginHotkeysMap } from "../lib/hotkeys";
+import { pushToast } from "./useToast";
 
 export type ThemeName = string;
 export type Mode = "dark" | "light";
@@ -377,21 +378,6 @@ export function useSettings() {
 
   // available themes — seeded from config at boot, hot-reloaded on file change
   const [themes, setThemes] = useState<Record<string, NormalizedTheme>>({});
-  const [themeError, _setThemeError] = useState("");
-  const setThemeError = useCallback((v: string) => {
-    _setThemeError((prev) => {
-      if (v && prev === v) {
-        queueMicrotask(() => _setThemeError(v));
-        return "";
-      }
-      return v;
-    });
-  }, []);
-  useEffect(() => {
-    if (!themeError) return;
-    const t = setTimeout(() => _setThemeError(""), 5000);
-    return () => clearTimeout(t);
-  }, [themeError]);
 
   useEffect(() => {
     let disposed = false;
@@ -400,9 +386,8 @@ export function useSettings() {
         if (disposed) return;
         if (parsed) {
           setThemes(parsed);
-          setThemeError("");
         } else {
-          setThemeError("themes.json is invalid — keeping the last good set");
+          pushToast("themes.json is invalid — keeping the last good set");
         }
       });
     reload();
@@ -617,12 +602,11 @@ export function useSettings() {
       const parsed = parseThemesConfig(text);
       if (parsed) {
         setThemes(parsed);
-        setThemeError("");
       }
     } catch (e) {
-      setThemeError(String(e));
+      pushToast(String(e));
     }
-  }, [setThemeError]);
+  }, []);
 
   return {
     settings,
@@ -633,7 +617,6 @@ export function useSettings() {
     resetColors,
     resetThemes,
     themes: themeList,
-    themeError,
     activeModes,
     effectiveMode,
     colorsFor: mergedColorsFor,

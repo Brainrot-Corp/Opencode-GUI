@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { playSound } from "../lib/sounds";
 import { splitModel } from "../lib/models";
+import { pushToast } from "./useToast";
 import type { ProviderGroup } from "../types";
 
 type OcClient = Awaited<ReturnType<typeof import("../api").opencode>>["client"];
@@ -20,7 +21,7 @@ function isReachable(model: string, groups: ProviderGroup[]): boolean {
   return groups.some((g) => g.id === pid && g.models.some((m) => m.id === mid));
 }
 
-export function useProviders(onError: (msg: string) => void, activeId: string) {
+export function useProviders(activeId: string) {
   const activeIdRef = useRef(activeId);
   useEffect(() => { activeIdRef.current = activeId; }, [activeId]);
   const [providers, setProviders] = useState<ProviderGroup[]>([]);
@@ -293,10 +294,10 @@ export function useProviders(onError: (msg: string) => void, activeId: string) {
         }
       } catch (e) {
         // provider listing is optional, but show why it failed
-        onError(`Failed to load models: ${e}`);
+        pushToast(`Failed to load models: ${e}`);
       }
     },
-    [onError],
+    [],
   );
 
   // thinking-effort options for the selected model

@@ -5,6 +5,7 @@ import "@fortawesome/fontawesome-free/css/all.min.css";
 import "./styles/tokens.css";
 import "./styles/syntax.css";
 import "./styles/layout.css";
+import "./styles/toast.css";
 import { getDirectory, setDirectory } from "./api";
 
 // debug local builds use http://localhost:1420 origin — localStorage there is

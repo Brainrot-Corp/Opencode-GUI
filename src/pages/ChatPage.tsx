@@ -21,6 +21,7 @@ const Onboarding = lazy(() => import("../components/Onboarding"));
 const FileEditorHost = lazy(() => import("../components/FileEditorHost"));
 const TerminalPanel = lazy(() => import("../components/Terminal"));
 import { HelpDialog, ShareDialog, VariantsDialog } from "../components/CommandDialog";
+import AgentBoard from "../components/AgentBoard";
 import { useOpencode } from "../hooks/useOpencode";
 import { useSettings } from "../hooks/useSettings";
 import { useGlobalShortcuts } from "../hooks/useGlobalShortcuts";
@@ -53,13 +54,12 @@ export default function ChatPage() {
     resetColors,
     resetThemes,
     themes,
-    themeError,
     activeModes,
     effectiveMode,
     colorsFor,
   } = useSettings();
-  // runtime plugins — voice intents, sidebar/titlebar widgets, overlays, error banner
-  const { plugins, exts, sidebarWidgets, titlebarItems, overlays, error: pluginError, toggleEnabled, removeDisabled } = usePlugins();
+  // runtime plugins — voice intents, sidebar/titlebar widgets, overlays
+  const { plugins, exts, sidebarWidgets, titlebarItems, overlays, toggleEnabled, removeDisabled } = usePlugins();
   // spoken replies / narration / debrief — the whole piper voice pipeline
   const { talking, debriefing, announce, pauseSpeech } = useSpeech(
     { msgs: oc.msgs, busy: oc.busy, permission: oc.permission, providers: oc.providers },
@@ -136,6 +136,7 @@ export default function ChatPage() {
     return Math.min(Math.max(280, w), 440);
   });
   const [sbClosed, setSbClosed] = useState(() => localStorage.getItem(SB_C_KEY) === "1");
+  const [agentsOpen, setAgentsOpen] = useState(() => localStorage.getItem("oc.agentBoard.open") === "1");
   // chat history find — routed when composer not focused and file not last active
   const [chatFindOpen, setChatFindOpen] = useState(false);
   const [chatFindQuery, setChatFindQuery] = useState("");
@@ -229,6 +230,7 @@ export default function ChatPage() {
     });
   }, []);
 
+  const toggleAgents = useCallback(() => setAgentsOpen(v => !v), []);
   const { stopArmed, clearStopArmed } = useGlobalShortcuts({
     settings,
     update,
@@ -255,6 +257,7 @@ export default function ChatPage() {
       }
       void (oc as any).newSession();
     },
+    onToggleAgents: toggleAgents,
   });
   usePluginHotkeys({ settings, plugins });
 
@@ -950,6 +953,9 @@ export default function ChatPage() {
           hasPluginUpdate={hasPluginUpdate}
           talking={talking}
           debriefing={debriefing}
+          onToggleAgents={toggleAgents}
+          agentsOpen={agentsOpen}
+          agentsHotkey={settings.hotkeys.toggleAgents}
           titlebarExtras={
             titlebarItems.length ? (
               <>
@@ -1070,24 +1076,6 @@ export default function ChatPage() {
             }
           />
           <div className="main">
-            {oc.error && (
-              <div key={oc.error} className="banner">
-                <span>{oc.error}</span>
-                <div className="banner-progress" aria-hidden />
-              </div>
-            )}
-            {themeError && (
-              <div key={themeError} className="banner">
-                <span>{themeError}</span>
-                <div className="banner-progress" aria-hidden />
-              </div>
-            )}
-            {pluginError && (
-              <div key={pluginError} className="banner">
-                <span>{pluginError}</span>
-                <div className="banner-progress" aria-hidden />
-              </div>
-            )}
             {!oc.activeId && !oc.booting && (
               <div className="messages">
                 <p className="empty">
@@ -1118,6 +1106,7 @@ export default function ChatPage() {
                   onRevert={oc.revertTo}
                   onFork={oc.forkFrom}
                   sessionId={oc.activeId}
+                  taskCosts={(oc as any).childTaskCosts}
                   findOpen={chatFindOpen}
                   findQuery={chatFindQuery}
                   findCase={chatFindCase}
@@ -1245,6 +1234,17 @@ export default function ChatPage() {
           />
         )}
         {diffOpen && oc.activeId && <DiffPanel sessionId={oc.activeId} onClose={() => setDiffOpen(false)} />}
+        <AgentBoard
+          open={agentsOpen}
+          onClose={() => setAgentsOpen(false)}
+          sessions={oc.sessions}
+          busyIds={oc.busyIds}
+          compactingIds={oc.compactingIds}
+          attentionIds={oc.attentionIds}
+          agents={oc.agents}
+          getDirForSession={(id: string) => (oc as any).getDirForSession?.(id) ?? ""}
+          onOpenSession={(id) => void oc.openSession(id)}
+        />
         <Suspense fallback={null}>
           <FileEditorHost hotkeys={settings.hotkeys} />
         </Suspense>

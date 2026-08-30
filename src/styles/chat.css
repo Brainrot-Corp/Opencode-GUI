@@ -1020,3 +1020,25 @@
   width: auto;
   padding: 0 6px;
 }
+
+/* agent final reports (fenced <task> XML) reuse tool-block chrome */
+.tool-block.task-result {
+  border-left-color: color-mix(in srgb, var(--accent) 38%, transparent);
+}
+.tool-block.task-result.completed {
+  border-left-color: color-mix(in srgb, var(--accent) 60%, transparent);
+}
+.tool-block.task-result.error,
+.tool-block.task-result.failed {
+  border-left-color: var(--danger);
+}
+.tool-block.subtask {
+  border-left-color: color-mix(in srgb, var(--accent) 28%, transparent);
+}
+.msg .tool-cost {
+  flex-shrink: 0;
+  font-size: 10px;
+  color: var(--accent);
+  text-shadow: 0 0 7px var(--accent-glow);
+  white-space: nowrap;
+}
