@@ -280,3 +280,190 @@
   flex: 1;
   min-width: 0;
 }
+
+/* ── voice + commands redesign ────────────────────────────────── */
+.vc-tip {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 2px 0 4px;
+  padding: 8px 10px;
+  background: color-mix(in srgb, var(--accent) calc(0.06 * 100%), var(--inset-bg));
+  border: 1px solid color-mix(in srgb, var(--accent) calc(0.14 * 100%), var(--line));
+  border-left: 2px solid color-mix(in srgb, var(--accent) calc(0.55 * 100%), transparent);
+  font-family: var(--sans);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-dim);
+}
+.vc-tip i {
+  flex: none;
+  margin-top: 1px;
+  font-size: 11px;
+  color: var(--accent);
+  opacity: 0.9;
+}
+.vc-tip strong {
+  color: var(--text);
+  font-weight: 600;
+}
+.vc-search {
+  padding: 2px 0 4px;
+}
+.vc-search .model-search-wrap {
+  position: relative;
+  top: auto;
+  margin: 0;
+  background: var(--inset-bg);
+  border: 1px solid var(--line);
+}
+.vc-search .model-search-wrap:focus-within {
+  border-color: color-mix(in srgb, var(--accent) calc(0.35 * 100%), transparent);
+  box-shadow: 0 0 10px -6px var(--accent-glow);
+}
+.vc-search .model-search {
+  font-size: 11.5px;
+}
+.vc-empty {
+  padding: 14px 10px;
+  text-align: center;
+  font-family: var(--sans);
+  font-size: 11.5px;
+  color: var(--text-faint);
+  background: var(--inset-bg);
+  border: 1px dashed var(--line);
+}
+
+/* outer frame — whole content englobed like .browse-list in plugins/voices */
+.vc-frame {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px;
+  background: var(--inset-bg);
+  border: 1px solid var(--line);
+}
+
+/* section — collapsable card group */
+.vc-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 0;
+}
+.vc-section.collapsed .vc-list {
+  display: none;
+}
+.vc-section-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 2px 0;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  cursor: pointer;
+  user-select: none;
+  background: none;
+  border: none;
+  width: 100%;
+  text-align: left;
+  transition: color 0.15s var(--ease);
+}
+.vc-section-head:hover {
+  color: var(--text);
+}
+.vc-section-head i {
+  width: 14px;
+  text-align: center;
+  font-size: 11px;
+  color: var(--accent);
+  opacity: 0.9;
+  flex: none;
+}
+.vc-section-head .vc-chevron {
+  width: 10px;
+  font-size: 8px;
+  color: var(--text-faint);
+  transition: transform 0.15s var(--ease);
+}
+.vc-section.collapsed .vc-chevron {
+  transform: rotate(-90deg);
+}
+.vc-section-head .vc-count {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 400;
+  letter-spacing: 0.06em;
+  color: var(--text-faint);
+  background: color-mix(in srgb, var(--accent) calc(0.08 * 100%), transparent);
+  border: 1px solid var(--line);
+  padding: 1px 5px;
+  border-radius: 4px;
+  flex: none;
+}
+.vc-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* row: plugin-row-style card — each content englobed like .plugin-row */
+.vc-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 9px 10px 8px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  transition: border-color 0.2s var(--ease), background 0.2s var(--ease);
+}
+.vc-row:hover {
+  background: color-mix(in srgb, var(--surface) 96%, var(--accent) 4%);
+  border-color: color-mix(in srgb, var(--accent) calc(0.18 * 100%), var(--line));
+}
+.vc-name {
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--accent-bright);
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  white-space: normal;
+}
+.vc-or {
+  font-family: var(--sans);
+  font-size: 11px;
+  color: var(--text-faint);
+  margin: 0 4px;
+}
+.vc-desc {
+  font-family: var(--sans);
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--text-dim);
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  white-space: normal;
+}
+.vc-ex {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  line-height: 1.4;
+  color: var(--text-faint);
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  white-space: normal;
+}
+.vc-ex span {
+  color: var(--text-dim);
+}
+.vc-ex i {
+  margin-right: 4px;
+  font-size: 9px;
+  opacity: 0.7;
+}

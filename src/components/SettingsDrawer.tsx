@@ -15,7 +15,7 @@ import VoicesDialog from "./VoicesDialog";
 import Onboarding from "./Onboarding";
 import AppearanceSettings from "./AppearanceSettings";
 import SoundsSettings from "./SoundsSettings";
-import InfoDialog, { HotkeysTab } from "./InfoDialog";
+import InfoDialog from "./InfoDialog";
 import type { ProviderGroup } from "../types";
 import "../styles/settings.css";
 
@@ -680,28 +680,6 @@ export default function SettingsDrawer({
                 </button>
               </div>
               {debugLocalErr && <div className="voice-err mono-hint" style={{ marginTop: "4px" }}>{debugLocalErr}</div>}
-            </div>
-          </section>
-
-          {/* ── Keybinds ── */}
-          <section className="settings-section" aria-label="Keybinds">
-            <div className="settings-section-title">
-              <i className="fa-solid fa-keyboard" /> Keybinds
-            </div>
-            <div className="setting-row">
-              <div className="setting-info">
-                <i className="fa-solid fa-keyboard setting-icon" />
-                <div>
-                  <div className="setting-name">Hotkeys</div>
-                  <div className="setting-desc">Click a binding to rebind — Esc to clear (unbound = disabled). Includes Editor and plugin hotkeys.</div>
-                </div>
-              </div>
-              <button type="button" className="reset-btn" data-tip="Open full hotkeys reference" onClick={() => setInfoOpen(true)}>
-                <i className="fa-solid fa-circle-info" /> Info
-              </button>
-            </div>
-            <div style={{ padding: "0 6px" }}>
-              <HotkeysTab settings={settings} update={update} plugins={plugins} />
             </div>
           </section>
 

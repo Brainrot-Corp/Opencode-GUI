@@ -57,18 +57,42 @@ export async function serverFetchFor(dir: string, path: string, init?: RequestIn
 }
 
 // a rejected invoke must not stay cached, or silent-retry boot would spin
-// on the same failure forever
+// on the same failure forever. Retry once quickly: the Rust side now waits
+// for the port to be listening, but a cold start can still take a few hundred
+// ms after setup; a transient invoke error shouldn't hard-fail the boot.
 export function opencode() {
-  cached ??= invoke<string>("server_url")
-    .then((base) => ({
+  if (cached) return cached;
+  const attempt = () =>
+    invoke<string>("server_url").then((base) => ({
       base,
       client: wrap(createOpencodeClient({ baseUrl: base })),
-    }))
-    .catch((e) => {
+    }));
+  cached = attempt().catch((e) => {
+    // one quick retry before surfacing — handles the narrow window where the
+    // frontend mounts before Rust's spawn_server health check has returned
+    return new Promise<{ base: string; client: ReturnType<typeof createOpencodeClient> }>((res, rej) => {
+      setTimeout(() => {
+        attempt().then(res).catch((e2) => {
+          cached = null;
+          rej(e2);
+        });
+      }, 400);
+    }).catch((e2) => {
       cached = null;
-      throw e;
+      throw e2 ?? e;
     });
+  }).catch((e) => {
+    cached = null;
+    throw e;
+  });
+  // ensure a later failure clears the slot (the inner catch already does for
+  // the retry path; this covers the success-then-failure edge)
+  cached.catch(() => { cached = null; });
   return cached;
+}
+
+export function resetOpencodeCache() {
+  cached = null;
 }
 
 // raw fetch for endpoints missing from the stale SDK types (/question*) —

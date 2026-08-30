@@ -10,6 +10,7 @@ import {
   hiddenSessions,
   HIDDEN_TITLE,
   withDeadline,
+  resetOpencodeCache,
 } from "../api";
 import { playSound } from "../lib/sounds";
 import { createSessionStore } from "../lib/sessionStore";
@@ -806,15 +807,18 @@ export function useOpencode() {
       const bootStarted = Date.now();
       while (!disposed) {
         try {
-          list = await withDeadline(refreshSessions(), 10_000, "session list");
+          list = await withDeadline(refreshSessions(), 12_000, "session list");
           break;
         } catch (e) {
-          // cold start gets ~20s; past that, surface why and boot anyway
-          // (phase 2 + finally still run, degrading to a banner not skeletons)
-          if (Date.now() - bootStarted > 20_000 && !disposed) {
+          // Rust now retries ports + waits for health (up to ~30s worst-case
+          // on a contested port); give it a bit more than the old 20s.
+          if (Date.now() - bootStarted > 30_000 && !disposed) {
             setError(`Server not responding: ${e}`);
             break;
           }
+          // if the cached base was a dead port, clear it so the next
+          // refreshSessions re-invokes server_url
+          try { resetOpencodeCache(); } catch {}
           await new Promise((r) => setTimeout(r, 600));
         }
       }

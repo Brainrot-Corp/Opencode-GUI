@@ -42,6 +42,61 @@ struct ServerState {
     error: Option<String>,
 }
 
+// Windows Job Object: child dies with parent even on crash (KILL_ON_JOB_CLOSE).
+// Without it a hard renderer crash orphans opencode.exe on its port.
+#[cfg(windows)]
+mod job {
+    use std::os::windows::io::AsRawHandle;
+    use std::process::Child;
+    use std::sync::OnceLock;
+    use windows::Win32::Foundation::HANDLE;
+    use windows::Win32::System::JobObjects::{
+        AssignProcessToJobObject, CreateJobObjectW, SetInformationJobObject, JobObjectExtendedLimitInformation,
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+    };
+    use windows::Win32::System::Threading::GetCurrentProcess;
+
+    struct JobHandle(HANDLE);
+    unsafe impl Send for JobHandle {}
+    unsafe impl Sync for JobHandle {}
+    static JOB: OnceLock<JobHandle> = OnceLock::new();
+
+    fn get() -> Option<HANDLE> {
+        if let Some(h) = JOB.get() {
+            return Some(h.0);
+        }
+        unsafe {
+            let h = CreateJobObjectW(None, None).ok()?;
+            let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
+            info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            let _ = SetInformationJobObject(
+                h,
+                JobObjectExtendedLimitInformation,
+                &info as *const _ as *const _,
+                std::mem::size_of_val(&info) as u32,
+            );
+            let _ = JOB.set(JobHandle(h));
+            Some(h)
+        }
+    }
+
+    pub fn assign(child: &Child) {
+        let Some(job) = get() else { return };
+        unsafe {
+            let proc = GetCurrentProcess();
+            // ensure current process is also in the job so nested children are covered
+            let _ = AssignProcessToJobObject(job, proc);
+            let h = HANDLE(child.as_raw_handle() as *mut _);
+            let _ = AssignProcessToJobObject(job, h);
+        }
+    }
+}
+#[cfg(not(windows))]
+mod job {
+    use std::process::Child;
+    pub fn assign(_: &Child) {}
+}
+
 // workspace persistence — saved per local dev build so debug restarts reopen
 // the same project without relying on WebView localStorage (devUrl origin
 // differs from release, so localStorage would appear empty).
@@ -83,40 +138,138 @@ fn read_saved_workspace(app: &tauri::AppHandle) -> Option<PathBuf> {
     if p.is_dir() { Some(p) } else { None }
 }
 
-// ponytail: kill-on-exit handler covers normal close; a hard crash can orphan
-// the server. Windows Job Objects (KILL_ON_JOB_CLOSE) if that ever matters.
+fn resolve_opencode_exe(exe_dir: &std::path::Path) -> PathBuf {
+    // bundled sidecar next to the GUI exe (release MSI) or dev triple-suffixed name
+    for name in ["opencode.exe", "opencode-x86_64-pc-windows-msvc.exe"] {
+        let p = exe_dir.join(name);
+        if p.is_file() {
+            return p;
+        }
+    }
+    // dev: exe is target/debug/opencode-gui.exe, sidecar lives in src-tauri/binaries
+    // walk up a bit and probe
+    if let Ok(cur) = std::env::current_exe() {
+        let mut anc = cur.parent().map(|p| p.to_owned());
+        for _ in 0..4 {
+            if let Some(dir) = anc.clone() {
+                let cand = dir.join("src-tauri").join("binaries").join("opencode-x86_64-pc-windows-msvc.exe");
+                if cand.is_file() { return cand; }
+                let cand2 = dir.join("binaries").join("opencode.exe");
+                if cand2.is_file() { return cand2; }
+                anc = dir.parent().map(|p| p.to_owned());
+            }
+        }
+    }
+    // last resort: PATH lookup
+    if let Ok(path) = std::env::var("PATH") {
+        for dir in std::env::split_paths(&path) {
+            let p = dir.join("opencode.exe");
+            if p.is_file() { return p; }
+            #[cfg(windows)]
+            {
+                let p2 = dir.join("opencode.cmd");
+                if p2.is_file() { return p2; }
+            }
+        }
+    }
+    exe_dir.join("opencode.exe")
+}
+
+fn wait_for_port(port: u16, timeout: std::time::Duration) -> bool {
+    use std::net::TcpStream;
+    use std::time::Instant;
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        if TcpStream::connect(format!("127.0.0.1:{port}")).is_ok() {
+            std::thread::sleep(std::time::Duration::from_millis(80));
+            return true;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    false
+}
+
 fn spawn_server(workspace: Option<PathBuf>) -> std::io::Result<(Child, u16)> {
-    let port = TcpListener::bind("127.0.0.1:0")?.local_addr()?.port();
+    const RETRIES: u32 = 5;
     let exe_dir = std::env::current_exe()?
         .parent()
-        .expect("exe has parent")
+        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "exe has no parent"))?
         .to_owned();
+    let exe_path = resolve_opencode_exe(&exe_dir);
     let home = std::env::var("USERPROFILE").unwrap_or_default();
-    let mut cmd = Command::new(exe_dir.join("opencode.exe"));
-    cmd.args(["serve", "--port", &port.to_string(), "--hostname", "127.0.0.1"]);
-    // ponytail: server reflects any Origin by default (verified), no --cors flags needed
-    if let Some(ws) = workspace {
-        if ws.is_dir() {
-            cmd.current_dir(ws);
+
+    let mut last_err: Option<std::io::Error> = None;
+    for attempt in 0..RETRIES {
+        let port = TcpListener::bind("127.0.0.1:0")?.local_addr()?.port();
+        let mut cmd = Command::new(&exe_path);
+        cmd.args(["serve", "--port", &port.to_string(), "--hostname", "127.0.0.1"]);
+        if let Some(ref ws) = workspace {
+            if ws.is_dir() {
+                cmd.current_dir(ws);
+            } else if !home.is_empty() {
+                cmd.current_dir(&home);
+            }
         } else if !home.is_empty() {
             cmd.current_dir(&home);
         }
-    } else if !home.is_empty() {
-        cmd.current_dir(&home);
+        #[cfg(debug_assertions)]
+        let _ = cmd.stdout(Stdio::inherit()).stderr(Stdio::inherit());
+        #[cfg(all(windows, not(debug_assertions)))]
+        {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+            cmd.creation_flags(CREATE_NO_WINDOW)
+                .stdout(Stdio::null())
+                .stderr(Stdio::null());
+        }
+        let mut child = match cmd.spawn() {
+            Ok(c) => c,
+            Err(e) => {
+                last_err = Some(e);
+                if attempt + 1 < RETRIES { std::thread::sleep(std::time::Duration::from_millis(200)); continue; }
+                else { break; }
+            }
+        };
+        job::assign(&child);
+
+        // wait until the server is actually listening; catches port races
+        // where the child fails to bind (port taken) and exits early
+        let listening = wait_for_port(port, std::time::Duration::from_secs(8));
+        // if child died immediately, it's a bind failure — retry on next port
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                last_err = Some(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("opencode exited early on port {port}: {status}"),
+                ));
+                if attempt + 1 < RETRIES {
+                    std::thread::sleep(std::time::Duration::from_millis(250));
+                    continue;
+                } else { break; }
+            }
+            Ok(None) if !listening => {
+                // still not listening but child alive — could be slow start; give it a bit more
+                if wait_for_port(port, std::time::Duration::from_secs(3)) {
+                    return Ok((child, port));
+                }
+                let _ = child.kill();
+                let _ = child.wait();
+                last_err = Some(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    format!("opencode not listening on port {port}"),
+                ));
+                if attempt + 1 < RETRIES { std::thread::sleep(std::time::Duration::from_millis(300)); continue; }
+                else { break; }
+            }
+            Ok(None) => return Ok((child, port)),
+            Err(e) => {
+                last_err = Some(e);
+                if attempt + 1 < RETRIES { std::thread::sleep(std::time::Duration::from_millis(200)); continue; }
+                else { break; }
+            }
+        }
     }
-    #[cfg(debug_assertions)]
-    let _ = cmd.stdout(Stdio::inherit()).stderr(Stdio::inherit());
-    // release: null stdio AND CREATE_NO_WINDOW Ã¢â‚¬â€ without the flag a visible
-    // console window pops up next to our frameless GUI
-    #[cfg(all(windows, not(debug_assertions)))]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        cmd.creation_flags(CREATE_NO_WINDOW)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
-    }
-    Ok((cmd.spawn()?, port))
+    Err(last_err.unwrap_or_else(|| std::io::Error::new(std::io::ErrorKind::Other, "failed to start opencode after retries")))
 }
 
 #[tauri::command]
@@ -681,7 +834,7 @@ mod ipc_hook {
 
     pub fn set_app(app: tauri::AppHandle) {
         let m = IPC_APP.get_or_init(|| Mutex::new(None));
-        *m.lock().unwrap() = Some(app);
+        *m.lock().unwrap_or_else(|e| e.into_inner()) = Some(app);
     }
 
     unsafe extern "system" fn wndproc(
@@ -692,7 +845,7 @@ mod ipc_hook {
     ) -> LRESULT {
         if msg == WM_COPYDATA {
             let cds = &*(lparam.0 as *const COPYDATASTRUCT);
-            let app_opt = IPC_APP.get().and_then(|m| m.lock().unwrap().clone());
+            let app_opt = IPC_APP.get().and_then(|m| m.lock().unwrap_or_else(|e| e.into_inner()).clone());
             if let Some(app) = app_opt {
                 match cds.dwData as usize {
                     super::IPC_TOGGLE => {
@@ -1611,8 +1764,7 @@ pub fn run() {
             drop(held);
             // shortcut.to_string() renders "shift+control+KeyM" style —
             // never equal to the registered spelling, so compare parsed
-            let mic: tauri_plugin_global_shortcut::Shortcut =
-                "ctrl+shift+m".parse().expect("valid hotkey");
+            let Ok(mic): Result<tauri_plugin_global_shortcut::Shortcut, _> = "ctrl+shift+m".parse() else { return; };
                 if *shortcut == mic {
                     // mic toggle — forward to last focused instance if different
                     #[cfg(windows)]
@@ -1829,7 +1981,10 @@ pub fn run() {
             Ok(())
         })
         .build(tauri::generate_context!())
-        .expect("error while building tauri application")
+        .unwrap_or_else(|e| {
+            eprintln!("tauri build failed: {e}");
+            std::process::exit(1);
+        })
         .run(|_app_handle, event| {
             // track last focused HWND for system-wide hotkeys across multiple
             // instances. Keyboard-focus repair on reactivation lives in the
@@ -1868,10 +2023,13 @@ pub fn run() {
                     .state::<ServerState>()
                     .child
                     .lock()
-                    .unwrap()
+                    .unwrap_or_else(|e| e.into_inner())
                     .take()
                 {
                     let _ = child.kill();
+                    // give the OS a moment to release the port / file lock so
+                    // the next launch or the updater's file swap doesn't collide
+                    let _ = child.wait();
                 }
                 // staged update swap + relaunch — after the sidecar is dead
                 // so its image file is no longer locked

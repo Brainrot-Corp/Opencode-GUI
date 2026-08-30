@@ -33,46 +33,79 @@ const VOICE: Group[] = [
     "Sessions & UI",
     [
       ["new session", "start a fresh chat"],
-      ["stop", "abort generation"],
+      ["stop", "abort the current generation"],
       ["dark mode / light mode", "switch theme variant"],
-      ["theme latte", "switch to a theme"],
-      ["open settings / close settings", ""],
-      ["toggle sidebar", ""],
-      ["cycle agent", ""],
-      ["send it", "send the draft"],
+      ["theme latte", "switch to any theme by name"],
+      ["open settings / close settings", "show or hide the settings drawer"],
+      ["toggle sidebar", "show or hide the session sidebar"],
+      ["cycle agent", "rotate to the next agent (like Tab)"],
+      ["send it", "send the draft in the composer"],
       ["clear prompt", "erase the composer"],
     ],
   ],
   [
     "Apps",
     [
-      ["launch spotify", "or any installed app"],
-      ["close chrome / quit chrome", ""],
-      ["minimize calculator", ""],
-      ["kill chrome", "force-close"],
+      ["launch spotify", "open any installed app by name"],
+      ["close chrome / quit chrome", "close an app by name"],
+      ["minimize calculator", "minimize an app by name"],
+      ["kill chrome", "force-close an app"],
     ],
   ],
   [
     "Dictation & speech",
     [
-      ["prompt …", "fill the composer with the rest"],
-      ["send …", "fill and send at once"],
-      ["debrief", "summarize recent changes aloud"],
-      ["be quiet / tais-toi", "stop speaking"],
-      ["can you hear me", "mic check"],
-      ["run compact", "execute a slash command"],
+      ["prompt …", "fill the composer — keep speaking after prompt"],
+      ["send …", "fill and send immediately"],
+      ["debrief", "speak a summary of recent changes"],
+      ["be quiet / tais-toi", "stop speaking immediately"],
+      ["can you hear me", "mic check — confirms listening"],
+      ["run compact", "execute any slash command by voice"],
     ],
   ],
   [
     "Git",
     [
       ["git status", "show the git panel"],
-      ["commit", "commit staged — generates a message if none typed"],
-      ["push / pull", ""],
-      ["stage all", ""],
+      ["commit", "commit staged changes (auto-generates a message)"],
+      ["push / pull", "push or pull the current branch"],
+      ["stage all", "stage all changes"],
     ],
   ],
 ];
+
+const VOICE_ICONS: Record<string, string> = {
+  "Sessions & UI": "fa-clone",
+  Apps: "fa-rocket",
+  "Dictation & speech": "fa-microphone",
+  Git: "fa-code-branch",
+};
+
+const VOICE_EXAMPLES: Record<string, string> = {
+  "new session": "“new session”",
+  stop: "“stop”",
+  "dark mode / light mode": "“dark mode” or “light mode”",
+  "theme latte": "“theme nightfall” — any installed theme",
+  "open settings / close settings": "“open settings”",
+  "toggle sidebar": "“toggle sidebar”",
+  "cycle agent": "“cycle agent”",
+  "send it": "“send it”",
+  "clear prompt": "“clear prompt”",
+  "launch spotify": "“launch Spotify” — any app name works",
+  "close chrome / quit chrome": "“close Chrome” or “quit Chrome”",
+  "minimize calculator": "“minimize Calculator”",
+  "kill chrome": "“kill Chrome” — force-close",
+  "prompt …": "“prompt fix the header padding on mobile”",
+  "send …": "“send hello team, draft is ready”",
+  debrief: "“debrief”",
+  "be quiet / tais-toi": "“be quiet” or “tais-toi”",
+  "can you hear me": "“can you hear me?”",
+  "run compact": "“run compact” — any /command works",
+  "git status": "“git status”",
+  commit: "“commit”",
+  "push / pull": "“push” or “pull”",
+  "stage all": "“stage all”",
+};
 
 // static non-rebindable rows — kept exactly as before for non-rebindable display
 const SYSTEM_KEYS: Row[] = [
@@ -149,6 +182,82 @@ const PillGroups = ({ data, left }: { data: Group[]; left?: boolean }) => (
     ))}
   </>
 );
+
+// richer voice rendering — icon header, accent command text (no pill), description + example line, collapsable groups
+function VoiceList({ data, filter }: { data: Group[]; filter: string }) {
+  const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
+  const q = filter.trim().toLowerCase();
+  const isFiltering = !!q;
+  const filtered = q
+    ? data
+        .map(([g, rows]): Group => [
+          g,
+          rows.filter(([l, r]) => {
+            const ex = VOICE_EXAMPLES[l] ?? "";
+            return `${l} ${r} ${ex} ${g}`.toLowerCase().includes(q);
+          }),
+        ])
+        .filter(([, rows]) => rows.length > 0)
+    : data;
+
+  if (!filtered.length) {
+    return <div className="vc-empty">No matches for “{filter}”</div>;
+  }
+
+  const toggle = (g: string) =>
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(g)) next.delete(g);
+      else next.add(g);
+      return next;
+    });
+
+  return (
+    <div className="vc-frame">
+      {filtered.map(([g, rows]) => {
+        const icon = VOICE_ICONS[g] ?? "fa-puzzle-piece";
+        const isPlugin = g.endsWith("— plugin");
+        const headIcon = isPlugin ? "fa-puzzle-piece" : icon;
+        const isCollapsed = !isFiltering && collapsed.has(g);
+        return (
+          <div key={g} className={`vc-section${isCollapsed ? " collapsed" : ""}`}>
+            <button type="button" className="vc-section-head" onClick={() => toggle(g)} aria-expanded={!isCollapsed}>
+              <i className="fa-solid fa-chevron-down vc-chevron" />
+              <i className={`fa-solid ${headIcon}`} />
+              <span>{g}</span>
+              <span className="vc-count">{rows.length}</span>
+            </button>
+            <div className="vc-list">
+              {rows.map(([l, r]) => {
+                const variants = l.split(/\s*\/\s*/);
+                const ex = VOICE_EXAMPLES[l] ?? (isPlugin ? `“${variants[0]}”` : "");
+                return (
+                  <div key={l} className="vc-row">
+                    <div className="vc-name">
+                      {variants.map((v, i) => (
+                        <span key={v}>
+                          {i > 0 && <span className="vc-or">or</span>}
+                          <span>{v}</span>
+                        </span>
+                      ))}
+                    </div>
+                    <div className="vc-desc">{r || (isPlugin ? "plugin command" : "—")}</div>
+                    {ex && (
+                      <div className="vc-ex">
+                        <i className="fa-solid fa-quote-left" />
+                        <span>{ex}</span>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
 function useEqualPills(deps: React.DependencyList) {
   const ref = useRef<HTMLDivElement>(null);
@@ -478,6 +587,8 @@ export default function InfoDialog({
   update?: (patch: Partial<AppSettings>) => void;
 }) {
   const [tab, setTab] = useState<"info" | "voice" | "cmds" | "keys">("info");
+  const [voiceQ, setVoiceQ] = useState("");
+  const voiceData = [...VOICE, ...docGroups(pluginDocs, "voice")] as Group[];
   return (
     <Dialog title="Info" onClose={onClose} top wide>
       <div className="dlg-tabs">
@@ -505,16 +616,38 @@ export default function InfoDialog({
       )}
       {tab === "voice" && (
         <>
-          <EqualWrap deps={[tab, JSON.stringify(VOICE), JSON.stringify(pluginDocs)]}>
-            <PillGroups data={[...VOICE, ...docGroups(pluginDocs, "voice")]} left />
-          </EqualWrap>
+          <div className="vc-tip">
+            <i className="fa-solid fa-circle-info" />
+            <span>
+              <strong>Any language Whisper understands</strong> — unmatched speech gets a translating pass. Polite words are ignored, one-letter typos are forgiven. Say <strong>prompt …</strong> to fill the composer or <strong>send …</strong> to fill + send.
+              A command buried mid-sentence is read back and waits for “yes”.
+            </span>
+          </div>
+          <div className="browse-search vc-search">
+            <label className="model-search-wrap" style={{ cursor: "text" }}>
+              <i className="fa-solid fa-magnifying-glass" />
+              <input
+                className="model-search"
+                placeholder="Filter voice commands…"
+                value={voiceQ}
+                onChange={(e) => setVoiceQ(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape" && voiceQ) {
+                    e.stopPropagation();
+                    setVoiceQ("");
+                  }
+                }}
+              />
+              {voiceQ && (
+                <button type="button" className="reset-btn" onClick={() => setVoiceQ("")} data-tip="Clear filter">
+                  <i className="fa-solid fa-xmark" />
+                </button>
+              )}
+            </label>
+          </div>
+          <VoiceList data={voiceData} filter={voiceQ} />
           <p className="cmd-note">
-            Phrasing works in any language whisper understands — an unmatched
-            utterance gets a second, translating pass (Settings › Voice).
-            Politeness words are ignored and one-letter typos in command words
-            are forgiven. Start with "prompt" to fill the composer or "send" to
-            fill and send; a command buried mid-sentence is read back and waits
-            for a yes.
+            {voiceQ ? `${voiceData.reduce((n, [, rows]) => n + rows.filter(([l, r]) => `${l} ${r} ${(VOICE_EXAMPLES[l] ?? "")}`.toLowerCase().includes(voiceQ.toLowerCase())).length, 0)} shown — clear the filter to see all.` : "Tip: phrasing is forgiving — “please launch spotify” and “lunch spotify” both work."}
           </p>
         </>
       )}
