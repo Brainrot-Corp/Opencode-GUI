@@ -1639,6 +1639,115 @@ fn resize_cursor() -> Option<serde_json::Value> {
     None
 }
 
+fn handle_global_shortcut(
+    app: &tauri::AppHandle,
+    shortcut: &tauri_plugin_global_shortcut::Shortcut,
+    event: tauri_plugin_global_shortcut::ShortcutEvent,
+) {
+    // Windows auto-repeats held hotkeys (WM_HOTKEY ~33ms apart after
+    // ~500ms hold) — act only on FRESH presses: ones where this key
+    // was physically released since its previous press
+    use std::sync::Mutex;
+    static HELD: Mutex<Option<u32>> = Mutex::new(None);
+    let mut held = HELD.lock().unwrap_or_else(|e| e.into_inner());
+    match event.state() {
+        tauri_plugin_global_shortcut::ShortcutState::Released => {
+            if *held == Some(event.id) {
+                *held = None;
+            }
+            return;
+        }
+        tauri_plugin_global_shortcut::ShortcutState::Pressed => {
+            let prev = held.replace(event.id);
+            if prev == Some(event.id) {
+                return; // auto-repeat of a key still held down
+            }
+        }
+    }
+    drop(held);
+    // shortcut.to_string() renders "shift+control+KeyM" style —
+    // never equal to the registered spelling, so compare parsed
+    let Ok(mic): Result<tauri_plugin_global_shortcut::Shortcut, _> = "ctrl+shift+m".parse() else { return; };
+    if *shortcut == mic {
+        // mic toggle — forward to last focused instance if different
+        #[cfg(windows)]
+        {
+            let my_hwnd = app
+                .get_webview_window("main")
+                .and_then(|w| w.hwnd().ok())
+                .map(|h| h.0 as isize)
+                .unwrap_or(0);
+            let fg = unsafe {
+                windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow().0 as isize
+            };
+            let target = if fg != 0 && is_opencode_window(fg) {
+                Some(fg)
+            } else {
+                read_last_focused(app)
+            };
+            if let Some(t) = target {
+                if t != my_hwnd && t != 0 && send_ipc_to_hwnd(t, IPC_MIC) {
+                    return;
+                }
+            }
+            use tauri::Emitter;
+            let _ = app.emit("mic://toggle", ());
+        }
+        #[cfg(not(windows))]
+        {
+            use tauri::Emitter;
+            let _ = app.emit("mic://toggle", ());
+        }
+    } else {
+        // Alt+Space toggle — apply to last focused instance system-wide
+        #[cfg(windows)]
+        {
+            let my_hwnd = app
+                .get_webview_window("main")
+                .and_then(|w| w.hwnd().ok())
+                .map(|h| h.0 as isize)
+                .unwrap_or(0);
+            let fg = unsafe {
+                windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow().0 as isize
+            };
+            let target = if fg != 0 && is_opencode_window(fg) {
+                Some(fg)
+            } else {
+                read_last_focused(app)
+            };
+            if let Some(t) = target {
+                if t != my_hwnd && t != 0 {
+                    if send_ipc_to_hwnd(t, IPC_TOGGLE) {
+                        return;
+                    }
+                    // SendMessage failed (target closed), fallback to self
+                }
+            }
+            if let Some(w) = app.get_webview_window("main") {
+                let visible = w.is_visible().unwrap_or(false);
+                let focused = window_focused(&w);
+                if visible && focused {
+                    hide_main(app);
+                } else {
+                    show_main(app);
+                }
+            }
+        }
+        #[cfg(not(windows))]
+        {
+            if let Some(w) = app.get_webview_window("main") {
+                let visible = w.is_visible().unwrap_or(false);
+                let focused = window_focused(&w);
+                if visible && focused {
+                    hide_main(app);
+                } else {
+                    show_main(app);
+                }
+            }
+        }
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // --new-instance bypasses the single-instance mutex so an explicit
@@ -1777,127 +1886,14 @@ pub fn run() {
             resize_cursor,
         ]);
 
-    // global hotkeys, work system-wide.
-    // If a combo is already taken (PowerToys Run, etc.), warn and continue
-    // instead of panicking — tray click still works as fallback.
-    // Second instance can't own the same global hotkey (first holds Alt+Space) — skip to avoid panic at build()
-    let builder = if is_new_instance {
-        builder
-    } else {
-        match tauri_plugin_global_shortcut::Builder::new()
-        .with_handler(|app, shortcut, event| {
-            // Windows auto-repeats held hotkeys (WM_HOTKEY ~33ms apart after
-            // ~500ms hold) — act only on FRESH presses: ones where this key
-            // was physically released since its previous press
-            use std::sync::Mutex;
-            static HELD: Mutex<Option<u32>> = Mutex::new(None);
-            let mut held = HELD.lock().unwrap_or_else(|e| e.into_inner());
-            match event.state() {
-                tauri_plugin_global_shortcut::ShortcutState::Released => {
-                    if *held == Some(event.id) {
-                        *held = None;
-                    }
-                    return;
-                }
-                tauri_plugin_global_shortcut::ShortcutState::Pressed => {
-                    let prev = held.replace(event.id);
-                    if prev == Some(event.id) {
-                        return; // auto-repeat of a key still held down
-                    }
-                }
-            }
-            drop(held);
-            // shortcut.to_string() renders "shift+control+KeyM" style —
-            // never equal to the registered spelling, so compare parsed
-            let Ok(mic): Result<tauri_plugin_global_shortcut::Shortcut, _> = "ctrl+shift+m".parse() else { return; };
-                if *shortcut == mic {
-                    // mic toggle — forward to last focused instance if different
-                    #[cfg(windows)]
-                    {
-                        let my_hwnd = app
-                            .get_webview_window("main")
-                            .and_then(|w| w.hwnd().ok())
-                            .map(|h| h.0 as isize)
-                            .unwrap_or(0);
-                        let fg = unsafe {
-                            windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow().0 as isize
-                        };
-                        let target = if fg != 0 && is_opencode_window(fg) {
-                            Some(fg)
-                        } else {
-                            read_last_focused(app)
-                        };
-                        if let Some(t) = target {
-                            if t != my_hwnd && t != 0 && send_ipc_to_hwnd(t, IPC_MIC) {
-                                return;
-                            }
-                        }
-                        use tauri::Emitter;
-                        let _ = app.emit("mic://toggle", ());
-                    }
-                    #[cfg(not(windows))]
-                    {
-                        use tauri::Emitter;
-                        let _ = app.emit("mic://toggle", ());
-                    }
-                } else {
-                    // Alt+Space toggle — apply to last focused instance system-wide
-                    #[cfg(windows)]
-                    {
-                        let my_hwnd = app
-                            .get_webview_window("main")
-                            .and_then(|w| w.hwnd().ok())
-                            .map(|h| h.0 as isize)
-                            .unwrap_or(0);
-                        let fg = unsafe {
-                            windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow().0 as isize
-                        };
-                        let target = if fg != 0 && is_opencode_window(fg) {
-                            Some(fg)
-                        } else {
-                            read_last_focused(app)
-                        };
-                        if let Some(t) = target {
-                            if t != my_hwnd && t != 0 {
-                                if send_ipc_to_hwnd(t, IPC_TOGGLE) {
-                                    return;
-                                }
-                                // SendMessage failed (target closed), fallback to self
-                            }
-                        }
-                        if let Some(w) = app.get_webview_window("main") {
-                            let visible = w.is_visible().unwrap_or(false);
-                            let focused = window_focused(&w);
-                            if visible && focused {
-                                hide_main(app);
-                            } else {
-                                show_main(app);
-                            }
-                        }
-                    }
-                    #[cfg(not(windows))]
-                    {
-                        if let Some(w) = app.get_webview_window("main") {
-                            let visible = w.is_visible().unwrap_or(false);
-                            let focused = window_focused(&w);
-                            if visible && focused {
-                                hide_main(app);
-                            } else {
-                                show_main(app);
-                            }
-                        }
-                    }
-                }
-        })
-        .with_shortcuts(["alt+space", "ctrl+shift+m"])
-    {
-        Ok(shortcuts_builder) => builder.plugin(shortcuts_builder.build()),
-        Err(e) => {
-            eprintln!("global shortcut Alt+Space unavailable: {e}");
-            builder
-        }
-        }
-    };
+    // global hotkeys, work system-wide. The plugin itself registers nothing;
+    // combos are registered per-shortcut in setup() via on_shortcut so a
+    // taken combo (second instance, PowerToys Run) only skips that combo —
+    // with_shortcuts would abort plugin setup and the app, which is why
+    // --new-instance used to skip the plugin entirely, silently leaving the
+    // app with NO hotkeys after every auto-update relaunch (update.rs spawns
+    // --new-instance while the old owner is already gone).
+    let builder = builder.plugin(tauri_plugin_global_shortcut::Builder::new().build());
 
     builder
         .setup(|app| {
@@ -1908,6 +1904,19 @@ pub fn run() {
                 menu::{Menu, MenuItem},
                 tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
             };
+            use tauri_plugin_global_shortcut::GlobalShortcutExt;
+
+            // register global hotkeys one by one: a taken combo (second
+            // instance, PowerToys Run) only skips that combo instead of
+            // aborting plugin setup
+            for combo in ["alt+space", "ctrl+shift+m"] {
+                if let Err(e) = app
+                    .global_shortcut()
+                    .on_shortcut(combo, handle_global_shortcut)
+                {
+                    eprintln!("global shortcut {combo} unavailable: {e}");
+                }
+            }
 
             let show = MenuItem::with_id(app, "show", "Show/Hide OpenCode GUI", true, None::<&str>)?;
             let new_win = MenuItem::with_id(app, "new-instance", "Open new window", true, None::<&str>)?;
