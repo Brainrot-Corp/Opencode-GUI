@@ -15,21 +15,33 @@
   inset: 0;
   margin: 0;
   padding: 10px;
+  box-sizing: border-box;
   font-family: var(--mono);
   font-size: 11px;
   /* integer px only — Blink snaps the caret on fractional line-heights
      (1.55em = 17.05px) and it drifts off the highlight layer */
   line-height: 17px;
   white-space: pre;
+  overflow-wrap: normal;
+  word-break: normal;
   tab-size: 2;
-}
-.fe-hl {
-  overflow: hidden;
-  color: var(--text-dim);
-}
-.fe-ta {
   overflow: auto;
   border: none;
+}
+.fe-hl {
+  color: var(--text-dim);
+  /* must stay scrollable so scrollTop can be set while textarea's
+     content is ahead of the deferred highlight — hide its bars */
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  pointer-events: none;
+}
+.fe-hl::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+.fe-ta {
   outline: none;
   resize: none;
   background: transparent;

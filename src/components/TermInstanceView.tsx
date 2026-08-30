@@ -134,7 +134,7 @@ export default function TermInstanceView({
   const spawn = useCallback(async () => {
     const curId = idRef.current;
     const curGen = genRef.current;
-    if (spawnedGenRef.current === curGen && aliveRef.current) return;
+    if (spawnedGenRef.current === curGen) return;
     // background warm — allow spawn even when dock is hidden so opening is instant;
     // hidden spawn uses 80x24 fallback and is resized on next open (no GUI on launch to not disturb user)
     spawnedGenRef.current = curGen;
@@ -357,6 +357,11 @@ export default function TermInstanceView({
       const t = window.setTimeout(() => void spawn(), 30);
       return () => window.clearTimeout(t);
     }
+    // dock-open active terminal: spawn promptly so first keystroke isn't lost (fixes first-key beep on first launch)
+    if (activeRef.current && openRef.current && !aliveRef.current) {
+      void spawn();
+      return;
+    }
     if (!activeRef.current && !aliveRef.current) {
       // inactive background terminal — don't spawn yet; will spawn on active (see effect below) or via longer idle fallback
       const stagger = ((idRef.current % 4) * 240) + 600;
@@ -452,7 +457,29 @@ export default function TermInstanceView({
 
   // focus when becoming active — only when dock is visible to not steal focus on background warm
   useEffect(() => {
-    if (active && open && termRef.current) setTimeout(() => termRef.current?.focus(), 50);
+    if (active && open && termRef.current) {
+      try { (window as any).__oc_lastWasTerm = true; } catch {}
+      const focusSync = () => {
+        const dock = document.querySelector(".term-dock") as HTMLElement | null;
+        if (!dock || dock.clientHeight <= 60) return;
+        const helper = document.querySelector(".term-dock:not(.closed) .xterm-helper-textarea") as HTMLElement | null;
+        if (!helper || helper.offsetParent === null) return;
+        if (helper === document.activeElement) return;
+        try { termRef.current?.focus(); } catch {}
+        try { helper.focus({ preventScroll: true } as any); } catch {}
+      };
+      // rAF = next frame event after layout, transitionend = height animation end
+      let raf = requestAnimationFrame(() => focusSync());
+      const dock = document.querySelector(".term-dock") as HTMLElement | null;
+      const onEnd = (e: TransitionEvent) => {
+        if (e.propertyName === "height") focusSync();
+      };
+      dock?.addEventListener("transitionend", onEnd);
+      return () => {
+        cancelAnimationFrame(raf);
+        dock?.removeEventListener("transitionend", onEnd);
+      };
+    }
   }, [active, open]);
 
   // re-focus active terminal after OS window reactivation (Alt+Tab, Alt+Space, tray)
@@ -481,16 +508,16 @@ export default function TermInstanceView({
       // immediate attempt — must beat first keystroke (~0-10ms after OS focus)
       const ok = doRefocus();
       if (ok) return;
-      // retry after OS settle (Alt+Tab posts focus async, WebView2 child HWND needs MoveFocus)
+      // retry after OS settle (Alt+Tab posts focus async, WebView2 child HWND needs MoveFocus) — event, not timer
       requestAnimationFrame(() => {
-        window.setTimeout(() => {
+        requestAnimationFrame(() => {
           if (!activeRef.current || !openRef.current || !termRef.current) return;
           const stillTerm = !!(window as any).__oc_lastWasTerm;
           const curAe = document.activeElement as HTMLElement | null;
           const curAeTerm = !!curAe?.closest?.(".xterm, .term-dock");
           if (!stillTerm && !curAeTerm) return;
           doRefocus();
-        }, 20);
+        });
       });
     };
     window.addEventListener("focus", refocus);
@@ -512,34 +539,48 @@ export default function TermInstanceView({
     return () => window.removeEventListener("oc:term-focus", onFocusReq as any);
   }, [active]);
 
-  // safety net: first keystroke after window reactivation can arrive before
-  // WebView2 HWND focus has settled (outer HWND still owns keyboard → Windows
+  // safety net: first keystroke after window reactivation or dock open can arrive before
+  // WebView2 HWND focus / helper focus has settled (outer HWND or toggle button still owns keyboard → Windows
   // beep, key never reaches xterm). Capture it in capture phase, focus the
   // helper and deliver directly to the pty so nothing is lost.
   useEffect(() => {
     if (!active) return;
     const onCapture = (e: KeyboardEvent) => {
       if (!activeRef.current || !openRef.current || !termRef.current) return;
-      const wasTerm = !!(window as any).__oc_lastWasTerm;
-      if (!wasTerm) return;
       const ae = document.activeElement as HTMLElement | null;
       const inTerm = !!ae?.closest?.(".xterm, .term-dock");
       if (inTerm) return;
-      // only when focus is lost (body) — otherwise let normal handlers run
-      if (ae !== document.body && ae !== null) return;
       if (e.ctrlKey || e.metaKey || e.altKey) return;
       if ((e as any).isComposing || e.keyCode === 229) return;
       const isPrintable = e.key.length === 1;
       const isEdit = e.key === "Backspace" || e.key === "Delete" || e.key === "Enter";
       if (!isPrintable && !isEdit) return;
       if (!document.querySelector(".term-dock:not(.closed)")) return;
+      const wasTerm = !!(window as any).__oc_lastWasTerm;
+      const isEditable = !!(ae?.closest?.("input, textarea, select, [contenteditable], [contenteditable=\"true\"], [contenteditable=\"\"]") || (ae as any)?.isContentEditable);
+      if (isEditable) return;
+      const isBody = ae === document.body || ae === null;
+      const isButton = ae?.tagName === "BUTTON";
+      if (isButton) {
+        // composer-first on launch: if composer exists, let it own the keystroke
+        if (document.querySelector(".composer textarea")) return;
+      } else if (isBody) {
+        if (document.querySelector(".composer textarea")) return;
+        if (!wasTerm) return;
+      } else {
+        return;
+      }
       e.preventDefault();
       e.stopPropagation();
       (e as any).stopImmediatePropagation?.();
-      // focus synchronously so subsequent keys land correctly
-      try { termRef.current!.focus(); } catch {}
-      const helper = document.querySelector(".term-dock:not(.closed) .xterm-helper-textarea") as HTMLElement | null;
-      try { helper?.focus({ preventScroll: true } as any); } catch {}
+      // focus helper only when dock has height — focusing a 0-height helper triggers Windows beep
+      const dock = document.querySelector(".term-dock:not(.closed)") as HTMLElement | null;
+      if (dock && dock.clientHeight > 60) {
+        try { termRef.current!.focus(); } catch {}
+        const helper = dock.querySelector(".xterm-helper-textarea") as HTMLElement | null;
+        try { helper?.focus({ preventScroll: true } as any); } catch {}
+      }
+      try { (window as any).__oc_lastWasTerm = true; } catch {}
       // deliver this keystroke directly — xterm's helper didn't receive it
       let data = e.key;
       if (isEdit) {
@@ -548,8 +589,6 @@ export default function TermInstanceView({
         else if (e.key === "Delete") data = "\x1b[3~";
       }
       void invoke("pty_write", { id: idRef.current, data }).catch(() => {});
-      // next keys should go via normal path
-      try { (window as any).__oc_lastWasTerm = false; } catch {}
     };
     window.addEventListener("keydown", onCapture, true);
     return () => window.removeEventListener("keydown", onCapture, true);

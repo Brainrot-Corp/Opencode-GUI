@@ -526,9 +526,31 @@ export function useGlobalShortcuts({
       })
       .catch(() => {});
 
+    // cold-launch beep fix: Rust's show_main/unpoison_input focused the
+    // window before React mounted, so no blur/focus event fires and
+    // activeElement stays body. First printable key then hits body → Windows beep.
+    // Run one event-driven rescue after paint so composer gets focus before
+    // the first keystroke. No hard-coded timeout; transitionend retry
+    // handles the dock height animation (helper not focusable until open).
+    let coldRaf = 0;
+    let coldDock: Element | null = null;
+    let coldOnEnd: ((e: Event) => void) | null = null;
+    if (typeof document !== "undefined" && document.activeElement === document.body) {
+      coldRaf = requestAnimationFrame(() => rescueFocus()) as unknown as number;
+      coldDock = document.querySelector(".term-dock");
+      if (coldDock) {
+        coldOnEnd = (e: Event) => {
+          if ((e as TransitionEvent).propertyName === "height") rescueFocus();
+        };
+        coldDock.addEventListener("transitionend", coldOnEnd as EventListener, { once: true } as any);
+      }
+    }
+
     return () => {
       window.removeEventListener("blur", onBlur);
       window.removeEventListener("focus", onFocus);
+      if (coldRaf) cancelAnimationFrame(coldRaf);
+      if (coldDock && coldOnEnd) coldDock.removeEventListener("transitionend", coldOnEnd as EventListener);
       unWin?.();
       unVis?.();
       unRestore?.();

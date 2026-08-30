@@ -248,17 +248,16 @@ export default function FileEditor({
     return findMatches(draft, query, matchCase);
   }, [draft, query, matchCase, findOpen]);
 
-  const syncScroll = () => {
+  const syncScroll = useCallback(() => {
     const hl = hlRef.current;
     const ta = taRef.current;
     if (!hl || !ta) return;
     hl.scrollTop = ta.scrollTop;
     hl.scrollLeft = ta.scrollLeft;
-  };
+  }, []);
   useEffect(() => {
     syncScroll();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draft]);
+  }, [draft, syncScroll]);
 
   const deferred = useDeferredValue(draft);
   const lang = extLang(path);
@@ -271,6 +270,12 @@ export default function FileEditor({
     if (!findOpen || !query || !matches.length) return hlBase;
     return highlightFindInHtml(hlBase, query, matchCase, cur);
   }, [hlBase, findOpen, query, matchCase, cur, matches.length]);
+
+  // deferred highlight can be shorter than textarea while typing — sync
+  // clamps then; re-sync after highlight paints so offset doesn't stick
+  useEffect(() => {
+    syncScroll();
+  }, [hlMarkup, syncScroll]);
 
   const goto = (idx: number) => {
     if (!matches.length) return;

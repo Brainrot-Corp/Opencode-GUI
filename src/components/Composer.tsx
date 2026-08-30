@@ -277,9 +277,17 @@ export default function Composer({
   const sidRef = useRef(sessionId);
   useEffect(() => {
     if (sessionId === sidRef.current) return;
+    const prev = sidRef.current;
     sidRef.current = sessionId;
     suppressSaveRef.current = true;
-    setInput(getDraft(sessionId ?? ""));
+    const draft = getDraft(sessionId ?? "");
+    // preserve boot-typed text: if we typed while sessionId was empty
+    // (booting) and the new session has no saved draft, keep current input
+    if (!prev && draft === "" && inputRef2.current !== "") {
+      // keep what was typed before session loaded
+    } else {
+      setInput(draft);
+    }
     setFindOpen(false);
     // next tick allow saving again — avoids saving old input under new sid
     queueMicrotask(() => {
@@ -645,12 +653,12 @@ export default function Composer({
     return () => window.removeEventListener("keydown", onKey);
   });
 
-  // type-to-focus: when terminal isn't focused and a session is active,
-  // printable keys (and Backspace/Delete) that would otherwise go nowhere
-  // focus the composer at the caret position. Shortcuts and overlays are excluded.
+  // type-to-focus: first keystroke should always land in the composer
+  // (even when the terminal dock is open or during boot) unless the
+  // user is already focused inside the terminal. Prevents the Windows
+  // beep that happens when body owns keyboard on launch.
   useEffect(() => {
     const onTypeToFocus = (e: KeyboardEvent) => {
-      if (!sessionId) return;
       const ta = inputRef.current;
       if (!ta || ta.disabled) return;
       if (document.activeElement === ta) return;
@@ -664,17 +672,8 @@ export default function Composer({
       const isEditable = (el: HTMLElement | null) =>
         !!el && (!!el.closest?.("input, textarea, select, [contenteditable]") || (el as HTMLElement).isContentEditable);
       if (isEditable(target) || isEditable(ae)) return;
-      // terminal owns its keys — only block when the dock is open (not .closed)
-      const tDock = target?.closest?.(".term-dock") as HTMLElement | null;
-      const aeDock = ae?.closest?.(".term-dock") as HTMLElement | null;
-      const dock = tDock || aeDock;
-      if (dock && !dock.classList.contains("closed")) return;
-      if (ae?.closest?.(".xterm") || target?.closest?.(".xterm")) return;
-      // if window was last focused in terminal, don't hijack first keystroke
-      // after Alt+Tab — let the global rescue / TermInstanceView refocus win
-      const wasTerm = !!(window as any).__oc_lastWasTerm;
-      const dockOpen = !!document.querySelector(".term-dock:not(.closed)");
-      if (wasTerm && dockOpen) return;
+      // only yield when focus is already inside the terminal
+      if (ae?.closest?.(".xterm, .term-dock") || target?.closest?.(".xterm, .term-dock")) return;
       // overlays own typing — blocked per user choice
       if (document.querySelector(".cmd-menu, .model-menu, .ctx-menu, .dlg-scrim, .drawer-scrim.open, .permission-bar")) return;
       e.preventDefault();
@@ -719,9 +718,9 @@ export default function Composer({
         } catch {}
       });
     };
-    window.addEventListener("keydown", onTypeToFocus);
-    return () => window.removeEventListener("keydown", onTypeToFocus);
-  }, [sessionId]);
+    window.addEventListener("keydown", onTypeToFocus, true);
+    return () => window.removeEventListener("keydown", onTypeToFocus, true);
+  }, []);
 
   const fillCmd = (c: CmdEntry) => {
     setInput(`/${c.name} `);

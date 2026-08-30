@@ -111,32 +111,51 @@ export function useOpencode() {
     if (!sid) return;
     setSessionSecurity((prev) => (prev[sid] === value ? prev : { ...prev, [sid]: value }));
   }, []);
-  const setSecurityMode = useCallback((m: SecurityMode) => {
+  const setSecurityMode = useCallback((m: SecurityMode, sid?: string) => {
+    const target = sid ?? activeRef.current;
     _setSecurityMode(m);
-    if (activeId) rememberSecuritySession(activeId, m);
+    if (target) rememberSecuritySession(target, m);
     playSound("click");
-  }, [activeId, rememberSecuritySession]);
+  }, [rememberSecuritySession]);
   const cycleSecurityMode = useCallback(() => {
     const cur = securityModeRef.current;
     const next: SecurityMode = cur === "user" ? "block" : cur === "block" ? "full" : "user";
+    const target = activeRef.current;
     _setSecurityMode(next);
-    if (activeId) rememberSecuritySession(activeId, next);
+    if (target) rememberSecuritySession(target, next);
     playSound("click");
-  }, [activeId, rememberSecuritySession]);
+  }, [rememberSecuritySession]);
   useEffect(() => {
     if (!activeId) return;
     const remembered = sessionSecurity[activeId];
     if (remembered === "full" || remembered === "block" || remembered === "user") {
+      restoringSecRef.current = true;
       _setSecurityMode((cur) => (cur === remembered ? cur : remembered));
+      queueMicrotask(() => { restoringSecRef.current = false; });
       return;
     }
     let global: string | null = null;
     try { global = localStorage.getItem(SECURITY_KEY); } catch {}
     if (global === "restricted") global = "block";
     if (global === "full" || global === "block" || global === "user") {
+      restoringSecRef.current = true;
       _setSecurityMode((cur) => (cur === global ? cur as SecurityMode : (global as SecurityMode)));
+      queueMicrotask(() => { restoringSecRef.current = false; });
     }
   }, [activeId, sessionSecurity]);
+
+  // generic watcher: any security value change auto-pins per-session (covers future shortcuts)
+  useEffect(() => {
+    const sid = activeRef.current;
+    if (!sid || restoringSecRef.current) return;
+    if (sessionSecurityRef.current[sid] === securityMode) return;
+    const hasPin = sid in sessionSecurityRef.current;
+    let global: string | null = null;
+    try { global = localStorage.getItem(SECURITY_KEY); } catch {}
+    if (global === "restricted") global = "block";
+    if (!hasPin && securityMode === global) return;
+    rememberSecuritySession(sid, securityMode);
+  }, [securityMode]);
   const [commands, setCommands] = useState<Cmd[]>([]);
   // plugin slash commands are aggregated in src/lib/plugins.ts slashStore;
   // cmdList is built from that store directly each render so autocomplete
@@ -280,6 +299,10 @@ export function useOpencode() {
     });
   }, []);
   void rememberAgentSession;
+  const sessionAgentsRef = useRef(sessionAgents);
+  useEffect(() => { sessionAgentsRef.current = sessionAgents; }, [sessionAgents]);
+  const restoringAgentRef = useRef(false);
+  const restoringSecRef = useRef(false);
 
   // session switch (or agents arriving late): re-apply the active session's remembered agent
   // when it exists and is still reachable; otherwise fall back to shared global last agent
@@ -289,7 +312,9 @@ export function useOpencode() {
     const remembered = sessionAgents[activeId];
     if (remembered) {
       if (isAgentReachable(remembered, agents)) {
+        restoringAgentRef.current = true;
         setAgentSel((cur) => (cur === remembered ? cur : remembered));
+        queueMicrotask(() => { restoringAgentRef.current = false; });
         return;
       }
       // stale — agent vanished: drop per-session pin
@@ -305,9 +330,24 @@ export function useOpencode() {
       global = localStorage.getItem(LAST_AGENT_KEY);
     } catch {}
     if (global && isAgentReachable(global, agents)) {
+      restoringAgentRef.current = true;
       setAgentSel((cur) => (cur === global ? cur : global));
+      queueMicrotask(() => { restoringAgentRef.current = false; });
     }
   }, [activeId, agents, sessionAgents]);
+
+  // generic watcher: any agent value change (dropdown, Tab, future shortcut) auto-pins per-session
+  useEffect(() => {
+    const sid = activeRef.current;
+    if (!sid || restoringAgentRef.current) return;
+    if (!agentSel || !isAgentReachable(agentSel, agents)) return;
+    if (sessionAgentsRef.current[sid] === agentSel) return;
+    const hasPin = sid in sessionAgentsRef.current;
+    let global: string | null = null;
+    try { global = localStorage.getItem(LAST_AGENT_KEY); } catch {}
+    if (!hasPin && agentSel === global) return;
+    rememberAgentSession(sid, agentSel);
+  }, [agentSel, agents]);
 
   // prune vanished agents from the map + global + disabled override
   useEffect(() => {
@@ -847,6 +887,7 @@ export function useOpencode() {
               return next;
             });
             prov.rememberSession(delId, "");
+            prov.forgetVariantSession(delId);
             if (delId === activeRef.current) {
               setQuestion(null);
               setPermission(null);
@@ -1063,12 +1104,20 @@ export function useOpencode() {
       return applyOverrides([...prev, patched]);
     });
     setActiveId(s.id);
+    // pin current chip values to the new session so it starts with last used
+    // per-session values and doesn't flip when global changes later
+    try {
+      if (prov.modelSel) prov.rememberSession(s.id, prov.modelSel);
+      if (agentSel) rememberAgentSession(s.id, agentSel);
+      if (securityModeRef.current) rememberSecuritySession(s.id, securityModeRef.current);
+      if (prov.variantSel) prov.rememberVariantSession(s.id, prov.variantSel);
+    } catch {}
     store.clearStashes();
     setMsgs([]);
     setPermission(null);
     setQuestion(null);
     return s.id;
-  }, []);
+  }, [prov.modelSel, prov.variantSel, agentSel]);
 
   // session-wide token/cost totals — summed from the authoritative store
   // (not the revert-filtered view) so rewinding doesn't rewrite history;
@@ -1306,10 +1355,11 @@ export function useOpencode() {
     }
   }, [agents, agentSel, disabledAgents, rememberAgentSession]);
 
-  // direct pick (mirrors selectModel) — remembers per-session and globally
+  // direct pick — dropdown change atomically writes global last + per-session pin
   const selectAgent = useCallback(
-    (v: string) => {
-      rememberAgentSession(activeRef.current, v);
+    (v: string, sid?: string) => {
+      const target = sid ?? activeRef.current;
+      if (target) rememberAgentSession(target, v);
       setAgentSel(v);
       playSound("click");
     },
@@ -1319,8 +1369,10 @@ export function useOpencode() {
   // picker entry: applies the choice globally AND remembers it for the
   // session it was made in (so switching back re-applies it)
   const selectModel = useCallback(
-    (v: string) => {
-      prov.rememberSession(activeRef.current, v);
+    (v: string, sid?: string) => {
+      const target = sid ?? activeRef.current;
+      // global last (oc.lastModel) via setModelSel effect + per-session pin
+      if (target) prov.rememberSession(target, v);
       prov.setModelSel(v);
     },
     [prov.rememberSession, prov.setModelSel],
@@ -1440,6 +1492,7 @@ export function useOpencode() {
         return next;
       });
       prov.rememberSession(id, "");
+      prov.forgetVariantSession(id);
       if (activeRef.current === id) {
         setActiveId("");
         store.clearStashes();
@@ -1489,10 +1542,25 @@ export function useOpencode() {
     const r: any = await (client.session as any).fork({ path: { id } });
     const s = r.data as Session;
     sessionDirRef.current.set(s.id, dirFor);
+    // copy per-session chip values from source session so duplicate inherits
+    try {
+      const srcModel = (prov as any).sessionModels?.[id];
+      if (srcModel) prov.rememberSession(s.id, srcModel);
+      else if (prov.modelSel) prov.rememberSession(s.id, prov.modelSel);
+      const srcAgent = sessionAgents[id];
+      if (srcAgent) rememberAgentSession(s.id, srcAgent);
+      else if (agentSel) rememberAgentSession(s.id, agentSel);
+      const srcSec = sessionSecurity[id] as SecurityMode | undefined;
+      if (srcSec) rememberSecuritySession(s.id, srcSec);
+      else if (securityModeRef.current) rememberSecuritySession(s.id, securityModeRef.current);
+      const srcVariant = (prov as any).sessionVariants?.[id];
+      if (srcVariant) prov.rememberVariantSession(s.id, srcVariant);
+      else if (prov.variantSel) prov.rememberVariantSession(s.id, prov.variantSel);
+    } catch {}
     await refreshSessions();
     await openSession(s.id);
     return s.id;
-  }, [refreshSessions, openSession]);
+  }, [refreshSessions, openSession, sessionAgents, sessionSecurity, agentSel]);
 
   const forkFrom = useCallback(async (messageID: string) => {
     const id = activeRef.current;
@@ -1515,6 +1583,21 @@ export function useOpencode() {
     const r: any = await (client.session as any).fork({ path: { id }, body: { messageID } });
     const s = r.data as Session;
     sessionDirRef.current.set(s.id, dirFor);
+    // fork inherits per-session chip values from source session
+    try {
+      const srcModel = (prov as any).sessionModels?.[id];
+      if (srcModel) prov.rememberSession(s.id, srcModel);
+      else if (prov.modelSel) prov.rememberSession(s.id, prov.modelSel);
+      const srcAgent = sessionAgents[id];
+      if (srcAgent) rememberAgentSession(s.id, srcAgent);
+      else if (agentSel) rememberAgentSession(s.id, agentSel);
+      const srcSec = sessionSecurity[id] as SecurityMode | undefined;
+      if (srcSec) rememberSecuritySession(s.id, srcSec);
+      else if (securityModeRef.current) rememberSecuritySession(s.id, securityModeRef.current);
+      const srcVariant = (prov as any).sessionVariants?.[id];
+      if (srcVariant) prov.rememberVariantSession(s.id, srcVariant);
+      else if (prov.variantSel) prov.rememberVariantSession(s.id, prov.variantSel);
+    } catch {}
     if (pasteText) {
       try { setDraft(s.id, pasteText); } catch {}
     }
@@ -1525,7 +1608,7 @@ export function useOpencode() {
       window.dispatchEvent(new CustomEvent("oc:rewind-input", { detail: pasteText }));
     }
     return s.id;
-  }, [refreshSessions, openSession, msgs]);
+  }, [refreshSessions, openSession, msgs, sessionAgents, sessionSecurity, agentSel]);
 
   const togglePin = useCallback((id: string) => {
     try {
@@ -1574,7 +1657,10 @@ export function useOpencode() {
       for (const id of ids) if (id in next) { delete next[id]; changed = true; }
       return changed ? next : prev;
     });
-    for (const id of ids) prov.rememberSession(id, "");
+    for (const id of ids) {
+      prov.rememberSession(id, "");
+      prov.forgetVariantSession(id);
+    }
     setSessions((prev) => prev.filter((s) => !ids.includes(s.id)));
     if (activeRef.current && ids.includes(activeRef.current)) {
       setActiveId("");
@@ -1608,7 +1694,10 @@ export function useOpencode() {
     }
     setSessionSecurity((prev) => (Object.keys(prev).length ? {} : prev));
     setSessionAgents((prev) => (Object.keys(prev).length ? {} : prev));
-    for (const id of ids) prov.rememberSession(id, "");
+    for (const id of ids) {
+      prov.rememberSession(id, "");
+      prov.forgetVariantSession(id);
+    }
     setActiveId("");
     store.clearStashes();
     setMsgs([]);

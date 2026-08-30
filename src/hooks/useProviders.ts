@@ -21,6 +21,8 @@ function isReachable(model: string, groups: ProviderGroup[]): boolean {
 }
 
 export function useProviders(onError: (msg: string) => void, activeId: string) {
+  const activeIdRef = useRef(activeId);
+  useEffect(() => { activeIdRef.current = activeId; }, [activeId]);
   const [providers, setProviders] = useState<ProviderGroup[]>([]);
   const [modelSel, setModelSel] = useState("");
   // per-session model memory: only entries that were EXPLICITLY picked for
@@ -63,6 +65,12 @@ export function useProviders(onError: (msg: string) => void, activeId: string) {
       return {};
     }
   });
+  const sessionModelsRef = useRef(sessionModels);
+  useEffect(() => { sessionModelsRef.current = sessionModels; }, [sessionModels]);
+  const sessionVariantsRef = useRef(sessionVariants);
+  useEffect(() => { sessionVariantsRef.current = sessionVariants; }, [sessionVariants]);
+  // B: pin only on user-initiated change — skip while restoring session
+  const restoringRef = useRef(false);
 
 
   // shared last hand-picked model — visible to every window/instance via
@@ -145,7 +153,9 @@ export function useProviders(onError: (msg: string) => void, activeId: string) {
     const remembered = sessionModels[activeId];
     if (remembered) {
       if (isReachable(remembered, providers)) {
+        restoringRef.current = true;
         setModelSel((cur) => (cur === remembered ? cur : remembered));
+        queueMicrotask(() => { restoringRef.current = false; });
         return;
       }
       // stale — provider/model vanished: drop the per-session pin
@@ -164,9 +174,30 @@ export function useProviders(onError: (msg: string) => void, activeId: string) {
       global = localStorage.getItem(LAST_MODEL_KEY) ?? sessionStorage.getItem(LAST_MODEL_KEY);
     } catch {}
     if (global && isReachable(global, providers)) {
+      restoringRef.current = true;
       setModelSel((cur) => (cur === global ? cur : global));
+      queueMicrotask(() => { restoringRef.current = false; });
     }
   }, [activeId, providers, sessionModels]);
+
+  // generic watcher: any model change (dropdown, Tab, future shortcut) auto-pins per-session
+  // B: skip while restoring and while still following global (unpinned)
+  useEffect(() => {
+    const sid = activeIdRef.current;
+    if (!sid || restoringRef.current) return;
+    if (!modelSel) {
+      if (sessionModelsRef.current[sid]) rememberSession(sid, "");
+      return;
+    }
+    if (!isReachable(modelSel, providers)) return;
+    if (sessionModelsRef.current[sid] === modelSel) return;
+    // unpinned sessions that are just showing the global last should not become pinned
+    let global: string | null = null;
+    try { global = localStorage.getItem(LAST_MODEL_KEY); } catch {}
+    const hasPin = sid in sessionModelsRef.current;
+    if (!hasPin && modelSel === global) return;
+    rememberSession(sid, modelSel);
+  }, [modelSel, providers]);
 
   // boot-time provider list + optional capability enrichment. attachment /
   // modality hints live only in GET /provider; SDK types stale AGAIN: runtime
@@ -299,8 +330,9 @@ export function useProviders(onError: (msg: string) => void, activeId: string) {
   }, [sessionVariants, activeId, variantMap, modelSel, modelVariants]);
 
   const setVariantSel = useCallback(
-    (v: string) => {
+    (v: string, sid?: string) => {
       if (!modelSel) return;
+      // global per-model last (for new chats)
       setVariantMap((prev) => {
         const next = { ...prev };
         if (v) next[modelSel] = v;
@@ -312,20 +344,45 @@ export function useProviders(onError: (msg: string) => void, activeId: string) {
         }
         return next;
       });
-      if (!activeId) return;
+      const target = sid ?? activeIdRef.current;
+      if (!target) return;
       setSessionVariants((prev) => {
         if (!v) {
-          if (!(activeId in prev)) return prev;
+          if (!(target in prev)) return prev;
           const next = { ...prev };
-          delete next[activeId];
+          delete next[target];
           return next;
         }
-        if (prev[activeId] === v) return prev;
-        return { ...prev, [activeId]: v };
+        if (prev[target] === v) return prev;
+        return { ...prev, [target]: v };
       });
     },
-    [modelSel, activeId],
+    [modelSel],
   );
+
+  const forgetVariantSession = useCallback((sid: string) => {
+    if (!sid) return;
+    setSessionVariants((prev) => {
+      if (!(sid in prev)) return prev;
+      const next = { ...prev };
+      delete next[sid];
+      return next;
+    });
+  }, []);
+
+  const rememberVariantSession = useCallback((sid: string, value: string) => {
+    if (!sid) return;
+    setSessionVariants((prev) => {
+      if (!value) {
+        if (!(sid in prev)) return prev;
+        const next = { ...prev };
+        delete next[sid];
+        return next;
+      }
+      if (prev[sid] === value) return prev;
+      return { ...prev, [sid]: value };
+    });
+  }, []);
 
   // chip click: effort cycles default -> low -> ... -> default
   const cycleVariant = useCallback(() => {
@@ -335,11 +392,25 @@ export function useProviders(onError: (msg: string) => void, activeId: string) {
     playSound("click");
   }, [modelVariants, variantSel, setVariantSel]);
 
+  // watcher for variant (covers Tab/future shortcuts) — B: skip restoring and global fallback
+  useEffect(() => {
+    const sid = activeIdRef.current;
+    if (!sid || restoringRef.current || !modelSel) return;
+    const cur = variantSel;
+    if (sessionVariantsRef.current[sid] === cur) return;
+    const hasPin = sid in sessionVariantsRef.current;
+    const globalForModel = variantMap[modelSel] ?? "";
+    if (!hasPin && cur === globalForModel) return;
+    rememberVariantSession(sid, cur);
+  }, [variantSel, modelSel]);
+
   return {
     providers,
     modelSel,
     setModelSel,
     rememberSession,
+    forgetVariantSession,
+    rememberVariantSession,
     defaultModel,
     learnDefault,
     sentExplicitModel,
@@ -350,6 +421,8 @@ export function useProviders(onError: (msg: string) => void, activeId: string) {
     variantSel,
     setVariantSel,
     cycleVariant,
+    sessionModels,
+    sessionVariants,
   };
 }
 
