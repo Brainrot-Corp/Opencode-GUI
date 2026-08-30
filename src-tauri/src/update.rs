@@ -208,6 +208,8 @@ pub fn cleanup_old() {
             let _ = std::fs::remove_file(dir.join("opencode-gui.old.exe"));
         }
     }
+    // leftover from pre-2.0.5 batch relaunch — no longer created, clean once
+    let _ = std::fs::remove_file(std::env::temp_dir().join("oc-relaunch.bat"));
 }
 
 fn trace(msg: &str) {
@@ -267,43 +269,38 @@ pub fn apply_on_exit() {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
+        use std::process::Stdio;
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         const DETACHED_PROCESS: u32 = 0x0000_0008;
         const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
-        let exe_quoted = format!("\"{}\"", exe_path.display());
-        trace(&format!("exe_path: {} quoted={}", exe_path.display(), exe_quoted));
-        // 1.5.5 simply did `Command::new(exe).spawn()` with no wait — worked on Win11
-        // where the single-instance mutex is released quickly, but failed on Win10
-        // where AV/WebView2 holds it ~1-2s. The tasklist-polling batch added later
-        // broke entirely (missing parens caused infinite `goto wait` loop, plus
-        // locale-dependent `tasklist`/`find` failures). Fixed-delay batch avoids
-        // all of that: ~2.5s ping delay then `start --new-instance` bypasses the
-        // mutex entirely. Matches 1.5.5's direct spawn semantics but survives Win10.
-        let batch_path = std::env::temp_dir().join("oc-relaunch.bat");
-        let batch = format!(
-            "@echo off\r\nping -n 4 127.0.0.1 >nul\r\nstart \"\" {} --new-instance\r\n(goto) 2>nul & del \"%~f0\"\r\n",
-            exe_quoted
-        );
-        trace(&format!("batch_path: {} batch_len={}", batch_path.display(), batch.len()));
+        trace(&format!("exe_path: {}", exe_path.display()));
+        // 0x800700E8 (232 ERROR_NO_DATA "pipe is being closed") came from the
+        // ping-based batch inheriting the dying parent's closing stdio pipes
+        // plus a brittle external `ping.exe` dependency. --new-instance
+        // bypasses the single-instance mutex, so no PID-wait or ping delay is
+        // needed — direct detached spawn with null stdio is the minimal fix.
+        // ponytail: no batch/ping, direct spawn only; powershell fallback only if needed
         let mut spawned = false;
-        if std::fs::write(&batch_path, &batch).is_ok() {
-            trace("batch write ok");
-            let mut cmd = std::process::Command::new("cmd");
-            cmd.args(["/C", &batch_path.to_string_lossy().to_string()]);
+        {
+            let mut cmd = std::process::Command::new(&exe_path);
+            cmd.arg("--new-instance");
+            cmd.stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null());
             cmd.creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
             match cmd.spawn() {
-                Ok(_) => { trace("batch spawn ok"); spawned = true; }
-                Err(e) => trace(&format!("batch spawn failed: {e}")),
+                Ok(_) => {
+                    trace("direct spawn ok");
+                    spawned = true;
+                }
+                Err(e) => trace(&format!("direct spawn failed: {e}")),
             }
-        } else {
-            trace("batch write failed");
         }
         if !spawned {
-            trace("batch not spawned, trying powershell");
-            // Fallback: fixed 2s sleep then Start-Process --new-instance (same semantics as batch)
+            trace("direct not spawned, trying powershell");
             let exe_str = exe_path.to_string_lossy().replace('\'', "''");
             let ps_cmd = format!(
-                "Start-Sleep -Seconds 2; Start-Process -FilePath '{}' -ArgumentList '--new-instance'",
+                "Start-Sleep -Milliseconds 400; Start-Process -FilePath '{}' -ArgumentList '--new-instance'",
                 exe_str
             );
             trace(&format!("ps_cmd: {ps_cmd}"));
@@ -318,9 +315,15 @@ pub fn apply_on_exit() {
                 "-Command",
                 &ps_cmd,
             ]);
+            cmd.stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null());
             cmd.creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
             match cmd.spawn() {
-                Ok(_) => { trace("powershell spawn ok"); spawned = true; }
+                Ok(_) => {
+                    trace("powershell spawn ok");
+                    spawned = true;
+                }
                 Err(e) => {
                     trace(&format!("powershell spawn failed: {e}"));
                     let mut alt = std::process::Command::new("pwsh");
@@ -334,22 +337,16 @@ pub fn apply_on_exit() {
                         "-Command",
                         &ps_cmd,
                     ]);
+                    alt.stdin(Stdio::null())
+                        .stdout(Stdio::null())
+                        .stderr(Stdio::null());
                     alt.creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
                     match alt.spawn() {
-                        Ok(_) => { trace("pwsh spawn ok"); spawned = true; }
-                        Err(e2) => {
-                            trace(&format!("pwsh spawn failed: {e2}"));
-                            // Last resort: direct detached launch (no delay)
-                            let mut fallback = std::process::Command::new(&exe_path);
-                            fallback.arg("--new-instance");
-                            fallback.creation_flags(
-                                CREATE_NO_WINDOW | DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP,
-                            );
-                            match fallback.spawn() {
-                                Ok(_) => { trace("direct fallback spawn ok"); spawned = true; }
-                                Err(e3) => trace(&format!("direct fallback spawn failed: {e3}")),
-                            }
+                        Ok(_) => {
+                            trace("pwsh spawn ok");
+                            spawned = true;
                         }
+                        Err(e2) => trace(&format!("pwsh spawn failed: {e2}")),
                     }
                 }
             }

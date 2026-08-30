@@ -2,10 +2,14 @@ import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { opencode, opencodeFor } from "../api";
 import { useContextMenu } from "../hooks/useContextMenu";
-import { invalidateFileCache, useFileCache } from "../hooks/useFileCache";
+import { invalidateFileCache, normalizeFilePath, useFileCache } from "../hooks/useFileCache";
 import { clipboardWrite } from "../lib/clipboard";
 import "../styles/files.css";
 import "../styles/find.css";
+
+function norm(p: string): string {
+  return normalizeFilePath(p);
+}
 
 type Node = {
   name: string;
@@ -37,7 +41,7 @@ function FileIcon({ name }: { name: string }) {
 }
 
 export default function FileTree({ dir = "" }: { dir?: string }) {
-  const { kids, error, loadingDir, load } = useFileCache(dir);
+  const { kids, error, load, isLoading } = useFileCache(dir);
   const [openDirs, setOpenDirs] = useState<Set<string>>(new Set());
   const [localErr, setLocalErr] = useState("");
   const errorMsg = error || localErr;
@@ -131,8 +135,9 @@ export default function FileTree({ dir = "" }: { dir?: string }) {
     return dir || "";
   }
   function parentPath(p: string): string {
-    const i = p.lastIndexOf("/");
-    return i >= 0 ? p.slice(0, i) : "";
+    const n = norm(p);
+    const i = n.lastIndexOf("/");
+    return i >= 0 ? n.slice(0, i) : "";
   }
   function parentAbs(node: Node): string {
     const abs = node.absolute;
@@ -151,12 +156,13 @@ export default function FileTree({ dir = "" }: { dir?: string }) {
 
 
   function toggleDir(n: Node) {
+    const key = norm(n.path);
     setOpenDirs((prev) => {
       const next = new Set(prev);
-      if (next.has(n.path)) next.delete(n.path);
+      if (next.has(key)) next.delete(key);
       else {
-        next.add(n.path);
-        if (!kids.has(n.path)) load(n.path);
+        next.add(key);
+        if (!kids.has(key)) load(n.path);
       }
       return next;
     });
@@ -177,13 +183,14 @@ export default function FileTree({ dir = "" }: { dir?: string }) {
     const baseAbs = base ? base.absolute : workspaceRootAbs();
     if (!baseAbs) { setError("Cannot determine workspace root — open a workspace first"); return; }
     const abs = joinAbs(baseAbs, trimmed);
-    const newRel = basePath ? `${basePath}/${trimmed}` : trimmed;
+    const baseNorm = norm(basePath);
+    const newRel = baseNorm ? `${baseNorm}/${trimmed}` : trimmed;
     try {
       await invoke("file_create", { path: abs, isDir });
       await load(basePath, true);
       emitChange(newRel);
-      emitChange(basePath);
-      if (base && !openDirs.has(base.path)) setOpenDirs((prev) => new Set(prev).add(base.path));
+      emitChange(baseNorm);
+      if (base && !openDirs.has(norm(base.path))) setOpenDirs((prev) => new Set(prev).add(norm(base.path)));
     } catch (e) { setError(String(e)); }
   }
 
@@ -294,7 +301,8 @@ export default function FileTree({ dir = "" }: { dir?: string }) {
           </div>
         );
       }
-      const isOpen = openDirs.has(n.path) || !!filterQuery;
+      const key = norm(n.path);
+      const isOpen = openDirs.has(key) || !!filterQuery;
       return n.type === "directory" ? (
         <div key={n.path}>
           <button
@@ -306,9 +314,9 @@ export default function FileTree({ dir = "" }: { dir?: string }) {
             <i className={`fa-solid fa-chevron-${isOpen ? "down" : "right"} ft-chev`} />
             <i className={`fa-solid ${isOpen ? "fa-folder-open" : "fa-folder"}`} />
             <span>{filterQuery ? highlightName(n.name, filterQuery) : n.name}</span>
-            {loadingDir === n.path && <i className="fa-solid fa-gear fa-spin-pulse ft-load" />}
+            {isLoading(n.path) && <i className="fa-solid fa-gear fa-spin-pulse ft-load" />}
           </button>
-          {isOpen && renderNodes(kids.get(n.path) ?? [], depth + 1)}
+          {isOpen && renderNodes(kids.get(key) ?? [], depth + 1)}
         </div>
       ) : (
         <button
