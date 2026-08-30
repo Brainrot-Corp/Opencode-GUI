@@ -185,6 +185,7 @@ export function useOpencode() {
   // command-registry refetch throttle for file-watcher bursts
   const cmdFetchAt = useRef(0);
   const agentFetchAt = useRef(0);
+  const baseRef = useRef("");
 
   // authoritative per-session message stores (SSE mutations land here
   // synchronously; only the active session mirrors into React state)
@@ -520,14 +521,14 @@ export function useOpencode() {
 
   // --- multi-workspace helpers ---
   const sessionDirRef = useRef<Map<string, string>>(new Map());
-  function getWorkspaces(): string[] {
+  const getWorkspaces = useCallback((): string[] => {
     try {
       const raw = JSON.parse(localStorage.getItem("oc.settings") ?? "{}");
       const arr = Array.isArray(raw.workspaces) ? raw.workspaces : [];
       return arr.filter((x: unknown) => typeof x === "string" && (x as string).trim()).slice(0, 5);
     } catch { return []; }
-  }
-  function getAllDirs(): string[] {
+  }, []);
+  const getAllDirs = useCallback((): string[] => {
     const primary = getDirectory();
     const extras = getWorkspaces();
     const seen = new Set<string>();
@@ -541,7 +542,7 @@ export function useOpencode() {
       out.push(t);
     }
     return out;
-  }
+  }, [getWorkspaces]);
   const getDirForSession = useCallback((id: string): string => {
     return sessionDirRef.current.get(id) ?? getDirectory();
   }, []);
@@ -582,7 +583,20 @@ export function useOpencode() {
     sessionDirRef.current = finalMap;
     setSessions(out);
     return out;
-  }, [refreshSessionsFor]);
+  }, [refreshSessionsFor, getAllDirs]);
+
+  // TF-04: serialize refreshSessions — double-click Rewind queues one more, drops intermediate
+  const refreshingRef = useRef(false);
+  const pendingRefreshRef = useRef(false);
+  const guardedRefresh = useCallback(async () => {
+    if (refreshingRef.current) { pendingRefreshRef.current = true; return; }
+    refreshingRef.current = true;
+    try { return await refreshSessions(); }
+    finally {
+      refreshingRef.current = false;
+      if (pendingRefreshRef.current) { pendingRefreshRef.current = false; void guardedRefresh(); }
+    }
+  }, [refreshSessions]);
 
   // server registry: custom + plugin-registered + skill commands.
   // hot reload: refetched on "/" menu open, window focus, and .opencode
@@ -626,7 +640,16 @@ export function useOpencode() {
     if (store.isStale(id, seq)) return;
     // mid-stream the SSE-mutated store is NEWER than any fetch snapshot
     // (opencode persists part text only at milestones) — don't reset it
-    if (busyRef.current.has(id)) return;
+    if (busyRef.current.has(id)) {
+      // became busy after fetch started — preserve streaming store
+      // seed only if store was empty (prevents forever-empty view)
+      if (!store.cached(id)?.length) {
+        const list = (r.data ?? []) as Msg[];
+        store.setFetched(id, list);
+        if (activeRef.current === id) setMsgs(list);
+      }
+      return;
+    }
     const list = (r.data ?? []) as Msg[];
     store.setFetched(id, list);
     // user may have switched away while we were fetching — update the
@@ -943,28 +966,46 @@ export function useOpencode() {
 
       try {
         const { base, client } = await opencode();
-        const dirs = getAllDirs();
+        baseRef.current = base;
+        let currentBase = base;
         // one live SSE per workspace (5 max) — each filtered by ?directory=
         let liveCount = 0;
         const updateLive = () => setLive(liveCount > 0);
-        for (const d of dirs) {
-          if (esMap.has(d)) continue;
-          const url = d ? `${base}/event?directory=${encodeURIComponent(d)}` : `${base}/event`;
-          const es = new EventSource(url);
-          es.onopen = () => { liveCount++; updateLive(); };
-          es.onerror = () => { /* EventSource auto-reconnects; live reflects open count */ };
-          es.onmessage = (ev) => {
-            try { onEvent(JSON.parse(ev.data), d); } catch {}
-          };
-          esMap.set(d, es);
-        }
-        // watch for workspace list changes — add/remove streams live
-        const wsInterval = window.setInterval(() => {
+        const setupSSE = (baseVal: string) => {
+          const dirs = getAllDirs();
+          for (const d of dirs) {
+            if (esMap.has(d)) continue;
+            const url = d ? `${baseVal}/event?directory=${encodeURIComponent(d)}` : `${baseVal}/event`;
+            const es = new EventSource(url);
+            es.onopen = () => { liveCount++; updateLive(); };
+            es.onerror = () => { /* EventSource auto-reconnects; live reflects open count */ };
+            es.onmessage = (ev) => {
+              try { onEvent(JSON.parse(ev.data), d); } catch {}
+            };
+            esMap.set(d, es);
+          }
+        };
+        setupSSE(currentBase);
+        // watch for workspace list changes — add/remove streams live; re-subscribes when base changes
+        const wsInterval = window.setInterval(async () => {
           if (disposed) return;
+          let liveBase = baseRef.current || currentBase;
+          try {
+            const r = await opencode().catch(() => null as any);
+            if (r?.base) { liveBase = r.base; if (liveBase !== baseRef.current) baseRef.current = liveBase; }
+          } catch {}
+          if (liveBase !== currentBase) {
+            for (const es of esMap.values()) es.close();
+            esMap.clear();
+            currentBase = liveBase;
+            baseRef.current = liveBase;
+            liveCount = 0;
+            updateLive();
+          }
           const cur = getAllDirs();
           // add new
           for (const d of cur) if (!esMap.has(d)) {
-            const url = d ? `${base}/event?directory=${encodeURIComponent(d)}` : `${base}/event`;
+            const url = d ? `${liveBase}/event?directory=${encodeURIComponent(d)}` : `${liveBase}/event`;
             const es = new EventSource(url);
             es.onopen = () => { liveCount++; updateLive(); };
             es.onerror = () => {};
@@ -1060,7 +1101,7 @@ export function useOpencode() {
       esMap.clear();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [refreshSessions, openSession, refreshCommands]);
+  }, [refreshSessions, openSession, refreshCommands, getAllDirs]);
 
   // keep the command registry + provider list warm across workspace switches
   // done elsewhere. Provider refetch self-heals a transient boot failure that
@@ -1235,7 +1276,7 @@ export function useOpencode() {
         if (prov.variantSel) body.variant = prov.variantSel;
         await (client.session as any).promptAsync({ path: { id: sid }, body });
       } catch (e) {
-        tracker.markBusy(sid, false);
+        tracker.reset(sid);
         // surface it in the history (synthetic error bubble) + toast
         store.addError(sid, String(e));
         pushToast(String(e));
@@ -1264,8 +1305,8 @@ export function useOpencode() {
     [activeId, promptNow],
   );
 
-  // drain one queued prompt per settled turn — guarded by the inflight set
-  // (busyRef lags a render behind and would refuse right after settling)
+  // drain one queued prompt per settled turn — ONLY from tracker.onSettle after grace
+  // hasInflight guard is safety for timer race; busyIds lags render so not used
   useEffect(() => {
     flushRef.current = (sid: string) => {
       if (tracker.hasInflight(sid)) return;
@@ -1381,14 +1422,14 @@ export function useOpencode() {
       const dirFor = sessionDirRef.current.get(id) ?? getDirectory();
       const { client } = dirFor ? await opencodeFor(dirFor) : await opencode();
       await (client.session as any).revert({ path: { id }, body: { messageID } }).catch(() => {});
-      await refreshSessions().catch(() => {});
+      await guardedRefresh().catch(() => {});
       await openSession(id).catch(() => {});
       if (pasteText) {
         try { setDraft(id, pasteText); } catch {}
         window.dispatchEvent(new CustomEvent("oc:rewind-input", { detail: pasteText }));
       }
     },
-    [refreshSessions, openSession, msgs],
+    [guardedRefresh, openSession, msgs],
   );
 
   const unrevert = useCallback(async () => {
@@ -1397,9 +1438,9 @@ export function useOpencode() {
     const dirFor = sessionDirRef.current.get(id) ?? getDirectory();
     const { client } = dirFor ? await opencodeFor(dirFor) : await opencode();
     await (client.session as any).unrevert({ path: { id } }).catch(() => {});
-    await refreshSessions().catch(() => {});
+    await guardedRefresh().catch(() => {});
     await openSession(id).catch(() => {});
-  }, [refreshSessions, openSession]);
+  }, [guardedRefresh, openSession]);
 
   const toggleDisabledAgent = useCallback((name: string) => {
     setDisabledAgents((prev) => {
@@ -1636,10 +1677,10 @@ export function useOpencode() {
       if (srcVariant) prov.rememberVariantSession(s.id, srcVariant);
       else if (prov.variantSel) prov.rememberVariantSession(s.id, prov.variantSel);
     } catch {}
-    await refreshSessions();
+    await guardedRefresh();
     await openSession(s.id);
     return s.id;
-  }, [refreshSessions, openSession, sessionAgents, sessionSecurity, agentSel, prov.modelSel, prov.defaultModel, prov.variantSel]);
+  }, [guardedRefresh, openSession, sessionAgents, sessionSecurity, agentSel, prov.modelSel, prov.defaultModel, prov.variantSel]);
 
   const forkFrom = useCallback(async (messageID: string) => {
     const id = activeRef.current;
@@ -1685,14 +1726,14 @@ export function useOpencode() {
     if (pasteText) {
       try { setDraft(s.id, pasteText); } catch {}
     }
-    await refreshSessions();
+    await guardedRefresh();
     await openSession(s.id);
     if (pasteText) {
       try { setDraft(s.id, pasteText); } catch {}
       window.dispatchEvent(new CustomEvent("oc:rewind-input", { detail: pasteText }));
     }
     return s.id;
-  }, [refreshSessions, openSession, msgs, sessionAgents, sessionSecurity, agentSel, prov.modelSel, prov.defaultModel, prov.variantSel]);
+  }, [guardedRefresh, openSession, msgs, sessionAgents, sessionSecurity, agentSel, prov.modelSel, prov.defaultModel, prov.variantSel]);
 
   const togglePin = useCallback((id: string) => {
     try {

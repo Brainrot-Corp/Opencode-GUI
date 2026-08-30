@@ -52,7 +52,8 @@ mod job {
     use windows::Win32::Foundation::HANDLE;
     use windows::Win32::System::JobObjects::{
         AssignProcessToJobObject, CreateJobObjectW, SetInformationJobObject, JobObjectExtendedLimitInformation,
-        JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_BREAKAWAY_OK,
+        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
     };
     use windows::Win32::System::Threading::GetCurrentProcess;
 
@@ -68,7 +69,11 @@ mod job {
         unsafe {
             let h = CreateJobObjectW(None, None).ok()?;
             let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
-            info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            // BREAKAWAY_OK allows nested jobs (enterprise/debugger already in a job) to
+            // still create a child job; without it AssignProcessToJobObject fails with
+            // ERROR_ACCESS_DENIED and nested grandchildren outlive the GUI.
+            info.BasicLimitInformation.LimitFlags =
+                JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_BREAKAWAY_OK;
             let _ = SetInformationJobObject(
                 h,
                 JobObjectExtendedLimitInformation,
@@ -85,9 +90,15 @@ mod job {
         unsafe {
             let proc = GetCurrentProcess();
             // ensure current process is also in the job so nested children are covered
-            let _ = AssignProcessToJobObject(job, proc);
+            if let Err(e) = AssignProcessToJobObject(job, proc) {
+                // ERROR_ACCESS_DENIED means we're already in a job (enterprise policy / debugger)
+                // — log instead of silently ignoring; child is still assigned but grandchildren may survive
+                eprintln!("[job] AssignProcessToJobObject(current) failed: {} (already in job? nested children may outlive GUI)", e);
+            }
             let h = HANDLE(child.as_raw_handle() as *mut _);
-            let _ = AssignProcessToJobObject(job, h);
+            if let Err(e) = AssignProcessToJobObject(job, h) {
+                eprintln!("[job] AssignProcessToJobObject(child) failed: {}", e);
+            }
         }
     }
 }
@@ -143,46 +154,81 @@ fn resolve_opencode_exe(exe_dir: &std::path::Path) -> PathBuf {
     for name in ["opencode.exe", "opencode-x86_64-pc-windows-msvc.exe"] {
         let p = exe_dir.join(name);
         if p.is_file() {
+            eprintln!("[opencode] resolved sidecar: {}", p.display());
             return p;
         }
     }
     // dev: exe is target/debug/opencode-gui.exe, sidecar lives in src-tauri/binaries
-    // walk up a bit and probe
+    // walk up to filesystem root (EH-08: previous 4-ancestor cap could miss + fallback to stale PATH)
     if let Ok(cur) = std::env::current_exe() {
         let mut anc = cur.parent().map(|p| p.to_owned());
-        for _ in 0..4 {
-            if let Some(dir) = anc.clone() {
-                let cand = dir.join("src-tauri").join("binaries").join("opencode-x86_64-pc-windows-msvc.exe");
-                if cand.is_file() { return cand; }
-                let cand2 = dir.join("binaries").join("opencode.exe");
-                if cand2.is_file() { return cand2; }
-                anc = dir.parent().map(|p| p.to_owned());
+        loop {
+            let Some(dir) = anc.clone() else { break };
+            let cand = dir.join("src-tauri").join("binaries").join("opencode-x86_64-pc-windows-msvc.exe");
+            if cand.is_file() {
+                eprintln!("[opencode] resolved sidecar: {}", cand.display());
+                return cand;
             }
+            let cand2 = dir.join("binaries").join("opencode.exe");
+            if cand2.is_file() {
+                eprintln!("[opencode] resolved sidecar: {}", cand2.display());
+                return cand2;
+            }
+            let parent = dir.parent().map(|p| p.to_owned());
+            if parent.is_none() || parent == anc {
+                break;
+            }
+            anc = parent;
         }
     }
     // last resort: PATH lookup
     if let Ok(path) = std::env::var("PATH") {
         for dir in std::env::split_paths(&path) {
             let p = dir.join("opencode.exe");
-            if p.is_file() { return p; }
+            if p.is_file() {
+                eprintln!("[opencode] resolved sidecar via PATH: {}", p.display());
+                return p;
+            }
             #[cfg(windows)]
             {
                 let p2 = dir.join("opencode.cmd");
-                if p2.is_file() { return p2; }
+                if p2.is_file() {
+                    eprintln!("[opencode] resolved sidecar via PATH: {}", p2.display());
+                    return p2;
+                }
             }
         }
     }
-    exe_dir.join("opencode.exe")
+    let fallback = exe_dir.join("opencode.exe");
+    eprintln!("[opencode] resolved sidecar fallback: {}", fallback.display());
+    fallback
 }
 
 fn wait_for_port(port: u16, timeout: std::time::Duration) -> bool {
+    use std::io::{Read, Write};
     use std::net::TcpStream;
     use std::time::Instant;
     let deadline = Instant::now() + timeout;
     while Instant::now() < deadline {
-        if TcpStream::connect(format!("127.0.0.1:{port}")).is_ok() {
-            std::thread::sleep(std::time::Duration::from_millis(80));
-            return true;
+        if let Ok(mut stream) = TcpStream::connect(format!("127.0.0.1:{port}")) {
+            let _ = stream.set_read_timeout(Some(std::time::Duration::from_millis(400)));
+            let _ = stream.set_write_timeout(Some(std::time::Duration::from_millis(400)));
+            let req = format!(
+                "GET /health HTTP/1.0\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"
+            );
+            if stream.write_all(req.as_bytes()).is_ok() {
+                let mut buf = [0u8; 8192];
+                if let Ok(n) = stream.read(&mut buf) {
+                    if n > 0 {
+                        let resp = String::from_utf8_lossy(&buf[..n]);
+                        // EH-07: validate HTTP 200 + JSON payload, not just TCP connect (port-steal race)
+                        if resp.contains("200") && resp.contains('{') {
+                            std::thread::sleep(std::time::Duration::from_millis(80));
+                            return true;
+                        }
+                    }
+                }
+            }
         }
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
@@ -520,10 +566,9 @@ fn file_reveal(path: String) -> Result<(), String> {
                 .creation_flags(CREATE_NO_WINDOW)
                 .spawn().map_err(|e| e.to_string())?;
         } else {
-            // /select, needs separate arg handling for spaces — explorer parses
-            // "/select,<path>" as one token; quoting the path fixes spaces.
             std::process::Command::new("explorer")
-                .arg(format!("/select,\"{}\"", path))
+                .arg("/select,")
+                .arg(&path)
                 .creation_flags(CREATE_NO_WINDOW)
                 .spawn().map_err(|e| e.to_string())?;
         }

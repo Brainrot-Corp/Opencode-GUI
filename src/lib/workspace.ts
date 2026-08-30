@@ -31,6 +31,8 @@ function readExtras(): string[] {
     return Array.isArray(raw.workspaces) ? raw.workspaces.filter((x: unknown) => typeof x === "string") : [];
   } catch { return []; }
 }
+// ponytail: re-reads localStorage immediately before write to minimize cross-tab
+// lost-update race; if contention grows use BroadcastChannel lock (global lock, per-tab merge)
 function writeExtras(list: string[]) {
   try {
     const raw = JSON.parse(localStorage.getItem("oc.settings") ?? "{}");
@@ -39,6 +41,17 @@ function writeExtras(list: string[]) {
   } catch {}
   window.dispatchEvent(new CustomEvent("oc:workspaces-changed"));
 }
+// transaction helper that re-reads before write and merges via updater — mitigates RC-05
+function safeWriteExtras(updater: (prev: string[]) => string[]) {
+  try {
+    const raw = JSON.parse(localStorage.getItem("oc.settings") ?? "{}");
+    const prev: string[] = Array.isArray(raw.workspaces) ? raw.workspaces.filter((x: unknown) => typeof x === "string") : [];
+    raw.workspaces = updater(prev).slice(0, MAX_EXTRA);
+    localStorage.setItem("oc.settings", JSON.stringify(raw));
+  } catch {}
+  window.dispatchEvent(new CustomEvent("oc:workspaces-changed"));
+}
+void writeExtras;
 export function getExtraWorkspaces(): string[] { return readExtras(); }
 export function getAllWorkspaces(): string[] {
   const primary = getDirectory();
@@ -60,25 +73,33 @@ export async function addWorkspace(path: string, atIndex?: number): Promise<bool
   if (!isDir) return false;
   const primary = getDirectory().toLowerCase();
   if (p.toLowerCase() === primary) return false;
-  let extras = readExtras();
-  const low = p.toLowerCase();
-  if (extras.some((e) => e.toLowerCase() === low)) return false;
-  if (extras.length >= MAX_EXTRA) return false;
-  if (typeof atIndex === "number" && atIndex >= 0 && atIndex <= extras.length) extras.splice(atIndex, 0, p);
-  else extras.push(p);
-  writeExtras(extras);
+  // atomic read-modify-write: re-read latest inside transaction to avoid cross-tab lost update
+  try {
+    const raw = JSON.parse(localStorage.getItem("oc.settings") ?? "{}");
+    let extras: string[] = Array.isArray(raw.workspaces) ? raw.workspaces.filter((x: unknown) => typeof x === "string") : [];
+    const low = p.toLowerCase();
+    if (extras.some((e) => e.toLowerCase() === low)) return false;
+    if (extras.length >= MAX_EXTRA) return false;
+    if (typeof atIndex === "number" && atIndex >= 0 && atIndex <= extras.length) extras.splice(atIndex, 0, p);
+    else extras.push(p);
+    raw.workspaces = extras.slice(0, MAX_EXTRA);
+    localStorage.setItem("oc.settings", JSON.stringify(raw));
+  } catch { return false; }
+  window.dispatchEvent(new CustomEvent("oc:workspaces-changed"));
   return true;
 }
 export function removeWorkspace(path: string) {
   const low = path.toLowerCase();
-  writeExtras(readExtras().filter((e) => e.toLowerCase() !== low));
+  safeWriteExtras((prev) => prev.filter((e) => e.toLowerCase() !== low));
 }
 export function reorderWorkspaces(from: number, to: number) {
-  const extras = readExtras();
-  if (from < 0 || from >= extras.length || to < 0 || to >= extras.length) return;
-  const [moved] = extras.splice(from, 1);
-  extras.splice(to, 0, moved);
-  writeExtras(extras);
+  safeWriteExtras((prev) => {
+    if (from < 0 || from >= prev.length || to < 0 || to >= prev.length) return prev;
+    const next = [...prev];
+    const [moved] = next.splice(from, 1);
+    next.splice(to, 0, moved);
+    return next;
+  });
 }
 export async function pickExtraWorkspace(atIndex?: number) {
   const def = getDirectory() || undefined;

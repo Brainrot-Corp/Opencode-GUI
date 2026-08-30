@@ -682,7 +682,7 @@ export default function MessageList({
     const el = listRef.current;
     if (!el) return;
     cancelAnimationFrame(raf.current);
-    expected.current = el.scrollHeight;
+    expected.current = el.scrollHeight - el.clientHeight;
     el.scrollTop = el.scrollHeight;
   }, []);
 
@@ -766,8 +766,8 @@ export default function MessageList({
       cancelAnimationFrame(raf.current);
       riding.current = false;
       const dist = el.scrollHeight - el.clientHeight - el.scrollTop;
-      // zero-tolerance pin: ONLY the exact tail counts as "at the bottom"
-      stick.current = dist <= 1;
+      // epsilon pin: fractional DPR/zoom can leave dist at 0.4-1.2px
+      stick.current = dist <= 4;
       // hysteresis so the pill can't flicker at one threshold
       setShowJump((v) => (v ? dist > 40 : dist > 80));
     };

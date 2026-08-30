@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { pushToast } from "./useToast";
 
 export type VoicePhase = "idle" | "recording" | "transcribing";
 
@@ -91,6 +92,10 @@ export function useVoice(
   // last utterance's encoded wav — kept so a routing miss can re-run it
   // through whisper's translate task without re-recording
   const lastWavRef = useRef<Uint8Array | null>(null);
+  // BA-04 watchdog: ScriptProcessorNode stalls after ~2-4min or tab hidden
+  const watchdogRef = useRef<number | null>(null);
+  const lastProcessRef = useRef(0);
+  const srcRef = useRef<MediaStreamAudioSourceNode | null>(null);
 
   // true while speech synthesis is audible (+ grace tail for speaker reverb)
   const ttsActive = useCallback(() => {
@@ -124,6 +129,12 @@ export function useVoice(
     // phase back to "recording" after the user switched the mic off
     modeRef.current = "manual";
     lastWavRef.current = null;
+    if (watchdogRef.current != null) {
+      clearInterval(watchdogRef.current);
+      watchdogRef.current = null;
+    }
+    srcRef.current?.disconnect();
+    srcRef.current = null;
     nodeRef.current?.disconnect();
     nodeRef.current = null;
     streamRef.current?.getTracks().forEach((t) => t.stop());
@@ -141,7 +152,11 @@ export function useVoice(
 
   const transcribe = useCallback(
     async (all: Float32Array) => {
-      if (all.length < RATE / 2) return; // sub-half-second click — ignore
+      if (all.length < RATE * 0.2) {
+        // BA-05: 0.5s floor discarded short commands like "clear"/"stop" — lower to 200ms
+        pushToast("utterance too short — ignored", { variant: "info", ttl: 2000 });
+        return;
+      }
       setPhase("transcribing");
       const wav = f32ToWav(all);
       lastWavRef.current = wav;
@@ -229,9 +244,10 @@ export function useVoice(
         });
         const ctx = new AudioContext({ sampleRate: RATE });
         const src = ctx.createMediaStreamSource(stream);
-        const node = ctx.createScriptProcessor(4096, 1, 1);
         modeRef.current = handsFree ? "stream" : "manual";
-        node.onaudioprocess = (e) => {
+        lastProcessRef.current = Date.now();
+        const onAudio = (e: AudioProcessingEvent) => {
+          lastProcessRef.current = Date.now();
           const ch = new Float32Array(e.inputBuffer.getChannelData(0));
           if (modeRef.current === "manual") {
             chunksRef.current.push(ch);
@@ -289,11 +305,36 @@ export function useVoice(
             if (silenceMsRef.current >= vadRef.current.pauseMs) closeUtterance();
           }
         };
+        const node = ctx.createScriptProcessor(4096, 1, 1);
+        node.onaudioprocess = onAudio;
         src.connect(node);
         node.connect(ctx.destination); // ScriptProcessor only runs when wired to output
         streamRef.current = stream;
         ctxRef.current = ctx;
         nodeRef.current = node;
+        srcRef.current = src;
+        // BA-04 watchdog: ScriptProcessorNode stalls after visibility change / 2-4min
+        if (watchdogRef.current != null) clearInterval(watchdogRef.current);
+        watchdogRef.current = window.setInterval(() => {
+          if (Date.now() - lastProcessRef.current <= 1000) return;
+          const c2 = ctxRef.current;
+          const s2 = streamRef.current;
+          const src2 = srcRef.current;
+          const old = nodeRef.current;
+          if (!c2 || !s2 || !src2 || !old) return;
+          if (c2.state === "closed") return;
+          try {
+            old.disconnect();
+          } catch {}
+          try {
+            const repl = c2.createScriptProcessor(4096, 1, 1);
+            repl.onaudioprocess = onAudio;
+            src2.connect(repl);
+            repl.connect(c2.destination);
+            nodeRef.current = repl;
+            lastProcessRef.current = Date.now();
+          } catch {}
+        }, 1000);
         setStreaming(handsFree);
         setPhase("recording");
       } catch (e) {

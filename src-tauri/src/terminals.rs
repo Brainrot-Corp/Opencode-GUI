@@ -330,9 +330,88 @@ fn wsl_available() -> bool {
     false
 }
 
+fn is_wsl_header_token(tok: &str) -> bool {
+    let low = tok.to_lowercase();
+    matches!(
+        low.as_str(),
+        "name"
+            | "nom"
+            | "nome"
+            | "nombre"
+            | "имя"
+            | "名前"
+            | "이름"
+            | "名称"
+            | "state"
+            | "état"
+            | "etat"
+            | "zustand"
+            | "estado"
+            | "stato"
+            | "состояние"
+            | "状態"
+            | "상태"
+            | "状态"
+            | "version"
+            | "バージョン"
+            | "버전"
+            | "版本"
+            | "версия"
+            | "running"
+            | "stopped"
+            | "installing"
+            | "ausgeführt"
+            | "angehalten"
+    )
+}
+
+fn is_no_distro_msg(s: &str) -> bool {
+    let low = s.to_lowercase();
+    low.contains("no installed")
+        || low.contains("is not installed")
+        || low.contains("no distribution")
+        || low.contains("keine")
+        || low.contains("aucune")
+        || low.contains("ninguna")
+        || low.contains("nessuna")
+        || low.contains("нет")
+        || low.contains("配布")
+        || low.contains("没有")
+        || low.contains("沒有")
+        || low.contains("없음")
+        || low.contains("no hay")
+        || low.contains("não há")
+        || low.contains("nao ha")
+}
+
 fn wsl_distros(out: &mut Vec<TerminalProfile>) {
     let mut names: Vec<String> = Vec::new();
     let mut saw_no_distro = false;
+
+    // EH-14: registry is primary (locale-independent) — try it first before CLI parsing
+    #[cfg(windows)]
+    {
+        for hive in [winreg::enums::HKEY_CURRENT_USER, winreg::enums::HKEY_LOCAL_MACHINE] {
+            if !names.is_empty() { break; }
+            let base = match winreg::RegKey::predef(hive).open_subkey("Software\\Microsoft\\Windows\\CurrentVersion\\Lxss") {
+                Ok(k) => k,
+                Err(_) => continue,
+            };
+            for key in base.enum_keys().flatten() {
+                if let Ok(sub) = base.open_subkey(&key) {
+                    if let Ok(distro) = sub.get_value::<String, _>("DistributionName") {
+                        let d = distro.trim().to_string();
+                        if !d.is_empty() && !names.contains(&d) {
+                            names.push(d);
+                        }
+                    }
+                }
+            }
+        }
+        if !names.is_empty() {
+            eprintln!("[terminals] wsl distros via registry: {:?}", names);
+        }
+    }
 
     // helper to run wsl with args, handling CREATE_NO_WINDOW, UTF-16 and Sysnative fallback (32-bit WoW64)
     let run_wsl = |args: &[&str]| -> Option<String> {
@@ -390,8 +469,7 @@ fn wsl_distros(out: &mut Vec<TerminalProfile>) {
     ] {
         if !names.is_empty() { break; }
         if let Some(combined) = run_wsl(args) {
-            let low_comb = combined.to_lowercase();
-            if low_comb.contains("no installed") || low_comb.contains("is not installed") || low_comb.contains("no distribution") {
+            if is_no_distro_msg(&combined) {
                 saw_no_distro = true;
             }
             for line in combined.lines() {
@@ -404,7 +482,8 @@ fn wsl_distros(out: &mut Vec<TerminalProfile>) {
                 if without_star.is_empty() { continue; }
                 // quiet: whole line is the name (may include spaces? take as-is, trimmed)
                 let name = without_star.trim().to_string();
-                if name.is_empty() || name.eq_ignore_ascii_case("name") { continue; }
+                let first_tok = name.split_whitespace().next().unwrap_or("");
+                if name.is_empty() || is_wsl_header_token(first_tok) { continue; }
                 if !names.contains(&name) {
                     names.push(name);
                 }
@@ -421,8 +500,7 @@ fn wsl_distros(out: &mut Vec<TerminalProfile>) {
     if names.is_empty() {
         for args in [&["--list", "--verbose"] as &[&str], &["-l", "-v"] as &[&str]] {
             if let Some(combined) = run_wsl(args) {
-                let low_comb = combined.to_lowercase();
-                if low_comb.contains("no installed") || low_comb.contains("is not installed") || low_comb.contains("no distribution") {
+                if is_no_distro_msg(&combined) {
                     saw_no_distro = true;
                 }
                 let mut lines = combined.lines().filter(|l| !l.trim().is_empty()).peekable();
@@ -439,7 +517,7 @@ fn wsl_distros(out: &mut Vec<TerminalProfile>) {
                     if without_star.is_empty() { continue; }
                     let name = without_star.split_whitespace().next().unwrap_or("").trim();
                     if name.is_empty() || name == "-" { continue; }
-                    if name.eq_ignore_ascii_case("running") || name.eq_ignore_ascii_case("stopped") || name.eq_ignore_ascii_case("installing") { continue; }
+                    if is_wsl_header_token(name) { continue; }
                     if !names.contains(&name.to_string()) {
                         names.push(name.to_string());
                     }
@@ -449,11 +527,10 @@ fn wsl_distros(out: &mut Vec<TerminalProfile>) {
         }
     }
 
-    // 3) plain --list (with header)
+    // 3) plain --list (with header) — take first whitespace column, filter localized headers
     if names.is_empty() {
         if let Some(combined) = run_wsl(&["--list"]) {
-            let low_comb = combined.to_lowercase();
-            if low_comb.contains("no installed") || low_comb.contains("is not installed") || low_comb.contains("no distribution") {
+            if is_no_distro_msg(&combined) {
                 saw_no_distro = true;
             }
             for line in combined.lines() {
@@ -461,22 +538,17 @@ fn wsl_distros(out: &mut Vec<TerminalProfile>) {
                 if t.is_empty() { continue; }
                 if t.to_lowercase().contains("windows subsystem") { continue; }
                 if t.contains("---") { continue; }
-                // plain list may have first line header "NAME" or localized; skip if it looks like header (contains multiple columns? but plain has just names)
-                // We'll treat any line that after stripping "*" is empty or equals header-like, skip
                 let without_star = if t.starts_with('*') { t[1..].trim() } else { t };
-                // if line has two+ tokens and second token is a known state, it's likely verbose header that slipped through — skip
                 let tokens: Vec<&str> = without_star.split_whitespace().collect();
                 if tokens.is_empty() { continue; }
-                // header heuristic: if first token is localized "NAME" translation, second token would be "STATE" translation — but we already skipped verbose; for plain, header is not present; but just in case, skip lines that look like header by checking if they contain "STATE" etc. Without locale we instead skip the very first line if we haven't yet collected names and it looks like it could be header? Keep simple: skip if line is single token "NAME" etc.
-                // Instead, just take first token as distro name
                 let name = tokens[0].trim();
-                if name.is_empty() || name.eq_ignore_ascii_case("name") { continue; }
+                if name.is_empty() || is_wsl_header_token(name) { continue; }
                 if !names.contains(&name.to_string()) {
                     names.push(name.to_string());
                 }
             }
             // plain --list's first line might be header in some locales — if we got exactly the header, remove it
-            if names.len() == 1 && names[0].to_lowercase() == "name" {
+            if names.len() == 1 && is_wsl_header_token(&names[0]) {
                 names.clear();
             }
         }

@@ -181,6 +181,8 @@ export default function Composer({
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const hlRef = useRef<HTMLDivElement>(null);
+  const composerRef = useRef<HTMLDivElement>(null);
+  const borderRef = useRef<number | null>(null);
   const historyRef = useRef<string[]>([]);
   const futureRef = useRef<string[]>([]);
   const isUndoRedoRef = useRef(false);
@@ -234,8 +236,8 @@ export default function Composer({
       // rawMarkup already is that (or empty if input empty which we early returned)
     }
     if (hasFind && findQuery) {
-      // ponytail: highlight counts from raw text indices but injected by scanning
-      // html text nodes — misses cross-token boundaries, ok for single-token queries
+      // ponytail: known entity boundary off-by-one, fix if reported — highlight
+      // counts from raw text indices but injected by scanning html text nodes
       base = highlightFindInHtml(base, findQuery, findCase, findCur);
     }
     return base;
@@ -247,6 +249,14 @@ export default function Composer({
     localStorage.removeItem("oc.comp.h");
   }, []);
 
+  // cache textarea border once — offsetHeight after height:auto jitters
+  useEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    const cs = getComputedStyle(el);
+    borderRef.current = parseFloat(cs.borderTopWidth || "0") + parseFloat(cs.borderBottomWidth || "0");
+  }, []);
+
   // auto-grow: the whole input follows its line count — the textarea (and
   // with it the entire composer card) expands until half the window, then
   // scrolls internally
@@ -254,9 +264,12 @@ export default function Composer({
     const el = inputRef.current;
     if (!el) return;
     const max = Math.round(window.innerHeight * 0.5);
+    if (borderRef.current === null) {
+      const cs = getComputedStyle(el);
+      borderRef.current = parseFloat(cs.borderTopWidth || "0") + parseFloat(cs.borderBottomWidth || "0");
+    }
+    const border = borderRef.current ?? 2;
     el.style.height = "auto";
-    // border is 1px top+bottom inside border-box, scrollHeight excludes it → +2 avoids 1px overflow that shows a scrollbar on one line
-    const border = el.offsetHeight - el.clientHeight;
     const h = Math.max(46, Math.min(el.scrollHeight + border, max));
     el.style.height = `${h}px`;
     // single line (or any fits) → no scrollbar at all; only scroll when capped at max
@@ -552,6 +565,7 @@ export default function Composer({
   // priority: model menu → slash suggestions → plain Enter send / Tab cycle
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (!composerRef.current?.contains(document.activeElement)) return;
       // find open has priority over model/slash/send
       if (findOpen) {
         if (e.key === "Escape") {
@@ -846,6 +860,7 @@ export default function Composer({
 
   return (
     <div
+      ref={composerRef}
       className={`composer${attach.dragOver ? " dragover" : ""}`}
       onDragOver={(e) => {
         if (!Array.from(e.dataTransfer.types).includes("Files")) return;

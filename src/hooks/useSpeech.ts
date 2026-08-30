@@ -8,6 +8,7 @@ import {
   withDeadline,
 } from "../api";
 import { playSound } from "../lib/sounds";
+import { pushToast } from "./useToast";
 import { splitModel } from "../lib/models";
 import {
   buildEnumPhrase,
@@ -53,6 +54,12 @@ export function useSpeech(oc: SpeechOc, settings: AppSettings) {
   const pendingAnswers = useRef<string[]>([]); // answer sentences waiting behind pendingEnum
   const settingsNow = useRef(settings);
   settingsNow.current = settings;
+  const providersRef = useRef(oc.providers);
+  providersRef.current = oc.providers;
+  // RL-03: cap queue to 8, drop oldest when unbounded — prevents memory blow-up on long turns
+  const capQueue = () => {
+    while (ttsQ.current.length > 8) ttsQ.current.shift();
+  };
 
   // queued speech — single FIFO, never cuts (debrief's cut is the only cutter)
   // if an answer is queued while an enumeration is pending, flush both together
@@ -70,6 +77,7 @@ export function useSpeech(oc: SpeechOc, settings: AppSettings) {
       ttsQ.current.push(...pendingAnswers.current);
       pendingAnswers.current = [];
     }
+    capQueue();
     // spoken — next enumeration reports only what happened after this
     toolCounts.current.clear();
     pumpTTS();
@@ -84,6 +92,7 @@ export function useSpeech(oc: SpeechOc, settings: AppSettings) {
         flushPendingEnum();
       } else {
         ttsQ.current.push(cleaned);
+        capQueue();
         pumpTTS();
       }
     },
@@ -129,7 +138,8 @@ export function useSpeech(oc: SpeechOc, settings: AppSettings) {
         let summary = "";
         try {
           const [providerID, modelID] = splitModel(secondaryModel);
-          const variant = lowVariantFor(secondaryModel, oc.providers as any);
+          // EH-15: read providers via ref at call time, not stale closure — avoids picking non-existent variant 400
+          const variant = lowVariantFor(secondaryModel, providersRef.current as any);
           const r = await withDeadline(
             client.session.prompt({
               path: { id: sid },
@@ -149,11 +159,12 @@ export function useSpeech(oc: SpeechOc, settings: AppSettings) {
         }
         if (summary) queueSpeech(summary);
         else queueSpeech(raw);
-      } catch {
+      } catch (e) {
+        pushToast(String(e));
         queueSpeech(raw);
       }
     },
-    [queueSpeech, debriefing, oc.providers],
+    [queueSpeech, debriefing],
   );
 
   // serialized synth→play pump; 'pause' resolves alongside 'ended' so the
@@ -167,21 +178,30 @@ export function useSpeech(oc: SpeechOc, settings: AppSettings) {
         while (ttsQ.current.length && !ttsHushed.current) {
           const phrase = ttsQ.current.shift()!;
           const st = settingsNow.current;
-          const bytes = await invoke<number[]>("tts_speak", {
-            text: phrase,
-            voice: st.ttsVoice,
-            speed: st.ttsSpeed,
-          }).catch(() => null);
+          let bytes: number[] | null = null;
+          try {
+            bytes = await invoke<number[]>("tts_speak", {
+              text: phrase,
+              voice: st.ttsVoice,
+              speed: st.ttsSpeed,
+            });
+          } catch (e) {
+            pushToast(String(e));
+            continue;
+          }
           if (!bytes || ttsHushed.current || bytes.length < 1000) continue;
           const a = playWav(bytes, st.ttsVol);
           replyAudio.current = a;
-          // 'error'/failed play() must release the wait too, or the pump
-          // deadlocks and the queue never drains
-          await new Promise<void>((res) => {
-            a.addEventListener("ended", () => res(), { once: true });
-            a.addEventListener("pause", () => res(), { once: true });
-            a.addEventListener("error", () => res(), { once: true });
-          });
+          // BA-06: on error reject instead of silently skipping phrase — surface via toast
+          try {
+            await new Promise<void>((res, rej) => {
+              a.addEventListener("ended", () => res(), { once: true });
+              a.addEventListener("pause", () => res(), { once: true });
+              a.addEventListener("error", () => rej(new Error("TTS playback failed")), { once: true });
+            });
+          } catch (e) {
+            pushToast(String(e));
+          }
         }
       } finally {
         ttsPumping.current = false;
@@ -330,6 +350,7 @@ export function useSpeech(oc: SpeechOc, settings: AppSettings) {
       if (pendingAnswers.current.length) {
         ttsQ.current.push(...pendingAnswers.current);
         pendingAnswers.current = [];
+        capQueue();
         pumpTTS();
       }
     }
@@ -410,6 +431,7 @@ export function useSpeech(oc: SpeechOc, settings: AppSettings) {
                 ttsQ.current.push(...pendingAnswers.current);
                 pendingAnswers.current = [];
               }
+              capQueue();
               // spoken — next enumeration reports only what happened after this
               toolCounts.current.clear();
               pumpTTS();
@@ -423,6 +445,7 @@ export function useSpeech(oc: SpeechOc, settings: AppSettings) {
             ttsQ.current.push(...pendingAnswers.current);
             pendingAnswers.current = [];
           }
+          capQueue();
           // spoken — next enumeration reports only what happened after this
           toolCounts.current.clear();
           pumpTTS();
@@ -474,7 +497,7 @@ export function useSpeech(oc: SpeechOc, settings: AppSettings) {
         replyAudio.current?.pause();
         {
           const c = cleanSpeech("Debriefing...");
-          if (c) { ttsQ.current.push(c); pumpTTS(); }
+          if (c) { ttsQ.current.push(c); capQueue(); pumpTTS(); }
         }
         try {
           let secondaryModel = "";
@@ -482,13 +505,13 @@ export function useSpeech(oc: SpeechOc, settings: AppSettings) {
             secondaryModel = JSON.parse(localStorage.getItem("oc.settings") ?? "{}").secondaryModel ?? "";
           } catch {}
           if (!secondaryModel) {
-            { const c = cleanSpeech("Pick a Secondary model in Settings, then try debrief again."); if (c) { ttsQ.current.push(c); pumpTTS(); } }
+            { const c = cleanSpeech("Pick a Secondary model in Settings, then try debrief again."); if (c) { ttsQ.current.push(c); capQueue(); pumpTTS(); } }
             window.dispatchEvent(new Event("oc:settings"));
             return;
           }
           const st = settingsNow.current;
           if (!st.ttsVoice) {
-            { const c = cleanSpeech("Install a neural voice in Settings, then try debrief again."); if (c) { ttsQ.current.push(c); pumpTTS(); } }
+            { const c = cleanSpeech("Install a neural voice in Settings, then try debrief again."); if (c) { ttsQ.current.push(c); capQueue(); pumpTTS(); } }
             return;
           }
           const dir = getDirectory();
@@ -505,7 +528,7 @@ export function useSpeech(oc: SpeechOc, settings: AppSettings) {
           const diffTrim = diff.trim().slice(0, 9000);
           const logTrim = log.trim().slice(0, 2000);
           if (!diffTrim && !logTrim && !recent.trim()) {
-            { const c = cleanSpeech("No recent changes or prompts to summarize."); if (c) { ttsQ.current.push(c); pumpTTS(); } }
+            { const c = cleanSpeech("No recent changes or prompts to summarize."); if (c) { ttsQ.current.push(c); capQueue(); pumpTTS(); } }
             return;
           }
           // locale from piper voice id: en_US-amy-medium -> en_US
@@ -531,7 +554,7 @@ export function useSpeech(oc: SpeechOc, settings: AppSettings) {
           let summary = "";
           try {
             const [providerID, modelID] = splitModel(secondaryModel);
-            const variant = lowVariantFor(secondaryModel, oc.providers as any);
+            const variant = lowVariantFor(secondaryModel, providersRef.current as any);
             const r = await withDeadline(
               client.session.prompt({
                 path: { id: sid },
@@ -555,12 +578,12 @@ export function useSpeech(oc: SpeechOc, settings: AppSettings) {
             await dropSession(sid);
           }
           if (!summary) {
-            { const c = cleanSpeech("Debrief had nothing to say."); if (c) { ttsQ.current.push(c); pumpTTS(); } }
+            { const c = cleanSpeech("Debrief had nothing to say."); if (c) { ttsQ.current.push(c); capQueue(); pumpTTS(); } }
             return;
           }
-          { const c = cleanSpeech(summary); if (c) { ttsQ.current.push(c); pumpTTS(); } }
+          { const c = cleanSpeech(summary); if (c) { ttsQ.current.push(c); capQueue(); pumpTTS(); } }
         } catch (e) {
-          { const c = cleanSpeech(`Debrief failed: ${String(e).slice(0, 200)}`); if (c) { ttsQ.current.push(c); pumpTTS(); } }
+          { const c = cleanSpeech(`Debrief failed: ${String(e).slice(0, 200)}`); if (c) { ttsQ.current.push(c); capQueue(); pumpTTS(); } }
         } finally {
           debriefBusy.current = false;
           setDebriefing(false);
@@ -569,7 +592,7 @@ export function useSpeech(oc: SpeechOc, settings: AppSettings) {
     };
     window.addEventListener("oc:debrief", onDebrief);
     return () => window.removeEventListener("oc:debrief", onDebrief);
-  }, [oc.providers]);
+  }, []);
 
   // voice "quiet" command — pause current playback without clearing the queue
   const pauseSpeech = useCallback(() => {

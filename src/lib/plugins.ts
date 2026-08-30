@@ -204,13 +204,18 @@ const active = new Map<string, { url?: string; style?: HTMLStyleElement }>();
 const lastScan = new Map<string, { manifest: string; main: string; css: string }>();
 
 function revokeActive(dir: string, id?: string) {
+  const seen = new Set<object>();
   for (const key of [dir, id].filter(Boolean) as string[]) {
     const a = active.get(key);
-    if (a) {
-      if (a.url) URL.revokeObjectURL(a.url);
+    if (!a) continue;
+    if (!seen.has(a)) {
+      seen.add(a);
+      if (a.url) {
+        try { URL.revokeObjectURL(a.url); } catch {}
+      }
       a.style?.remove();
-      active.delete(key);
     }
+    active.delete(key);
   }
   // style is also indexed by id (dataset.plugin) — remove that too if dir!=id
   if (id && id !== dir) {
@@ -232,7 +237,14 @@ async function loadOne(d: { dir: string; manifest: string; main: string; css: st
   // replace any previous resources for this dir/id before re-importing
   revokeActive(d.dir, man.id);
   const url = URL.createObjectURL(new Blob([d.main], { type: "text/javascript" }));
-  const mod = await import(/* @vite-ignore */ url);
+  let mod: any;
+  let loaded = false;
+  try {
+    mod = await import(/* @vite-ignore */ url);
+    loaded = true;
+  } finally {
+    if (!loaded) URL.revokeObjectURL(url);
+  }
   const entry: { url?: string; style?: HTMLStyleElement } = { url };
   active.set(d.dir, entry);
   // also keep an alias keyed by id for quick disable lookup when dir != id (same object)
@@ -274,9 +286,16 @@ async function loadOne(d: { dir: string; manifest: string; main: string; css: st
 
 export async function loadPlugins(): Promise<LoadedPlugin[]> {
   // full reload — used at boot. Clears everything and rebuilds from scan.
-  for (const [, a] of active) {
-    if (a.url) URL.revokeObjectURL(a.url);
-    a.style?.remove();
+  {
+    const seen = new Set<object>();
+    for (const [, a] of active) {
+      if (seen.has(a)) continue;
+      seen.add(a);
+      if (a.url) {
+        try { URL.revokeObjectURL(a.url); } catch {}
+      }
+      a.style?.remove();
+    }
   }
   active.clear();
   lastScan.clear();

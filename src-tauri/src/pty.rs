@@ -266,6 +266,8 @@ pub fn pty_spawn(
         if map.contains_key(&id) {
             kill_and_close(&mut map, id);
         } else if map.len() >= MAX_TERMS {
+            // RC-07: just-created PTY would leak (child + reader threads) if we return early
+            session.kill();
             return Err(format!("max terminals ({MAX_TERMS}) reached"));
         }
         map.insert(id, session);

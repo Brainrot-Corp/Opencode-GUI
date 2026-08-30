@@ -18,6 +18,8 @@ export function findMatches(
   return out;
 }
 
+// ponytail: known entity boundary off-by-one, fix if reported — entity-encoded
+// boundaries (&amp;) can desync highlight offsets by one when query spans an entity
 // inject find-hit spans into an HTML string without breaking tags.
 // splits on tags, only replaces inside text nodes. Uses escaped query so
 // "&lt;" etc. match the escaped HTML. Counts occurrences globally to mark active.

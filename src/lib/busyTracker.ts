@@ -24,6 +24,8 @@ export function createBusyTracker(opts: {
   // starts within that window and cancels the settle, so Send/Stop and the
   // sidebar dot stop flapping at every step boundary
   const settleTimers = new Map<string, number>();
+  // generation counter avoids timer race if settle is cancelled and re-queued
+  const settleGen = new Map<string, number>();
   const queues = new Map<string, QueuedPrompt[]>();
 
   const markBusy = (sid: string, on: boolean) =>
@@ -57,12 +59,16 @@ export function createBusyTracker(opts: {
   const hasInflight = (sid: string) => !!inflight.get(sid)?.size;
 
   // deduped — completions and idles may both call for the same settle
+  // ponytail: fixed 1.5s grace, cancelSettle on new assistant message extends it; generation counter avoids timer race
   const settle = (sid: string) => {
     if (settleTimers.has(sid)) return;
+    const gen = (settleGen.get(sid) ?? 0) + 1;
+    settleGen.set(sid, gen);
     settleTimers.set(
       sid,
       window.setTimeout(() => {
         settleTimers.delete(sid);
+        if (settleGen.get(sid) !== gen) return;
         if (!inflight.get(sid)?.size) opts.onSettle(sid);
       }, SETTLE_GRACE_MS),
     );
@@ -73,6 +79,7 @@ export function createBusyTracker(opts: {
     if (t !== undefined) {
       clearTimeout(t);
       settleTimers.delete(sid);
+      settleGen.set(sid, (settleGen.get(sid) ?? 0) + 1);
     }
   };
 

@@ -106,7 +106,23 @@ export function useProviders(activeId: string) {
 
   // persist the session->model map (every write is a validated selection)
   useEffect(() => {
-    localStorage.setItem(SESSION_MODELS_KEY, JSON.stringify(sessionModels));
+    try {
+      localStorage.setItem(SESSION_MODELS_KEY, JSON.stringify(sessionModels));
+    } catch {
+      // quota exceeded or blocked — evict oldest and retry once, else toast
+      try {
+        const keys = Object.keys(sessionModels);
+        if (keys.length > 1) {
+          const trimmed = { ...sessionModels };
+          delete trimmed[keys[0]];
+          localStorage.setItem(SESSION_MODELS_KEY, JSON.stringify(trimmed));
+        } else {
+          throw new Error("quota");
+        }
+      } catch {
+        try { pushToast("Storage full — per-session model pins not saved"); } catch {}
+      }
+    }
   }, [sessionModels]);
 
   // persist the session->variant map

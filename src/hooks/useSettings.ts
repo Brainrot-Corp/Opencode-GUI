@@ -416,7 +416,11 @@ export function useSettings() {
     : activeModes[0];
 
   useEffect(() => {
-    localStorage.setItem(KEY, JSON.stringify(settings));
+    try {
+      localStorage.setItem(KEY, JSON.stringify(settings));
+    } catch (e) {
+      try { pushToast(`Failed to save settings: ${e}`); } catch {}
+    }
   }, [settings]);
 
   // keep Rust file + api directory in sync so local debug builds survive

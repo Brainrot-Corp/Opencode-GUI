@@ -47,6 +47,49 @@ fn run(dir: &str, args: &[&str]) -> Result<String, String> {
     }
 }
 
+fn unescape_c_quote(s: &str) -> String {
+    // git C-quotes use octal \ooo, plus \\, \", \t, \n
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        match chars.next() {
+            Some('n') => out.push('\n'),
+            Some('t') => out.push('\t'),
+            Some('\\') => out.push('\\'),
+            Some('"') => out.push('"'),
+            Some(d) if d.is_ascii_digit() => {
+                // octal up to 3 digits
+                let mut oct = String::new();
+                oct.push(d);
+                for _ in 0..2 {
+                    if let Some(&peek) = chars.peek() {
+                        if peek.is_ascii_digit() && peek < '8' {
+                            oct.push(chars.next().unwrap());
+                        } else {
+                            break;
+                        }
+                    }
+                }
+                if let Ok(val) = u8::from_str_radix(&oct, 8) {
+                    out.push(val as char);
+                } else {
+                    out.push_str(&oct);
+                }
+            }
+            Some(other) => {
+                out.push('\\');
+                out.push(other);
+            }
+            None => out.push('\\'),
+        }
+    }
+    out
+}
+
 fn parse_status(out: &str) -> GitStatus {
     let mut st = GitStatus {
         repo: true,
@@ -55,7 +98,21 @@ fn parse_status(out: &str) -> GitStatus {
         behind: 0,
         files: Vec::new(),
     };
-    for line in out.lines() {
+    // EH-13: porcelain v1 -z is NUL delimited; avoids " -> " hacks and C-quote issues.
+    // Support both NUL and legacy lines for tests/back-compat.
+    let entries: Vec<&str> = if out.contains('\0') {
+        out.split('\0').collect()
+    } else {
+        out.lines().collect()
+    };
+    let is_nul = out.contains('\0');
+    let mut i = 0;
+    while i < entries.len() {
+        let line = entries[i];
+        i += 1;
+        if line.is_empty() {
+            continue;
+        }
         if let Some(head) = line.strip_prefix("## ") {
             // "main...origin/main [ahead 1, behind 2]" | "main" |
             // "No commits yet on main" | "HEAD (no branch)"
@@ -64,8 +121,8 @@ fn parse_status(out: &str) -> GitStatus {
             } else {
                 head.split("...").next().unwrap_or("").split(' ').next().unwrap_or("").to_string()
             };
-            if let Some(i) = head.find('[') {
-                let inner: Option<&str> = head[i + 1..].split(']').next();
+            if let Some(idx) = head.find('[') {
+                let inner: Option<&str> = head[idx + 1..].split(']').next();
                 for part in inner.unwrap_or("").split(',') {
                     let part = part.trim();
                     if let Some(n) = part.strip_prefix("ahead ") {
@@ -75,19 +132,66 @@ fn parse_status(out: &str) -> GitStatus {
                     }
                 }
             }
-        } else if line.len() >= 4 {
+        } else if line.len() >= 2 {
             let mut chars = line.chars();
             let x = chars.next().unwrap_or(' ');
             let y = chars.next().unwrap_or(' ');
-            // exact "XY path" layout — skip 3 chars keeps interior spacing
-            let mut path: String = chars.skip(1).collect();
-            // renames report "old -> new" — track the new name
-            if let Some(i) = path.rfind(" -> ") {
-                path = path[i + 4..].to_string();
+            // path is after XY + optional score/delimiter (space or tab)
+            // e.g. "R  old", "R100 old", "M  file"
+            let raw = &line[2..];
+            // trim leading delimiters (space, tab, digits for score)
+            // For "R100 old" -> raw="100 old" -> skip digits -> " old" -> trim -> "old"
+            let trimmed = raw.trim_start();
+            let mut path = if trimmed
+                .chars()
+                .next()
+                .map(|c| c.is_ascii_digit())
+                .unwrap_or(false)
+            {
+                // skip leading score digits
+                let mut idx2 = 0;
+                for c in trimmed.chars() {
+                    if c.is_ascii_digit() {
+                        idx2 += c.len_utf8();
+                    } else {
+                        break;
+                    }
+                }
+                trimmed[idx2..].trim_start().to_string()
+            } else {
+                trimmed.to_string()
+            };
+            // tab-separated renames (R100\told) may use tab after score
+            if path.starts_with('\t') {
+                path = path[1..].trim_start().to_string();
             }
-            // C-quoted exotic paths: best-effort unquote (escapes stay raw)
-            if path.starts_with('"') && path.ends_with('"') && path.len() >= 2 {
-                path = path[1..path.len() - 1].to_string();
+            let is_rename = x == 'R' || y == 'R' || x == 'C' || y == 'C';
+            if is_nul && is_rename {
+                // NUL mode: next entry is the new name
+                if i < entries.len() {
+                    let nxt = entries[i];
+                    if !nxt.is_empty() && !nxt.starts_with("## ") {
+                        // next is new path, not a status line
+                        path = nxt.to_string();
+                        i += 1;
+                    } else if let Some(pos) = path.rfind(" -> ") {
+                        // fallback: handle arrow if somehow still there
+                        path = path[pos + 4..].to_string();
+                    }
+                }
+            } else if !is_nul {
+                // legacy lines: rename is "old -> new"; track new, but avoid
+                // mis-parsing filenames that legitimately contain " -> "
+                if is_rename {
+                    if let Some(pos) = path.rfind(" -> ") {
+                        path = path[pos + 4..].to_string();
+                    }
+                }
+                // C-quoted exotic paths: unescape properly (was previously left raw)
+                if path.starts_with('"') && path.ends_with('"') && path.len() >= 2 {
+                    let inner = &path[1..path.len() - 1];
+                    path = unescape_c_quote(inner);
+                }
             }
             if !path.is_empty() {
                 st.files.push(GitFile { path, x, y });
@@ -99,7 +203,7 @@ fn parse_status(out: &str) -> GitStatus {
 
 #[tauri::command]
 pub async fn git_status(dir: String) -> Result<GitStatus, String> {
-    match run(&dir, &["status", "--porcelain=v1", "-b", "--untracked-files=all"]) {
+    match run(&dir, &["status", "--porcelain=v1", "-z", "-b", "--untracked-files=all"]) {
         Ok(out) => Ok(parse_status(&out)),
         // not a repo / git missing — quiet state for the panel, not an error
         Err(_) => Ok(GitStatus {

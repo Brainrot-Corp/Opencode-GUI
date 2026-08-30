@@ -69,8 +69,9 @@ fn classify(b: &mut Browser, url: &str) -> (bool, bool) {
 }
 
 fn spawn_poll(app: AppHandle, gen: u64) {
+    // ponytail: poll collapses JS redirects, NavigationCompleted event if WebView2 exposes
     std::thread::spawn(move || loop {
-        std::thread::sleep(Duration::from_millis(400));
+        std::thread::sleep(Duration::from_millis(200));
         let wv = {
             let state = app.state::<BrowserState>();
             let Ok(mut guard) = state.0.lock() else { return };
