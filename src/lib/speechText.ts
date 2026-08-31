@@ -23,17 +23,19 @@ export function playWav(bytes: number[], volume: number): HTMLAudioElement {
 let sharedCtx: AudioContext | null = null;
 function getCtx(): AudioContext | null {
   try {
+    if (sharedCtx?.state === "closed") sharedCtx = null;
     if (!sharedCtx) {
       sharedCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 } as any);
     }
-    if (sharedCtx.state === "suspended") void sharedCtx.resume();
+    if (sharedCtx.state === "suspended" || (sharedCtx.state as string) === "interrupted") void sharedCtx.resume().catch(() => {});
+    if (sharedCtx.state === "closed") return null;
     return sharedCtx;
   } catch { return null; }
 }
 export function playPcm(bytes: number[], volume: number): { stop: () => void; ended: Promise<void> } {
   const ctx = getCtx();
-  // fallback to WAV if AudioContext unavailable
-  if (!ctx) {
+  // fallback to WAV if AudioContext unavailable or closed
+  if (!ctx || ctx.state === "closed") {
     const a = playWav(bytes, volume);
     return {
       stop: () => a.pause(),
@@ -47,7 +49,31 @@ export function playPcm(bytes: number[], volume: number): { stop: () => void; en
   const u8 = new Uint8Array(bytes);
   // bytes are i16 LE mono at 24000 Hz
   const samples = u8.length >> 1;
-  const buf = ctx.createBuffer(1, samples, 24000);
+  if (samples === 0) {
+    const a = playWav(bytes, volume);
+    return {
+      stop: () => a.pause(),
+      ended: new Promise<void>((res, rej) => {
+        a.addEventListener("ended", () => res(), { once: true });
+        a.addEventListener("pause", () => res(), { once: true });
+        a.addEventListener("error", () => rej(new Error("PCM playback failed")), { once: true });
+      }),
+    };
+  }
+  let buf: AudioBuffer;
+  try {
+    buf = ctx.createBuffer(1, samples, 24000);
+  } catch {
+    const a = playWav(bytes, volume);
+    return {
+      stop: () => a.pause(),
+      ended: new Promise<void>((res, rej) => {
+        a.addEventListener("ended", () => res(), { once: true });
+        a.addEventListener("pause", () => res(), { once: true });
+        a.addEventListener("error", () => rej(new Error("PCM playback failed")), { once: true });
+      }),
+    };
+  }
   const ch = buf.getChannelData(0);
   const view = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
   for (let i = 0; i < samples; i++) ch[i] = view.getInt16(i * 2, true) / 32768;
@@ -55,16 +81,50 @@ export function playPcm(bytes: number[], volume: number): { stop: () => void; en
   src.buffer = buf;
   const gain = ctx.createGain();
   gain.gain.value = volume;
-  src.connect(gain).connect(ctx.destination);
+  try { src.connect(gain).connect(ctx.destination); } catch {
+    const a = playWav(bytes, volume);
+    return {
+      stop: () => a.pause(),
+      ended: new Promise<void>((res, rej) => {
+        a.addEventListener("ended", () => res(), { once: true });
+        a.addEventListener("pause", () => res(), { once: true });
+        a.addEventListener("error", () => rej(new Error("PCM playback failed")), { once: true });
+      }),
+    };
+  }
   window.dispatchEvent(new CustomEvent<number>("oc:tts-live", { detail: (samples / 24000) * 1000 }));
   let resolveEnded!: () => void;
+  let timeout: number | undefined;
+  const durationMs = (samples / 24000) * 1000;
   const ended = new Promise<void>((res) => {
-    resolveEnded = res;
-    src.onended = () => res();
+    resolveEnded = () => {
+      if (timeout !== undefined) { clearTimeout(timeout); timeout = undefined; }
+      res();
+    };
+    src.onended = () => resolveEnded();
+    // ponytail: timeout guards against suspended/interrupted context where onended never fires — speech cut mid-sentence would hang pump forever
+    const slack = 4000;
+    const maxMs = Math.max(durationMs + slack, 6000);
+    timeout = window.setTimeout(() => {
+      try { src.stop(); } catch {}
+      resolveEnded();
+    }, maxMs);
   });
-  src.start();
+  try { src.start(); } catch {
+    if (timeout !== undefined) clearTimeout(timeout);
+    // fallback to WAV if start throws (e.g. closed context)
+    const a = playWav(bytes, volume);
+    return {
+      stop: () => a.pause(),
+      ended: new Promise<void>((res, rej) => {
+        a.addEventListener("ended", () => res(), { once: true });
+        a.addEventListener("pause", () => res(), { once: true });
+        a.addEventListener("error", () => rej(new Error("PCM playback failed")), { once: true });
+      }),
+    };
+  }
   return {
-    stop: () => { try { src.stop(); } catch {} resolveEnded(); },
+    stop: () => { if (timeout !== undefined) { clearTimeout(timeout); timeout = undefined; } try { src.stop(); } catch {} resolveEnded(); },
     // allow caller to await ended or detect pause
     ended,
   };

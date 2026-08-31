@@ -181,14 +181,17 @@ export function useSpeech(oc: SpeechOc, settings: AppSettings) {
 
   // pipelined synth→play: synthesis of chunk N+1 starts while N plays,
   // and PCM path bypasses WAV/Blob overhead. Falls back to WAV on failure.
+  // ponytail: 30s cap guards against wedged Rust synth hanging pump forever (ttsPumping stays true)
+  const withSynthTimeout = <T>(p: Promise<T>, ms = 30000) =>
+    Promise.race([p, new Promise<never>((_, rej) => setTimeout(() => rej(new Error("TTS synth timed out")), ms))]) as Promise<T>;
   const synthOne = async (phrase: string, st: AppSettings): Promise<{ bytes: number[]; isPcm: boolean } | null> => {
     // prefer PCM (i16 LE, no WAV header) — smaller IPC, no browser WAV decode
     try {
-      const pcm = await invoke<number[]>("tts_speak_pcm", { text: phrase, voice: st.ttsVoice, speed: st.ttsSpeed });
+      const pcm = await withSynthTimeout(invoke<number[]>("tts_speak_pcm", { text: phrase, voice: st.ttsVoice, speed: st.ttsSpeed }));
       if (pcm && pcm.length >= 200) return { bytes: pcm, isPcm: true };
     } catch {}
     try {
-      const wav = await invoke<number[]>("tts_speak", { text: phrase, voice: st.ttsVoice, speed: st.ttsSpeed });
+      const wav = await withSynthTimeout(invoke<number[]>("tts_speak", { text: phrase, voice: st.ttsVoice, speed: st.ttsSpeed }));
       if (wav && wav.length >= 1000) return { bytes: wav, isPcm: false };
     } catch (e) { pushToast(String(e)); }
     return null;
@@ -216,12 +219,12 @@ export function useSpeech(oc: SpeechOc, settings: AppSettings) {
           // use prefetched result if it matches this phrase, else synth now
           let res: { bytes: number[]; isPcm: boolean } | null = null;
           if (prefetch) {
-            try { res = await prefetch; } catch {}
+            try { res = await Promise.race([prefetch, new Promise<null>((r) => setTimeout(() => r(null), 32000))]); } catch {}
             // verify prefetch was for this phrase (queue may have shifted on hush)
             // if queue head changed, discard and re-synth
             if (ttsQ.current[0] !== phrase) { prefetch = startPrefetch(); continue; }
           } else {
-            res = await synthOne(phrase, st);
+            try { res = await Promise.race([synthOne(phrase, st), new Promise<null>((r) => setTimeout(() => r(null), 32000))]); } catch {}
           }
           // consume queue entry now
           ttsQ.current.shift();
@@ -230,10 +233,12 @@ export function useSpeech(oc: SpeechOc, settings: AppSettings) {
           if (!res || ttsHushed.current) continue;
           const { bytes, isPcm } = res;
           // playback — PCM via AudioContext, WAV via Audio element
+          // ponytail: outer race guards against AudioContext suspended/interrupted where onended never fires — cut mid sentence would hang pump forever (ttsPumping stays true, future speech never drains)
           if (isPcm) {
             const h = playPcm(bytes, st.ttsVol);
             pcmStop.current = h.stop;
-            try { await h.ended; } catch (e) { pushToast(String(e)); }
+            const pcmTimeoutMs = Math.max((bytes.length / 2 / 24000) * 1000 + 5000, 8000);
+            try { await Promise.race([h.ended, new Promise<void>((r) => setTimeout(r, pcmTimeoutMs))]); } catch (e) { pushToast(String(e)); }
             finally { pcmStop.current = null; }
             // also allow pause to break
             if (ttsHushed.current) { try { h.stop(); } catch {} }
@@ -241,11 +246,14 @@ export function useSpeech(oc: SpeechOc, settings: AppSettings) {
             const a = playWav(bytes, st.ttsVol);
             replyAudio.current = a;
             try {
-              await new Promise<void>((res2, rej) => {
-                a.addEventListener("ended", () => res2(), { once: true });
-                a.addEventListener("pause", () => res2(), { once: true });
-                a.addEventListener("error", () => rej(new Error("TTS playback failed")), { once: true });
-              });
+              await Promise.race([
+                new Promise<void>((res2, rej) => {
+                  a.addEventListener("ended", () => res2(), { once: true });
+                  a.addEventListener("pause", () => res2(), { once: true });
+                  a.addEventListener("error", () => rej(new Error("TTS playback failed")), { once: true });
+                }),
+                new Promise<void>((r) => setTimeout(r, 40000)),
+              ]);
             } catch (e) { pushToast(String(e)); }
           }
         }

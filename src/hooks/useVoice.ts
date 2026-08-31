@@ -102,7 +102,7 @@ export function useVoice(
   const rollRef = useRef<Float32Array[]>([]);
   const rollMsRef = useRef(0);
   const lastVoiceAtRef = useRef(0);
-  const busyRef = useRef(false);
+  const busyRef = useRef<number | null>(null);
   const tickRef = useRef<number | null>(null);
   const engineRef = useRef("");
   const uttRef = useRef<Float32Array[]>([]);
@@ -123,7 +123,8 @@ export function useVoice(
   // serialize start → teardown → restart (prevents overlapping getUserMedia/worklet races)
   const startingRef = useRef(false);
   // serialize final transcriptions — overlapping voice_transcribe_pcm hangs one permanently
-  const finalBusyRef = useRef(false);
+  // ponytail: store owning seq so stale finally only clears its own owner, not live generation
+  const finalBusyRef = useRef<number | null>(null);
 
   const vdbg = useCallback((k: VdbgKind, m: string) => dbgRef.current?.(k, m), []);
   const sttLog = useCallback((k: VdbgKind, m: string) => {
@@ -163,8 +164,8 @@ export function useVoice(
     const seq = ++seqRef.current;
     sttLog("warn", `teardown seq=${seq} reason=${reason} phase=${phaseRef.current} streaming=${streamingRef.current} busy=${busyRef.current} finalBusy=${finalBusyRef.current}`);
     cancelRef.current = true;
-    busyRef.current = false;
-    finalBusyRef.current = false;
+    busyRef.current = null;
+    finalBusyRef.current = null;
     lastPcmRef.current = null;
     if (tickRef.current != null) { clearInterval(tickRef.current); tickRef.current = null; sttLog("hint", "tick cleared"); }
     if (watchdogRef.current != null) { clearInterval(watchdogRef.current); watchdogRef.current = null; sttLog("hint", "watchdog cleared"); }
@@ -277,11 +278,11 @@ export function useVoice(
   }, [model, sttLog]);
 
   const handleFinal = useCallback(async (pcm: Float32Array, seq: number) => {
-    if (finalBusyRef.current) {
-      sttLog("warn", `handleFinal dropped — already transcribing seq=${seq}`);
+    if (finalBusyRef.current !== null) {
+      sttLog("warn", `handleFinal dropped — already transcribing seq=${seq} owner=${finalBusyRef.current}`);
       return;
     }
-    finalBusyRef.current = true;
+    finalBusyRef.current = seq;
     const pcmSec = (pcm.length / RATE).toFixed(2);
     sttLog("hint", `handleFinal start seq=${seq} pcm=${pcm.length} (${pcmSec}s)`);
     setPhase("transcribing");
@@ -303,10 +304,17 @@ export function useVoice(
       sttLog("warn", `handleFinal crashed seq=${seq}: ${String(e)}`);
       if (!cancelRef.current && seq === seqRef.current) setError(String(e).slice(0, 400));
     } finally {
-      finalBusyRef.current = false;
+      const isStale = cancelRef.current || seq !== seqRef.current;
+      if (isStale) {
+        // stale must not clobber live generation's phase/partial/busy
+        if (finalBusyRef.current === seq) finalBusyRef.current = null;
+        sttLog("hint", `handleFinal cleanup stale seq=${seq} cur=${seqRef.current} finalBusy=${finalBusyRef.current} — skip phase reset`);
+        return;
+      }
+      if (finalBusyRef.current === seq) finalBusyRef.current = null;
       setPartial("");
       // self-recovering: always return to recording if mic still live, else idle
-      const stillLive = !!ctxRef.current && !cancelRef.current && seq === seqRef.current;
+      const stillLive = !!ctxRef.current && !cancelRef.current;
       sttLog("hint", `handleFinal cleanup seq=${seq} stillLive=${stillLive} finalBusy cleared`);
       setPhase(stillLive ? "recording" : "idle");
     }
@@ -374,8 +382,8 @@ export function useVoice(
 
   const partialTick = useCallback(() => {
     if (cancelRef.current) return;
-    if (busyRef.current) { sttLog("hint", "partialTick skipped busy"); return; }
-    if (finalBusyRef.current) return;
+    if (busyRef.current !== null) { sttLog("hint", "partialTick skipped busy"); return; }
+    if (finalBusyRef.current !== null) return;
     if (!ctxRef.current) { sttLog("warn", "partialTick no ctx — mic dead, will watchdog"); return; }
     if (ctxRef.current.state === "suspended") {
       sttLog("warn", `partialTick ctx suspended — trying resume`);
@@ -390,10 +398,10 @@ export function useVoice(
     }
     const seq = seqRef.current;
     const pcm = merge(rollRef.current);
-    busyRef.current = true;
+    busyRef.current = seq;
     sttLog("hint", `partialTick seq=${seq} roll=${(rollMsRef.current / 1000).toFixed(1)}s`);
     void transcribePcm(pcm, true, seq).then((text) => {
-      if (cancelRef.current || seq !== seqRef.current) { sttLog("hint", `partial stale seq=${seq}`); return; }
+      if (cancelRef.current || seq !== seqRef.current) { sttLog("hint", `partial stale seq=${seq} cur=${seqRef.current}`); return; }
       if (!text) return;
       const { delta, cumulative, isNew } = dedupRef.current.push(text);
       if (!isNew && !delta) return;
@@ -409,9 +417,14 @@ export function useVoice(
     }).catch((e) => {
       sttLog("warn", `partialTick transcribe threw: ${String(e)}`);
     }).finally(() => {
-      // self-recovering: never leave busy stuck true — watchdog also clears but main path must
-      busyRef.current = false;
-      if (cancelRef.current || seq !== seqRef.current) sttLog("hint", `partial busy cleared stale seq=${seq}`);
+      // self-recovering: only clear busy if this seq still owns it — stale must not clear live's busy
+      const isStale = cancelRef.current || seq !== seqRef.current;
+      if (isStale) {
+        if (busyRef.current === seq) busyRef.current = null;
+        sttLog("hint", `partial busy cleared stale seq=${seq} cur=${seqRef.current} busy=${busyRef.current}`);
+        return;
+      }
+      if (busyRef.current === seq) busyRef.current = null;
     });
   }, [transcribePcm, sttLog, forget]);
 
@@ -434,6 +447,9 @@ export function useVoice(
         cancelRef.current = false;
         seqRef.current += 1;
         const seq = seqRef.current;
+        // new generation owns fresh busy state — clear stale owners so they don't block
+        busyRef.current = null;
+        finalBusyRef.current = null;
         dedupRef.current.reset();
         sttLog("hint", `toggle: getUserMedia seq=${seq}`);
         const stream = await withTimeout(navigator.mediaDevices.getUserMedia({
@@ -652,7 +668,7 @@ export function useVoice(
 
         if (tickRef.current != null) clearInterval(tickRef.current);
         tickRef.current = window.setInterval(() => {
-          try { partialTick(); } catch (e) { sttLog("warn", `partialTick outer throw: ${String(e)}`); busyRef.current = false; }
+          try { partialTick(); } catch (e) { sttLog("warn", `partialTick outer throw: ${String(e)}`); busyRef.current = null; }
         }, PARTIAL_INTERVAL);
         setStreaming(true);
         setPhase("recording");
