@@ -26,7 +26,7 @@ import { useOpencode } from "../hooks/useOpencode";
 import { useSettings } from "../hooks/useSettings";
 import { useGlobalShortcuts } from "../hooks/useGlobalShortcuts";
 import { usePluginHotkeys } from "../hooks/usePluginHotkeys";
-import { useVoice } from "../hooks/useVoice";
+import { useVoice, type VdbgKind } from "../hooks/useVoice";
 import { routeVoice, routerInput, type VoiceAct } from "../lib/voiceRouter";
 import { ensureDict } from "../lib/dictWords";
 import { pickWorkspace, getLastWorkspace, getAllWorkspaces } from "../lib/workspace";
@@ -432,6 +432,9 @@ export default function ChatPage() {
   // guards the async translate fallback: newer speech invalidates an
   // in-flight re-route
   const seqRef = useRef(0);
+  // dictation capture mode — bare "prompt" (no args) opens it: speech appends
+  // to the composer until "send", "clear" or any other command ends it
+  const captureRef = useRef(false);
   // warm the typo-corrector's dictionary veto once per launch
   useEffect(() => {
     void ensureDict();
@@ -513,10 +516,12 @@ export default function ChatPage() {
       }
     })();
   }, [autoUpdateEnabled, pluginCatalog, plugins, catalogLoading]);
-  // debug transcript mode (Settings › Voice): last few utterance audits
-  const [vdbg, setVdbg] = useState<string[]>([]);
+  // debug transcript mode (Settings › Voice): structured audit trail —
+  // colored kind tag + short message, newest at the bottom
+  const VD_TAG: Record<VdbgKind, string> = { act: "cmd", say: "heard", warn: "!!", hint: "·" };
+  const [vdbg, setVdbg] = useState<{ kind: VdbgKind; msg: string }[]>([]);
   const dbgPush = useCallback(
-    (s: string) => setVdbg((d) => [...d.slice(-4), s]),
+    (kind: VdbgKind, msg: string) => setVdbg((d) => [...d.slice(-7), { kind, msg }]),
     [],
   );
   // visible confirmation for voice yes/no outcomes — works even when TTS is
@@ -528,11 +533,43 @@ export default function ChatPage() {
     clearTimeout(vnoteTimer.current);
     vnoteTimer.current = window.setTimeout(() => setVnote(""), 2600);
   }, []);
+  const routeCtx = useCallback(
+    () => ({
+      themes: themes.map((t) => t.id),
+      commands: oc.cmdList.map((c) => c.name),
+      exts,
+    }),
+    [themes, oc.cmdList, exts],
+  );
+
+  // executes a routed act — shared by the native, partial and capture paths
+  const dispatch = useCallback(
+    (act: VoiceAct) => {
+      playSound("click");
+      if (act.type === "embedded") {
+        // active session: a command ran recently → trust the streak, skip
+        // the read-back (25s window). Fuzzy matches (command + trailing
+        // clause) always read back — they're only probable.
+        if (!act.fuzzy && Date.now() - lastExecRef.current < 25000) {
+          execAct(act.act);
+          return;
+        }
+        pendingRef.current = { act: act.act, until: Date.now() + 15000 };
+        // natural read-back: "Okay — turn the lights off?"
+        const d = describeAct(act.act);
+        announce(`Okay — ${d.charAt(0).toLowerCase()}${d.slice(1)}?`);
+        return;
+      }
+      execAct(act);
+    },
+    [execAct, describeAct],
+  );
+
   const handleVoiceTranscript = useCallback(
     (text: string) => {
       const p = pendingRef.current;
       if (p && Date.now() < p.until) {
-        if (settings.voice.debug) dbgPush(`"${text}" → consumed by yes/no prompt`);
+        if (settings.voice.debug) dbgPush("hint", `yes/no — "${text}"`);
         const t0 = text.toLowerCase().replace(/[.,!?;:]+$/, "").trim();
         // yes/no in EN/FR/ES — "si" matches Spanish sí (whisper drops accents)
         if (/^(yes|yeah|yep|yup|sure|do it|confirm|go ahead|oui|ouais|ouep|vas-?y|si|sí|claro|dale|vale)\b/.test(t0)) {
@@ -556,40 +593,40 @@ export default function ChatPage() {
       }
       pendingRef.current = null;
 
-      const routeCtx = () => ({
-        themes: themes.map((t) => t.id),
-        commands: oc.cmdList.map((c) => c.name),
-        exts,
-      });
-      // executes a routed act — shared by the native and translated paths
-      const dispatch = (act: VoiceAct) => {
-        playSound("click");
-        if (act.type === "embedded") {
-          // active session: a command ran recently → trust the streak, skip
-          // the read-back (25s window). Fuzzy matches (command + trailing
-          // clause) always read back — they're only probable.
-          if (!act.fuzzy && Date.now() - lastExecRef.current < 25000) {
-            execAct(act.act);
-            return;
-          }
-          pendingRef.current = { act: act.act, until: Date.now() + 15000 };
-          // natural read-back: "Okay — turn the lights off?"
-          const d = describeAct(act.act);
-          announce(`Okay — ${d.charAt(0).toLowerCase()}${d.slice(1)}?`);
+      // dictation capture mode: everything said appends to the composer until
+      // "send"/"clear"/any other command ends it
+      if (captureRef.current) {
+        const act = routeVoice(text, routeCtx());
+        if (!act) {
+          if (settings.voice.debug) dbgPush("say", `+ ${text}`);
+          dispatch({ type: "dictate", arg: text });
           return;
         }
-        execAct(act);
-      };
+        if (act.type === "dictate") {
+          if (settings.voice.debug) dbgPush("say", `+ ${act.arg}`);
+          return; // more args — keep capturing
+        }
+        captureRef.current = false;
+        if (settings.voice.debug) dbgPush("act", `capture → ${describeAct(act)}`);
+        dispatch(act);
+        return;
+      }
 
       const act = routeVoice(text, routeCtx());
-      if (settings.voice.debug)
-        dbgPush(
-          `"${text}" → "${routerInput(text)}" → ${
-            act ? JSON.stringify(act) : "no match · dictation"
-          }`,
-        );
+      if (settings.voice.debug) {
+        if (act) dbgPush("act", describeAct(act));
+        else dbgPush("hint", `no match — ${text}`);
+      }
       if (act) {
         dispatch(act);
+        return;
+      }
+      // bare "prompt" — open dictation capture: following speech appends to
+      // the composer until "send", "clear" or any other command
+      if (routerInput(text) === "prompt") {
+        captureRef.current = true;
+        confirmNote("Listening — speak your prompt, then say send");
+        if (settings.voice.debug) dbgPush("act", "capture on — listening");
         return;
       }
       // no match — multilingual mode already translated the main pass;
@@ -600,16 +637,34 @@ export default function ChatPage() {
         void retranscribeRef.current?.().then((native) => {
           if (!native || seq !== seqRef.current) return;
           const act2 = routeVoice(native, routeCtx());
-          if (settings.voice.debug)
-            dbgPush(
-              `[native] "${native}" → ${act2 ? JSON.stringify(act2) : "no match"}`,
-            );
+          if (settings.voice.debug) {
+            if (act2) dbgPush("act", `native → ${describeAct(act2)}`);
+            else dbgPush("hint", `native pass — no match: ${native}`);
+          }
           if (act2) dispatch(act2);
         });
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [themes, oc.cmdList, exts, execAct, describeAct, settings.voice.debug, settings.voice.multilingual, dbgPush],
+    [routeCtx, dispatch, settings.voice.debug, settings.voice.multilingual, dbgPush],
+  );
+
+  // rolling partial pass — fires one-shot commands the moment they're fully
+  // spoken (no pause needed). Arg-carrying and embedded acts wait for the
+  // authoritative utterance pass; returning true makes the hook forget the
+  // buffer so fired words can't double-fire on the close pass. Disabled
+  // during dictation capture (the words are the payload there)
+  const handleVoicePartial = useCallback(
+    (partial: string): boolean => {
+      if (captureRef.current) return false;
+      const act = routeVoice(partial, routeCtx());
+      if (!act || act.type === "embedded") return false;
+      if (settings.voice.debug) dbgPush("act", `early — ${describeAct(act)}`);
+      dispatch(act);
+      return true;
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [routeCtx, dispatch, settings.voice.debug, dbgPush],
   );
 
   const voice = useVoice(
@@ -619,7 +674,12 @@ export default function ChatPage() {
     settings.voice.gpu,
     settings.voice.debug ? dbgPush : undefined,
     settings.voice.multilingual,
+    handleVoicePartial,
   );
+  // mic off ends dictation capture — nothing left to listen to
+  useEffect(() => {
+    if (!voice.streaming) captureRef.current = false;
+  }, [voice.streaming]);
   // handler runs before useVoice returns — reach retranscribe through a ref
   const retranscribeRef = useRef<(() => Promise<string | null>) | null>(null);
   retranscribeRef.current = voice.retranscribe;
@@ -1161,7 +1221,10 @@ export default function ChatPage() {
                 {settings.voice.debug && vdbg.length > 0 && (
                   <div className="voice-debug" role="log">
                     {vdbg.map((l, i) => (
-                      <div key={i}>{l}</div>
+                      <div key={i} className={`vd-line vd-${l.kind}`}>
+                        <span className="vd-tag">{VD_TAG[l.kind]}</span>
+                        <span className="vd-msg">{l.msg}</span>
+                      </div>
                     ))}
                   </div>
                 )}

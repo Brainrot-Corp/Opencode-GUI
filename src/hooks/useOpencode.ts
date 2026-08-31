@@ -1173,8 +1173,11 @@ export function useOpencode() {
   // + all descendant sub-agent sessions (via /session/{id}/children) so the
   // footer shows the real spend, not just the primary agent.
   const [activeChildren, setActiveChildren] = useState<Session[]>([]);
+  // poll runs every 3s while busy — replace state only on real changes so
+  // childTaskCosts (→ MsgRow taskCosts prop) keeps a stable identity
+  const childrenSigRef = useRef("");
   const refreshActiveChildren = useCallback(async (sid: string) => {
-    if (!sid) { setActiveChildren([]); return; }
+    if (!sid) { childrenSigRef.current = ""; setActiveChildren([]); return; }
     try {
       const dir = sessionDirRef.current.get(sid) ?? getDirectory();
       const { client } = dir ? await opencodeFor(dir) : await opencode();
@@ -1198,7 +1201,11 @@ export function useOpencode() {
           for (const ch of extra) if (!seen.has((ch as any).id)) { seen.add((ch as any).id); list.push(ch); }
         } catch {}
       }
-      setActiveChildren(list);
+      const sig = JSON.stringify(list);
+      if (sig !== childrenSigRef.current) {
+        childrenSigRef.current = sig;
+        setActiveChildren(list);
+      }
     } catch {
       // keep previous on error (transient)
     }
@@ -1691,7 +1698,7 @@ export function useOpencode() {
     if (!id) return;
     let pasteText = "";
     try {
-      const all = store.cached(id) ?? msgs;
+      const all = store.cached(id) ?? msgsRef.current;
       const target = all.find((m: any) => m.info?.id === messageID);
       if (target) {
         const parts: any[] = (target as any).parts ?? [];
@@ -1737,7 +1744,7 @@ export function useOpencode() {
       window.dispatchEvent(new CustomEvent("oc:rewind-input", { detail: pasteText }));
     }
     return s.id;
-  }, [guardedRefresh, openSession, msgs, sessionAgents, sessionSecurity, agentSel, prov.modelSel, prov.defaultModel, prov.variantSel]);
+  }, [guardedRefresh, openSession, sessionAgents, sessionSecurity, agentSel, prov.modelSel, prov.defaultModel, prov.variantSel]);
 
   const togglePin = useCallback((id: string) => {
     try {

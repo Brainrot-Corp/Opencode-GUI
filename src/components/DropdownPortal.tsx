@@ -46,7 +46,7 @@ export default function DropdownPortal({
       let dir = prefer;
       const room = prefer === "down" ? vh - r.bottom : r.top;
       const other = prefer === "down" ? r.top : vh - r.bottom;
-      if (room < 316 && other > room) dir = prefer === "down" ? "up" : "down";
+      if (room < 180 && other > room) dir = prefer === "down" ? "up" : "down";
       const effAlign =
         align ?? (a.closest(".dlg-body") ? "right" : "left");
       const s: CSSProperties = { position: "fixed", zIndex: 100 };
@@ -60,11 +60,18 @@ export default function DropdownPortal({
         s.right = "auto";
       }
       setStyle(s);
-      // clamp into view after the menu has measured
+      // clamp into view and constrain height to available viewport room
+      // so short lists hug content and long lists scroll without overflowing
       requestAnimationFrame(() => {
         const w = wrapRef.current;
         if (!w) return;
         w.style.transform = "";
+        const menu = w.firstElementChild as HTMLElement | null;
+        if (menu) {
+          const avail = dir === "down" ? vh - r.bottom - 14 : r.top - 14;
+          menu.style.maxHeight = `${Math.max(96, avail)}px`;
+          menu.style.height = "auto";
+        }
         const b = w.getBoundingClientRect();
         let dx = 0;
         let dy = 0;

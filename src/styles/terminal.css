@@ -452,6 +452,8 @@
 .term-add-menu {
   min-width: 240px;
   max-width: 320px;
+  height: auto;
+  min-height: 0;
   max-height: min(360px, 60vh);
   overflow-y: auto;
   display: flex;

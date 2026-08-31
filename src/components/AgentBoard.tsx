@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useMemo, useCallback } from "react";
+import { useEffect, useRef, useState, useMemo, useCallback, useDeferredValue } from "react";
 import type { Session } from "@opencode-ai/sdk/client";
 import type { Msg } from "../types";
 import { playSound } from "../lib/sounds";
@@ -114,7 +114,11 @@ export default function AgentBoard({ open, onClose, sessions, busyIds, compactin
     try { localStorage.setItem(OPEN_KEY, open ? "1" : "0"); } catch {}
   }, [open]);
 
-  // Esc closes when open (no scrim — don't steal from other overlays)
+  // Esc closes when open (no scrim — don't steal from other overlays).
+  // onClose through a ref: ChatPage passes an inline arrow (new identity per
+  // render = per streaming delta) — deps on it would resubscribe per delta.
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
   useEffect(() => {
     if (!open) return;
     const key = (e: KeyboardEvent) => {
@@ -123,12 +127,12 @@ export default function AgentBoard({ open, onClose, sessions, busyIds, compactin
         const overlay = document.querySelector(".dlg-scrim, .drawer-scrim.open, .ctx-menu, .cmd-menu, .model-menu");
         if (overlay) return;
         e.preventDefault();
-        onClose();
+        onCloseRef.current();
       }
     };
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
-  }, [open, onClose]);
+  }, [open]);
 
   // 60fps rAF ticker — smooth vs 12fps setInterval
   useEffect(() => {
@@ -150,7 +154,10 @@ export default function AgentBoard({ open, onClose, sessions, busyIds, compactin
   }, [open, simRunning]);
 
   // build simulated lane nodes — 4 default, each with staggered phase offset
+  // gated on `open`: this runs on every streaming delta via msgs/sessions props,
+  // and the board is usually closed — skip all scanning then
   const simNodes: SimNode[] = useMemo(() => {
+    if (!open) return [];
     const names = (agents && agents.length ? agents.slice(0, 4).map(a => a.name) : ["explore", "plan", "build", "general"]);
     // pad to 4
     while (names.length < 4) names.push(`agent-${names.length + 1}`);
@@ -171,7 +178,7 @@ export default function AgentBoard({ open, onClose, sessions, busyIds, compactin
         phase: (i * 0.24) % 1, // stagger lanes
       };
     });
-  }, [agents, sessions, getDirForSession]);
+  }, [open, agents, sessions, getDirForSession]);
 
   // per-node progress 0..1 over LOOP_MS with phase offset — driven by rAF
   const loopBaseRef = useRef<number>(performance.now());
@@ -183,24 +190,33 @@ export default function AgentBoard({ open, onClose, sessions, busyIds, compactin
 
   // real background agents — busy/compacting/attention sessions
   const liveNodes = useMemo(() => {
+    if (!open) return [];
     const set = new Set<string>();
     busyIds?.forEach(id => set.add(id));
     compactingIds?.forEach(id => set.add(id));
     attentionIds?.forEach(id => set.add(id));
     return [...set].map(id => sessions.find(s => s.id === id)).filter(Boolean) as Session[];
-  }, [busyIds, compactingIds, attentionIds, sessions]);
+  }, [open, busyIds, compactingIds, attentionIds, sessions]);
 
   // --- sub-agent tasks (parentID child sessions + task tool parts) ---
   // user reported 3 parallel tasks not showing — they are child sessions with
   // parentID filtered from `sessions`, plus live tool parts with tool==="task"
   function fmtTok(n: number) { return n >= 1000 ? `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k` : `${n}`; }
+  // deferred: msgs churns per streaming delta and the scan below walks every
+  // part (regexing large task outputs). useDeferredValue lets the streaming
+  // render win and coalesces rescans — one per quiet frame, not one per delta
+  const deferredMsgs = useDeferredValue(msgs);
   const taskLanes = useMemo(() => {
     type Lane = { id: string; label: string; details: string; status: SimStatus; agent: string; cost?: number; tokens?: number; duration?: string; rawId: string };
     const out: Lane[] = [];
+    // closed board: skip the full-conversation part scan entirely — msgs churn
+    // per streaming delta and this memo re-runs each time even when unmounted-
+    // visible (hooks run before `if (!open) return null`)
+    if (!open) return out;
     const seen = new Set<string>();
     // 1) live task tool parts from the active session's messages (most accurate: description + status)
     if (msgs && msgs.length) {
-      for (const m of msgs as any[]) {
+      for (const m of deferredMsgs as any[]) {
         for (const p of (m.parts ?? []) as any[]) {
           if (p?.type !== "tool") continue;
           if (String(p.tool ?? "").toLowerCase() !== "task") continue;
@@ -244,7 +260,7 @@ export default function AgentBoard({ open, onClose, sessions, busyIds, compactin
       }
     }
     return out;
-  }, [msgs, activeChildren, childTaskCosts, busyIds, activeId, agents]);
+  }, [open, deferredMsgs, activeChildren, childTaskCosts, busyIds, activeId, agents]);
 
   // graph edges — DAG across lanes
   const EDGES: [number, number][] = useMemo(() => [[0,1],[1,2],[2,3],[0,2],[1,3]], []);

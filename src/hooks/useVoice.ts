@@ -6,6 +6,10 @@ import type { VAD } from "@ozymandiasthegreat/vad";
 
 export type VoicePhase = "idle" | "recording" | "transcribing";
 
+// debug-transcript line kinds — act = command fired, say = whisper output,
+// warn = engine/fallback trouble, hint = faint housekeeping
+export type VdbgKind = "act" | "say" | "warn" | "hint";
+
 const RATE = 16000; // whisper's required sample rate — AudioContext resamples
 
 // hands-free VAD defaults
@@ -83,8 +87,9 @@ export function useVoice(
   model: string,
   sens = 0.7,
   gpu = false,
-  debug?: (msg: string) => void,
+  debug?: (kind: VdbgKind, msg: string) => void,
   multilingual = false,
+  onPartial?: (partial: string) => boolean,
 ) {
   const [phase, setPhase] = useState<VoicePhase>("idle");
   // streaming = always-on mic: pauses are cut into utterances automatically
@@ -116,6 +121,24 @@ export function useVoice(
   // (English-only) router always sees English text
   const mlRef = useRef(multilingual);
   mlRef.current = multilingual;
+  // rolling buffer: every spoken chunk lands here regardless of utterance
+  // state — the partial tick transcribes it mid-speech so one-shot commands
+  // fire without waiting for a pause. Cleared ("forgotten") after a command
+  // fires or when the authoritative utterance-close pass takes over
+  const rollRef = useRef<Float32Array[]>([]);
+  const rollMsRef = useRef(0);
+  const lastVoiceAtRef = useRef(0);
+  // partial tick yields to the authoritative utterance-close pass (busyRef)
+  // and to itself; the close pass never yields to a partial
+  const busyRef = useRef(false);
+  const tickRef = useRef<number | null>(null);
+  // early command firing — ChatPage routes the partial and returns whether
+  // it fired (ref-backed so the tick closure sees the latest wiring)
+  const partialRef = useRef(onPartial);
+  partialRef.current = onPartial;
+  // engine reported in the debug transcript only when it changes — per
+  // utterance it would be noise
+  const engineRef = useRef("");
   // stream-mode VAD state
   const uttRef = useRef<Float32Array[]>([]);
   const preRef = useRef<Float32Array[]>([]);
@@ -162,8 +185,23 @@ export function useVoice(
     return () => window.removeEventListener("oc:tts-live", live);
   }, []);
 
+  // drop everything buffered — after a command fires, on utterance close and
+  // on teardown, so nothing is ever transcribed or fired twice
+  const forget = useCallback(() => {
+    rollRef.current = [];
+    rollMsRef.current = 0;
+    uttRef.current = [];
+    preRef.current = [];
+    speechMsRef.current = 0;
+    silenceMsRef.current = 0;
+  }, []);
+
   const teardown = useCallback(() => {
     lastWavRef.current = null;
+    if (tickRef.current != null) {
+      clearInterval(tickRef.current);
+      tickRef.current = null;
+    }
     if (watchdogRef.current != null) {
       clearInterval(watchdogRef.current);
       watchdogRef.current = null;
@@ -176,17 +214,14 @@ export function useVoice(
     streamRef.current = null;
     void ctxRef.current?.close().catch(() => {});
     ctxRef.current = null;
-    uttRef.current = [];
-    preRef.current = [];
+    forget();
     carryRef.current = new Float32Array(0);
-    speechMsRef.current = 0;
-    silenceMsRef.current = 0;
     bargeMsRef.current = 0;
-  }, []);
+  }, [forget]);
 
   useEffect(() => () => teardown(), [teardown]);
 
-  const vdbg = useCallback((s: string) => dbgRef.current?.(s), []);
+  const vdbg = useCallback((kind: VdbgKind, msg: string) => dbgRef.current?.(kind, msg), []);
 
   // feed a chunk's complete 30ms frames through the WebRTC VAD (libfvad
   // wasm); returns how many frames were voiced. Sub-frame remainder rolls
@@ -232,7 +267,11 @@ export function useVoice(
             gpu: gpuRef.current,
           },
         );
-        vdbg(`transcribed on ${out.engine}${out.note ? ` — ${out.note}` : ""}`);
+        if (out.note) vdbg("warn", `engine fallback — ${out.note}`);
+        else if (out.engine !== engineRef.current) {
+          engineRef.current = out.engine;
+          vdbg("hint", `engine: ${out.engine}`);
+        }
         if (out.text.trim()) onResult(out.text.trim());
       } catch (e) {
         setError(String(e));
@@ -272,21 +311,55 @@ export function useVoice(
     setPhase("idle");
   }, [teardown]);
 
-  // close the open utterance when silence settles
+  // close the open utterance when silence settles — the authoritative pass:
+  // full context, best accuracy, handles args and embedded commands
   const closeUtterance = useCallback(() => {
     const seg = uttRef.current;
-    uttRef.current = [];
     const spoke = speechMsRef.current >= MIN_SPEECH_MS;
     const voicedMs = Math.round(speechMsRef.current);
-    speechMsRef.current = 0;
-    silenceMsRef.current = 0;
+    forget();
     if (seg.length && spoke) {
-      vdbg(`utterance closed — ${voicedMs}ms voiced`);
+      vdbg("hint", `closed · ${(voicedMs / 1000).toFixed(1)}s voiced`);
       void transcribe(merge(seg));
     } else if (seg.length) {
-      vdbg(`utterance dropped — ${voicedMs}ms voiced (min ${MIN_SPEECH_MS}ms)`);
+      vdbg("hint", "dropped — too short");
     }
-  }, [transcribe, vdbg]);
+  }, [transcribe, vdbg, forget]);
+
+  // rolling partial pass, ~every 1.4s while speech is active: transcribes the
+  // rolling buffer mid-speech; when the router fires a one-shot command the
+  // whole buffer is forgotten so the words can't fire twice. Non-command
+  // partials are deliberately discarded — the utterance-close pass is what
+  // produces the final text (args, embedded, dictation all live there)
+  const partialTick = useCallback(() => {
+    if (busyRef.current || !ctxRef.current) return;
+    if (Date.now() - lastVoiceAtRef.current > 1600) return; // nobody talking
+    if (rollMsRef.current < 1700) return; // not enough new audio yet
+    // keep the window bounded — whisper cost grows with length
+    while (rollMsRef.current > 12000 && rollRef.current.length > 1) {
+      const head = rollRef.current[0]!;
+      rollMsRef.current -= (head.length / RATE) * 1000;
+      rollRef.current = rollRef.current.slice(1);
+    }
+    const wav = f32ToWav(merge(rollRef.current));
+    busyRef.current = true;
+    invoke<{ text: string; engine: string; note: string }>("voice_transcribe", {
+      audio: Array.from(wav),
+      model,
+      translate: mlRef.current,
+      gpu: gpuRef.current,
+    })
+      .then((out) => {
+        const text = out.text.trim();
+        if (!text) return;
+        vdbg("say", text);
+        if (partialRef.current?.(text)) forget();
+      })
+      .catch(() => {})
+      .finally(() => {
+        busyRef.current = false;
+      });
+  }, [model, vdbg, forget]);
 
   const toggle = useCallback(() => {
     // any live mic (recording, or mid-transcribe) toggles off;
@@ -346,7 +419,7 @@ export function useVoice(
               bargeMsRef.current += chunkMs;
               if (bargeMsRef.current >= 250) {
                 bargeMsRef.current = 0;
-                vdbg("barge-in — cancelling reply");
+                vdbg("warn", "barge-in — reply cancelled");
                 ttsUntilRef.current = Date.now(); // kill our grace window too
                 ttsSpeakingRef.current = false;
                 window.speechSynthesis?.cancel();
@@ -366,11 +439,15 @@ export function useVoice(
             return;
           }
           bargeMsRef.current = 0;
+          // everything spoken lands in the rolling buffer for the partial tick
+          rollRef.current.push(ch);
+          rollMsRef.current += chunkMs;
           // VAD: rolling 30ms frames through the WebRTC detector — any voiced
           // frame is speech. Quiet before speech fills the pre-roll ring;
           // speech opens an utterance; pauseMs of trailing quiet closes it
           const voiced = vadVoiced(ch);
           const speech = voiced > 0;
+          if (speech) lastVoiceAtRef.current = Date.now();
           if (!uttRef.current.length && !speech) {
             preRef.current.push(ch);
             if (preRef.current.length > PRE_CHUNKS) preRef.current.shift();
@@ -379,7 +456,6 @@ export function useVoice(
           if (!uttRef.current.length) {
             uttRef.current = preRef.current;
             preRef.current = [];
-            vdbg(`speech start — ${voiced} voiced frame${voiced === 1 ? "" : "s"}`);
           }
           uttRef.current.push(ch);
           if (speech) {
@@ -421,13 +497,16 @@ export function useVoice(
             lastProcessRef.current = Date.now();
           } catch {}
         }, 1000);
+        // rolling partial transcribe tick — one-shot commands fire mid-speech
+        if (tickRef.current != null) clearInterval(tickRef.current);
+        tickRef.current = window.setInterval(partialTick, 1400);
         setStreaming(true);
         setPhase("recording");
       } catch (e) {
         setError(String(e));
       }
     })();
-  }, [phase, streaming, stop, model, closeUtterance, ttsActive]);
+  }, [phase, streaming, stop, model, closeUtterance, ttsActive, partialTick]);
 
   return { phase, streaming, error, toggle, retranscribe };
 }

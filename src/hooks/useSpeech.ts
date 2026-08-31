@@ -212,8 +212,13 @@ export function useSpeech(oc: SpeechOc, settings: AppSettings) {
 
   // no streaming speech — only when an answer finishes (even mid-turn) we decide
   // to queue it raw or via the commit-model summary, never cutting.
+  // tail lookups scan backward in place: msgs identity changes per streaming
+  // delta, and [...msgs].reverse() copies the whole history each time
   useEffect(() => {
-    const last = [...oc.msgs].reverse().find((m) => (m.info as any).role === "assistant");
+    let last: Msg | undefined;
+    for (let i = oc.msgs.length - 1; i >= 0; i--) {
+      if ((oc.msgs[i].info as any).role === "assistant") { last = oc.msgs[i]; break; }
+    }
     if (!last) return;
     const id = last.info.id;
     const info = last.info as any;
@@ -284,9 +289,11 @@ export function useSpeech(oc: SpeechOc, settings: AppSettings) {
   // fallback for silent completions — same word-count gate, queued never cuts
   useEffect(() => {
     if (!settings.speakReplies || !settings.ttsVoice || ttsHushed.current || debriefing) return;
-    const last = [...oc.msgs]
-      .reverse()
-      .find((m) => (m.info as any).role === "assistant" && (m.info as any).time?.completed);
+    let last: Msg | undefined;
+    for (let i = oc.msgs.length - 1; i >= 0; i--) {
+      const m = oc.msgs[i];
+      if ((m.info as any).role === "assistant" && (m.info as any).time?.completed) { last = m; break; }
+    }
     if (!last || last.info.id === lastSpoken.current) return;
     if (!seenLive.current.has(last.info.id)) return;
     lastSpoken.current = last.info.id;
@@ -312,6 +319,8 @@ export function useSpeech(oc: SpeechOc, settings: AppSettings) {
   // batched tool enumeration — array of tool uses, spoken every 10s
   const toolSeen = useRef<Set<string>>(new Set());
   const toolCounts = useRef<Map<string, number>>(new Map());
+  // tail signature of the last collector scan — skips O(parts) rescans on deltas
+  const collectorSig = useRef(" init");
 
   const prevBusy = useRef(false);
   const lastPromptId = useRef("");
@@ -321,7 +330,10 @@ export function useSpeech(oc: SpeechOc, settings: AppSettings) {
     prevBusy.current = oc.busy;
     // a new live prompt — latest user message changed. Covers back-to-back
     // turns too (drained queue), where busy never visibly rises again.
-    const lastUser = [...oc.msgs].reverse().find((m) => (m.info as any).role === "user");
+    let lastUser: Msg | undefined;
+    for (let i = oc.msgs.length - 1; i >= 0; i--) {
+      if ((oc.msgs[i].info as any).role === "user") { lastUser = oc.msgs[i]; break; }
+    }
     const newPrompt = !!lastUser && lastUser.info.id !== lastPromptId.current;
     if (lastUser) lastPromptId.current = lastUser.info.id;
     // reset batch on a fresh prompt, but never cut queued voice (only debrief cuts)
@@ -356,10 +368,17 @@ export function useSpeech(oc: SpeechOc, settings: AppSettings) {
     }
   }, [oc.busy, oc.msgs, announce]);
 
-  // collector: count distinct tool parts once when they appear (pending/running/completed)
+  // collector: count distinct tool parts once when they appear (pending/running/completed).
+  // ponytail: tail-signature gate — while streaming, tool parts only ever append
+  // to the tail message, so an unchanged (count, tailId, tailPartsLen) signature
+  // means nothing new to count; a fetch re-shuffle recounts at the next append
   useEffect(() => {
     if (!oc.busy) return;
-    let changed = false;
+    const n = oc.msgs.length;
+    const tail = oc.msgs[n - 1];
+    const sig = `${n}:${(tail as any)?.info?.id ?? ""}:${tail?.parts.length ?? 0}`;
+    if (sig === collectorSig.current) return;
+    collectorSig.current = sig;
     for (const m of oc.msgs)
       for (const p of m.parts ?? []) {
         if ((p as any).type !== "tool") continue;
@@ -370,10 +389,8 @@ export function useSpeech(oc: SpeechOc, settings: AppSettings) {
         toolSeen.current.add(key);
         const tool = String((p as any).tool ?? "unknown").toLowerCase();
         toolCounts.current.set(tool, (toolCounts.current.get(tool) ?? 0) + 1);
-        changed = true;
       }
     // no speech here — ticker handles it every 10s
-    void changed;
   }, [oc.msgs, oc.busy]);
 
   // ticker: every 10s while busy, speak what happened since the LAST
