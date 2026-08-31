@@ -349,6 +349,10 @@ function find(devs, frag) {
     return toks.some((t) => n.includes(t));
   });
 }
+function availList(devs) {
+  const names = devs.map((d) => d.name).filter(Boolean);
+  return names.length ? names.join(", ") : "none";
+}
 
 export async function testCreds(api, c) {
   clearHueCache();
@@ -382,7 +386,7 @@ export async function runLightAct(api, c, act) {
   const devs = await lights(api, c);
   if (!devs.length) throw new Error("no Hue lights found");
   let targets = find(devs, act.name);
-  if (!targets.length) throw new Error(`no light matches "${act.name}"`);
+  if (!targets.length) throw new Error(`no light matches "${act.name}". Available lights: ${availList(devs)}.`);
   const state = stateFor(act);
   if (!state) throw new Error("unsupported act");
   const sent = [];
@@ -427,7 +431,7 @@ export async function runRoomAct(api, c, act) {
   const devs = await rooms(api, c);
   if (!devs.length) throw new Error("no Hue rooms found");
   let targets = find(devs, act.name);
-  if (!targets.length) throw new Error(`no room matches "${act.name}"`);
+  if (!targets.length) throw new Error(`no room matches "${act.name}". Available rooms: ${availList(devs)}.`);
   const state = stateFor(act);
   if (!state) throw new Error("unsupported act");
   const sent = [];
@@ -477,9 +481,16 @@ export async function runHueAct(api, c, act) {
     try { return await runLightAct(api, c, act); } catch (e) {
       const msg = String(e);
       if (act.name && /no light matches/.test(msg)) {
-        // retry as room with same payload kind
         const roomAct = { ...act, type: act.type.replace("light", "room") };
-        try { return await runRoomAct(api, c, roomAct); } catch {}
+        try { return await runRoomAct(api, c, roomAct); } catch (_) {
+          // both failed — TTS should read all available lights + rooms
+          try {
+            const all = await getAll(api, c);
+            throw new Error(`no light or room matches "${act.name}". Available lights: ${availList(all.lights)}. Available rooms: ${availList(all.rooms)}.`);
+          } catch (err) {
+            if (/no light or room matches/.test(String(err))) throw err;
+          }
+        }
       }
       throw e;
     }
@@ -489,7 +500,14 @@ export async function runHueAct(api, c, act) {
       const msg = String(e);
       if (act.name && /no room matches/.test(msg)) {
         const lightAct = { ...act, type: act.type.replace("room", "light") };
-        try { return await runLightAct(api, c, lightAct); } catch {}
+        try { return await runLightAct(api, c, lightAct); } catch (_) {
+          try {
+            const all = await getAll(api, c);
+            throw new Error(`no light or room matches "${act.name}". Available lights: ${availList(all.lights)}. Available rooms: ${availList(all.rooms)}.`);
+          } catch (err) {
+            if (/no light or room matches/.test(String(err))) throw err;
+          }
+        }
       }
       throw e;
     }
@@ -714,6 +732,7 @@ export default function activate(api) {
     triggers: TRIGGERS,
     vocab: VOCAB,
     lexicon: LEXICON,
+    requiresConfirmation: false,
     Settings,
     slash: [
       { name: "hue", description: "Control Hue lights & rooms — on/off, 0-100%, color, warm/cool  (e.g. /hue on bedroom, /hue 50 living room, /hue blue desk)", takesArgs: true, handle: handleHueSlash },

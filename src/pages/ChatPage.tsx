@@ -555,6 +555,18 @@ export default function ChatPage() {
     (act: VoiceAct) => {
       playSound("click");
       if (act.type === "embedded") {
+        // plugin-driven confirmation: a plugin can opt out via
+        // `requiresConfirmation = false` or `requiresConfirmation = (act)=>boolean`
+        const inner = act.act as unknown as { type?: string; plugin?: string; act?: unknown };
+        if (inner?.type === "plugin" && typeof inner.plugin === "string") {
+          const ext = extById[inner.plugin];
+          const flag = ext?.requiresConfirmation as unknown as boolean | ((a: unknown) => boolean) | undefined;
+          const needs = typeof flag === "function" ? flag(inner.act) : flag !== false;
+          if (!needs) {
+            execAct(act.act);
+            return;
+          }
+        }
         // active session: a command ran recently → trust the streak, skip
         // the read-back (25s window). Fuzzy matches (command + trailing
         // clause) always read back — they're only probable.
@@ -581,7 +593,7 @@ export default function ChatPage() {
       }
       execAct(act);
     },
-    [execAct, describeAct, announce],
+    [execAct, describeAct, announce, extById],
   );
 
   const handleVoiceTranscript = useCallback(

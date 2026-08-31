@@ -18,6 +18,9 @@ const PARTIAL_INTERVAL = 600; // 300-1000ms spec
 const ROLL_WINDOW_MS = 12000;
 const MIN_PARTIAL_MS = 700;
 const VOICE_TAIL_MS = 1600;
+const TRANSCRIBE_TIMEOUT_MS = 32_000;
+const PARTIAL_TIMEOUT_MS = 14_000;
+const WATCHDOG_MS = 1500;
 
 export const MODE_FOR = (sens: number) => Math.max(0, Math.min(3, Math.round((1 - sens) * 3)));
 export const THRESH_FOR = (sens: number) => 0.03 - sens * 0.028;
@@ -53,6 +56,14 @@ function rms(chunk: Float32Array): number {
 }
 function chunkMs(len: number): number { return (len / RATE) * 1000; }
 
+function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  let t: number | undefined;
+  const timeout = new Promise<T>((_, rej) => {
+    t = window.setTimeout(() => rej(new Error(`${label} timeout after ${ms}ms`)), ms);
+  });
+  return Promise.race([p, timeout]).finally(() => { if (t !== undefined) clearTimeout(t); }) as Promise<T>;
+}
+
 export function useVoice(
   onResult: (text: string) => void,
   model: string,
@@ -67,6 +78,10 @@ export function useVoice(
   const [streaming, setStreaming] = useState(false);
   const [error, setError] = useState("");
   const [partial, setPartial] = useState("");
+  const phaseRef = useRef<VoicePhase>("idle");
+  const streamingRef = useRef(false);
+  useEffect(() => { phaseRef.current = phase; }, [phase]);
+  useEffect(() => { streamingRef.current = streaming; }, [streaming]);
 
   const vadRef = useRef({ pauseMs: SILENCE_MS, thresh: THRESH_FOR(sens), mode: MODE_FOR(sens) });
   vadRef.current = { pauseMs: SILENCE_MS, thresh: THRESH_FOR(sens), mode: MODE_FOR(sens) };
@@ -103,8 +118,21 @@ export function useVoice(
   const watchdogRef = useRef<number | null>(null);
   const lastProcessRef = useRef(0);
   const onResultRef = useRef(onResult); onResultRef.current = onResult;
+  // generation for self-recovery — any in-flight Whisper/partial after bump is stale and dropped
+  const seqRef = useRef(0);
+  // serialize start → teardown → restart (prevents overlapping getUserMedia/worklet races)
+  const startingRef = useRef(false);
+  // serialize final transcriptions — overlapping voice_transcribe_pcm hangs one permanently
+  const finalBusyRef = useRef(false);
 
   const vdbg = useCallback((k: VdbgKind, m: string) => dbgRef.current?.(k, m), []);
+  const sttLog = useCallback((k: VdbgKind, m: string) => {
+    const line = `[STT:${k}] ${m}`;
+    // always visible in devtools so we can pinpoint where STT dies after prolonged use
+    // eslint-disable-next-line no-console
+    console.debug(line);
+    vdbg(k, m);
+  }, [vdbg]);
 
   const ttsActive = useCallback(() => {
     const s = window.speechSynthesis;
@@ -131,56 +159,89 @@ export function useVoice(
     window.dispatchEvent(new CustomEvent("oc:voice-partial", { detail: { text: "", isFinal: true } }));
   }, []);
 
-  const teardown = useCallback(() => {
+  const teardown = useCallback((reason = "teardown") => {
+    const seq = ++seqRef.current;
+    sttLog("warn", `teardown seq=${seq} reason=${reason} phase=${phaseRef.current} streaming=${streamingRef.current} busy=${busyRef.current} finalBusy=${finalBusyRef.current}`);
     cancelRef.current = true;
+    busyRef.current = false;
+    finalBusyRef.current = false;
     lastPcmRef.current = null;
-    if (tickRef.current != null) { clearInterval(tickRef.current); tickRef.current = null; }
-    if (watchdogRef.current != null) { clearInterval(watchdogRef.current); watchdogRef.current = null; }
-    try { workletRef.current?.port.close?.(); } catch {}
+    if (tickRef.current != null) { clearInterval(tickRef.current); tickRef.current = null; sttLog("hint", "tick cleared"); }
+    if (watchdogRef.current != null) { clearInterval(watchdogRef.current); watchdogRef.current = null; sttLog("hint", "watchdog cleared"); }
+    try { workletRef.current?.port.close?.(); } catch (e) { sttLog("warn", `worklet port close failed: ${String(e)}`); }
     try { workletRef.current?.disconnect(); } catch {}
     workletRef.current = null;
     try { srcRef.current?.disconnect(); } catch {}
     srcRef.current = null;
     try { nodeRef.current?.disconnect(); } catch {}
     nodeRef.current = null;
-    streamRef.current?.getTracks().forEach(t => t.stop());
+    try {
+      const tracks = streamRef.current?.getTracks() ?? [];
+      tracks.forEach(t => { try { t.stop(); } catch {} });
+      if (tracks.length) sttLog("hint", `mic tracks stopped: ${tracks.length}`);
+    } catch (e) { sttLog("warn", `track stop failed: ${String(e)}`); }
     streamRef.current = null;
     const ctx = ctxRef.current;
     ctxRef.current = null;
-    if (ctx) { void ctx.close().catch(() => {}); }
+    if (ctx) {
+      const state = ctx.state;
+      void ctx.close().then(() => sttLog("hint", `AudioContext closed (was ${state})`)).catch((e) => sttLog("warn", `AudioContext close failed: ${String(e)}`));
+    }
     forget();
     carryRef.current = new Float32Array(0);
     bargeMsRef.current = 0;
-  }, [forget]);
+    lastProcessRef.current = 0;
+  }, [forget, sttLog]);
 
-  useEffect(() => () => teardown(), [teardown]);
+  useEffect(() => () => teardown("unmount"), [teardown]);
 
   // PCM → whisper via persistent backend (voice_transcribe_pcm). Keeps audio as
   // Float32 internally, no WAV encode, reuse server/model cache, off UI thread
   // via Rust spawn_blocking. Falls back to CLI if server not available.
-  const transcribePcm = useCallback(async (pcm: Float32Array, isPartial: boolean): Promise<string | null> => {
+  const transcribePcm = useCallback(async (pcm: Float32Array, isPartial: boolean, seq: number): Promise<string | null> => {
+    if (cancelRef.current || seq !== seqRef.current) {
+      sttLog("hint", `transcribe dropped (stale/cancelled) seq=${seq} cur=${seqRef.current} isPartial=${isPartial}`);
+      return null;
+    }
     if (pcm.length < RATE * 0.2) {
       if (!isPartial) pushToast("utterance too short — ignored", { variant: "info", ttl: 2000 });
+      sttLog("hint", `transcribe skipped too short ${pcm.length} samples isPartial=${isPartial}`);
       return null;
     }
     // keep last PCM for multilingual retry
     lastPcmRef.current = pcm.slice(0);
+    const label = isPartial ? "partial Whisper" : "final Whisper";
+    const timeoutMs = isPartial ? PARTIAL_TIMEOUT_MS : TRANSCRIBE_TIMEOUT_MS;
+    sttLog("hint", `${label} start seq=${seq} pcm=${pcm.length} (${(pcm.length / RATE).toFixed(2)}s) model=${model} gpu=${gpuRef.current} translate=${mlRef.current}`);
+    const t0 = Date.now();
     try {
-      // try PCM path first (persistent, no WAV)
-      const out = await invoke<{ text: string; engine: string; note: string }>("voice_transcribe_pcm", {
+      const p = invoke<{ text: string; engine: string; note: string }>("voice_transcribe_pcm", {
         pcm: Array.from(pcm),
         model,
         translate: mlRef.current,
         gpu: gpuRef.current,
       });
-      if (cancelRef.current) return null;
-      if (out.note) vdbg("warn", `engine fallback — ${out.note}`);
-      else if (out.engine !== engineRef.current) { engineRef.current = out.engine; vdbg("hint", `engine: ${out.engine}`); }
+      const out = await withTimeout(p, timeoutMs, label);
+      if (cancelRef.current || seq !== seqRef.current) {
+        sttLog("warn", `${label} stale after await seq=${seq} cur=${seqRef.current}`);
+        return null;
+      }
+      const dt = Date.now() - t0;
+      if (out.note) sttLog("warn", `${label} done ${dt}ms engine=${out.engine} fallback: ${out.note} textLen=${out.text.length}`);
+      else {
+        if (out.engine !== engineRef.current) { engineRef.current = out.engine; sttLog("hint", `engine: ${out.engine} ${dt}ms`); }
+        else sttLog("hint", `${label} done ${dt}ms engine=${out.engine} textLen=${out.text.length}`);
+      }
       return out.text.trim() || null;
     } catch (e) {
+      const dt = Date.now() - t0;
+      if (cancelRef.current || seq !== seqRef.current) {
+        sttLog("warn", `${label} error but stale seq=${seq} cur=${seqRef.current}: ${String(e)}`);
+        return null;
+      }
+      sttLog("warn", `${label} pcm path failed ${dt}ms: ${String(e)} — trying WAV fallback`);
       // fallback to legacy WAV path if PCM command missing (older backend) — still works
       try {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const wav = (() => {
           const buf = new ArrayBuffer(44 + pcm.length * 2);
           const v = new DataView(buf);
@@ -192,54 +253,98 @@ export function useVoice(
           let o = 44; for (let i = 0; i < pcm.length; i++, o += 2) { const s = Math.max(-1, Math.min(1, pcm[i]!)); v.setInt16(o, s < 0 ? s * 0x8000 : s * 0x7fff, true); }
           return new Uint8Array(buf);
         })();
-        const out2 = await invoke<{ text: string; engine: string; note: string }>("voice_transcribe", {
+        const p2 = invoke<{ text: string; engine: string; note: string }>("voice_transcribe", {
           audio: Array.from(wav), model, translate: mlRef.current, gpu: gpuRef.current,
         });
-        if (cancelRef.current) return null;
+        const out2 = await withTimeout(p2, timeoutMs, `${label} WAV fallback`);
+        if (cancelRef.current || seq !== seqRef.current) {
+          sttLog("warn", `${label} WAV stale after await seq=${seq}`);
+          return null;
+        }
+        sttLog("hint", `${label} WAV fallback done ${Date.now() - t0}ms textLen=${out2.text.length}`);
         return out2.text.trim() || null;
       } catch (e2) {
-        if (!cancelRef.current) setError(String(e2 ?? e));
+        if (cancelRef.current || seq !== seqRef.current) {
+          sttLog("warn", `${label} WAV error but stale: ${String(e2)}`);
+          return null;
+        }
+        const msg = String(e2 ?? e);
+        sttLog("warn", `${label} failed ${Date.now() - t0}ms: ${msg}`);
+        if (!isPartial) setError(msg.slice(0, 400));
         return null;
       }
     }
-  }, [model, vdbg]);
+  }, [model, sttLog]);
 
-  const handleFinal = useCallback(async (pcm: Float32Array) => {
-    setPhase("transcribing");
-    const text = await transcribePcm(pcm, false);
-    if (cancelRef.current) { setPhase(ctxRef.current ? "recording" : "idle"); return; }
-    if (text) {
-      vdbg("say", text);
-      window.dispatchEvent(new CustomEvent("oc:voice-partial", { detail: { text, isFinal: true } }));
-      liveRef.current?.(text, true);
-      onResultRef.current(text);
+  const handleFinal = useCallback(async (pcm: Float32Array, seq: number) => {
+    if (finalBusyRef.current) {
+      sttLog("warn", `handleFinal dropped — already transcribing seq=${seq}`);
+      return;
     }
-    setPartial("");
-    setPhase(ctxRef.current ? "recording" : "idle");
-  }, [transcribePcm, vdbg]);
+    finalBusyRef.current = true;
+    const pcmSec = (pcm.length / RATE).toFixed(2);
+    sttLog("hint", `handleFinal start seq=${seq} pcm=${pcm.length} (${pcmSec}s)`);
+    setPhase("transcribing");
+    try {
+      const text = await transcribePcm(pcm, false, seq);
+      if (cancelRef.current || seq !== seqRef.current) {
+        sttLog("warn", `handleFinal stale after transcribe seq=${seq} cur=${seqRef.current}`);
+        return;
+      }
+      if (text) {
+        sttLog("say", `final: "${text.slice(0, 200)}"`);
+        window.dispatchEvent(new CustomEvent("oc:voice-partial", { detail: { text, isFinal: true } }));
+        liveRef.current?.(text, true);
+        onResultRef.current(text);
+      } else {
+        sttLog("hint", `handleFinal empty result seq=${seq}`);
+      }
+    } catch (e) {
+      sttLog("warn", `handleFinal crashed seq=${seq}: ${String(e)}`);
+      if (!cancelRef.current && seq === seqRef.current) setError(String(e).slice(0, 400));
+    } finally {
+      finalBusyRef.current = false;
+      setPartial("");
+      // self-recovering: always return to recording if mic still live, else idle
+      const stillLive = !!ctxRef.current && !cancelRef.current && seq === seqRef.current;
+      sttLog("hint", `handleFinal cleanup seq=${seq} stillLive=${stillLive} finalBusy cleared`);
+      setPhase(stillLive ? "recording" : "idle");
+    }
+  }, [transcribePcm, sttLog]);
 
   const retranscribe = useCallback(async (): Promise<string | null> => {
     const pcm = lastPcmRef.current;
-    if (!pcm) return null;
+    const seq = seqRef.current;
+    if (!pcm) { sttLog("hint", "retranscribe no pcm"); return null; }
+    sttLog("hint", `retranscribe start seq=${seq} pcm=${pcm.length}`);
     try {
-      const out = await invoke<{ text: string; engine: string; note: string }>("voice_transcribe_pcm", {
+      const p = invoke<{ text: string; engine: string; note: string }>("voice_transcribe_pcm", {
         pcm: Array.from(pcm), model, translate: !mlRef.current, gpu: gpuRef.current,
       });
+      const out = await withTimeout(p, TRANSCRIBE_TIMEOUT_MS, "retranscribe");
+      if (cancelRef.current || seq !== seqRef.current) return null;
       return out.text.trim() || null;
-    } catch { return null; }
-  }, [model]);
+    } catch (e) {
+      sttLog("warn", `retranscribe failed: ${String(e)}`);
+      return null;
+    }
+  }, [model, sttLog]);
 
   const stop = useCallback(async () => {
-    teardown();
+    sttLog("hint", `stop called phase=${phaseRef.current} streaming=${streamingRef.current}`);
+    teardown("stop");
     setStreaming(false);
     setPhase("idle");
     setError("");
-  }, [teardown]);
+  }, [teardown, sttLog]);
 
   const closeUtterance = useCallback(() => {
-    const seg = uttRef.current;
+    if (cancelRef.current) { sttLog("hint", "closeUtterance dropped — cancelled"); return; }
+    const seq = seqRef.current;
+    const seg = uttRef.current.slice();
     const spoke = speechMsRef.current >= MIN_SPEECH_MS;
     const voicedMs = Math.round(speechMsRef.current);
+    if (!seg.length) { sttLog("hint", `closeUtterance empty seg seq=${seq}`); return; }
     // keep rolling tail for overlapping context — don't drop everything,
     // just the utterance buffer; rolling keeps last PRE_ROLL_MS for next
     const tailMs = PRE_ROLL_MS;
@@ -255,21 +360,27 @@ export function useVoice(
     // restore tail as pre-roll for next utterance's overlapping context
     if (toKeep.length) {
       preRef.current = toKeep.slice(-PRE_CHUNKS);
-      // also keep tail in rolling for context continuity
       for (const c of toKeep) { rollRef.current.push(c); rollMsRef.current += chunkMs(c.length); }
     }
     if (seg.length && spoke) {
-      vdbg("hint", `closed · ${(voicedMs / 1000).toFixed(1)}s voiced`);
+      sttLog("hint", `closeUtterance seq=${seq} voiced=${(voicedMs / 1000).toFixed(1)}s chunks=${seg.length} → handleFinal`);
       const pcm = merge(seg);
-      void handleFinal(pcm);
+      void handleFinal(pcm, seq);
       window.dispatchEvent(new CustomEvent("oc:voice-final", { detail: { text: "" } }));
     } else if (seg.length) {
-      vdbg("hint", "dropped — too short");
+      sttLog("hint", `closeUtterance dropped too short seq=${seq} voiced=${voicedMs}ms`);
     }
-  }, [forget, handleFinal, vdbg]);
+  }, [forget, handleFinal, sttLog]);
 
   const partialTick = useCallback(() => {
-    if (busyRef.current || !ctxRef.current || cancelRef.current) return;
+    if (cancelRef.current) return;
+    if (busyRef.current) { sttLog("hint", "partialTick skipped busy"); return; }
+    if (finalBusyRef.current) return;
+    if (!ctxRef.current) { sttLog("warn", "partialTick no ctx — mic dead, will watchdog"); return; }
+    if (ctxRef.current.state === "suspended") {
+      sttLog("warn", `partialTick ctx suspended — trying resume`);
+      void ctxRef.current.resume().then(() => sttLog("hint", "ctx resumed")).catch((e) => sttLog("warn", `ctx resume failed: ${String(e)}`));
+    }
     if (Date.now() - lastVoiceAtRef.current > VOICE_TAIL_MS) return;
     if (rollMsRef.current < MIN_PARTIAL_MS) return;
     while (rollMsRef.current > ROLL_WINDOW_MS && rollRef.current.length > 1) {
@@ -277,119 +388,201 @@ export function useVoice(
       rollMsRef.current -= chunkMs(head.length);
       rollRef.current = rollRef.current.slice(1);
     }
+    const seq = seqRef.current;
     const pcm = merge(rollRef.current);
     busyRef.current = true;
-    void transcribePcm(pcm, true).then((text) => {
-      if (cancelRef.current) return;
+    sttLog("hint", `partialTick seq=${seq} roll=${(rollMsRef.current / 1000).toFixed(1)}s`);
+    void transcribePcm(pcm, true, seq).then((text) => {
+      if (cancelRef.current || seq !== seqRef.current) { sttLog("hint", `partial stale seq=${seq}`); return; }
       if (!text) return;
-      // dedup overlapping results
       const { delta, cumulative, isNew } = dedupRef.current.push(text);
-      const display = cumulative;
       if (!isNew && !delta) return;
-      // emit partial live transcript
-      setPartial(display);
-      window.dispatchEvent(new CustomEvent("oc:voice-partial", { detail: { text: display, isFinal: false } }));
-      liveRef.current?.(display, false);
-      vdbg("say", display);
-      if (partialRef.current?.(display)) {
+      setPartial(cumulative);
+      window.dispatchEvent(new CustomEvent("oc:voice-partial", { detail: { text: cumulative, isFinal: false } }));
+      liveRef.current?.(cumulative, false);
+      sttLog("say", `partial: "${cumulative.slice(0, 200)}" delta="${delta.slice(0, 80)}"`);
+      if (partialRef.current?.(cumulative)) {
         // command fired — forget to avoid double-fire, but keep partial UI cleared
+        sttLog("act", `partial fired command — forget`);
         forget();
       }
-    }).catch(() => {}).finally(() => { busyRef.current = false; });
-  }, [transcribePcm, vdbg, forget]);
+    }).catch((e) => {
+      sttLog("warn", `partialTick transcribe threw: ${String(e)}`);
+    }).finally(() => {
+      // self-recovering: never leave busy stuck true — watchdog also clears but main path must
+      busyRef.current = false;
+      if (cancelRef.current || seq !== seqRef.current) sttLog("hint", `partial busy cleared stale seq=${seq}`);
+    });
+  }, [transcribePcm, sttLog, forget]);
 
   const toggle = useCallback(() => {
-    if (phase !== "idle" || streaming) { void stop(); return; }
+    if (startingRef.current) { sttLog("warn", "toggle ignored — start already in progress"); return; }
+    if (phaseRef.current !== "idle" || streamingRef.current) { void stop(); return; }
     setError("");
     window.speechSynthesis?.cancel();
+    startingRef.current = true;
+    const startSeq = seqRef.current + 1;
+    sttLog("hint", `toggle start → seq=${startSeq} model=${model} gpu=${gpu} sens=${sens} multilingual=${multilingual}`);
     (async () => {
       try {
-        const st = await invoke<{ bin: boolean; models: string[] }>("voice_status").catch(() => null);
-        if (!st?.bin) { setError("voice engine not installed — set it up in Settings › Voice"); return; }
-        if (!st.models.includes(model)) { setError(`model ${model} isn't downloaded — pick or fetch one in Settings › Voice`); return; }
-        try { await ensureVad(); } catch { setError("voice VAD failed to load — try restarting"); return; }
+        sttLog("hint", "toggle: checking voice_status");
+        const st = await withTimeout(invoke<{ bin: boolean; models: string[] }>("voice_status").catch(() => null) as Promise<any>, 5000, "voice_status");
+        if (!st?.bin) { sttLog("warn", "voice_status: engine not installed"); setError("voice engine not installed — set it up in Settings › Voice"); return; }
+        if (!st.models.includes(model)) { sttLog("warn", `voice_status: model ${model} missing`); setError(`model ${model} isn't downloaded — pick or fetch one in Settings › Voice`); return; }
+        sttLog("hint", "toggle: ensureVad");
+        try { await withTimeout(ensureVad(), 8000, "ensureVad"); sttLog("hint", "VAD ready"); } catch (e) { sttLog("warn", `VAD failed: ${String(e)}`); setError("voice VAD failed to load — try restarting"); return; }
         cancelRef.current = false;
+        seqRef.current += 1;
+        const seq = seqRef.current;
         dedupRef.current.reset();
-        const stream = await navigator.mediaDevices.getUserMedia({
+        sttLog("hint", `toggle: getUserMedia seq=${seq}`);
+        const stream = await withTimeout(navigator.mediaDevices.getUserMedia({
           audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+        }), 8000, "getUserMedia");
+        if (cancelRef.current || seq !== seqRef.current) {
+          sttLog("warn", `getUserMedia stale seq=${seq} cur=${seqRef.current} — stopping tracks`);
+          stream.getTracks().forEach(t => t.stop());
+          return;
+        }
+        // mic track failure → self-recovering reset so next toggle works
+        stream.getTracks().forEach(t => {
+          t.onended = () => {
+            if (seq !== seqRef.current) return;
+            sttLog("warn", `mic track ended seq=${seq}`);
+            setError("microphone disconnected");
+            teardown("mic track ended");
+            setStreaming(false);
+            setPhase("idle");
+          };
         });
+        sttLog("hint", `toggle: AudioContext seq=${seq}`);
         const ctx = new AudioContext({ sampleRate: RATE });
+        if (ctx.state === "suspended") {
+          try { await ctx.resume(); sttLog("hint", "AudioContext resumed"); } catch (e) { sttLog("warn", `AudioContext resume failed: ${String(e)}`); }
+        }
+        if (cancelRef.current || seq !== seqRef.current) {
+          sttLog("warn", `AudioContext stale seq=${seq}`);
+          stream.getTracks().forEach(t => t.stop());
+          void ctx.close().catch(() => {});
+          return;
+        }
         // worklet path — true streaming, off main thread, small frames
         let worklet: AudioWorkletNode | null = null;
         let scriptNode: ScriptProcessorNode | null = null;
+        void scriptNode;
         const src = ctx.createMediaStreamSource(stream);
         let usingWorklet = false;
         try {
           const blob = new Blob([WORKLET_CODE], { type: "application/javascript" });
           const url = URL.createObjectURL(blob);
-          await ctx.audioWorklet.addModule(url);
+          await withTimeout(ctx.audioWorklet.addModule(url), 5000, "audioWorklet.addModule");
           URL.revokeObjectURL(url);
+          if (cancelRef.current || seq !== seqRef.current) throw new Error("cancelled while loading worklet");
           worklet = new AudioWorkletNode(ctx, "capture-processor", { processorOptions: { frameSize: WORKLET_FRAME } });
           usingWorklet = true;
-        } catch {
+          sttLog("hint", `AudioWorklet ready seq=${seq}`);
+        } catch (e) {
           usingWorklet = false;
+          sttLog("warn", `AudioWorklet failed seq=${seq}: ${String(e)} — fallback to ScriptProcessor`);
         }
 
         lastProcessRef.current = Date.now();
 
         const handleChunk = (ch: Float32Array) => {
-          lastProcessRef.current = Date.now();
-          if (cancelRef.current) return;
-          const level = rms(ch);
-          const ms = chunkMs(ch.length);
-          if (ttsActive()) {
-            const bargeThresh = Math.max(vadRef.current.thresh * 2, 0.05);
-            if (level >= bargeThresh) {
-              bargeMsRef.current += ms;
-              if (bargeMsRef.current >= 250) {
-                bargeMsRef.current = 0;
-                vdbg("warn", "barge-in — reply cancelled");
-                ttsUntilRef.current = Date.now();
-                ttsSpeakingRef.current = false;
-                window.speechSynthesis?.cancel();
-                window.dispatchEvent(new Event("oc:tts-stop"));
-                if (!uttRef.current.length && preRef.current.length) {
-                  uttRef.current = preRef.current;
-                  preRef.current = [];
-                }
-              }
-            } else {
-              bargeMsRef.current = Math.max(0, bargeMsRef.current - ms / 2);
+          try {
+            lastProcessRef.current = Date.now();
+            if (cancelRef.current || seq !== seqRef.current) return;
+            if (ctx.state === "suspended") {
+              // try resume but don't block capture
+              void ctx.resume().catch(() => {});
             }
-            preRef.current.push(ch);
-            if (preRef.current.length > PRE_CHUNKS) preRef.current.shift();
-            return;
-          }
-          bargeMsRef.current = 0;
-          rollRef.current.push(ch);
-          rollMsRef.current += ms;
-          const { voiced, carry } = vadVoicedCount(ch, vadRef.current.mode, carryRef.current);
-          carryRef.current = carry;
-          const speech = voiced > 0;
-          if (speech) lastVoiceAtRef.current = Date.now();
-          if (!uttRef.current.length && !speech) {
-            preRef.current.push(ch);
-            if (preRef.current.length > PRE_CHUNKS) preRef.current.shift();
-            return;
-          }
-          if (!uttRef.current.length) {
-            uttRef.current = preRef.current;
-            preRef.current = [];
-          }
-          uttRef.current.push(ch);
-          if (speech) {
-            speechMsRef.current += (voiced * FRAME * 1000) / RATE;
-            silenceMsRef.current = 0;
-          } else {
-            silenceMsRef.current += ms;
-            if (silenceMsRef.current >= vadRef.current.pauseMs) closeUtterance();
+            const level = rms(ch);
+            const ms = chunkMs(ch.length);
+            if (ttsActive()) {
+              const bargeThresh = Math.max(vadRef.current.thresh * 2, 0.05);
+              if (level >= bargeThresh) {
+                bargeMsRef.current += ms;
+                if (bargeMsRef.current >= 250) {
+                  bargeMsRef.current = 0;
+                  sttLog("warn", "barge-in — reply cancelled");
+                  ttsUntilRef.current = Date.now();
+                  ttsSpeakingRef.current = false;
+                  window.speechSynthesis?.cancel();
+                  window.dispatchEvent(new Event("oc:tts-stop"));
+                  if (!uttRef.current.length && preRef.current.length) {
+                    uttRef.current = preRef.current;
+                    preRef.current = [];
+                  }
+                }
+              } else {
+                bargeMsRef.current = Math.max(0, bargeMsRef.current - ms / 2);
+              }
+              preRef.current.push(ch);
+              if (preRef.current.length > PRE_CHUNKS) preRef.current.shift();
+              return;
+            }
+            bargeMsRef.current = 0;
+            rollRef.current.push(ch);
+            rollMsRef.current += ms;
+            while (rollMsRef.current > ROLL_WINDOW_MS + 2000 && rollRef.current.length > 1) {
+              const head = rollRef.current[0]!;
+              rollMsRef.current -= chunkMs(head.length);
+              rollRef.current = rollRef.current.slice(1);
+              sttLog("warn", "roll overflow — trimmed");
+            }
+            let voiced = 0;
+            let carry: Float32Array = carryRef.current;
+            try {
+              const res = vadVoicedCount(ch, vadRef.current.mode, carryRef.current);
+              voiced = res.voiced;
+              carry = res.carry;
+            } catch (e) {
+              sttLog("warn", `VAD threw: ${String(e)} — treating as non-speech`);
+              voiced = 0;
+              carry = new Float32Array(0);
+            }
+            carryRef.current = carry;
+            const speech = voiced > 0;
+            if (speech) lastVoiceAtRef.current = Date.now();
+            if (!uttRef.current.length && !speech) {
+              preRef.current.push(ch);
+              if (preRef.current.length > PRE_CHUNKS) preRef.current.shift();
+              return;
+            }
+            if (!uttRef.current.length) {
+              sttLog("hint", `utterance start seq=${seq}`);
+              uttRef.current = preRef.current.slice();
+              preRef.current = [];
+            }
+            uttRef.current.push(ch);
+            if (speech) {
+              speechMsRef.current += (voiced * FRAME * 1000) / RATE;
+              silenceMsRef.current = 0;
+            } else {
+              silenceMsRef.current += ms;
+              if (silenceMsRef.current >= vadRef.current.pauseMs) {
+                sttLog("hint", `silence ${Math.round(silenceMsRef.current)}ms ≥ ${vadRef.current.pauseMs} → closeUtterance`);
+                closeUtterance();
+              }
+            }
+          } catch (e) {
+            sttLog("warn", `handleChunk crashed: ${String(e)} stack=${(e as Error)?.stack?.slice(0, 500) ?? ""}`);
+            // self-recovering: don't leave mic dead — reset utterance state so next chunk can start fresh
+            try { silenceMsRef.current = 0; } catch {}
           }
         };
 
+        if (cancelRef.current || seq !== seqRef.current) {
+          sttLog("warn", `toggle stale after worklet setup seq=${seq}`);
+          stream.getTracks().forEach(t => t.stop());
+          void ctx.close().catch(() => {});
+          return;
+        }
+
         if (usingWorklet && worklet) {
           worklet.port.onmessage = (e: MessageEvent<Float32Array>) => handleChunk(e.data);
+          worklet.port.onmessageerror = (e) => sttLog("warn", `worklet messageerror seq=${seq}: ${String((e as any)?.data ?? e)}`);
           src.connect(worklet);
-          // worklet does not need destination connection
           workletRef.current = worklet;
         } else {
           const node = ctx.createScriptProcessor(WORKLET_FRAME, 1, 1);
@@ -403,36 +596,91 @@ export function useVoice(
         ctxRef.current = ctx;
         srcRef.current = src;
 
-        // watchdog for ScriptProcessor fallback — AudioWorklet doesn't stall like ScriptProcessor
-        if (!usingWorklet && scriptNode) {
-          const nodeForWatch = scriptNode;
-          if (watchdogRef.current != null) clearInterval(watchdogRef.current);
-          watchdogRef.current = window.setInterval(() => {
-            if (Date.now() - lastProcessRef.current <= 1200) return;
-            const c2 = ctxRef.current, s2 = streamRef.current, src2 = srcRef.current;
-            if (!c2 || !s2 || !src2 || c2.state === "closed") return;
-            try { nodeForWatch.disconnect(); } catch {}
+        // watchdog — works for both AudioWorklet (can stall on tab hidden) and ScriptProcessor
+        if (watchdogRef.current != null) clearInterval(watchdogRef.current);
+        watchdogRef.current = window.setInterval(() => {
+          if (cancelRef.current || seq !== seqRef.current) return;
+          const age = Date.now() - lastProcessRef.current;
+          if (age <= WATCHDOG_MS) return;
+          const c2 = ctxRef.current, s2 = streamRef.current, src2 = srcRef.current;
+          if (!c2 || !s2 || !src2 || c2.state === "closed") {
+            sttLog("warn", `watchdog: no ctx/stream/src state=${c2?.state} age=${age}ms seq=${seq}`);
+            return;
+          }
+          sttLog("warn", `watchdog: no audio for ${age}ms seq=${seq} ctx=${c2.state} — trying recovery`);
+          // try resume context first (cheapest self-recovery)
+          if (c2.state === "suspended") {
+            void c2.resume().then(() => {
+              sttLog("hint", `watchdog: ctx resumed seq=${seq}`);
+              lastProcessRef.current = Date.now();
+            }).catch((e) => sttLog("warn", `watchdog resume failed: ${String(e)}`));
+            return;
+          }
+          // check tracks live
+          const liveTracks = s2.getTracks().filter(t => t.readyState === "live");
+          if (!liveTracks.length) {
+            sttLog("warn", `watchdog: mic tracks dead seq=${seq} — teardown to allow restart`);
+            teardown("watchdog mic dead");
+            setStreaming(false);
+            setPhase("idle");
+            setError("microphone stream lost — tap mic to restart");
+            return;
+          }
+          // ScriptProcessor fallback — recreate node
+          if (!usingWorklet && nodeRef.current) {
+            const old = nodeRef.current;
+            try { old.disconnect(); } catch {}
             try {
               const repl = c2.createScriptProcessor(WORKLET_FRAME, 1, 1);
               repl.onaudioprocess = (e) => handleChunk(new Float32Array(e.inputBuffer.getChannelData(0)));
               src2.connect(repl); repl.connect(c2.destination);
               nodeRef.current = repl;
               lastProcessRef.current = Date.now();
-            } catch {}
-          }, 1000);
-        }
+              sttLog("hint", `watchdog: ScriptProcessor recreated seq=${seq}`);
+            } catch (e) { sttLog("warn", `watchdog recreate failed: ${String(e)}`); }
+            return;
+          }
+          // Worklet stalled — teardown and surface error so user can restart; auto-restart would surprise
+          if (usingWorklet) {
+            sttLog("warn", `watchdog: worklet stalled seq=${seq} — tearing down to allow restart`);
+            teardown("watchdog worklet stalled");
+            setStreaming(false);
+            setPhase("idle");
+            setError("mic stalled — tap mic to restart");
+          }
+        }, 1000);
 
         if (tickRef.current != null) clearInterval(tickRef.current);
-        tickRef.current = window.setInterval(partialTick, PARTIAL_INTERVAL);
+        tickRef.current = window.setInterval(() => {
+          try { partialTick(); } catch (e) { sttLog("warn", `partialTick outer throw: ${String(e)}`); busyRef.current = false; }
+        }, PARTIAL_INTERVAL);
         setStreaming(true);
         setPhase("recording");
-        vdbg("hint", usingWorklet ? `worklet ${WORKLET_FRAME} samples · ${PARTIAL_INTERVAL}ms tick` : `fallback ${WORKLET_FRAME} · tick ${PARTIAL_INTERVAL}ms`);
+        sttLog("hint", `STT lifecycle: start → audio capture (${usingWorklet ? "worklet" : "ScriptProcessor"}) → VAD→Whisper ready seq=${seq} frame=${WORKLET_FRAME} tick=${PARTIAL_INTERVAL}ms`);
       } catch (e) {
-        setError(String(e));
-        teardown();
+        const msg = String(e);
+        sttLog("warn", `toggle failed: ${msg}`);
+        setError(msg.slice(0, 400));
+        teardown(`toggle failed: ${msg}`);
+        setStreaming(false);
+        setPhase("idle");
+      } finally {
+        startingRef.current = false;
       }
     })();
-  }, [phase, streaming, stop, model, closeUtterance, ttsActive, partialTick, teardown, vdbg]);
+  }, [stop, model, closeUtterance, ttsActive, partialTick, teardown, sttLog, gpu, sens, multilingual]);
+
+  // keep last toggle reachable even when component remounts
+  useEffect(() => {
+    const onVis = () => {
+      if (document.visibilityState === "visible" && ctxRef.current?.state === "suspended" && streamingRef.current) {
+        sttLog("hint", "visibility visible — resuming AudioContext");
+        void ctxRef.current.resume().catch((e) => sttLog("warn", `vis resume failed: ${String(e)}`));
+      }
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
+  }, [sttLog]);
 
   return { phase, streaming, error, toggle, retranscribe, partial, stop };
 }

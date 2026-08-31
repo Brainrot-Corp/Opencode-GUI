@@ -36,6 +36,10 @@ export type PluginExt = {
   exec?: (act: unknown) => Promise<string | void> | string | void;
   triggers?: string[];
   vocab?: string[];
+  // whether an embedded (mid-sentence) trigger needs spoken yes/no.
+  // false → embedded fires immediately like a direct hit. true (default)
+  // → waits for confirmation + toast/TTS. Can be per-act.
+  requiresConfirmation?: boolean | ((act: unknown) => boolean);
   // phrasing rewrites applied after the built-in lexicon rules
   lexicon?: [RegExp, string][];
   // React component rendered as a Settings drawer section

@@ -710,6 +710,7 @@ export default function activate(api) {
     triggers: TRIGGERS,
     vocab: VOCAB,
     lexicon: LEXICON,
+    requiresConfirmation: (act) => !String(act?.type).startsWith("light"),
     Settings,
     slash: [
       { name: "lights", description: "Control Tuya lights — on/off, 0-100%, color, warm/cool  (e.g. /lights on bedroom, /lights 50, /lights blue)", takesArgs: true, handle: handleLightsSlash },

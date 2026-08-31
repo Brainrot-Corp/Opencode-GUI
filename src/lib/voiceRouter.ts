@@ -35,6 +35,7 @@ export type RouterExt = {
   parse?: (t: string) => unknown | null;
   triggers?: string[];
   vocab?: string[];
+  requiresConfirmation?: boolean | ((act: unknown) => boolean);
 };
 
 export type VoiceCtx = {

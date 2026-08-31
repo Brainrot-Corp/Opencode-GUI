@@ -327,11 +327,13 @@ pub async fn voice_transcribe(
     translate: Option<bool>,
     gpu: Option<bool>,
 ) -> Result<TranscribeOut, String> {
+    eprintln!("[STT] voice_transcribe start model={} audio={} gpu={:?} translate={:?}", model, audio.len(), gpu, translate);
     if !model.ends_with(".bin") || model.contains("..") {
         return Err("bad model name".into());
     }
-    let mp = models_dir().join(model);
+    let mp = models_dir().join(&model);
     if !mp.exists() {
+        eprintln!("[STT] voice_transcribe model missing {}", mp.display());
         return Err(format!("model {} is not downloaded", mp.display()));
     }
 
@@ -348,6 +350,7 @@ pub async fn voice_transcribe(
             .map_err(|e| e.to_string())?;
         f.write_all(&audio).map_err(|e| e.to_string())?;
     }
+    eprintln!("[STT] voice_transcribe tmp={} len={}", tmp.display(), audio.len());
 
     let tr = translate.unwrap_or(false);
     let gpu_cli = find_gpu_cli();
@@ -366,25 +369,26 @@ pub async fn voice_transcribe(
     // EH-10+TF-02: offload blocking wait to dedicated pool; single wait without double-reap
     let tmp2 = tmp.clone();
     let blocking = tauri::async_runtime::spawn_blocking(move || -> Result<TranscribeOut, String> {
+        eprintln!("[STT] voice_transcribe blocking start engine={} fallback={:?}", if want_gpu { "gpu" } else { "cpu" }, cpu_fallback.is_some());
         let mut engine = if want_gpu { "gpu" } else { "cpu" };
         let mut note = String::new();
         let (text, stderr) = match run_whisper(&primary, &mp, &tmp2, tr) {
             Ok(v) => v,
-            Err(e) => match cpu_fallback {
-                // engine crashed (old driver, missing CUDA dlls) → retry on CPU
-                Some(cpu) => {
-                    engine = "cpu";
-                    note = format!("engine failed: {e}");
-                    run_whisper(&cpu, &mp, &tmp2, tr)?
+            Err(e) => {
+                eprintln!("[STT] voice_transcribe primary failed: {}", e);
+                match cpu_fallback {
+                    // engine crashed (old driver, missing CUDA dlls) → retry on CPU
+                    Some(cpu) => {
+                        engine = "cpu";
+                        note = format!("engine failed: {e}");
+                        eprintln!("[STT] voice_transcribe CPU fallback");
+                        run_whisper(&cpu, &mp, &tmp2, tr)?
+                    }
+                    None => return Err(e),
                 }
-                None => return Err(e),
             },
         };
         if engine == "gpu" {
-            // a cublas build that can't reach CUDA still exits 0 while quietly
-            // computing on the cpu — verify from its own log that cuda engaged
-            // (device enumeration / backend registry) and didn't report an
-            // init failure; on mismatch surface whisper's own last lines
             let low = stderr.to_ascii_lowercase();
             let cuda_failed = low.contains("failed to initialize cuda") || low.contains("cuda_init: failed");
             if !low.contains("cuda") || cuda_failed {
@@ -397,8 +401,10 @@ pub async fn voice_transcribe(
                     .join(" | ");
                 let tail: String = tail.chars().rev().take(160).collect::<Vec<_>>().into_iter().rev().collect();
                 note = format!("gpu build ran without cuda: {tail}");
+                eprintln!("[STT] voice_transcribe gpu fallback no cuda tail={}", tail);
             }
         }
+        eprintln!("[STT] voice_transcribe blocking done engine={} text_len={} note={}", engine, text.len(), note);
         Ok(TranscribeOut {
             text,
             engine: engine.into(),
@@ -409,6 +415,7 @@ pub async fn voice_transcribe(
     .map_err(|e| format!("task join failed: {e}"))?;
 
     let _ = std::fs::remove_file(&tmp);
+    eprintln!("[STT] voice_transcribe done text_len={} engine={}", blocking.as_ref().map(|o| o.text.len()).unwrap_or(0), blocking.as_ref().map(|o| o.engine.clone()).unwrap_or_default());
     blocking
 }
 
@@ -475,8 +482,11 @@ fn is_server_alive(s: &mut WhisperServer) -> bool {
     matches!(s.child.try_wait(), Ok(None))
 }
 fn kill_server(s: &mut WhisperServer) {
+    let pid = s.child.id();
+    eprintln!("[STT] kill_server pid={} port={} model={}", pid, s.port, s.model);
     let _ = s.child.kill();
     let _ = s.child.wait();
+    eprintln!("[STT] kill_server done pid={}", pid);
 }
 fn free_port() -> Option<u16> {
     std::net::TcpListener::bind("127.0.0.1:0").ok()?.local_addr().ok().map(|a| a.port())
@@ -501,24 +511,34 @@ fn wait_for_server(port: u16, timeout: Duration) -> bool {
 }
 fn ensure_whisper_server(model_path: &Path, use_gpu: bool) -> Result<u16, String> {
     let model_str = model_path.to_string_lossy().to_string();
-    let mut guard = whisper_server_lock().lock().map_err(|e| e.to_string())?;
-    if let Some(s) = guard.as_mut() {
-        if s.model == model_str && s.gpu == use_gpu && is_server_alive(s) {
-            return Ok(s.port);
+    eprintln!("[STT] ensure_whisper_server start model={} gpu={}", model_str, use_gpu);
+    // fast path / teardown under lock, then drop guard before the 10s wait so other transcribes don't block on the mutex
+    {
+        let mut guard = whisper_server_lock().lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(s) = guard.as_mut() {
+            if s.model == model_str && s.gpu == use_gpu && is_server_alive(s) {
+                eprintln!("[STT] ensure_whisper_server reuse port={} gpu={}", s.port, use_gpu);
+                return Ok(s.port);
+            }
+            if guard.is_some() {
+                eprintln!("[STT] ensure_whisper_server teardown old model={} gpu={} alive={}", guard.as_ref().map(|x| x.model.clone()).unwrap_or_default(), guard.as_ref().map(|x| x.gpu).unwrap_or(false), guard.as_mut().map(|x| is_server_alive(x)).unwrap_or(false));
+                let mut old = guard.take().unwrap();
+                kill_server(&mut old);
+            }
         }
-        // mismatched model/gpu or dead — tear down
-        let mut old = guard.take().unwrap();
-        kill_server(&mut old);
     }
     let bin = if use_gpu { find_gpu_server().or_else(find_server) } else { find_server().or_else(find_gpu_server) };
     let server_bin = match bin {
         Some(p) => p,
-        None => return Err("whisper-server not found — falling back to CLI".into()),
+        None => {
+            eprintln!("[STT] ensure_whisper_server no server binary — CLI fallback");
+            return Err("whisper-server not found — falling back to CLI".into());
+        }
     };
     let port = free_port().ok_or("no free port for whisper-server")?;
+    eprintln!("[STT] ensure_whisper_server spawn bin={} port={} model={}", server_bin.display(), port, model_str);
     let mut cmd = Command::new(&server_bin);
     cmd.args(["-m", &model_str, "--host", "127.0.0.1", "--port", &port.to_string()]);
-    // use 4 threads by default, whisper-server will pick hardware concurrency
     cmd.stdout(Stdio::null()).stderr(Stdio::piped());
     #[cfg(all(windows, not(debug_assertions)))]
     {
@@ -527,36 +547,56 @@ fn ensure_whisper_server(model_path: &Path, use_gpu: bool) -> Result<u16, String
         cmd.creation_flags(CREATE_NO_WINDOW);
     }
     let child = cmd.spawn().map_err(|e| format!("failed to spawn whisper-server: {e}"))?;
-    // assign to job object so it dies with GUI
     #[cfg(windows)]
     {
         crate::job::assign(&child);
     }
-    let mut handle = WhisperServer { port, child, model: model_str, gpu: use_gpu };
-    // wait for listen
+    let mut handle = WhisperServer { port, child, model: model_str.clone(), gpu: use_gpu };
     let alive = wait_for_server(port, Duration::from_secs(10));
-    // also check child didn't exit early
     match handle.child.try_wait() {
-        Ok(Some(st)) => return Err(format!("whisper-server exited early: {st}")),
+        Ok(Some(st)) => {
+            eprintln!("[STT] ensure_whisper_server exited early status={} port={}", st, port);
+            return Err(format!("whisper-server exited early: {st}"));
+        }
         Ok(None) if !alive => {
+            eprintln!("[STT] ensure_whisper_server not listening port={}", port);
             kill_server(&mut handle);
             return Err("whisper-server not listening".into());
         }
         _ => {}
     }
-    let p = handle.port;
-    *guard = Some(handle);
-    Ok(p)
+    // re-lock to insert — handle race where another thread already started the same server while we were waiting
+    {
+        let mut guard = whisper_server_lock().lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(s) = guard.as_mut() {
+            if s.model == model_str && s.gpu == use_gpu && is_server_alive(s) {
+                eprintln!("[STT] ensure_whisper_server race win existing port={} — killing duplicate port={}", s.port, handle.port);
+                kill_server(&mut handle);
+                return Ok(s.port);
+            }
+            if let Some(mut old) = guard.take() {
+                eprintln!("[STT] ensure_whisper_server replacing old port={}", old.port);
+                kill_server(&mut old);
+            }
+        }
+        let p = handle.port;
+        eprintln!("[STT] ensure_whisper_server ready port={} gpu={} model={}", p, use_gpu, model_str);
+        *guard = Some(handle);
+        Ok(p)
+    }
 }
 pub fn shutdown_whisper_server() {
+    eprintln!("[STT] shutdown_whisper_server");
     if let Some(lock) = WHISPER_SERVER.get() {
-        if let Ok(mut g) = lock.lock() {
+        // poisoned lock still contains the server — recover instead of leaking it forever
+        if let Ok(mut g) = lock.lock().or_else(|e| Ok::<_, String>(e.into_inner())) {
             if let Some(mut s) = g.take() { kill_server(&mut s); }
         }
     }
 }
 
 // Cache for whisper-rs contexts (CPU path) — model path → Arc<Mutex<WhisperContextState>>
+// lock poison is recovered so one failed load doesn't permanently block STT
 #[cfg(feature = "whisper")]
 mod whisper_cache {
     use super::*;
@@ -570,13 +610,14 @@ mod whisper_cache {
     pub fn get_or_load(model: &Path) -> Result<Arc<WhisperContext>, String> {
         let key = model.to_string_lossy().to_string();
         {
-            let g = cache().lock().map_err(|e| e.to_string())?;
+            let g = cache().lock().unwrap_or_else(|e| e.into_inner());
             if let Some(ctx) = g.get(&key) { return Ok(ctx.clone()); }
         }
+        eprintln!("[STT] whisper_rs load model={}", key);
         let ctx = WhisperContext::new_with_params(&key, WhisperContextParameters::default())
             .map_err(|e| format!("whisper init failed: {e}"))?;
         let arc = Arc::new(ctx);
-        cache().lock().map_err(|e| e.to_string())?.insert(key, arc.clone());
+        cache().lock().unwrap_or_else(|e| e.into_inner()).insert(key, arc.clone());
         Ok(arc)
     }
 }
@@ -591,14 +632,17 @@ pub async fn voice_transcribe_pcm(
     translate: Option<bool>,
     gpu: Option<bool>,
 ) -> Result<TranscribeOut, String> {
+    eprintln!("[STT] voice_transcribe_pcm start model={} pcm={} gpu={:?} translate={:?}", model, pcm.len(), gpu, translate);
     if !model.ends_with(".bin") || model.contains("..") {
         return Err("bad model name".into());
     }
     let mp = models_dir().join(&model);
     if !mp.exists() {
+        eprintln!("[STT] voice_transcribe_pcm model missing {}", mp.display());
         return Err(format!("model {} is not downloaded", mp.display()));
     }
     if pcm.len() < (16000 * 20 / 100) { // <20ms
+        eprintln!("[STT] voice_transcribe_pcm too short {} <20ms", pcm.len());
         return Ok(TranscribeOut { text: String::new(), engine: "cpu".into(), note: String::new() });
     }
     // clamp to 30s (whisper max) — rolling buffer is bounded frontend-side, but guard here
@@ -607,8 +651,10 @@ pub async fn voice_transcribe_pcm(
     let want_gpu = gpu.unwrap_or(false);
     let mp_clone = mp.clone();
     let pcm_clone = pcm.clone();
+    let pcm_len = pcm_clone.len();
     // spawn_blocking keeps inference off Tauri's async pool
     let res = tauri::async_runtime::spawn_blocking(move || -> Result<TranscribeOut, String> {
+        eprintln!("[STT] voice_transcribe_pcm blocking start pcm={} want_gpu={} translate={}", pcm_len, want_gpu, tr);
         // 1) try whisper-rs in-process (CPU, zero-copy PCM) if compiled with feature
         #[cfg(feature = "whisper")]
         {
@@ -644,28 +690,55 @@ pub async fn voice_transcribe_pcm(
             }
         }
         // 2) try persistent whisper-server (GPU path or CPU if server found)
-        if let Ok(port) = ensure_whisper_server(&mp_clone, want_gpu) {
-            // build WAV in memory for multipart POST
-            let wav = pcm_f32_to_wav_bytes(&pcm_clone, 16000);
-            // use blocking reqwest (spawn_blocking already)
-            let client = reqwest::blocking::Client::builder()
-                .timeout(Duration::from_secs(30))
-                .build().map_err(|e| e.to_string())?;
-            let form = reqwest::blocking::multipart::Form::new()
-                .part("file", reqwest::blocking::multipart::Part::bytes(wav).file_name("audio.wav").mime_str("audio/wav").unwrap())
-                .text("temperature", "0.0")
-                .text("response_format", "json");
-            let url = format!("http://127.0.0.1:{port}/inference");
-            let resp = client.post(&url).multipart(form).send().map_err(|e| format!("whisper-server request failed: {e}"))?;
-            if !resp.status().is_success() {
-                let txt = resp.text().unwrap_or_default();
-                return Err(format!("whisper-server inference failed: {txt}"));
+        match ensure_whisper_server(&mp_clone, want_gpu) {
+            Ok(port) => {
+                eprintln!("[STT] voice_transcribe_pcm server hit port={} gpu={}", port, want_gpu);
+                let wav = pcm_f32_to_wav_bytes(&pcm_clone, 16000);
+                let client = reqwest::blocking::Client::builder()
+                    .timeout(Duration::from_secs(30))
+                    .build().map_err(|e| e.to_string())?;
+                let form = reqwest::blocking::multipart::Form::new()
+                    .part("file", reqwest::blocking::multipart::Part::bytes(wav).file_name("audio.wav").mime_str("audio/wav").unwrap())
+                    .text("temperature", "0.0")
+                    .text("response_format", "json");
+                let url = format!("http://127.0.0.1:{port}/inference");
+                eprintln!("[STT] voice_transcribe_pcm server POST {}", url);
+                let resp = match client.post(&url).multipart(form).send() {
+                    Ok(r) => r,
+                    Err(e) => {
+                        eprintln!("[STT] voice_transcribe_pcm server request failed: {} — killing server for self-recovery", e);
+                        // self-recovering: server became unresponsive — kill so next utterance restarts it
+                        if let Some(lock) = WHISPER_SERVER.get() {
+                            if let Ok(mut g) = lock.lock().or_else(|f| Ok::<_, String>(f.into_inner())) {
+                                if let Some(mut s) = g.take() { kill_server(&mut s); }
+                            }
+                        }
+                        return Err(format!("whisper-server request failed: {e}"));
+                    }
+                };
+                if !resp.status().is_success() {
+                    let txt = resp.text().unwrap_or_default();
+                    eprintln!("[STT] voice_transcribe_pcm server inference failed: {}", txt);
+                    // treat http error as server poison — kill so CLI fallback/restart succeeds next time
+                    if let Some(lock) = WHISPER_SERVER.get() {
+                        if let Ok(mut g) = lock.lock().or_else(|f| Ok::<_, String>(f.into_inner())) {
+                            if let Some(s) = g.as_mut() {
+                                if s.port == port { let mut old = g.take().unwrap(); kill_server(&mut old); }
+                            }
+                        }
+                    }
+                    return Err(format!("whisper-server inference failed: {txt}"));
+                }
+                let body: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
+                let text = body.get("text").and_then(|v| v.as_str()).unwrap_or("")
+                    .lines().map(str::trim).filter(|l| !l.is_empty()).collect::<Vec<_>>().join(" ");
+                let engine = if want_gpu { "gpu" } else { "cpu" };
+                eprintln!("[STT] voice_transcribe_pcm server done engine={} text_len={}", engine, text.len());
+                return Ok(TranscribeOut { text, engine: engine.into(), note: String::new() });
             }
-            let body: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
-            let text = body.get("text").and_then(|v| v.as_str()).unwrap_or("")
-                .lines().map(str::trim).filter(|l| !l.is_empty()).collect::<Vec<_>>().join(" ");
-            let engine = if want_gpu { "gpu" } else { "cpu" };
-            return Ok(TranscribeOut { text, engine: engine.into(), note: String::new() });
+            Err(e) => {
+                eprintln!("[STT] voice_transcribe_pcm server miss: {} — CLI fallback", e);
+            }
         }
         // 3) fallback: CLI per-inference via temp WAV (still PCM→WAV once, no frontend WAV)
         let wav = pcm_f32_to_wav_bytes(&pcm_clone, 16000);
@@ -686,15 +759,20 @@ pub async fn voice_transcribe_pcm(
         let mut engine = if want_gpu_actual { "gpu" } else { "cpu" };
         let mut note = String::new();
         let tmp2 = tmp.clone();
+        eprintln!("[STT] voice_transcribe_pcm CLI fallback engine={} tmp={}", if want_gpu_actual { "gpu" } else { "cpu" }, tmp.display());
         let (text, stderr) = match run_whisper(&primary, &mp_clone, &tmp2, tr) {
             Ok(v) => v,
-            Err(e) => match cpu_fallback {
-                Some(cpu) => {
-                    engine = "cpu";
-                    note = format!("engine failed: {e}");
-                    run_whisper(&cpu, &mp_clone, &tmp2, tr)?
+            Err(e) => {
+                eprintln!("[STT] voice_transcribe_pcm primary CLI failed: {}", e);
+                match cpu_fallback {
+                    Some(cpu) => {
+                        engine = "cpu";
+                        note = format!("engine failed: {e}");
+                        eprintln!("[STT] voice_transcribe_pcm CPU CLI retry");
+                        run_whisper(&cpu, &mp_clone, &tmp2, tr)?
+                    }
+                    None => { let _ = std::fs::remove_file(&tmp); eprintln!("[STT] voice_transcribe_pcm CLI failed no fallback"); return Err(e); }
                 }
-                None => { let _ = std::fs::remove_file(&tmp); return Err(e); }
             },
         };
         let _ = std::fs::remove_file(&tmp);
@@ -706,10 +784,13 @@ pub async fn voice_transcribe_pcm(
                 let tail = stderr.lines().rev().take(2).collect::<Vec<_>>().join(" | ");
                 let tail: String = tail.chars().rev().take(160).collect::<Vec<_>>().into_iter().rev().collect();
                 note = format!("gpu build ran without cuda: {tail}");
+                eprintln!("[STT] voice_transcribe_pcm gpu no cuda tail={}", tail);
             }
         }
+        eprintln!("[STT] voice_transcribe_pcm CLI done engine={} text_len={}", engine, text.len());
         Ok(TranscribeOut { text, engine: engine.into(), note })
     }).await.map_err(|e| format!("task join failed: {e}"))??;
+    eprintln!("[STT] voice_transcribe_pcm done pcm={} engine={} text_len={}", pcm.len(), res.engine, res.text.len());
     Ok(res)
 }
 
@@ -717,16 +798,16 @@ pub async fn voice_transcribe_pcm(
 // spawn_blocking. Hard cap so a wedged process can't pin the UI mic state.
 // Returns (transcription, stderr log) — stderr carries the backend/device
 // lines used to verify the gpu build engaged cuda.
+// All error paths log [STT] so frontend lifecycle logs can pinpoint die reason.
 fn run_whisper(cli: &Path, mp: &Path, tmp: &Path, translate: bool) -> Result<(String, String), String> {
     use std::io::Read;
+    eprintln!("[STT] run_whisper start cli={} tmp={} translate={}", cli.display(), tmp.display(), translate);
     let mut cmd = Command::new(cli);
     cmd.arg("-m").arg(mp).arg("-f").arg(tmp);
     cmd.args(["-nt", "-np"]);
     if translate {
-        // source language is auto-detected; the decode task becomes translate
         cmd.arg("--translate");
     }
-    // release: CREATE_NO_WINDOW keeps a console from flashing next to the GUI
     #[cfg(all(windows, not(debug_assertions)))]
     {
         use std::os::windows::process::CommandExt;
@@ -735,7 +816,8 @@ fn run_whisper(cli: &Path, mp: &Path, tmp: &Path, translate: bool) -> Result<(St
     }
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
 
-    let mut child = cmd.spawn().map_err(|e| format!("failed to run whisper-cli: {e}"))?;
+    let mut child = cmd.spawn().map_err(|e| { eprintln!("[STT] run_whisper spawn failed: {}", e); format!("failed to run whisper-cli: {e}") })?;
+    eprintln!("[STT] run_whisper spawned pid={:?} cli={}", child.id(), cli.display());
     // drain both pipes on threads so a chatty child can't deadlock on a full
     // pipe while the poll loop waits (TF-02: child reaped via try_wait only)
     let mut out_pipe = child.stdout.take();
@@ -757,13 +839,15 @@ fn run_whisper(cli: &Path, mp: &Path, tmp: &Path, translate: bool) -> Result<(St
     let deadline = Instant::now() + Duration::from_secs(180);
     let status;
     loop {
-        match child.try_wait().map_err(|e| e.to_string())? {
+        match child.try_wait().map_err(|e| { eprintln!("[STT] run_whisper try_wait failed: {}", e); e.to_string() })? {
             Some(s) => {
                 status = s;
+                eprintln!("[STT] run_whisper child exit status={} ", s);
                 break;
             }
             None => {
                 if Instant::now() > deadline {
+                    eprintln!("[STT] run_whisper timeout 180s — killing pid={:?}", child.id());
                     let _ = child.kill();
                     let _ = child.wait();
                     let _ = out_t.join();
@@ -776,6 +860,7 @@ fn run_whisper(cli: &Path, mp: &Path, tmp: &Path, translate: bool) -> Result<(St
     }
     let stdout = out_t.join().unwrap_or_default();
     let stderr = err_t.join().unwrap_or_default();
+    eprintln!("[STT] run_whisper done status={} stdout={} stderr_tail={}", status, stdout.len(), String::from_utf8_lossy(&stderr).lines().rev().take(1).next().unwrap_or("").chars().take(120).collect::<String>());
     if !status.success() && stdout.is_empty() {
         let tail = String::from_utf8_lossy(&stderr)
             .lines()
@@ -783,6 +868,7 @@ fn run_whisper(cli: &Path, mp: &Path, tmp: &Path, translate: bool) -> Result<(St
             .take(2)
             .collect::<Vec<_>>()
             .join(" | ");
+        eprintln!("[STT] run_whisper failed status={} tail={}", status, tail);
         return Err(format!("whisper-cli failed ({}): {}", status, tail));
     }
     let text = String::from_utf8_lossy(&stdout);
@@ -792,6 +878,7 @@ fn run_whisper(cli: &Path, mp: &Path, tmp: &Path, translate: bool) -> Result<(St
         .filter(|l| !l.is_empty())
         .collect::<Vec<_>>()
         .join(" ");
+    eprintln!("[STT] run_whisper clean text_len={}", clean.len());
     Ok((clean, String::from_utf8_lossy(&stderr).to_string()))
 }
 

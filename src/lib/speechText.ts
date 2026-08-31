@@ -57,14 +57,14 @@ export function playPcm(bytes: number[], volume: number): { stop: () => void; en
   gain.gain.value = volume;
   src.connect(gain).connect(ctx.destination);
   window.dispatchEvent(new CustomEvent<number>("oc:tts-live", { detail: (samples / 24000) * 1000 }));
-  let stopped = false;
+  let resolveEnded!: () => void;
   const ended = new Promise<void>((res) => {
-    src.onended = () => { if (!stopped) res(); };
-    // also resolve on manual stop
+    resolveEnded = res;
+    src.onended = () => res();
   });
   src.start();
   return {
-    stop: () => { stopped = true; try { src.stop(); } catch {} },
+    stop: () => { try { src.stop(); } catch {} resolveEnded(); },
     // allow caller to await ended or detect pause
     ended,
   };
