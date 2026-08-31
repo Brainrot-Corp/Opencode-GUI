@@ -647,26 +647,32 @@ export function useSpeech(oc: SpeechOc, settings: AppSettings) {
           const c = cleanSpeech("Debriefing...");
           if (c) { ttsQ.current.push(c); capQueue(); pumpTTS(); }
         }
+        let sid: string | null = null;
+        let dir = "";
         try {
-          let secondaryModel = "";
-          try {
-            secondaryModel = JSON.parse(localStorage.getItem("oc.settings") ?? "{}").secondaryModel ?? "";
-          } catch {}
+          const st = settingsNow.current;
+          // prefer live settings, fallback to localStorage for hot reload edge
+          let secondaryModel = st.secondaryModel ?? "";
+          if (!secondaryModel) {
+            try { secondaryModel = JSON.parse(localStorage.getItem("oc.settings") ?? "{}").secondaryModel ?? ""; } catch {}
+          }
           if (!secondaryModel) {
             { const c = cleanSpeech("Pick a Secondary model in Settings, then try debrief again."); if (c) { ttsQ.current.push(c); capQueue(); pumpTTS(); } }
             window.dispatchEvent(new Event("oc:settings"));
             return;
           }
-          const st = settingsNow.current;
           if (!st.ttsVoice) {
             { const c = cleanSpeech("Install a neural voice in Settings, then try debrief again."); if (c) { ttsQ.current.push(c); capQueue(); pumpTTS(); } }
             return;
           }
-          const dir = getDirectory();
-          const [diff, log] = await Promise.all([
+          dir = getDirectory();
+          // include both staged and unstaged — staged-only changes were invisible before
+          const [diffUnstaged, diffStaged, log] = await Promise.all([
             invoke<string>("git_diff", { dir, path: "", staged: false }).catch(() => ""),
+            invoke<string>("git_diff", { dir, path: "", staged: true }).catch(() => ""),
             invoke<string>("git_log", { dir }).catch(() => ""),
           ]);
+          const diff = [diffStaged, diffUnstaged].filter(Boolean).join("\n");
           const recent = msgsRef.current
             .filter((m) => (m.info as any).role === "user")
             .slice(-6)
@@ -696,34 +702,61 @@ export function useSpeech(oc: SpeechOc, settings: AppSettings) {
             `\n\nGIT DIFF (working tree, may be empty):\n${diffTrim || "(empty)"}` +
             `\n\nGIT LOG (last commits):\n${logTrim || "(empty)"}` +
             `\n\nRECENT USER PROMPTS (why, most recent last):\n${recent || "(none)"}`;
-          // hidden temp session on the secondary model — same pattern as GitPanel genMsg
+          // hidden temp session — use promptAsync + polling like GitPanel (sync prompt hangs on stalled provider)
           const { client } = await opencode();
-          const sid = await tempSession();
+          sid = await tempSession(dir || undefined);
           let summary = "";
-          try {
-            const [providerID, modelID] = splitModel(secondaryModel);
-            const variant = lowVariantFor(secondaryModel, providersRef.current as any);
-            const r = await withDeadline(
-              client.session.prompt({
+          const [providerID, modelID] = splitModel(secondaryModel);
+          if (!providerID || !modelID) throw new Error(`Bad model "${secondaryModel}" — expected provider/model`);
+          const variant = lowVariantFor(secondaryModel, providersRef.current as any);
+          // helper: promptAsync + poll messages until completed or deadline
+          const pollOnce = async (v?: string) => {
+            await withDeadline(
+              (client.session as any).promptAsync({
                 path: { id: sid },
-                body: {
-                  parts: [{ type: "text", text: prompt }],
-                  model: { providerID, modelID },
-                  ...(variant ? { variant } : {}),
-                },
+                body: { parts: [{ type: "text", text: prompt }], model: { providerID, modelID }, ...(v ? { variant: v } : {}) },
               }),
-              180_000,
+              30_000,
               "Debrief",
             );
-            const parts: any[] = ((r.data as any)?.parts ?? []) as any[];
-            summary = parts.filter((p) => p.type === "text").map((p) => p.text ?? "").join("").trim();
-            if (!summary) {
-              // fallback: some SDK shapes nest under data.message
-              const alt = (r.data as any)?.message ?? (r.data as any);
-              if (Array.isArray(alt?.parts)) summary = alt.parts.filter((p: any)=>p.type==="text").map((p:any)=>p.text).join("").trim();
+            const start = Date.now();
+            while (Date.now() - start < 150_000) {
+              await new Promise((r) => setTimeout(r, 260));
+              try {
+                const r: any = await (client.session as any).messages({ path: { id: sid } });
+                const list: any[] = (r.data ?? []) as any[];
+                const assistants = list.filter((m: any) => m.info?.role === "assistant");
+                const last = assistants[assistants.length - 1];
+                if (!last) continue;
+                const parts: any[] = (last.parts ?? []) as any[];
+                const raw = parts.filter((p: any) => p.type === "text").map((p: any) => p.text ?? "").join("").trim();
+                if (raw) summary = raw;
+                if (last.info?.time?.completed) break;
+                if (summary && Date.now() - start > 8000 && raw === summary) {
+                  // if stalled after we have text, give it a bit then break
+                }
+              } catch {}
             }
-          } finally {
-            await dropSession(sid);
+          };
+          try {
+            await pollOnce(variant);
+          } catch (e) {
+            const msg = String(e);
+            // variant 400 → retry without variant (stale provider list)
+            if (variant && /variant|400|bad request/i.test(msg)) {
+              summary = "";
+              await pollOnce(undefined);
+            } else throw e;
+          }
+          if (!summary) {
+            // fallback shape: some SDKs nest under data.message
+            try {
+              const r: any = await (client.session as any).messages({ path: { id: sid } });
+              const list: any[] = (r.data ?? []) as any[];
+              const last = list.filter((m: any) => m.info?.role === "assistant").pop();
+              const alt = (last as any)?.message ?? last;
+              if (Array.isArray(alt?.parts)) summary = alt.parts.filter((p: any)=>p.type==="text").map((p:any)=>p.text).join("").trim();
+            } catch {}
           }
           if (!summary) {
             { const c = cleanSpeech("Debrief had nothing to say."); if (c) { ttsQ.current.push(c); capQueue(); pumpTTS(); } }
@@ -731,8 +764,14 @@ export function useSpeech(oc: SpeechOc, settings: AppSettings) {
           }
           { const c = cleanSpeech(summary); if (c) { ttsQ.current.push(c); capQueue(); pumpTTS(); } }
         } catch (e) {
+          // surface verbatim so auth/model errors are actionable, not silent
+          pushToast(String(e));
           { const c = cleanSpeech(`Debrief failed: ${String(e).slice(0, 200)}`); if (c) { ttsQ.current.push(c); capQueue(); pumpTTS(); } }
         } finally {
+          if (sid) {
+            try { await (await opencode()).client.session.abort({ path: { id: sid } } as any).catch(()=>{}); } catch {}
+            await dropSession(sid, dir || undefined).catch(()=>{});
+          }
           debriefBusy.current = false;
           setDebriefing(false);
         }
