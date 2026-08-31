@@ -52,6 +52,7 @@ export function useSpeech(oc: SpeechOc, settings: AppSettings) {
   // queued speech — sentences awaiting piper playback
   const ttsQ = useRef<string[]>([]);
   const ttsPumping = useRef(false);
+  const pumpGen = useRef(0);
   const ttsHushed = useRef(false); // user hit stop-speech: mute this reply's rest
   const pendingEnum = useRef<string | null>(null); // "*" = enumeration waiting for pump to free
   const pendingAnswers = useRef<string[]>([]); // answer sentences waiting behind pendingEnum
@@ -197,10 +198,36 @@ export function useSpeech(oc: SpeechOc, settings: AppSettings) {
     return null;
   };
 
+  const forceResetTTS = useCallback(() => {
+    // ponytail: hard reset for wedged TTS — clears everything so next speech can start without reboot (user reported loop until reboot after cut)
+    ttsQ.current = [];
+    pendingEnum.current = null;
+    pendingAnswers.current = [];
+    toolCounts.current.clear();
+    ttsHushed.current = false;
+    ttsPumping.current = false;
+    pumpGen.current++;
+    setTalking(false);
+    try { pcmStop.current?.(); } catch {}
+    pcmStop.current = null;
+    try { replyAudio.current?.pause(); } catch {}
+    replyAudio.current = null;
+    try { replyAudio.current = null as any; } catch {}
+  }, []);
+
   const pumpTTS = () => {
     if (ttsPumping.current) return;
     ttsPumping.current = true;
+    const myGen = ++pumpGen.current;
     setTalking(true);
+    let watchdog: number | undefined;
+    // ponytail: watchdog guarantees pump never stays stuck forever even if a promise never settles — user reported loop until reboot
+    watchdog = window.setTimeout(() => {
+      if (pumpGen.current === myGen && ttsPumping.current) {
+        console.warn("[TTS] watchdog force reset");
+        forceResetTTS();
+      }
+    }, 45000);
     (async () => {
       try {
         // prefetch first chunk while loop sets up
@@ -235,15 +262,19 @@ export function useSpeech(oc: SpeechOc, settings: AppSettings) {
           // playback — PCM via AudioContext, WAV via Audio element
           // ponytail: outer race guards against AudioContext suspended/interrupted where onended never fires — cut mid sentence would hang pump forever (ttsPumping stays true, future speech never drains)
           if (isPcm) {
-            const h = playPcm(bytes, st.ttsVol);
+            let h: ReturnType<typeof playPcm> | null = null;
+            try { h = playPcm(bytes, st.ttsVol); } catch (e) { pushToast(String(e)); continue; }
+            if (!h) continue;
             pcmStop.current = h.stop;
             const pcmTimeoutMs = Math.max((bytes.length / 2 / 24000) * 1000 + 5000, 8000);
             try { await Promise.race([h.ended, new Promise<void>((r) => setTimeout(r, pcmTimeoutMs))]); } catch (e) { pushToast(String(e)); }
-            finally { pcmStop.current = null; }
+            finally { if (pumpGen.current === myGen) pcmStop.current = null; }
             // also allow pause to break
             if (ttsHushed.current) { try { h.stop(); } catch {} }
           } else {
-            const a = playWav(bytes, st.ttsVol);
+            let a: HTMLAudioElement | null = null;
+            try { a = playWav(bytes, st.ttsVol); } catch (e) { pushToast(String(e)); continue; }
+            if (!a) continue;
             replyAudio.current = a;
             try {
               await Promise.race([
@@ -255,11 +286,15 @@ export function useSpeech(oc: SpeechOc, settings: AppSettings) {
                 new Promise<void>((r) => setTimeout(r, 40000)),
               ]);
             } catch (e) { pushToast(String(e)); }
+            finally { if (pumpGen.current === myGen && replyAudio.current === a) replyAudio.current = null; }
           }
         }
       } finally {
-        ttsPumping.current = false;
-        setTalking(false);
+        if (watchdog !== undefined) clearTimeout(watchdog);
+        if (pumpGen.current === myGen) {
+          ttsPumping.current = false;
+          setTalking(false);
+        }
       }
     })();
   };
@@ -369,6 +404,11 @@ export function useSpeech(oc: SpeechOc, settings: AppSettings) {
     const stop = () => {
       ttsHushed.current = true;
       ttsQ.current = []; // nothing queued survives the stop
+      pendingEnum.current = null;
+      pendingAnswers.current = [];
+      toolCounts.current.clear();
+      lastStreamIdRef.current = "";
+      lastStreamTextRef.current = "";
       replyAudio.current?.pause();
       try { pcmStop.current?.(); } catch {}
       pcmStop.current = null;
@@ -376,13 +416,16 @@ export function useSpeech(oc: SpeechOc, settings: AppSettings) {
     const vol = (e: Event) => {
       if (replyAudio.current) replyAudio.current.volume = (e as CustomEvent<number>).detail;
     };
+    const reset = () => { forceResetTTS(); };
     window.addEventListener("oc:tts-stop", stop);
     window.addEventListener("oc:tts-vol", vol);
+    window.addEventListener("oc:tts-reset", reset as EventListener);
     return () => {
       window.removeEventListener("oc:tts-stop", stop);
       window.removeEventListener("oc:tts-vol", vol);
+      window.removeEventListener("oc:tts-reset", reset as EventListener);
     };
-  }, []);
+  }, [forceResetTTS]);
 
   // --- working pulse ----------------------------------------------------------
   // speech is OFF → total silence, no exceptions. While it's ON and a turn
@@ -497,7 +540,10 @@ export function useSpeech(oc: SpeechOc, settings: AppSettings) {
       toolCounts.current.clear();
       pendingEnum.current = null;
       // flush any answers that were waiting behind a last enumeration
-      if (pendingAnswers.current.length) {
+      if (ttsHushed.current) {
+        // stop was hit — discard stale tail instead of looping it into next turn
+        pendingAnswers.current = [];
+      } else if (pendingAnswers.current.length) {
         ttsQ.current.push(...pendingAnswers.current);
         pendingAnswers.current = [];
         capQueue();

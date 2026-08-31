@@ -56,12 +56,23 @@ function rms(chunk: Float32Array): number {
 }
 function chunkMs(len: number): number { return (len / RATE) * 1000; }
 
-function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+function withTimeout<T>(p: Promise<T>, ms: number, label: string, signal?: AbortSignal): Promise<T> {
   let t: number | undefined;
+  let onAbort: (() => void) | undefined;
   const timeout = new Promise<T>((_, rej) => {
     t = window.setTimeout(() => rej(new Error(`${label} timeout after ${ms}ms`)), ms);
+    if (signal) {
+      if (signal.aborted) { clearTimeout(t); rej(new DOMException(`${label} aborted`, "AbortError")); return; }
+      onAbort = () => { clearTimeout(t); rej(new DOMException(`${label} aborted seq stale`, "AbortError")); };
+      signal.addEventListener("abort", onAbort, { once: true });
+    }
   });
-  return Promise.race([p, timeout]).finally(() => { if (t !== undefined) clearTimeout(t); }) as Promise<T>;
+  // if p is already settled when signal aborts, race still rejects via abort
+  const raced = signal ? Promise.race([p, timeout]) : Promise.race([p, timeout]);
+  return raced.finally(() => {
+    if (t !== undefined) clearTimeout(t);
+    if (signal && onAbort) signal.removeEventListener("abort", onAbort);
+  }) as Promise<T>;
 }
 
 export function useVoice(
@@ -125,6 +136,8 @@ export function useVoice(
   // serialize final transcriptions — overlapping voice_transcribe_pcm hangs one permanently
   // ponytail: store owning seq so stale finally only clears its own owner, not live generation
   const finalBusyRef = useRef<number | null>(null);
+  // abort in-flight whisper when seq bumps — avoids 14s/32s hang on dead server
+  const inflightRef = useRef<Map<string, AbortController>>(new Map());
 
   const vdbg = useCallback((k: VdbgKind, m: string) => dbgRef.current?.(k, m), []);
   const sttLog = useCallback((k: VdbgKind, m: string) => {
@@ -167,6 +180,9 @@ export function useVoice(
     busyRef.current = null;
     finalBusyRef.current = null;
     lastPcmRef.current = null;
+    // abort any in-flight whisper — prevents 14s/32s timeout hang on stale seq
+    for (const [k, ac] of inflightRef.current) { try { ac.abort(); sttLog("hint", `abort inflight ${k} on teardown`); } catch {} }
+    inflightRef.current.clear();
     if (tickRef.current != null) { clearInterval(tickRef.current); tickRef.current = null; sttLog("hint", "tick cleared"); }
     if (watchdogRef.current != null) { clearInterval(watchdogRef.current); watchdogRef.current = null; sttLog("hint", "watchdog cleared"); }
     try { workletRef.current?.port.close?.(); } catch (e) { sttLog("warn", `worklet port close failed: ${String(e)}`); }
@@ -215,6 +231,9 @@ export function useVoice(
     const timeoutMs = isPartial ? PARTIAL_TIMEOUT_MS : TRANSCRIBE_TIMEOUT_MS;
     sttLog("hint", `${label} start seq=${seq} pcm=${pcm.length} (${(pcm.length / RATE).toFixed(2)}s) model=${model} gpu=${gpuRef.current} translate=${mlRef.current}`);
     const t0 = Date.now();
+    const ac = new AbortController();
+    const inflightKey = `${seq}:${isPartial ? "partial" : "final"}`;
+    inflightRef.current.set(inflightKey, ac);
     try {
       const p = invoke<{ text: string; engine: string; note: string }>("voice_transcribe_pcm", {
         pcm: Array.from(pcm),
@@ -222,9 +241,9 @@ export function useVoice(
         translate: mlRef.current,
         gpu: gpuRef.current,
       });
-      const out = await withTimeout(p, timeoutMs, label);
-      if (cancelRef.current || seq !== seqRef.current) {
-        sttLog("warn", `${label} stale after await seq=${seq} cur=${seqRef.current}`);
+      const out = await withTimeout(p, timeoutMs, label, ac.signal);
+      if (ac.signal.aborted || cancelRef.current || seq !== seqRef.current) {
+        sttLog("hint", `${label} stale after await seq=${seq} cur=${seqRef.current} — dropped`);
         return null;
       }
       const dt = Date.now() - t0;
@@ -236,8 +255,9 @@ export function useVoice(
       return out.text.trim() || null;
     } catch (e) {
       const dt = Date.now() - t0;
-      if (cancelRef.current || seq !== seqRef.current) {
-        sttLog("warn", `${label} error but stale seq=${seq} cur=${seqRef.current}: ${String(e)}`);
+      const aborted = (e as DOMException)?.name === "AbortError" || ac.signal.aborted;
+      if (aborted || cancelRef.current || seq !== seqRef.current) {
+        sttLog("hint", `${label} aborted/stale seq=${seq} cur=${seqRef.current}: ${String(e)} — dropped`);
         return null;
       }
       sttLog("warn", `${label} pcm path failed ${dt}ms: ${String(e)} — trying WAV fallback`);
@@ -257,16 +277,17 @@ export function useVoice(
         const p2 = invoke<{ text: string; engine: string; note: string }>("voice_transcribe", {
           audio: Array.from(wav), model, translate: mlRef.current, gpu: gpuRef.current,
         });
-        const out2 = await withTimeout(p2, timeoutMs, `${label} WAV fallback`);
-        if (cancelRef.current || seq !== seqRef.current) {
-          sttLog("warn", `${label} WAV stale after await seq=${seq}`);
+        const out2 = await withTimeout(p2, timeoutMs, `${label} WAV fallback`, ac.signal);
+        if (ac.signal.aborted || cancelRef.current || seq !== seqRef.current) {
+          sttLog("hint", `${label} WAV stale after await seq=${seq} cur=${seqRef.current} — dropped`);
           return null;
         }
         sttLog("hint", `${label} WAV fallback done ${Date.now() - t0}ms textLen=${out2.text.length}`);
         return out2.text.trim() || null;
       } catch (e2) {
-        if (cancelRef.current || seq !== seqRef.current) {
-          sttLog("warn", `${label} WAV error but stale: ${String(e2)}`);
+        const aborted2 = (e2 as DOMException)?.name === "AbortError" || ac.signal.aborted;
+        if (aborted2 || cancelRef.current || seq !== seqRef.current) {
+          sttLog("hint", `${label} WAV aborted/stale seq=${seq} cur=${seqRef.current}: ${String(e2)} — dropped`);
           return null;
         }
         const msg = String(e2 ?? e);
@@ -274,6 +295,8 @@ export function useVoice(
         if (!isPartial) setError(msg.slice(0, 400));
         return null;
       }
+    } finally {
+      inflightRef.current.delete(inflightKey);
     }
   }, [model, sttLog]);
 
@@ -289,7 +312,7 @@ export function useVoice(
     try {
       const text = await transcribePcm(pcm, false, seq);
       if (cancelRef.current || seq !== seqRef.current) {
-        sttLog("warn", `handleFinal stale after transcribe seq=${seq} cur=${seqRef.current}`);
+        sttLog("hint", `handleFinal stale after transcribe seq=${seq} cur=${seqRef.current} — dropped`);
         return;
       }
       if (text) {
@@ -420,8 +443,10 @@ export function useVoice(
       // self-recovering: only clear busy if this seq still owns it — stale must not clear live's busy
       const isStale = cancelRef.current || seq !== seqRef.current;
       if (isStale) {
-        if (busyRef.current === seq) busyRef.current = null;
-        sttLog("hint", `partial busy cleared stale seq=${seq} cur=${seqRef.current} busy=${busyRef.current}`);
+        const owned = busyRef.current === seq;
+        if (owned) busyRef.current = null;
+        // ponytail: only log when stale actually owned busy; teardown already cleared → silent
+        if (owned) sttLog("hint", `partial busy cleared stale seq=${seq} cur=${seqRef.current}`);
         return;
       }
       if (busyRef.current === seq) busyRef.current = null;
@@ -445,6 +470,9 @@ export function useVoice(
         sttLog("hint", "toggle: ensureVad");
         try { await withTimeout(ensureVad(), 8000, "ensureVad"); sttLog("hint", "VAD ready"); } catch (e) { sttLog("warn", `VAD failed: ${String(e)}`); setError("voice VAD failed to load — try restarting"); return; }
         cancelRef.current = false;
+        // abort any hanging whisper from previous seq before bumping — avoids overlap hang
+        for (const [, ac] of inflightRef.current) { try { ac.abort(); } catch {} }
+        inflightRef.current.clear();
         seqRef.current += 1;
         const seq = seqRef.current;
         // new generation owns fresh busy state — clear stale owners so they don't block

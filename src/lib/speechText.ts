@@ -6,6 +6,7 @@ export function playWav(bytes: number[], volume: number): HTMLAudioElement {
     new Blob([new Uint8Array(bytes)], { type: "audio/wav" }),
   );
   const a = new Audio(url);
+  a.loop = false;
   a.volume = volume;
   a.onended = () => URL.revokeObjectURL(url);
   // tell the voice hook piper is audible so hands-free VAD gates its echo
@@ -20,6 +21,19 @@ export function playWav(bytes: number[], volume: number): HTMLAudioElement {
 // --- low-latency PCM path: bypass WAV header + Blob decode -----------------
 // Rust sends raw i16 LE PCM (24kHz mono) as bytes; we build an AudioBuffer
 // directly — no WAV header, no Blob URL, no extra IPC copy.
+function pcmToWavBytes(pcm: number[]): number[] {
+  const u8 = new Uint8Array(pcm);
+  const wav = new Uint8Array(44 + u8.length);
+  const view = new DataView(wav.buffer);
+  wav.set([82, 73, 70, 70], 0); view.setUint32(4, 36 + u8.length, true);
+  wav.set([87, 65, 86, 69], 8); wav.set([102, 109, 116, 32], 12);
+  view.setUint32(16, 16, true); view.setUint16(20, 1, true); view.setUint16(22, 1, true);
+  view.setUint32(24, 24000, true); view.setUint32(28, 24000 * 2, true);
+  view.setUint16(32, 2, true); view.setUint16(34, 16, true);
+  wav.set([100, 97, 116, 97], 36); view.setUint32(40, u8.length, true);
+  wav.set(u8, 44);
+  return Array.from(wav);
+}
 let sharedCtx: AudioContext | null = null;
 function getCtx(): AudioContext | null {
   try {
@@ -34,23 +48,40 @@ function getCtx(): AudioContext | null {
 }
 export function playPcm(bytes: number[], volume: number): { stop: () => void; ended: Promise<void> } {
   const ctx = getCtx();
-  // fallback to WAV if AudioContext unavailable or closed
-  if (!ctx || ctx.state === "closed") {
-    const a = playWav(bytes, volume);
-    return {
-      stop: () => a.pause(),
-      ended: new Promise<void>((res, rej) => {
-        a.addEventListener("ended", () => res(), { once: true });
-        a.addEventListener("pause", () => res(), { once: true });
-        a.addEventListener("error", () => rej(new Error("PCM playback failed")), { once: true });
-      }),
-    };
+  // fallback to WAV if AudioContext unavailable, closed, or not running (suspended/interrupted)
+  // ponytail: playing on a suspended context would hang pump until timeout (6-8s) — fallback immediately so cut speech recovers without gap
+  if (!ctx || (ctx.state as string) !== "running") {
+    // if not running, try one immediate resume; if still not running, use WAV path which is not tied to AudioContext
+    if (ctx && (ctx.state as string) !== "running") {
+      try { void ctx.resume().catch(() => {}); } catch {}
+      if ((ctx.state as string) !== "running") {
+        const a = playWav(pcmToWavBytes(bytes), volume);
+        return {
+          stop: () => a.pause(),
+          ended: new Promise<void>((res, rej) => {
+            a.addEventListener("ended", () => res(), { once: true });
+            a.addEventListener("pause", () => res(), { once: true });
+            a.addEventListener("error", () => rej(new Error("PCM playback failed")), { once: true });
+          }),
+        };
+      }
+    } else {
+      const a = playWav(pcmToWavBytes(bytes), volume);
+      return {
+        stop: () => a.pause(),
+        ended: new Promise<void>((res, rej) => {
+          a.addEventListener("ended", () => res(), { once: true });
+          a.addEventListener("pause", () => res(), { once: true });
+          a.addEventListener("error", () => rej(new Error("PCM playback failed")), { once: true });
+        }),
+      };
+    }
   }
   const u8 = new Uint8Array(bytes);
   // bytes are i16 LE mono at 24000 Hz
   const samples = u8.length >> 1;
   if (samples === 0) {
-    const a = playWav(bytes, volume);
+    const a = playWav(pcmToWavBytes(bytes), volume);
     return {
       stop: () => a.pause(),
       ended: new Promise<void>((res, rej) => {
@@ -64,7 +95,7 @@ export function playPcm(bytes: number[], volume: number): { stop: () => void; en
   try {
     buf = ctx.createBuffer(1, samples, 24000);
   } catch {
-    const a = playWav(bytes, volume);
+    const a = playWav(pcmToWavBytes(bytes), volume);
     return {
       stop: () => a.pause(),
       ended: new Promise<void>((res, rej) => {
@@ -78,11 +109,12 @@ export function playPcm(bytes: number[], volume: number): { stop: () => void; en
   const view = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
   for (let i = 0; i < samples; i++) ch[i] = view.getInt16(i * 2, true) / 32768;
   const src = ctx.createBufferSource();
+  src.loop = false;
   src.buffer = buf;
   const gain = ctx.createGain();
   gain.gain.value = volume;
   try { src.connect(gain).connect(ctx.destination); } catch {
-    const a = playWav(bytes, volume);
+    const a = playWav(pcmToWavBytes(bytes), volume);
     return {
       stop: () => a.pause(),
       ended: new Promise<void>((res, rej) => {
@@ -113,7 +145,7 @@ export function playPcm(bytes: number[], volume: number): { stop: () => void; en
   try { src.start(); } catch {
     if (timeout !== undefined) clearTimeout(timeout);
     // fallback to WAV if start throws (e.g. closed context)
-    const a = playWav(bytes, volume);
+    const a = playWav(pcmToWavBytes(bytes), volume);
     return {
       stop: () => a.pause(),
       ended: new Promise<void>((res, rej) => {
