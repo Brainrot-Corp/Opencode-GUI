@@ -88,6 +88,10 @@ export type PluginExt = {
     handle?: () => void | Promise<void>;
   }[];
   onHotkey?: (id: string) => void | Promise<void>;
+  // lifecycle: called once after successful load (boot, enable, hot-reload).
+  // Generic background hook — e.g. light plugins refresh device list here.
+  // Failures are swallowed; not all plugins need it.
+  init?: () => void | Promise<void>;
 };
 
 export type LoadedPlugin = {
@@ -285,7 +289,16 @@ async function loadOne(d: { dir: string; manifest: string; main: string; css: st
     const cur = active.get(d.dir);
     if (cur) cur.style = style;
   }
-  return { id: man.id, name: man.name, dir: d.dir, version: man.version, description: man.description, ext: { ...raw, id: man.id, name: man.name }, error: "", disabled: false };
+  const ext: PluginExt = { ...raw, id: man.id, name: man.name };
+  // generic lifecycle — no hardcoded ids; plugins that need background work
+  // (e.g. refresh available lights/rooms) wire it via ext.init
+  const initFn = (raw as { init?: unknown }).init;
+  if (typeof initFn === "function") {
+    Promise.resolve()
+      .then(() => (initFn as () => unknown).call(raw))
+      .catch(() => {});
+  }
+  return { id: man.id, name: man.name, dir: d.dir, version: man.version, description: man.description, ext, error: "", disabled: false };
 }
 
 export async function loadPlugins(): Promise<LoadedPlugin[]> {

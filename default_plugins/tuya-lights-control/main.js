@@ -704,6 +704,11 @@ export default function activate(api) {
   }
 
   return {
+    init: async () => {
+      const c = confOf(api.settings());
+      if (!confReady(c)) return;
+      try { clearTuyaCache(); await allDevs(api, c); } catch {}
+    },
     parse: parseVoice,
     describe,
     exec: (act) => runAct(api, confOf(api.settings()), act),

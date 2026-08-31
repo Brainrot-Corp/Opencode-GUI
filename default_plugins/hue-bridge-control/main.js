@@ -726,6 +726,11 @@ export default function activate(api) {
   }
 
   return {
+    init: async () => {
+      const c = confOf(api.settings());
+      if (!confReady(c)) return;
+      try { clearHueCache(); await getAll(api, c); } catch {}
+    },
     parse: parseVoice,
     describe,
     exec: (act) => runHueAct(api, confOf(api.settings()), act),
