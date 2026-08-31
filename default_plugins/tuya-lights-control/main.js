@@ -177,7 +177,7 @@ export function describe(a) {
   return describeLight(a) || describeCurtain(a);
 }
 
-export const TRIGGERS = ["turn", "dim", "brighten", "set", "make", "change", "color", "open", "close", "stop", "pause", "move"];
+export const TRIGGERS = ["turn", "dim", "brighten", "set", "make", "change", "color", "open", "close", "stop", "pause", "move", "eteins", "eteindre", "allume", "allumer", "ouvre", "ouvrir", "ferme", "fermer"];
 
 export const VOCAB = [
   ...TRIGGERS,
@@ -186,6 +186,8 @@ export const VOCAB = [
   "on", "off", "white", "percent", "half", "quarter",
   ...TONES.split("|"),
   ...COLORS.split("|"),
+  // French device vocab — helps one-edit / metaphone repair on French transcripts
+  "lumiere", "lumieres", "lampe", "lampes", "rideau", "rideaux", "store", "stores", "volet", "volets",
 ];
 
 export const LEXICON = [
@@ -198,6 +200,12 @@ export const LEXICON = [
   [/\bblinds? down\b/g, "curtains close"],
   [/\bshades? up\b/g, "curtains open"],
   [/\bshades? down\b/g, "curtains close"],
+  // French — lights / curtains (end-anchored; applied after deaccent so use
+  // unaccented forms; plugin host merges all lexicons after core FR)
+  [/\b(?:eteins?|eteint|eteindre|coupe?)\s+(?:les?|des|ma|mon|la)?\s*(?:lumieres?|lampes?|lampe)s?$/g, "turn off the lights"],
+  [/\ballume(?:r|z)?\s+(?:les?|des|ma|mon|la)?\s*(?:lumieres?|lampes?|lampe)s?$/g, "turn on the lights"],
+  [/\bouvre(?:r|z)?\s+(?:les?|des|ma|mon|la)?\s*(?:rideaux?|stores?|volets?|tentures?)s?$/g, "open the curtains"],
+  [/\b(?:ferme|fermer)\s+(?:les?|des|ma|mon|la)?\s*(?:rideaux?|stores?|volets?|tentures?)s?$/g, "close the curtains"],
 ];
 
 // ---------------------------------------------------------------------------
