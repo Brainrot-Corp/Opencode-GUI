@@ -217,7 +217,7 @@ export function useVoice(
   // via Rust spawn_blocking. Falls back to CLI if server not available.
   const transcribePcm = useCallback(async (pcm: Float32Array, isPartial: boolean, seq: number): Promise<string | null> => {
     if (cancelRef.current || seq !== seqRef.current) {
-      sttLog("hint", `transcribe dropped (stale/cancelled) seq=${seq} cur=${seqRef.current} isPartial=${isPartial}`);
+      // stale — silently dropped, no whisper log (ponytail: drop stale without noise)
       return null;
     }
     if (pcm.length < RATE * 0.2) {
@@ -243,7 +243,6 @@ export function useVoice(
       });
       const out = await withTimeout(p, timeoutMs, label, ac.signal);
       if (ac.signal.aborted || cancelRef.current || seq !== seqRef.current) {
-        sttLog("hint", `${label} stale after await seq=${seq} cur=${seqRef.current} — dropped`);
         return null;
       }
       const dt = Date.now() - t0;
@@ -257,7 +256,6 @@ export function useVoice(
       const dt = Date.now() - t0;
       const aborted = (e as DOMException)?.name === "AbortError" || ac.signal.aborted;
       if (aborted || cancelRef.current || seq !== seqRef.current) {
-        sttLog("hint", `${label} aborted/stale seq=${seq} cur=${seqRef.current}: ${String(e)} — dropped`);
         return null;
       }
       sttLog("warn", `${label} pcm path failed ${dt}ms: ${String(e)} — trying WAV fallback`);
@@ -279,7 +277,6 @@ export function useVoice(
         });
         const out2 = await withTimeout(p2, timeoutMs, `${label} WAV fallback`, ac.signal);
         if (ac.signal.aborted || cancelRef.current || seq !== seqRef.current) {
-          sttLog("hint", `${label} WAV stale after await seq=${seq} cur=${seqRef.current} — dropped`);
           return null;
         }
         sttLog("hint", `${label} WAV fallback done ${Date.now() - t0}ms textLen=${out2.text.length}`);
@@ -287,7 +284,6 @@ export function useVoice(
       } catch (e2) {
         const aborted2 = (e2 as DOMException)?.name === "AbortError" || ac.signal.aborted;
         if (aborted2 || cancelRef.current || seq !== seqRef.current) {
-          sttLog("hint", `${label} WAV aborted/stale seq=${seq} cur=${seqRef.current}: ${String(e2)} — dropped`);
           return null;
         }
         const msg = String(e2 ?? e);
@@ -312,7 +308,6 @@ export function useVoice(
     try {
       const text = await transcribePcm(pcm, false, seq);
       if (cancelRef.current || seq !== seqRef.current) {
-        sttLog("hint", `handleFinal stale after transcribe seq=${seq} cur=${seqRef.current} — dropped`);
         return;
       }
       if (text) {
@@ -329,9 +324,8 @@ export function useVoice(
     } finally {
       const isStale = cancelRef.current || seq !== seqRef.current;
       if (isStale) {
-        // stale must not clobber live generation's phase/partial/busy
+        // stale must not clobber live generation's phase/partial/busy — silently drop
         if (finalBusyRef.current === seq) finalBusyRef.current = null;
-        sttLog("hint", `handleFinal cleanup stale seq=${seq} cur=${seqRef.current} finalBusy=${finalBusyRef.current} — skip phase reset`);
         return;
       }
       if (finalBusyRef.current === seq) finalBusyRef.current = null;
@@ -424,7 +418,7 @@ export function useVoice(
     busyRef.current = seq;
     sttLog("hint", `partialTick seq=${seq} roll=${(rollMsRef.current / 1000).toFixed(1)}s`);
     void transcribePcm(pcm, true, seq).then((text) => {
-      if (cancelRef.current || seq !== seqRef.current) { sttLog("hint", `partial stale seq=${seq} cur=${seqRef.current}`); return; }
+      if (cancelRef.current || seq !== seqRef.current) return;
       if (!text) return;
       const { delta, cumulative, isNew } = dedupRef.current.push(text);
       if (!isNew && !delta) return;
@@ -440,13 +434,10 @@ export function useVoice(
     }).catch((e) => {
       sttLog("warn", `partialTick transcribe threw: ${String(e)}`);
     }).finally(() => {
-      // self-recovering: only clear busy if this seq still owns it — stale must not clear live's busy
+      // self-recovering: only clear busy if this seq still owns it — stale must not clear live's busy — silent
       const isStale = cancelRef.current || seq !== seqRef.current;
       if (isStale) {
-        const owned = busyRef.current === seq;
-        if (owned) busyRef.current = null;
-        // ponytail: only log when stale actually owned busy; teardown already cleared → silent
-        if (owned) sttLog("hint", `partial busy cleared stale seq=${seq} cur=${seqRef.current}`);
+        if (busyRef.current === seq) busyRef.current = null;
         return;
       }
       if (busyRef.current === seq) busyRef.current = null;
