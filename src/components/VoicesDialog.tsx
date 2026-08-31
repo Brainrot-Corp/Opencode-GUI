@@ -37,15 +37,30 @@ export default function VoicesDialog({
 
   // GPU detection (NVIDIA for cublas whisper + Kokoro CUDA)
   const [gpu, setGpu] = useState<{ nvidia: boolean; name: string; compute_cap: string } | null>(null);
+  const [ttsLog, setTtsLog] = useState<string[]>([]);
+  const [ttsLast, setTtsLast] = useState("");
+
+  const refreshTtsLog = () => {
+    invoke<string[]>("tts_debug_log").then(setTtsLog).catch(() => {});
+    // tts_status also carries last log for the one-line badge
+    invoke<{ gpu_log?: string }>("tts_status").then((s) => setTtsLast(s.gpu_log ?? "")).catch(() => {});
+  };
 
   useEffect(() => {
     if (!open) return;
     inst.refresh();
+    refreshTtsLog();
     invoke<{ nvidia: boolean; name: string; compute_cap: string }>("voice_gpu")
       .then(setGpu)
       .catch(() => setGpu(null));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
+
+  // refresh log after GPU pack changes
+  useEffect(() => {
+    if (!open) return;
+    refreshTtsLog();
+  }, [piper?.gpuBin, open]);
 
   // Kokoro voices are a static list (single voices.bin), no HF walk needed
   useEffect(() => {
@@ -370,6 +385,54 @@ export default function VoicesDialog({
               )}
             </div>
           </div>
+
+          {/* GPU fallback debug — visible when CUDA pack is installed */}
+          {piper?.gpuBin && (ttsLast || ttsLog.length > 0) && (
+            <div className="setting-row wrap tts-debug-row">
+              <div className="setting-info">
+                <i className="fa-solid fa-bug setting-icon" />
+                <div style={{ minWidth: 0 }}>
+                  <div className="setting-name">
+                    TTS debug log
+                    {(ttsLast.includes("CPU fallback") || ttsLast.includes("failed")) && (
+                      <span className="model-chip" style={{ marginLeft: 6, background: "var(--danger)", color: "#fff", fontSize: "0.7em" }}>fallback to CPU</span>
+                    )}
+                  </div>
+                  <div className="setting-desc mono-hint" style={{ wordBreak: "break-all", whiteSpace: "pre-wrap" }}>
+                    {ttsLast || ttsLog[ttsLog.length - 1] || "no log yet — trigger a TTS preview to test"}
+                  </div>
+                </div>
+              </div>
+              <div className="color-controls">
+                <button
+                  type="button"
+                  className="reset-btn"
+                  data-tip="Copy log for bug report"
+                  onClick={async () => {
+                    const txt = ttsLog.join("\n") || ttsLast;
+                    try {
+                      await navigator.clipboard.writeText(txt);
+                    } catch {
+                      // fallback: write via tauri if clipboard blocked
+                    }
+                  }}
+                >
+                  <i className="fa-solid fa-copy" /> Copy
+                </button>
+                <button type="button" className="reset-btn" data-tip="Refresh log" onClick={refreshTtsLog}>
+                  <i className="fa-solid fa-rotate" /> Refresh
+                </button>
+                <button
+                  type="button"
+                  className="reset-btn"
+                  data-tip="Clear log"
+                  onClick={() => invoke("tts_clear_debug").then(refreshTtsLog).catch(() => {})}
+                >
+                  <i className="fa-solid fa-trash-can" /> Clear
+                </button>
+              </div>
+            </div>
+          )}
 
           <div className="setting-row drop">
             <div className="setting-info">

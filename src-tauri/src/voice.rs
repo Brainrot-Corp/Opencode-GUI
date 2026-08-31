@@ -3,7 +3,7 @@ use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
@@ -544,6 +544,30 @@ fn kokoro_gpu_ready() -> bool {
         .iter()
         .all(|d| kokoro_gpu_dir().join(d).exists())
 }
+// debug log ring for TTS GPU fallback diagnostics — surfaced in the TTS menu
+static TTS_DEBUG_LOG: std::sync::OnceLock<Mutex<Vec<String>>> = std::sync::OnceLock::new();
+fn tts_debug_store() -> &'static Mutex<Vec<String>> {
+    TTS_DEBUG_LOG.get_or_init(|| Mutex::new(Vec::new()))
+}
+fn push_tts_log(msg: String) {
+    let line = format!("[{}] {}", chrono_like_now(), msg);
+    eprintln!("{line}");
+    if let Ok(mut g) = tts_debug_store().lock() {
+        g.push(line);
+        if g.len() > 40 {
+            g.remove(0);
+        }
+    }
+}
+fn chrono_like_now() -> String {
+    // HH:MM:SS without extra crates
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() % 86400)
+        .unwrap_or(0);
+    format!("{:02}:{:02}:{:02}", secs / 3600, (secs % 3600) / 60, secs % 60)
+}
+
 // ORT loads its CUDA provider from the exe dir / legacy search, which ignores
 // AddDllDirectory — SetDllDirectory slots the pack dir into the legacy order
 // (exe dir → system32 → this dir → PATH) so the provider and its cublas/cudnn
@@ -557,11 +581,26 @@ fn enable_kokoro_gpu_search() {
                 use windows::core::HSTRING;
                 use windows::Win32::System::LibraryLoader::SetDllDirectoryW;
                 let dir = kokoro_gpu_dir();
-                if SetDllDirectoryW(&HSTRING::from(dir.as_os_str())).is_err() {
-                    eprintln!("kokoro gpu: SetDllDirectoryW failed");
+                let ok = SetDllDirectoryW(&HSTRING::from(dir.as_os_str())).is_ok();
+                if ok {
+                    push_tts_log(format!("GPU pack: SetDllDirectoryW({}) ok", dir.display()));
+                } else {
+                    push_tts_log(format!("GPU pack: SetDllDirectoryW({}) FAILED", dir.display()));
                 }
             }
+            #[cfg(not(windows))]
+            push_tts_log("GPU pack: found, enabled".to_string());
         });
+    } else {
+        // log once per status check if pack is incomplete
+        let missing: Vec<_> = KOKORO_GPU_DLLS
+            .iter()
+            .filter(|d| !kokoro_gpu_dir().join(d).exists())
+            .copied()
+            .collect();
+        if !missing.is_empty() && kokoro_gpu_dir().exists() {
+            push_tts_log(format!("GPU pack incomplete, missing: {}", missing.join(", ")));
+        }
     }
 }
 // legacy piper paths — kept for migration/cleanup, not used for new installs
@@ -641,13 +680,24 @@ pub struct TtsStatus {
     bin: bool,
     gpu: bool,
     voices: Vec<String>,
+    gpu_log: String,
+}
+
+fn tts_last_log() -> String {
+    tts_debug_store()
+        .lock()
+        .ok()
+        .and_then(|g| g.last().cloned())
+        .unwrap_or_default()
 }
 
 #[tauri::command]
 pub fn tts_status() -> TtsStatus {
+    // ensure GPU search is primed so logs reflect current pack state
+    enable_kokoro_gpu_search();
     let has_model = kokoro_model_path().exists() && !kokoro_model_broken();
     if !has_model {
-        return TtsStatus { bin: false, gpu: kokoro_gpu_ready(), voices: Vec::new() };
+        return TtsStatus { bin: false, gpu: kokoro_gpu_ready(), voices: Vec::new(), gpu_log: tts_last_log() };
     }
     let mut voices = Vec::new();
     if let Ok(rd) = std::fs::read_dir(kokoro_voices_dir()) {
@@ -665,7 +715,23 @@ pub fn tts_status() -> TtsStatus {
         voices = KOKORO_VOICES.iter().map(|s| s.to_string()).collect();
     }
     voices.sort();
-    TtsStatus { bin: true, gpu: kokoro_gpu_ready(), voices }
+    TtsStatus { bin: true, gpu: kokoro_gpu_ready(), voices, gpu_log: tts_last_log() }
+}
+
+#[tauri::command]
+pub fn tts_debug_log() -> Vec<String> {
+    tts_debug_store()
+        .lock()
+        .map(|g| g.clone())
+        .unwrap_or_default()
+}
+
+#[tauri::command]
+pub fn tts_clear_debug() -> Result<(), String> {
+    if let Ok(mut g) = tts_debug_store().lock() {
+        g.clear();
+    }
+    Ok(())
 }
 
 // Kokoro TTS instance — lazily initialized, GPU auto-selected (CUDA → DirectML → CPU).
@@ -703,27 +769,77 @@ async fn get_kokoro() -> Result<Arc<kokoro_en::KokoroTts>, String> {
     } else {
         return Err("kokoro voices not installed — set it up in Settings > Voice".into());
     };
-    // GPU auto-select (CUDA → DirectML → CPU) is safe with the int8 model:
-    // every EP failure is a catchable onnxruntime error, and the crate's
-    // build_and_probe_session falls back to CPU itself. DirectML fails on
-    // Kokoro's ConvTranspose (onnxruntime 80070057) but recovers cleanly;
-    // CUDA engages when the optional gpu-dlls pack is installed (RTX 50-series
-    // prebuilts lack sm_120 kernels yet and fall back the same way).
+    // GPU auto-select: when gpu_pack is present and provider=auto, try CUDA
+    // explicitly first so the fallback is visible in the TTS debug log. The
+    // crate's internal auto also falls back (e.g. Blackwell sm_120
+    // NoKernelImageForDevice → rebuild on CPU) but that fallback is silent
+    // from the caller's PoV (still Ok) — explicit try makes it explicit.
+    let provider = std::env::var("KOKORO_ORT_PROVIDER").unwrap_or_else(|_| "auto".into());
+    let gpu_ready = kokoro_gpu_ready();
+    push_tts_log(format!(
+        "Kokoro init: provider={}, gpu_pack={}, model={}, voices={}",
+        provider, gpu_ready, model.display(), voices_path.display()
+    ));
+    // explicit CUDA probe when pack is present and user left provider on auto
+    if provider.eq_ignore_ascii_case("auto") && gpu_ready {
+        let prev = std::env::var("KOKORO_ORT_PROVIDER").ok();
+        std::env::set_var("KOKORO_ORT_PROVIDER", "cuda");
+        let cuda_res = kokoro_en::KokoroTts::new(&model, &voices_path).await;
+        if let Some(v) = prev.clone() { std::env::set_var("KOKORO_ORT_PROVIDER", v); } else { std::env::remove_var("KOKORO_ORT_PROVIDER"); }
+        match cuda_res {
+            Ok(t) => {
+                push_tts_log("Kokoro init ok (cuda) — GPU active".to_string());
+                let arc = Arc::new(t);
+                *guard = Some(arc.clone());
+                return Ok(arc);
+            }
+            Err(e) => {
+                let msg = e.to_string();
+                push_tts_log(format!("Kokoro CUDA init failed ({}), falling back to CPU", msg));
+                eprintln!("kokoro CUDA init failed ({}), falling back to CPU", msg);
+                // fall through to CPU retry below
+            }
+        }
+    }
     let tts = match kokoro_en::KokoroTts::new(&model, &voices_path).await {
-        Ok(t) => t,
+        Ok(t) => {
+            let hint = if provider.eq_ignore_ascii_case("cpu") {
+                "cpu-forced"
+            } else if gpu_ready {
+                "auto (explicit CUDA already tried) — CPU fallback active"
+            } else {
+                "auto, gpu_pack=false — CPU"
+            };
+            push_tts_log(format!("Kokoro init ok ({})", hint));
+            t
+        },
         Err(e) => {
             let msg = e.to_string();
             // If auto/CUDA/DML failed, retry once with CPU forced (covers the
             // DML 80070057 case and missing CUDA toolkit)
             if msg.contains("80070057") || msg.contains("Dml") || msg.contains("DirectML") || msg.contains("CUDA") {
-                eprintln!("kokoro init with {} failed ({}), retrying with CPU", std::env::var("KOKORO_ORT_PROVIDER").unwrap_or_else(|_| "auto".into()), msg);
+                let line = format!("kokoro init with {} failed ({}), retrying with CPU", provider, msg);
+                push_tts_log(line.clone());
+                eprintln!("{line}");
                 let prev2 = std::env::var("KOKORO_ORT_PROVIDER").ok();
                 std::env::set_var("KOKORO_ORT_PROVIDER", "cpu");
                 let res = kokoro_en::KokoroTts::new(&model, &voices_path).await;
                 if let Some(v) = prev2 { std::env::set_var("KOKORO_ORT_PROVIDER", v); } else { std::env::remove_var("KOKORO_ORT_PROVIDER"); }
-                res.map_err(|e2| format!("kokoro init failed (cpu fallback also failed): {e} | {e2}"))?
+                match res {
+                    Ok(t) => {
+                        push_tts_log("Kokoro init ok after CPU fallback — GPU was unavailable/faulty, now on CPU".to_string());
+                        t
+                    }
+                    Err(e2) => {
+                        let line2 = format!("kokoro init failed (cpu fallback also failed): {e} | {e2}");
+                        push_tts_log(line2.clone());
+                        return Err(line2);
+                    }
+                }
             } else {
-                return Err(format!("kokoro init failed: {msg}"));
+                let line = format!("kokoro init failed: {msg}");
+                push_tts_log(line.clone());
+                return Err(line);
             }
         }
     };
