@@ -180,9 +180,14 @@ export function useVoice(
     busyRef.current = null;
     finalBusyRef.current = null;
     lastPcmRef.current = null;
-    // abort any in-flight whisper — prevents 14s/32s timeout hang on stale seq
-    for (const [k, ac] of inflightRef.current) { try { ac.abort(); sttLog("hint", `abort inflight ${k} on teardown`); } catch {} }
-    inflightRef.current.clear();
+    // abort stale partial whispers — keep final for last utterance (cur-1) to allow delivery after mic stop
+    for (const [k, ac] of [...inflightRef.current.entries()]) {
+      if (k.endsWith(":partial")) { try { ac.abort(); } catch {} inflightRef.current.delete(k); }
+      else {
+        const s = parseInt(k.split(":")[0]!, 10);
+        if (!Number.isNaN(s) && s < seq - 1) { try { ac.abort(); } catch {} inflightRef.current.delete(k); }
+      }
+    }
     if (tickRef.current != null) { clearInterval(tickRef.current); tickRef.current = null; sttLog("hint", "tick cleared"); }
     if (watchdogRef.current != null) { clearInterval(watchdogRef.current); watchdogRef.current = null; sttLog("hint", "watchdog cleared"); }
     try { workletRef.current?.port.close?.(); } catch (e) { sttLog("warn", `worklet port close failed: ${String(e)}`); }
@@ -216,8 +221,9 @@ export function useVoice(
   // Float32 internally, no WAV encode, reuse server/model cache, off UI thread
   // via Rust spawn_blocking. Falls back to CLI if server not available.
   const transcribePcm = useCallback(async (pcm: Float32Array, isPartial: boolean, seq: number): Promise<string | null> => {
-    if (cancelRef.current || seq !== seqRef.current) {
-      // stale — silently dropped, no whisper log (ponytail: drop stale without noise)
+    const isStaleFor = (s: number, partial: boolean) => partial ? (cancelRef.current || s !== seqRef.current) : (s < seqRef.current - 1);
+    if (isStaleFor(seq, isPartial)) {
+      // stale — silently dropped, no whisper log (ponytail: drop stale without noise, finals allow cur-1 for last utterance)
       return null;
     }
     if (pcm.length < RATE * 0.2) {
@@ -242,7 +248,7 @@ export function useVoice(
         gpu: gpuRef.current,
       });
       const out = await withTimeout(p, timeoutMs, label, ac.signal);
-      if (ac.signal.aborted || cancelRef.current || seq !== seqRef.current) {
+      if (ac.signal.aborted || isStaleFor(seq, isPartial)) {
         return null;
       }
       const dt = Date.now() - t0;
@@ -255,7 +261,7 @@ export function useVoice(
     } catch (e) {
       const dt = Date.now() - t0;
       const aborted = (e as DOMException)?.name === "AbortError" || ac.signal.aborted;
-      if (aborted || cancelRef.current || seq !== seqRef.current) {
+      if (aborted || isStaleFor(seq, isPartial)) {
         return null;
       }
       sttLog("warn", `${label} pcm path failed ${dt}ms: ${String(e)} — trying WAV fallback`);
@@ -276,14 +282,14 @@ export function useVoice(
           audio: Array.from(wav), model, translate: mlRef.current, gpu: gpuRef.current,
         });
         const out2 = await withTimeout(p2, timeoutMs, `${label} WAV fallback`, ac.signal);
-        if (ac.signal.aborted || cancelRef.current || seq !== seqRef.current) {
+        if (ac.signal.aborted || isStaleFor(seq, isPartial)) {
           return null;
         }
         sttLog("hint", `${label} WAV fallback done ${Date.now() - t0}ms textLen=${out2.text.length}`);
         return out2.text.trim() || null;
       } catch (e2) {
         const aborted2 = (e2 as DOMException)?.name === "AbortError" || ac.signal.aborted;
-        if (aborted2 || cancelRef.current || seq !== seqRef.current) {
+        if (aborted2 || isStaleFor(seq, isPartial)) {
           return null;
         }
         const msg = String(e2 ?? e);
@@ -307,7 +313,7 @@ export function useVoice(
     setPhase("transcribing");
     try {
       const text = await transcribePcm(pcm, false, seq);
-      if (cancelRef.current || seq !== seqRef.current) {
+      if (seq < seqRef.current - 1) {
         return;
       }
       if (text) {
@@ -320,11 +326,11 @@ export function useVoice(
       }
     } catch (e) {
       sttLog("warn", `handleFinal crashed seq=${seq}: ${String(e)}`);
-      if (!cancelRef.current && seq === seqRef.current) setError(String(e).slice(0, 400));
+      if (seq >= seqRef.current - 1) setError(String(e).slice(0, 400));
     } finally {
-      const isStale = cancelRef.current || seq !== seqRef.current;
+      const isStale = seq < seqRef.current - 1;
       if (isStale) {
-        // stale must not clobber live generation's phase/partial/busy — silently drop
+        // stale must not clobber live generation's phase/partial/busy — silently drop (allow cur-1 final after mic stop)
         if (finalBusyRef.current === seq) finalBusyRef.current = null;
         return;
       }
@@ -475,7 +481,6 @@ export function useVoice(
           audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
         }), 8000, "getUserMedia");
         if (cancelRef.current || seq !== seqRef.current) {
-          sttLog("warn", `getUserMedia stale seq=${seq} cur=${seqRef.current} — stopping tracks`);
           stream.getTracks().forEach(t => t.stop());
           return;
         }
@@ -496,7 +501,6 @@ export function useVoice(
           try { await ctx.resume(); sttLog("hint", "AudioContext resumed"); } catch (e) { sttLog("warn", `AudioContext resume failed: ${String(e)}`); }
         }
         if (cancelRef.current || seq !== seqRef.current) {
-          sttLog("warn", `AudioContext stale seq=${seq}`);
           stream.getTracks().forEach(t => t.stop());
           void ctx.close().catch(() => {});
           return;
@@ -608,7 +612,6 @@ export function useVoice(
         };
 
         if (cancelRef.current || seq !== seqRef.current) {
-          sttLog("warn", `toggle stale after worklet setup seq=${seq}`);
           stream.getTracks().forEach(t => t.stop());
           void ctx.close().catch(() => {});
           return;
