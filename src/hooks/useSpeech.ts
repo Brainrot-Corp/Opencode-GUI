@@ -15,7 +15,9 @@ import {
   cleanSpeech,
   full_text,
   lowVariantFor,
+  playPcm,
   playWav,
+  splitForSpeech,
   wordCount,
 } from "../lib/speechText";
 import type { AppSettings } from "./useSettings";
@@ -45,6 +47,7 @@ export function useSpeech(oc: SpeechOc, settings: AppSettings) {
   // the fallback may read; restored/session history never qualifies
   const seenLive = useRef<Set<string>>(new Set());
   const replyAudio = useRef<HTMLAudioElement | null>(null);
+  const pcmStop = useRef<(() => void) | null>(null);
 
   // queued speech — sentences awaiting piper playback
   const ttsQ = useRef<string[]>([]);
@@ -60,6 +63,15 @@ export function useSpeech(oc: SpeechOc, settings: AppSettings) {
   const capQueue = () => {
     while (ttsQ.current.length > 8) ttsQ.current.shift();
   };
+
+  // keep Kokoro warm on GPU — first synth JITs CUDA kernels, warm avoids paying it on first sentence
+  useEffect(() => {
+    if (!settings.ttsVoice) return;
+    let cancelled = false;
+    // fire once per voice; ignore errors (model not yet installed)
+    invoke<string>("tts_warm").catch(() => {});
+    return () => { cancelled = !cancelled; void cancelled; };
+  }, [settings.ttsVoice]);
 
   // queued speech — single FIFO, never cuts (debrief's cut is the only cutter)
   // if an answer is queued while an enumeration is pending, flush both together
@@ -167,40 +179,74 @@ export function useSpeech(oc: SpeechOc, settings: AppSettings) {
     [queueSpeech, debriefing],
   );
 
-  // serialized synth→play pump; 'pause' resolves alongside 'ended' so the
-  // stop-speech button breaks the wait instead of deadlocking the queue
+  // pipelined synth→play: synthesis of chunk N+1 starts while N plays,
+  // and PCM path bypasses WAV/Blob overhead. Falls back to WAV on failure.
+  const synthOne = async (phrase: string, st: AppSettings): Promise<{ bytes: number[]; isPcm: boolean } | null> => {
+    // prefer PCM (i16 LE, no WAV header) — smaller IPC, no browser WAV decode
+    try {
+      const pcm = await invoke<number[]>("tts_speak_pcm", { text: phrase, voice: st.ttsVoice, speed: st.ttsSpeed });
+      if (pcm && pcm.length >= 200) return { bytes: pcm, isPcm: true };
+    } catch {}
+    try {
+      const wav = await invoke<number[]>("tts_speak", { text: phrase, voice: st.ttsVoice, speed: st.ttsSpeed });
+      if (wav && wav.length >= 1000) return { bytes: wav, isPcm: false };
+    } catch (e) { pushToast(String(e)); }
+    return null;
+  };
+
   const pumpTTS = () => {
     if (ttsPumping.current) return;
     ttsPumping.current = true;
     setTalking(true);
     (async () => {
       try {
-        while (ttsQ.current.length && !ttsHushed.current) {
-          const phrase = ttsQ.current.shift()!;
+        // prefetch first chunk while loop sets up
+        let prefetch: Promise<{ bytes: number[]; isPcm: boolean } | null> | null = null;
+        const nextPhrase = () => ttsQ.current[0];
+        const startPrefetch = () => {
+          const nxt = nextPhrase();
+          if (!nxt || ttsHushed.current) return null;
           const st = settingsNow.current;
-          let bytes: number[] | null = null;
-          try {
-            bytes = await invoke<number[]>("tts_speak", {
-              text: phrase,
-              voice: st.ttsVoice,
-              speed: st.ttsSpeed,
-            });
-          } catch (e) {
-            pushToast(String(e));
-            continue;
+          return synthOne(nxt, st);
+        };
+        if (ttsQ.current.length) prefetch = startPrefetch();
+        while (ttsQ.current.length && !ttsHushed.current) {
+          const phrase = ttsQ.current[0]; // peek — consume only after synth succeeds
+          const st = settingsNow.current;
+          // use prefetched result if it matches this phrase, else synth now
+          let res: { bytes: number[]; isPcm: boolean } | null = null;
+          if (prefetch) {
+            try { res = await prefetch; } catch {}
+            // verify prefetch was for this phrase (queue may have shifted on hush)
+            // if queue head changed, discard and re-synth
+            if (ttsQ.current[0] !== phrase) { prefetch = startPrefetch(); continue; }
+          } else {
+            res = await synthOne(phrase, st);
           }
-          if (!bytes || ttsHushed.current || bytes.length < 1000) continue;
-          const a = playWav(bytes, st.ttsVol);
-          replyAudio.current = a;
-          // BA-06: on error reject instead of silently skipping phrase — surface via toast
-          try {
-            await new Promise<void>((res, rej) => {
-              a.addEventListener("ended", () => res(), { once: true });
-              a.addEventListener("pause", () => res(), { once: true });
-              a.addEventListener("error", () => rej(new Error("TTS playback failed")), { once: true });
-            });
-          } catch (e) {
-            pushToast(String(e));
+          // consume queue entry now
+          ttsQ.current.shift();
+          // kick off next synth in background while current plays
+          prefetch = ttsQ.current.length && !ttsHushed.current ? startPrefetch() : null;
+          if (!res || ttsHushed.current) continue;
+          const { bytes, isPcm } = res;
+          // playback — PCM via AudioContext, WAV via Audio element
+          if (isPcm) {
+            const h = playPcm(bytes, st.ttsVol);
+            pcmStop.current = h.stop;
+            try { await h.ended; } catch (e) { pushToast(String(e)); }
+            finally { pcmStop.current = null; }
+            // also allow pause to break
+            if (ttsHushed.current) { try { h.stop(); } catch {} }
+          } else {
+            const a = playWav(bytes, st.ttsVol);
+            replyAudio.current = a;
+            try {
+              await new Promise<void>((res2, rej) => {
+                a.addEventListener("ended", () => res2(), { once: true });
+                a.addEventListener("pause", () => res2(), { once: true });
+                a.addEventListener("error", () => rej(new Error("TTS playback failed")), { once: true });
+              });
+            } catch (e) { pushToast(String(e)); }
           }
         }
       } finally {
@@ -211,28 +257,25 @@ export function useSpeech(oc: SpeechOc, settings: AppSettings) {
   };
 
   // streaming speech — while the assistant is still generating, speak
-  // complete sentences as they appear (low-latency). Uses Kokoro GPU → CPU
-  // auto fallback; each sentence is synthesized and queued as soon as it
-  // is complete, so playback starts before the full answer is ready.
+  // complete sentences/clauses as they appear (low-latency). Prefers
+  // sentence terminals but will split long clauses at ,;:— once >=80 chars
+  // to keep perceived latency low while preserving prosody (≥40 chars).
   const lastStreamIdRef = useRef("");
   const lastStreamTextRef = useRef("");
   useEffect(() => {
     if (!settings.speakReplies || !settings.ttsVoice) return;
     if (!oc.busy) return;
-    // find the currently streaming assistant message (not yet completed)
     let streaming: Msg | undefined;
     for (let i = oc.msgs.length - 1; i >= 0; i--) {
       const m = oc.msgs[i];
       if ((m.info as any).role === "assistant" && !(m.info as any).time?.completed) {
-        streaming = m;
-        break;
+        streaming = m; break;
       }
     }
     if (!streaming) return;
     const id = streaming.info.id as string;
     const full = full_text(streaming);
     if (!full.trim()) return;
-    // new streaming turn?
     if (id !== lastStreamIdRef.current) {
       lastStreamIdRef.current = id;
       lastStreamTextRef.current = "";
@@ -240,28 +283,30 @@ export function useSpeech(oc: SpeechOc, settings: AppSettings) {
     }
     const prev = lastStreamTextRef.current;
     if (full.length <= prev.length) return;
-    if (!full.startsWith(prev)) {
-      // text was edited/reset, just update
-      lastStreamTextRef.current = full;
-      return;
-    }
-    // find complete sentences in full that weren't in prev
-    const allSentences = full.match(/[^.!?]+[.!?]+/g) || [];
-    const prevSentences = prev.match(/[^.!?]+[.!?]+/g) || [];
-    if (allSentences.length > prevSentences.length) {
-      const newSentences = allSentences.slice(prevSentences.length);
-      for (const s of newSentences) {
-        const clean = cleanSpeech(s);
+    if (!full.startsWith(prev)) { lastStreamTextRef.current = full; return; }
+    // pending text not yet queued
+    const pending = full.slice(prev.length);
+    // incrementally extract complete chunks from pending's start
+    let consumed = 0;
+    let buf = "";
+    // scan by small clause pieces so we can emit early at clause marks
+    const pieces = pending.match(/[^.!?,;:—]+[.!?,;:—]*\s*/g) || [pending];
+    for (const piece of pieces) {
+      buf += piece;
+      const tr = buf.trim();
+      const endsSentence = /[.!?]\s*$/.test(buf);
+      const endsClause = /[,;:—]\s*$/.test(buf);
+      const ready = (endsSentence && tr.length >= 20) || (endsClause && tr.length >= 60) || tr.length >= 220;
+      if (ready) {
+        const clean = cleanSpeech(tr);
         if (clean) queueSpeech(clean);
-      }
-      // update prev to include the new complete sentences, keep trailing incomplete for next time
-      const pos = full.lastIndexOf(newSentences[newSentences.length - 1]);
-      if (pos >= 0) {
-        lastStreamTextRef.current = full.slice(0, pos + newSentences[newSentences.length - 1].length);
-      } else {
-        lastStreamTextRef.current = prev + newSentences.join("");
+        consumed += buf.length;
+        // advance prev by what we consumed
+        lastStreamTextRef.current = prev + pending.slice(0, consumed);
+        buf = "";
       }
     }
+    // tail buf stays pending until more text arrives or turn completes
   }, [oc.msgs, oc.busy, settings.speakReplies, settings.ttsVoice, queueSpeech]);
 
   // no streaming speech — only when an answer finishes (even mid-turn) we decide
@@ -306,17 +351,7 @@ export function useSpeech(oc: SpeechOc, settings: AppSettings) {
     if (!wasStreamed && wordCount(toSpeak) > 30) {
       void summarizeWithCommitModel(toSpeak);
     } else {
-      // split tail into sentences for consistent queuing
-      const sents = toSpeak.match(/[^.!?]+[.!?]+/g) || [toSpeak];
-      let queued = false;
-      for (const s of sents) {
-        const c = cleanSpeech(s);
-        if (c) { queueSpeech(c); queued = true; }
-      }
-      if (!queued) {
-        const c = cleanSpeech(toSpeak);
-        if (c) queueSpeech(c);
-      }
+      for (const chunk of splitForSpeech(toSpeak)) queueSpeech(chunk);
     }
   }, [oc.msgs, oc.busy, settings.speakReplies, settings.ttsVoice, debriefing, queueSpeech, summarizeWithCommitModel]);
 
@@ -327,6 +362,8 @@ export function useSpeech(oc: SpeechOc, settings: AppSettings) {
       ttsHushed.current = true;
       ttsQ.current = []; // nothing queued survives the stop
       replyAudio.current?.pause();
+      try { pcmStop.current?.(); } catch {}
+      pcmStop.current = null;
     };
     const vol = (e: Event) => {
       if (replyAudio.current) replyAudio.current.volume = (e as CustomEvent<number>).detail;
@@ -393,12 +430,7 @@ export function useSpeech(oc: SpeechOc, settings: AppSettings) {
       }
     }
     if (!wasStreamed && wordCount(toSpeak) > 30) void summarizeWithCommitModel(toSpeak);
-    else {
-      const sents = toSpeak.match(/[^.!?]+[.!?]+/g) || [toSpeak];
-      let queued = false;
-      for (const s of sents) { const c = cleanSpeech(s); if (c) { queueSpeech(c); queued = true; } }
-      if (!queued) { const c = cleanSpeech(toSpeak); if (c) queueSpeech(c); }
-    }
+    else { for (const chunk of splitForSpeech(toSpeak)) queueSpeech(chunk); }
   }, [settings.speakReplies, settings.ttsVoice, oc.msgs, debriefing, queueSpeech, summarizeWithCommitModel]);
 
   // status cues: turn start is spoken via same queued FIFO — never cuts.
@@ -610,6 +642,7 @@ export function useSpeech(oc: SpeechOc, settings: AppSettings) {
         pendingEnum.current = null;
         pendingAnswers.current = [];
         replyAudio.current?.pause();
+        try { pcmStop.current?.(); } catch {}
         {
           const c = cleanSpeech("Debriefing...");
           if (c) { ttsQ.current.push(c); capQueue(); pumpTTS(); }
@@ -712,6 +745,7 @@ export function useSpeech(oc: SpeechOc, settings: AppSettings) {
   // voice "quiet" command — pause current playback without clearing the queue
   const pauseSpeech = useCallback(() => {
     replyAudio.current?.pause();
+    try { pcmStop.current?.(); } catch {}
   }, []);
 
   return { talking, debriefing, announce, pauseSpeech };

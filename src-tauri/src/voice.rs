@@ -1376,6 +1376,61 @@ pub async fn tts_speak(text: String, voice: String, speed: Option<f64>) -> Resul
     Ok(wav)
 }
 
+// warm Kokoro and keep it on GPU — call once at startup / voice change so
+// the first utterance doesn't pay model load. Stays in KOKORO OnceLock.
+#[tauri::command]
+pub async fn tts_warm() -> Result<String, String> {
+    let tts = get_kokoro().await?;
+    // dummy synth to force CUDA kernels to JIT-load (first synth is slower)
+    let v = kokoro_en::Voice::new("af_heart".to_string()).with_speed(1.0);
+    let _ = tts.synth("warmup.".to_string(), v).await;
+    Ok("warm".into())
+}
+
+// PCM path — returns raw i16 LE mono at 24000 Hz via Channel, no WAV header.
+// Frontend builds AudioBuffer directly (zero WAV encode/decode, smaller IPC than WAV).
+#[tauri::command]
+pub async fn tts_speak_pcm(
+    text: String,
+    voice: String,
+    speed: Option<f64>,
+) -> Result<Vec<u8>, String> {
+    if text.trim().is_empty() || text.len() > 20_000 {
+        return Err("bad speak text".into());
+    }
+    if !kokoro_model_path().exists() {
+        return Err(format!("kokoro not installed — set it up in Settings > Voice (missing {})", kokoro_model_path().display()));
+    }
+    let kvoice = map_piper_to_kokoro(&voice);
+    let has_voice = kokoro_voice_path(&kvoice).exists() || kokoro_voices_path().exists() || kokoro_voices_dir().exists() && std::fs::read_dir(kokoro_voices_dir()).map(|mut rd| rd.next().is_some()).unwrap_or(false);
+    if !has_voice {
+        return Err(format!("kokoro voice {} not installed — download it in Settings > Voice › Voices (missing {})", kvoice, kokoro_voice_path(&kvoice).display()));
+    }
+    let sp = speed.unwrap_or(1.0).clamp(0.5, 2.0) as f32;
+    let tts = get_kokoro().await?;
+    let v = kokoro_en::Voice::new(kvoice.clone()).with_speed(sp);
+    let txt_len = text.len();
+    let pcm_bytes = tauri::async_runtime::spawn_blocking(move || -> Result<Vec<u8>, String> {
+        let start = Instant::now();
+        let rt = tokio::runtime::Handle::try_current();
+        let fut = async {
+            let (samples, _) = tts.synth(text.clone(), v).await.map_err(|e| e.to_string())?;
+            Ok::<Vec<f32>, String>(samples)
+        };
+        let samples = if let Ok(h) = rt { h.block_on(fut)? } else {
+            tokio::runtime::Builder::new_current_thread().enable_all().build().map_err(|e| e.to_string())?.block_on(fut)?
+        };
+        let elapsed = start.elapsed().as_millis();
+        let secs = samples.len() as f32 / 24000.0;
+        push_tts_log(format!("synth pcm ok: {} chars → {:.1}s audio in {}ms", txt_len, secs, elapsed));
+        // f32 → i16 LE raw
+        let mut out = Vec::with_capacity(samples.len() * 2);
+        for s in samples { let v = (s.clamp(-1.0, 1.0) * 32767.0) as i16; out.extend_from_slice(&v.to_le_bytes()); }
+        Ok::<Vec<u8>, String>(out)
+    }).await.map_err(|e| format!("task join failed: {e}"))??;
+    Ok(pcm_bytes)
+}
+
 // streaming TTS — emits WAV chunks via Channel as each sentence is synthesized.
 // Frontend creates a Channel<Vec<u8>> and plays chunks as they arrive.
 #[tauri::command]

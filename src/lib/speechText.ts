@@ -17,6 +17,96 @@ export function playWav(bytes: number[], volume: number): HTMLAudioElement {
   return a;
 }
 
+// --- low-latency PCM path: bypass WAV header + Blob decode -----------------
+// Rust sends raw i16 LE PCM (24kHz mono) as bytes; we build an AudioBuffer
+// directly — no WAV header, no Blob URL, no extra IPC copy.
+let sharedCtx: AudioContext | null = null;
+function getCtx(): AudioContext | null {
+  try {
+    if (!sharedCtx) {
+      sharedCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 } as any);
+    }
+    if (sharedCtx.state === "suspended") void sharedCtx.resume();
+    return sharedCtx;
+  } catch { return null; }
+}
+export function playPcm(bytes: number[], volume: number): { stop: () => void; ended: Promise<void> } {
+  const ctx = getCtx();
+  // fallback to WAV if AudioContext unavailable
+  if (!ctx) {
+    const a = playWav(bytes, volume);
+    return {
+      stop: () => a.pause(),
+      ended: new Promise<void>((res, rej) => {
+        a.addEventListener("ended", () => res(), { once: true });
+        a.addEventListener("pause", () => res(), { once: true });
+        a.addEventListener("error", () => rej(new Error("PCM playback failed")), { once: true });
+      }),
+    };
+  }
+  const u8 = new Uint8Array(bytes);
+  // bytes are i16 LE mono at 24000 Hz
+  const samples = u8.length >> 1;
+  const buf = ctx.createBuffer(1, samples, 24000);
+  const ch = buf.getChannelData(0);
+  const view = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
+  for (let i = 0; i < samples; i++) ch[i] = view.getInt16(i * 2, true) / 32768;
+  const src = ctx.createBufferSource();
+  src.buffer = buf;
+  const gain = ctx.createGain();
+  gain.gain.value = volume;
+  src.connect(gain).connect(ctx.destination);
+  window.dispatchEvent(new CustomEvent<number>("oc:tts-live", { detail: (samples / 24000) * 1000 }));
+  let stopped = false;
+  const ended = new Promise<void>((res) => {
+    src.onended = () => { if (!stopped) res(); };
+    // also resolve on manual stop
+  });
+  src.start();
+  return {
+    stop: () => { stopped = true; try { src.stop(); } catch {} },
+    // allow caller to await ended or detect pause
+    ended,
+  };
+}
+
+// clause-aware chunker: prefers sentence terminals (.!?) but will split
+// long sentences at clause marks (, ; : —) once minLen is met. Preserves
+// prosody: never emits < MIN chars unless forced, never > MAX without split.
+const TTS_MIN = 40;
+const TTS_MAX = 220;
+export function splitForSpeech(text: string): string[] {
+  const cleaned = cleanSpeech(text);
+  if (!cleaned) return [];
+  if (cleaned.length <= TTS_MAX) {
+    // short enough: keep as one natural chunk
+    if (/[.!?]$/.test(cleaned) || cleaned.length >= TTS_MIN) return [cleaned];
+    return [cleaned];
+  }
+  const out: string[] = [];
+  let buf = "";
+  // split keeping delimiters
+  const parts = cleaned.match(/[^.!?,;:—]+[.!?,;:—]*\s*/g) || [cleaned];
+  for (const part of parts) {
+    const next = (buf + part).trim();
+    const endsSentence = /[.!?][\s]*$/.test(part);
+    const endsClause = /[,;:—][\s]*$/.test(part);
+    if (buf && next.length > TTS_MAX) {
+      if (buf.trim().length >= TTS_MIN) { out.push(buf.trim()); buf = part; }
+      else { out.push(next.slice(0, TTS_MAX).trim()); buf = next.slice(TTS_MAX); }
+      continue;
+    }
+    buf = next;
+    if (endsSentence && buf.length >= TTS_MIN) { out.push(buf.trim()); buf = ""; }
+    else if (endsClause && buf.length >= 80) { out.push(buf.trim()); buf = ""; }
+  }
+  if (buf.trim()) {
+    if (buf.trim().length < TTS_MIN && out.length) out[out.length - 1] += " " + buf.trim();
+    else out.push(buf.trim());
+  }
+  return out.filter(Boolean);
+}
+
 // all text-part content of a message, joined — streaming deltas included
 export function full_text(m: Msg): string {
   return m.parts

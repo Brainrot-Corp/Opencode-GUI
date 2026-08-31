@@ -32,6 +32,7 @@ import { ensureDict } from "../lib/dictWords";
 import { pickWorkspace, getLastWorkspace, getAllWorkspaces } from "../lib/workspace";
 import { playSound } from "../lib/sounds";
 import { useSpeech } from "../hooks/useSpeech";
+import { pushToast, dismissToast } from "../hooks/useToast";
 import { matchesEvent } from "../lib/hotkeys";
 import { usePlugins } from "../hooks/usePlugins";
 import { loadPluginsCatalog, fetchPluginFiles, pluginRawUrl, type PluginCatalogEntry } from "../lib/pluginsCatalog";
@@ -429,6 +430,8 @@ export default function ChatPage() {
   // read back and waits for a spoken yes/no. Any other speech (or 15s)
   // cancels — chatter can't leave stale traps.
   const pendingRef = useRef<{ act: VoiceAct; until: number } | null>(null);
+  const pendingToastRef = useRef<number | undefined>(undefined);
+  const pendingTimerRef = useRef<number>(0);
   // guards the async translate fallback: newer speech invalidates an
   // in-flight re-route
   const seqRef = useRef(0);
@@ -438,6 +441,11 @@ export default function ChatPage() {
   // warm the typo-corrector's dictionary veto once per launch
   useEffect(() => {
     void ensureDict();
+  }, []);
+  // cleanup pending confirmation toast/timer on unmount
+  useEffect(() => () => {
+    if (pendingTimerRef.current) clearTimeout(pendingTimerRef.current);
+    if (pendingToastRef.current !== undefined) dismissToast(pendingToastRef.current);
   }, []);
   const refreshCatalog = useCallback(async (force = false) => {
     setCatalogLoading(true);
@@ -555,14 +563,25 @@ export default function ChatPage() {
           return;
         }
         pendingRef.current = { act: act.act, until: Date.now() + 15000 };
-        // natural read-back: "Okay — turn the lights off?"
         const d = describeAct(act.act);
-        announce(`Okay — ${d.charAt(0).toLowerCase()}${d.slice(1)}?`);
+        const question = `Okay — ${d.charAt(0).toLowerCase()}${d.slice(1)}?`;
+        announce(question);
+        if (pendingToastRef.current !== undefined) dismissToast(pendingToastRef.current);
+        if (pendingTimerRef.current) clearTimeout(pendingTimerRef.current);
+        pendingToastRef.current = pushToast(`${question} Say yes or no.`, { variant: "info", ttl: 15000 });
+        pendingTimerRef.current = window.setTimeout(() => {
+          pendingRef.current = null;
+          if (pendingToastRef.current !== undefined) {
+            dismissToast(pendingToastRef.current);
+            pendingToastRef.current = undefined;
+          }
+          pendingTimerRef.current = 0;
+        }, 15000);
         return;
       }
       execAct(act);
     },
-    [execAct, describeAct],
+    [execAct, describeAct, announce],
   );
 
   const handleVoiceTranscript = useCallback(
@@ -574,6 +593,8 @@ export default function ChatPage() {
         // yes/no in EN/FR/ES — "si" matches Spanish sí (whisper drops accents)
         if (/^(yes|yeah|yep|yup|sure|do it|confirm|go ahead|oui|ouais|ouep|vas-?y|si|sí|claro|dale|vale)\b/.test(t0)) {
           pendingRef.current = null;
+          if (pendingToastRef.current !== undefined) { dismissToast(pendingToastRef.current); pendingToastRef.current = undefined; }
+          if (pendingTimerRef.current) { clearTimeout(pendingTimerRef.current); pendingTimerRef.current = 0; }
           playSound("click");
           const d = describeAct(p.act);
           const acks = ["Done.", "You got it.", "On it.", "Sure thing."];
@@ -583,15 +604,25 @@ export default function ChatPage() {
           execAct(p.act);
         } else if (/^(no|nope|nah|cancel|forget it|non|annule|annuler|anula|cancela)\b/.test(t0)) {
           pendingRef.current = null;
+          if (pendingToastRef.current !== undefined) { dismissToast(pendingToastRef.current); pendingToastRef.current = undefined; }
+          if (pendingTimerRef.current) { clearTimeout(pendingTimerRef.current); pendingTimerRef.current = 0; }
           const nos = ["No problem.", "Okay, skipping that.", "Cancelled."];
           announce(nos[Math.floor(Math.random() * nos.length)]);
           confirmNote("✗ Cancelled");
         } else {
           pendingRef.current = null; // unrelated chatter kills the question
+          if (pendingToastRef.current !== undefined) { dismissToast(pendingToastRef.current); pendingToastRef.current = undefined; }
+          if (pendingTimerRef.current) { clearTimeout(pendingTimerRef.current); pendingTimerRef.current = 0; }
         }
         return;
       }
-      pendingRef.current = null;
+      if (p) {
+        pendingRef.current = null;
+        if (pendingToastRef.current !== undefined) { dismissToast(pendingToastRef.current); pendingToastRef.current = undefined; }
+        if (pendingTimerRef.current) { clearTimeout(pendingTimerRef.current); pendingTimerRef.current = 0; }
+      } else {
+        pendingRef.current = null;
+      }
 
       // dictation capture mode: everything said appends to the composer until
       // "send"/"clear"/any other command ends it
