@@ -1044,10 +1044,13 @@ pub async fn tts_speak(text: String, voice: String, speed: Option<f64>) -> Resul
         return Err(format!("kokoro voice {} not installed — download it in Settings > Voice › Voices (missing {})", kvoice, kokoro_voice_path(&kvoice).display()));
     }
     let sp = speed.unwrap_or(1.0).clamp(0.5, 2.0) as f32;
+    let gpu_active = kokoro_gpu_ready();
     let tts = get_kokoro().await?;
     let v = kokoro_en::Voice::new(kvoice.clone()).with_speed(sp);
     // offload blocking ONNX inference to blocking pool
+    let txt_len = text.len();
     let wav = tauri::async_runtime::spawn_blocking(move || -> Result<Vec<u8>, String> {
+        let start = Instant::now();
         let rt = tokio::runtime::Handle::try_current();
         let fut = async {
             let (samples, _) = tts.synth(text.clone(), v).await.map_err(|e| e.to_string())?;
@@ -1058,6 +1061,17 @@ pub async fn tts_speak(text: String, voice: String, speed: Option<f64>) -> Resul
         } else {
             tokio::runtime::Builder::new_current_thread().enable_all().build().map_err(|e| e.to_string())?.block_on(fut)?
         };
+        let elapsed = start.elapsed();
+        let ms = elapsed.as_millis();
+        let secs = samples.len() as f32 / 24000.0;
+        push_tts_log(format!(
+            "synth ok: {} chars → {:.1}s audio in {}ms ({:.1}x realtime, {})",
+            txt_len,
+            secs,
+            ms,
+            if secs > 0.0 { secs * 1000.0 / ms as f32 } else { 0.0 },
+            if gpu_active { "gpu-pack present" } else { "cpu" }
+        ));
         Ok::<Vec<u8>, String>(f32_to_wav(&samples, 24000))
     })
     .await

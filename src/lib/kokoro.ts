@@ -34,8 +34,9 @@ export function kokoroVoiceUrl(id: string): string {
 // official CUDA 13 runtime, cuBLAS and cuDNN 9 redistributables. First synth
 // after install self-tests the GPU and falls back to CPU automatically.
 // Two ORT provider variants cover all NVIDIA generations: pre-Blackwell
-// (Ada/Hopper etc., official 1.28.0) and Blackwell sm_120 (community 1.24.1
-// built with CMAKE_CUDA_ARCHITECTURES=120, driver ≥591, CUDA 13.1).
+// (Ada/Hopper etc., official 1.28.0, CUDA 13.0 / cuDNN 9.13) and Blackwell
+// sm_120 (community 1.24.1 built with CMAKE_CUDA_ARCHITECTURES=120,
+// CUDA 13.1 / cuDNN 9.19, driver ≥591).
 const KOKORO_GPU_PARTS_BASE: { key: string; url: string; label: string }[] = [
   {
     key: "kokoro-gpu-cudart",
@@ -53,6 +54,23 @@ const KOKORO_GPU_PARTS_BASE: { key: string; url: string; label: string }[] = [
     label: "CUDA pack · cuDNN",
   },
 ];
+const KOKORO_GPU_PARTS_BLACKWELL_BASE: { key: string; url: string; label: string }[] = [
+  {
+    key: "kokoro-gpu-cudart",
+    url: "https://developer.download.nvidia.com/compute/cuda/redist/cuda_cudart/windows-x86_64/cuda_cudart-windows-x86_64-13.1.80-archive.zip",
+    label: "CUDA pack · cudart (Blackwell)",
+  },
+  {
+    key: "kokoro-gpu-cublas",
+    url: "https://developer.download.nvidia.com/compute/cuda/redist/libcublas/windows-x86_64/libcublas-windows-x86_64-13.1.0.3-archive.zip",
+    label: "CUDA pack · cuBLAS (Blackwell)",
+  },
+  {
+    key: "kokoro-gpu-cudnn",
+    url: "https://developer.download.nvidia.com/compute/cudnn/redist/cudnn/windows-x86_64/cudnn-windows-x86_64-9.19.0.56_cuda13-archive.zip",
+    label: "CUDA pack · cuDNN 9.19 (Blackwell)",
+  },
+];
 export const KOKORO_GPU_PARTS: { key: string; url: string; label: string }[] = [
   {
     key: "kokoro-gpu-ort",
@@ -67,7 +85,7 @@ export const KOKORO_GPU_PARTS_BLACKWELL: { key: string; url: string; label: stri
     url: "https://github.com/Natfii/onnxruntime-gpu-blackwell/releases/download/v1.24.1/onnxruntime_gpu-1.24.1-cp312-cp312-win_amd64.whl",
     label: "CUDA pack · onnxruntime provider (Blackwell sm_120)",
   },
-  ...KOKORO_GPU_PARTS_BASE,
+  ...KOKORO_GPU_PARTS_BLACKWELL_BASE,
 ];
 // ~sums shown on the install button
 export const KOKORO_GPU_MB = 986;
