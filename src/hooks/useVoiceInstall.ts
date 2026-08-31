@@ -85,7 +85,7 @@ export function useVoiceInstall(
   // whisper engine zip + one ggml model; skips whatever is already installed.
   // URL overrides (from the remote recommended.json) replace built-in sources
   async function installWhisper(
-    modelId: string = settings.voice.model || VOICE_MODELS[1].id,
+    modelId: string = settings.voice.model || VOICE_MODELS.find((m) => m.id === "ggml-large-v3-turbo-q8_0.bin")?.id || VOICE_MODELS[VOICE_MODELS.length - 1]!.id,
     urls?: { binUrl?: string; modelUrl?: string },
   ): Promise<boolean> {
     if (!voice?.bin) {
@@ -242,7 +242,7 @@ export function useVoiceInstall(
       const left = (voice?.items ?? []).filter((m) => m !== name);
       setVoice((v) => ({ bin: v?.bin ?? false, gpuBin: v?.gpuBin, items: left }));
       if (settings.voice.model === name) {
-        update({ voice: { ...settings.voice, model: left[0] ?? VOICE_MODELS[1].id } });
+        update({ voice: { ...settings.voice, model: left[0] || VOICE_MODELS.find((m) => m.id === "ggml-large-v3-turbo-q8_0.bin")?.id || VOICE_MODELS[VOICE_MODELS.length - 1]!.id } });
       }
       return true;
     } catch (e) {

@@ -16,7 +16,8 @@ export const VOICE_MODELS = [
   { id: "ggml-tiny.en.bin", label: "tiny.en · 78 MB · fastest, rougher" },
   { id: "ggml-base.en.bin", label: "base.en · 148 MB · English-only" },
   { id: "ggml-small.en.bin", label: "small.en · 488 MB · best accuracy, English-only" },
-  { id: "ggml-base.bin", label: "base multilingual · 148 MB · recommended" },
+  { id: "ggml-base.bin", label: "base multilingual · 148 MB" },
+  { id: "ggml-large-v3-turbo-q8_0.bin", label: "large-v3-turbo-q8_0 · 834 MB · fast · recommended" },
 ];
 
 // Kokoro — low-latency neural TTS (ONNX Runtime, GPU → CPU auto).

@@ -158,7 +158,7 @@ const DEFAULTS: AppSettings = {
   workspace: "",
   workspaces: [],
   collapsed: true,
-  voice: { model: "ggml-base.bin", sens: 0.7, debug: false, multilingual: false, gpu: false },
+  voice: { model: "ggml-large-v3-turbo-q8_0.bin", sens: 0.7, debug: false, multilingual: false, gpu: false },
   speakReplies: false,
   ttsVoice: "",
   ttsVol: 1,
@@ -298,7 +298,7 @@ export function useSettings() {
           model:
             typeof p.voice?.model === "string" && p.voice.model
               ? p.voice.model
-              : "ggml-base.bin",
+              : "ggml-large-v3-turbo-q8_0.bin",
           sens: num(p.voice?.sens, DEFAULTS.voice.sens, 0, 1),
           debug: !!p.voice?.debug,
           multilingual: p.voice?.multilingual === undefined ? false : !!p.voice.multilingual,
