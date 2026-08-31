@@ -776,9 +776,14 @@ async fn get_kokoro() -> Result<Arc<kokoro_en::KokoroTts>, String> {
     // from the caller's PoV (still Ok) — explicit try makes it explicit.
     let provider = std::env::var("KOKORO_ORT_PROVIDER").unwrap_or_else(|_| "auto".into());
     let gpu_ready = kokoro_gpu_ready();
+    let model_len = std::fs::metadata(&model).map(|m| m.len()).unwrap_or(0);
+    // INT8 quantized model (92_361_116 bytes) lacks Blackwell sm_120 CUDA kernels — will silently run Conv on CPU even with GPU pack
+    if gpu_ready && model_len == 92_361_116 {
+        push_tts_log("WARN: quantized model on GPU — INT8 has no sm_120 kernels, Conv ops will fallback to CPU and appear slow. For Blackwell, use FP32 model.onnx (325 MB) for full GPU.".to_string());
+    }
     push_tts_log(format!(
-        "Kokoro init: provider={}, gpu_pack={}, model={}, voices={}",
-        provider, gpu_ready, model.display(), voices_path.display()
+        "Kokoro init: provider={}, gpu_pack={}, model={} ({} bytes), voices={}",
+        provider, gpu_ready, model.display(), model_len, voices_path.display()
     ));
     // explicit CUDA probe when pack is present and user left provider on auto
     if provider.eq_ignore_ascii_case("auto") && gpu_ready {

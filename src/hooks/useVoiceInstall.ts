@@ -7,6 +7,7 @@ import {
   MODEL_BASE,
   VOICE_MODELS,
   KOKORO_MODEL_URL,
+  KOKORO_MODEL_URL_FP32,
   KOKORO_VOICES,
   kokoroGpuPartsFor,
   kokoroVoiceUrl,
@@ -326,7 +327,9 @@ export function useVoiceInstall(
   // optional CUDA pack (ort provider + NVIDIA cudart/cuBLAS/cuDNN) →
   // kokoro/gpu-dlls; first synth self-tests the GPU and falls back to CPU
   // automatically. Picks Blackwell vs pre-Blackwell ORT provider by compute
-  // cap (≥12.0 → sm_120). force=true re-downloads all four parts
+  // cap (≥12.0 → sm_120). force=true re-downloads all four parts. On Blackwell,
+  // also swaps the quantized model for FP32 (INT8 has no sm_120 kernels and
+  // Conv ops fallback to slow CPU path).
   async function installKokoroGpu(force = false, computeCap = ""): Promise<boolean> {
     if (dl) return false;
     if (piper?.gpuBin && !force) return true;
@@ -346,6 +349,19 @@ export function useVoiceInstall(
         setErr(String(e));
         return false;
       }
+    }
+    // Blackwell + quantized model (92 MB) has no sm_120 INT8 kernels → Conv
+    // runs on CPU and spikes. Auto-swap to FP32 (325 MB) for full GPU.
+    if (parseFloat(cap) >= 12.0) {
+      // always ensure FP32 on Blackwell — quantized will be slow even with GPU pack
+      if (!(await downloadTo("kokoro-model", KOKORO_MODEL_URL_FP32, "kokoro model (FP32 for Blackwell)"))) return false;
+      try {
+        await invoke("install_piper_bin", { key: "kokoro-model" });
+      } catch (e) {
+        setErr(String(e));
+        return false;
+      }
+      setPiper((t) => ({ bin: true, items: t?.items ?? [] }));
     }
     setPiper((t) => ({ bin: t?.bin ?? false, gpuBin: true, items: t?.items ?? [] }));
     return true;

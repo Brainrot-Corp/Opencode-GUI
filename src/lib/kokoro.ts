@@ -25,6 +25,9 @@ export const VOICE_MODELS = [
 // session load (hard process crash) — do not switch back to it.
 export const KOKORO_MODEL_URL =
   "https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/resolve/main/onnx/model_quantized.onnx";
+// FP32 model has full CUDA kernels for Blackwell sm_120+ (INT8 quantized lacks sm_120 kernels and falls back to slow CPU path even with GPU pack)
+export const KOKORO_MODEL_URL_FP32 =
+  "https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/resolve/main/onnx/model.onnx";
 export function kokoroVoiceUrl(id: string): string {
   return `https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/resolve/main/voices/${id}.bin`;
 }
