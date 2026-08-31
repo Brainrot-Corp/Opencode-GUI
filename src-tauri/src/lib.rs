@@ -13,7 +13,7 @@ use browser::{browser_back, browser_close, browser_forward, browser_navigate, br
 
 mod voice;
 use voice::{install_bin_finalize, install_model_finalize, install_piper_bin, install_tts_voice_part, 
-tts_remove_voice, tts_speak, tts_status, voice_download, voice_remove_all, voice_remove_model,
+tts_remove_voice, tts_speak, tts_status, voice_download, voice_gpu, voice_remove_all, voice_remove_gpu, voice_remove_model,
     voice_status, voice_transcribe};
 
 mod git;
@@ -1844,11 +1844,13 @@ pub fn run() {
               open_app,
               window_app,
             voice_status,
+            voice_gpu,
             voice_transcribe,
             voice_download,
             install_bin_finalize,
             install_model_finalize,
             voice_remove_model,
+            voice_remove_gpu,
             tts_status,
             tts_speak,
             install_piper_bin,

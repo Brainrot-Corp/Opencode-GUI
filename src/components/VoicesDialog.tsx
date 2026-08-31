@@ -1,4 +1,5 @@
 ﻿import { useEffect, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import type { AppSettings } from "../hooks/useSettings";
 import { useVoiceInstall } from "../hooks/useVoiceInstall";
 import PickerMenu from "./PickerMenu";
@@ -7,7 +8,7 @@ import InlineNumberInput from "./InlineNumberInput";
 import { PIPER_LANGS, piperLabel, loadPiperCatalog, loadWhisperCatalog, wmGroup, type WhisperModel } from "../lib/piper";
 
 // centered glass dialog hosting everything speech-related: tab "Options"
-// carries the whole former Settings Voice box (whisper engine, hands-free,
+// carries the whole former Settings Voice box (whisper engine, sensitivity,
 // spoken replies); tab "Voices" browses the full Piper catalog with search,
 // one-click download-and-activate and inline previews
 export default function VoicesDialog({
@@ -34,9 +35,15 @@ export default function VoicesDialog({
   const [catLoading, setCatLoading] = useState(false);
   const [query, setQuery] = useState("");
 
+  // GPU detection (NVIDIA for the cublas whisper engine)
+  const [gpu, setGpu] = useState<{ nvidia: boolean; name: string } | null>(null);
+
   useEffect(() => {
     if (!open) return;
     inst.refresh();
+    invoke<{ nvidia: boolean; name: string }>("voice_gpu")
+      .then(setGpu)
+      .catch(() => setGpu(null));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
@@ -344,62 +351,37 @@ export default function VoicesDialog({
 
           <div className="setting-row">
             <div className="setting-info">
-              <i className="fa-solid fa-headset setting-icon" />
+              <i className="fa-solid fa-wave-square setting-icon" />
               <div>
-                <div className="setting-name">Hands-free dictation</div>
+                <div className="setting-name">Mic sensitivity</div>
                 <div className="setting-desc">
-                  Mic stays live and listens for commands — say "prompt …" to fill
-                  the composer, "send …" to fill and send at once
+                  Higher picks up quieter voices (and more background noise)
                 </div>
               </div>
             </div>
-            <button
-              type="button"
-              className={`toggle${settings.voice.handsFree ? " on" : ""}`}
-              aria-pressed={settings.voice.handsFree}
-              onClick={() =>
-                update({ voice: { ...settings.voice, handsFree: !settings.voice.handsFree } })
-              }
-            >
-              <span className="knob" />
-            </button>
+            <div className="color-controls">
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.05}
+                value={settings.voice.sens}
+                aria-label="Microphone sensitivity"
+                onChange={(e) =>
+                  update({ voice: { ...settings.voice, sens: Number(e.target.value) } })
+                }
+              />
+              <InlineNumberInput
+                value={settings.voice.sens}
+                min={0}
+                max={1}
+                step={0.05}
+                suffix="%"
+                ariaLabel="Microphone sensitivity percent"
+                onChange={(v) => update({ voice: { ...settings.voice, sens: v } })}
+              />
+            </div>
           </div>
-
-          {settings.voice.handsFree && (
-            <div className="setting-row">
-              <div className="setting-info">
-                <i className="fa-solid fa-wave-square setting-icon" />
-                <div>
-                  <div className="setting-name">Mic sensitivity</div>
-                  <div className="setting-desc">
-                    Higher picks up quieter voices (and more background noise)
-                  </div>
-                </div>
-              </div>
-              <div className="color-controls">
-                <input
-                  type="range"
-                  min={0}
-                  max={1}
-                  step={0.05}
-                  value={settings.voice.sens}
-                  aria-label="Microphone sensitivity"
-                  onChange={(e) =>
-                    update({ voice: { ...settings.voice, sens: Number(e.target.value) } })
-                  }
-                />
-                <InlineNumberInput
-                  value={settings.voice.sens}
-                  min={0}
-                  max={1}
-                  step={0.05}
-                  suffix="%"
-                  ariaLabel="Microphone sensitivity percent"
-                  onChange={(v) => update({ voice: { ...settings.voice, sens: v } })}
-                />
-              </div>
-            </div>
-          )}
 
           <div className="setting-row">
             <div className="setting-info">
@@ -407,8 +389,8 @@ export default function VoicesDialog({
               <div>
                 <div className="setting-name">Multilingual commands</div>
                 <div className="setting-desc">
-                  No English match? Re-runs the utterance through whisper's
-                  translate task before giving up to dictation
+                  Translates speech to English before matching — on a miss, the
+                  native-language transcription gets one retry
                 </div>
               </div>
             </div>
@@ -422,6 +404,70 @@ export default function VoicesDialog({
             >
               <span className="knob" />
             </button>
+          </div>
+
+          <div className="setting-row">
+            <div className="setting-info">
+              <i className="fa-solid fa-bolt setting-icon" />
+              <div>
+                <div className="setting-name">GPU transcription</div>
+                <div className="setting-desc">
+                  {!gpu
+                    ? "Checking for an NVIDIA GPU…"
+                    : gpu.nvidia
+                      ? voice?.gpuBin
+                        ? `${gpu.name} — CUDA 12.4 decode, automatic CPU fallback (needs driver ≥ 552)`
+                        : `${gpu.name} detected — installs a CUDA engine next to the CPU one`
+                      : "No NVIDIA GPU detected — the GPU engine needs one"}
+                </div>
+              </div>
+            </div>
+            <div className="color-controls">
+              {!voice?.gpuBin ? (
+                <button
+                  type="button"
+                  className="reset-btn"
+                  disabled={!!dl || !gpu?.nvidia}
+                  onClick={() => void inst.installWhisperGpu()}
+                >
+                  <i className="fa-solid fa-download" />
+                  Install GPU engine (671 MB)
+                </button>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    className="reset-btn"
+                    disabled={!!dl}
+                    aria-label="Reinstall GPU engine"
+                    onClick={() => void inst.installWhisperGpu(true)}
+                  >
+                    <i className="fa-solid fa-rotate" />
+                    Reinstall
+                  </button>
+                  <button
+                    type="button"
+                    className="reset-btn"
+                    disabled={!!dl}
+                    aria-label="Delete GPU engine"
+                    onClick={() => void inst.removeGpuEngine()}
+                  >
+                    <i className="fa-solid fa-trash-can" />
+                    Delete
+                  </button>
+                  <button
+                    type="button"
+                    className={`toggle${settings.voice.gpu ? " on" : ""}`}
+                    aria-pressed={settings.voice.gpu}
+                    onClick={() =>
+                      update({ voice: { ...settings.voice, gpu: !settings.voice.gpu } })
+                    }
+                  >
+                    <span className="knob" />
+                  </button>
+                </>
+              )}
+            </div>
           </div>
 
           <div className="setting-row">

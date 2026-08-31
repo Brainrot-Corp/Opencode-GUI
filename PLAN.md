@@ -43,7 +43,7 @@ So we build a **thin GUI client** that spawns and talks to the server. All agent
 - **opencode release binary** — sidecar (`bundle.externalBin` in `tauri.conf.json`)
 - Markdown: `react-markdown` + `remark-gfm` + `lowlight` / `rehype-highlight`
 - Terminal: `xterm.js` + Rust `portable-pty` (ConPTY)
-- Voice: whisper.cpp + piper TTS, `double-metaphone` + `an-array-of-english-words` for typo tolerance
+- Voice: whisper.cpp + piper TTS (GPU = NVIDIA cublas build, optional), `@ozymandiasthegreat/vad` (WebRTC VAD, embedded wasm) for hands-free speech detection, `double-metaphone` + `an-array-of-english-words` for typo tolerance
 
 > **Design rules** (spacing unit, glass/acrylic material, accent system, blocky
 > chrome, icons, fonts, persistence keys) are codified in [AGENTS.md](./AGENTS.md)

@@ -176,6 +176,10 @@ export function useOpencode() {
 
   const activeRef = useRef(activeId);
   activeRef.current = activeId;
+  // stable read for callbacks that must not change identity per delta
+  // (msgs in deps would defeat MsgRow memo → whole history re-renders while streaming)
+  const msgsRef = useRef(msgs);
+  msgsRef.current = msgs;
   const busyRef = useRef(busyIds);
   busyRef.current = busyIds;
   const compactingRef = useRef(compactingIds);
@@ -1398,7 +1402,7 @@ export function useOpencode() {
       if (!id) return;
       let pasteText = "";
       try {
-        const all = store.cached(id) ?? msgs;
+        const all = store.cached(id) ?? msgsRef.current;
         const idx = all.findIndex((m: any) => m.info?.id === messageID);
         if (idx >= 0) {
           const after = all.slice(idx + 1);
@@ -1429,7 +1433,7 @@ export function useOpencode() {
         window.dispatchEvent(new CustomEvent("oc:rewind-input", { detail: pasteText }));
       }
     },
-    [guardedRefresh, openSession, msgs],
+    [guardedRefresh, openSession],
   );
 
   const unrevert = useCallback(async () => {

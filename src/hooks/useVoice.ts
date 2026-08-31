@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { pushToast } from "./useToast";
+import VADBuilder, { VADMode, VADEvent } from "@ozymandiasthegreat/vad";
+import type { VAD } from "@ozymandiasthegreat/vad";
 
 export type VoicePhase = "idle" | "recording" | "transcribing";
 
@@ -9,9 +11,27 @@ const RATE = 16000; // whisper's required sample rate — AudioContext resamples
 // hands-free VAD defaults
 const SILENCE_MS = 900; // pause length that ends an utterance
 const MIN_SPEECH_MS = 350; // shorter voiced blips are ignored
-const PRE_CHUNKS = 5; // ~320ms pre-roll ring so word onsets don't clip
-// sensitivity slider (0..1) maps to an rms threshold: lenient → strict
+const PRE_CHUNKS = 5; // pre-roll ring so word onsets don't clip
+const FRAME = 480; // 30ms @ 16k — one WebRTC VAD frame (libfvad)
+// sensitivity slider (0..1) → libfvad aggressiveness mode (3..0):
+// higher sensitivity = lenient detector (fewer misses, more noise)
+export const MODE_FOR = (sens: number) =>
+  Math.max(0, Math.min(3, Math.round((1 - sens) * 3)));
+// energy floor kept only for the TTS barge-in detector — speech on/off is
+// decided by the VAD, not by level
 export const THRESH_FOR = (sens: number) => 0.03 - sens * 0.028;
+
+// libfvad (WebRTC VAD) wasm — one constructor per aggressiveness mode, built
+// once and reused. onaudioprocess is sync, so every mode the slider can pick
+// must exist before the first chunk arrives
+let vadClass: typeof VAD | null = null;
+const vadByMode = new Map<number, VAD>();
+async function buildVads() {
+  vadClass = await VADBuilder();
+  for (let m = 0; m <= 3; m++) {
+    if (!vadByMode.has(m)) vadByMode.set(m, new vadClass!(m as VADMode, RATE));
+  }
+}
 
 // Float32 samples → 16-bit mono PCM WAV (44-byte header + data)
 function f32ToWav(samples: Float32Array): Uint8Array {
@@ -61,8 +81,10 @@ function rms(chunk: Float32Array): number {
 export function useVoice(
   onResult: (text: string) => void,
   model: string,
-  handsFree = false,
   sens = 0.7,
+  gpu = false,
+  debug?: (msg: string) => void,
+  multilingual = false,
 ) {
   const [phase, setPhase] = useState<VoicePhase>("idle");
   // streaming = always-on mic: pauses are cut into utterances automatically
@@ -70,14 +92,30 @@ export function useVoice(
   const [error, setError] = useState("");
   // live VAD tuning — read per audio chunk so slider changes apply instantly
   // without restarting the stream
-  const vadRef = useRef({ pauseMs: SILENCE_MS, thresh: THRESH_FOR(sens) });
-  vadRef.current = { pauseMs: SILENCE_MS, thresh: THRESH_FOR(sens) };
+  const vadRef = useRef({
+    pauseMs: SILENCE_MS,
+    thresh: THRESH_FOR(sens),
+    mode: MODE_FOR(sens),
+  });
+  vadRef.current = { pauseMs: SILENCE_MS, thresh: THRESH_FOR(sens), mode: MODE_FOR(sens) };
   // recording machinery lives in refs so start/stop closures stay stable
   const ctxRef = useRef<AudioContext | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const nodeRef = useRef<ScriptProcessorNode | null>(null);
-  const chunksRef = useRef<Float32Array[]>([]);
-  const modeRef = useRef<"manual" | "stream">("manual");
+  // sub-frame carry: chunks aren't multiples of the 30ms VAD frame, so the
+  // rolling remainder waits here for the next chunk
+  const carryRef = useRef<Float32Array>(new Float32Array(0));
+  const gpuRef = useRef(gpu);
+  gpuRef.current = gpu;
+  // debug transcript (Settings › Voice): VAD-level transitions land in the
+  // same log as the utterance audits — ref-backed so onAudio closures see
+  // the latest flag without re-wiring the audio graph
+  const dbgRef = useRef(debug);
+  dbgRef.current = debug;
+  // multilingual mode: the main pass runs whisper's translate task so the
+  // (English-only) router always sees English text
+  const mlRef = useRef(multilingual);
+  mlRef.current = multilingual;
   // stream-mode VAD state
   const uttRef = useRef<Float32Array[]>([]);
   const preRef = useRef<Float32Array[]>([]);
@@ -125,9 +163,6 @@ export function useVoice(
   }, []);
 
   const teardown = useCallback(() => {
-    // back to manual so an in-flight stream utterance's finally can't flip
-    // phase back to "recording" after the user switched the mic off
-    modeRef.current = "manual";
     lastWavRef.current = null;
     if (watchdogRef.current != null) {
       clearInterval(watchdogRef.current);
@@ -143,12 +178,39 @@ export function useVoice(
     ctxRef.current = null;
     uttRef.current = [];
     preRef.current = [];
+    carryRef.current = new Float32Array(0);
     speechMsRef.current = 0;
     silenceMsRef.current = 0;
     bargeMsRef.current = 0;
   }, []);
 
   useEffect(() => () => teardown(), [teardown]);
+
+  const vdbg = useCallback((s: string) => dbgRef.current?.(s), []);
+
+  // feed a chunk's complete 30ms frames through the WebRTC VAD (libfvad
+  // wasm); returns how many frames were voiced. Sub-frame remainder rolls
+  // into the next chunk via carryRef
+  const vadVoiced = useCallback((ch: Float32Array): number => {
+    const v = vadByMode.get(vadRef.current.mode);
+    if (!v) return 0;
+    const carry = carryRef.current;
+    const all = new Float32Array(carry.length + ch.length);
+    all.set(carry);
+    all.set(ch, carry.length);
+    const n = Math.floor(all.length / FRAME);
+    carryRef.current = all.slice(n * FRAME);
+    if (!n) return 0;
+    let voiced = 0;
+    for (let i = 0; i < n; i++) {
+      // one exactly-sized Int16Array per frame — processFrame copies the
+      // frame's whole .buffer, so a subarray view of the merged chunk would
+      // overflow the wasm heap copy and kill onaudioprocess
+      const pcm = vadClass!.floatTo16BitPCM(all.subarray(i * FRAME, (i + 1) * FRAME));
+      if (v.processFrame(pcm) === VADEvent.VOICE) voiced++;
+    }
+    return voiced;
+  }, []);
 
   const transcribe = useCallback(
     async (all: Float32Array) => {
@@ -161,32 +223,44 @@ export function useVoice(
       const wav = f32ToWav(all);
       lastWavRef.current = wav;
       try {
-        const text = await invoke<string>("voice_transcribe", {
-          audio: Array.from(wav),
-          model,
-        });
-        if (text.trim()) onResult(text.trim());
+        const out = await invoke<{ text: string; engine: string; note: string }>(
+          "voice_transcribe",
+          {
+            audio: Array.from(wav),
+            model,
+            translate: mlRef.current,
+            gpu: gpuRef.current,
+          },
+        );
+        vdbg(`transcribed on ${out.engine}${out.note ? ` — ${out.note}` : ""}`);
+        if (out.text.trim()) onResult(out.text.trim());
       } catch (e) {
         setError(String(e));
       } finally {
-        setPhase(modeRef.current === "stream" ? "recording" : "idle");
+        // mic torn down mid-transcribe (user toggled off) → back to idle
+        setPhase(ctxRef.current ? "recording" : "idle");
       }
     },
-    [onResult, model],
+    [onResult, model, vdbg],
   );
 
-  // re-run the last utterance through whisper's translate task (any detected
-  // language → English) for the router's multilingual fallback
-  const retranslate = useCallback(async (): Promise<string | null> => {
+  // multilingual mode's retry: the main pass already ran whisper's translate
+  // task, so this re-runs the same audio natively (source language) — gives
+  // the router a second shot when the translation mangled an English command
+  const retranscribe = useCallback(async (): Promise<string | null> => {
     const wav = lastWavRef.current;
     if (!wav) return null;
     try {
-      const text = await invoke<string>("voice_transcribe", {
-        audio: Array.from(wav),
-        model,
-        translate: true,
-      });
-      return text.trim() || null;
+      const out = await invoke<{ text: string; engine: string; note: string }>(
+        "voice_transcribe",
+        {
+          audio: Array.from(wav),
+          model,
+          translate: !mlRef.current,
+          gpu: gpuRef.current,
+        },
+      );
+      return out.text.trim() || null;
     } catch {
       return null;
     }
@@ -196,25 +270,26 @@ export function useVoice(
     teardown();
     setStreaming(false);
     setPhase("idle");
-    const merged = chunksRef.current;
-    chunksRef.current = [];
-    await transcribe(merge(merged));
-  }, [teardown, transcribe]);
+  }, [teardown]);
 
-  // stream mode: close the open utterance when silence settles
+  // close the open utterance when silence settles
   const closeUtterance = useCallback(() => {
     const seg = uttRef.current;
     uttRef.current = [];
     const spoke = speechMsRef.current >= MIN_SPEECH_MS;
+    const voicedMs = Math.round(speechMsRef.current);
     speechMsRef.current = 0;
     silenceMsRef.current = 0;
-    if (seg.length && spoke) void transcribe(merge(seg));
-  }, [transcribe]);
+    if (seg.length && spoke) {
+      vdbg(`utterance closed — ${voicedMs}ms voiced`);
+      void transcribe(merge(seg));
+    } else if (seg.length) {
+      vdbg(`utterance dropped — ${voicedMs}ms voiced (min ${MIN_SPEECH_MS}ms)`);
+    }
+  }, [transcribe, vdbg]);
 
   const toggle = useCallback(() => {
-    // busy finishing a manual clip — nothing to toggle
-    if (phase === "transcribing" && !streaming) return;
-    // any live mic (recording, or stream mode mid-transcribe) toggles off;
+    // any live mic (recording, or mid-transcribe) toggles off;
     // this also stops the click-during-transcribe double-stream race
     if (phase !== "idle" || streaming) {
       void stop();
@@ -244,15 +319,20 @@ export function useVoice(
         });
         const ctx = new AudioContext({ sampleRate: RATE });
         const src = ctx.createMediaStreamSource(stream);
-        modeRef.current = handsFree ? "stream" : "manual";
+        // the VAD wasm instances must exist before the first chunk lands —
+        // onaudioprocess is sync
+        try {
+          await buildVads();
+        } catch {
+          setError("voice VAD failed to load — try restarting the app");
+          stream.getTracks().forEach((t) => t.stop());
+          void ctx.close().catch(() => {});
+          return;
+        }
         lastProcessRef.current = Date.now();
         const onAudio = (e: AudioProcessingEvent) => {
           lastProcessRef.current = Date.now();
           const ch = new Float32Array(e.inputBuffer.getChannelData(0));
-          if (modeRef.current === "manual") {
-            chunksRef.current.push(ch);
-            return;
-          }
           const level = rms(ch);
           const chunkMs = (ch.length / RATE) * 1000;
           // a reply is playing: AEC removes most of our own voice, so quiet
@@ -266,6 +346,7 @@ export function useVoice(
               bargeMsRef.current += chunkMs;
               if (bargeMsRef.current >= 250) {
                 bargeMsRef.current = 0;
+                vdbg("barge-in — cancelling reply");
                 ttsUntilRef.current = Date.now(); // kill our grace window too
                 ttsSpeakingRef.current = false;
                 window.speechSynthesis?.cancel();
@@ -285,9 +366,12 @@ export function useVoice(
             return;
           }
           bargeMsRef.current = 0;
-          // VAD: quiet before speech fills the pre-roll ring; speech opens an
-          // utterance; pauseMs of trailing quiet closes and transcribes it
-          if (!uttRef.current.length && level < vadRef.current.thresh) {
+          // VAD: rolling 30ms frames through the WebRTC detector — any voiced
+          // frame is speech. Quiet before speech fills the pre-roll ring;
+          // speech opens an utterance; pauseMs of trailing quiet closes it
+          const voiced = vadVoiced(ch);
+          const speech = voiced > 0;
+          if (!uttRef.current.length && !speech) {
             preRef.current.push(ch);
             if (preRef.current.length > PRE_CHUNKS) preRef.current.shift();
             return;
@@ -295,17 +379,19 @@ export function useVoice(
           if (!uttRef.current.length) {
             uttRef.current = preRef.current;
             preRef.current = [];
+            vdbg(`speech start — ${voiced} voiced frame${voiced === 1 ? "" : "s"}`);
           }
           uttRef.current.push(ch);
-          if (level >= vadRef.current.thresh) {
-            speechMsRef.current += chunkMs;
+          if (speech) {
+            speechMsRef.current += (voiced * FRAME * 1000) / RATE;
             silenceMsRef.current = 0;
           } else {
             silenceMsRef.current += chunkMs;
             if (silenceMsRef.current >= vadRef.current.pauseMs) closeUtterance();
           }
         };
-        const node = ctx.createScriptProcessor(4096, 1, 1);
+        // 2048 = 128ms chunks: finer VAD/close granularity, still cheap
+        const node = ctx.createScriptProcessor(2048, 1, 1);
         node.onaudioprocess = onAudio;
         src.connect(node);
         node.connect(ctx.destination); // ScriptProcessor only runs when wired to output
@@ -327,7 +413,7 @@ export function useVoice(
             old.disconnect();
           } catch {}
           try {
-            const repl = c2.createScriptProcessor(4096, 1, 1);
+            const repl = c2.createScriptProcessor(2048, 1, 1);
             repl.onaudioprocess = onAudio;
             src2.connect(repl);
             repl.connect(c2.destination);
@@ -335,13 +421,13 @@ export function useVoice(
             lastProcessRef.current = Date.now();
           } catch {}
         }, 1000);
-        setStreaming(handsFree);
+        setStreaming(true);
         setPhase("recording");
       } catch (e) {
         setError(String(e));
       }
     })();
-  }, [phase, streaming, stop, handsFree, model, closeUtterance, ttsActive]);
+  }, [phase, streaming, stop, model, closeUtterance, ttsActive]);
 
-  return { phase, streaming, error, toggle, retranslate };
+  return { phase, streaming, error, toggle, retranscribe };
 }

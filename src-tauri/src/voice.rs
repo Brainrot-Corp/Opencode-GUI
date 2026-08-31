@@ -1,11 +1,15 @@
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
+
+// download size cap for voice engine/model fetches — enforced by curl
+// --max-filesize and re-checked after download
+const DOWNLOAD_CAP: u64 = 2 * 1024 * 1024 * 1024;
 
 fn unique_temp_path(prefix: &str, ext: &str) -> PathBuf {
     let ts = std::time::SystemTime::now()
@@ -37,6 +41,12 @@ fn bin_dir() -> PathBuf {
     whisper_dir().join("bin")
 }
 
+// separate GPU engine dir (cublas build) so CPU/GPU installs can coexist —
+// transcribe picks per call and falls back to the CPU one on failure
+fn bin_gpu_dir() -> PathBuf {
+    whisper_dir().join("bin-gpu")
+}
+
 fn models_dir() -> PathBuf {
     whisper_dir().join("models")
 }
@@ -45,9 +55,9 @@ fn downloads_dir() -> PathBuf {
     whisper_dir().join("downloads")
 }
 
-fn find_cli() -> Option<PathBuf> {
+fn find_cli_in(dir: &Path) -> Option<PathBuf> {
     for name in ["whisper-cli.exe", "main.exe"] {
-        let p = bin_dir().join(name);
+        let p = dir.join(name);
         if p.exists() {
             return Some(p);
         }
@@ -55,9 +65,18 @@ fn find_cli() -> Option<PathBuf> {
     None
 }
 
+fn find_cli() -> Option<PathBuf> {
+    find_cli_in(&bin_dir())
+}
+
+fn find_gpu_cli() -> Option<PathBuf> {
+    find_cli_in(&bin_gpu_dir())
+}
+
 #[derive(serde::Serialize)]
 pub struct VoiceStatus {
     bin: bool,
+    gpu_bin: bool,
     models: Vec<String>,
 }
 
@@ -75,7 +94,57 @@ pub fn voice_status() -> VoiceStatus {
     models.sort();
     VoiceStatus {
         bin: find_cli().is_some(),
+        gpu_bin: find_gpu_cli().is_some(),
         models,
+    }
+}
+
+// NVIDIA GPU detection for the cublas whisper build — NVIDIA is the only
+// vendor with a prebuilt GPU engine (no modern release ships a Vulkan
+// build). Enumerates Win32_VideoController through the OS CIM cmdlet,
+// zero extra deps.
+#[derive(serde::Serialize)]
+pub struct GpuStatus {
+    nvidia: bool,
+    name: String,
+}
+
+#[tauri::command]
+pub async fn voice_gpu() -> GpuStatus {
+    let nvidia = tauri::async_runtime::spawn_blocking(|| -> Option<String> {
+        let mut cmd = Command::new("powershell");
+        cmd.args([
+            "-NoProfile",
+            "-Command",
+            "Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty Name",
+        ]);
+        // release: no console flash next to the frameless window
+        #[cfg(all(windows, not(debug_assertions)))]
+        {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+            cmd.creation_flags(CREATE_NO_WINDOW);
+        }
+        cmd.stdout(Stdio::piped()).stderr(Stdio::null());
+        let out = cmd.output().ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .map(str::trim)
+            .find(|l| l.to_lowercase().contains("nvidia"))
+            .map(str::to_string)
+    })
+    .await
+    .ok()
+    .flatten();
+    match nvidia {
+        Some(name) => GpuStatus { nvidia: true, name },
+        None => GpuStatus {
+            nvidia: false,
+            name: String::new(),
+        },
     }
 }
 
@@ -105,10 +174,9 @@ pub async fn voice_download(key: String, url: String) -> Result<(), String> {
         "--max-time",
         "1800",
         "--max-filesize",
-        "629145600",
-        "-o",
     ]);
-    cmd.arg(&part).arg(&url);
+    cmd.arg(DOWNLOAD_CAP.to_string());
+    cmd.arg("-o").arg(&part).arg(&url);
     // release: no console flash next to the frameless window
     #[cfg(all(windows, not(debug_assertions)))]
     {
@@ -135,21 +203,26 @@ fn part_path(key: &str) -> Result<PathBuf, String> {
 }
 
 #[tauri::command]
-pub async fn install_bin_finalize(key: String) -> Result<(), String> {
+pub async fn install_bin_finalize(key: String, gpu: Option<bool>) -> Result<(), String> {
     let part = part_path(&key)?;
     // EH-12: cap size and stream via File+BufReader instead of read whole file (OOM on 400MB)
     let meta = std::fs::metadata(&part).map_err(|e| format!("download incomplete: {e}"))?;
-    if meta.len() > 629145600 {
+    if meta.len() > DOWNLOAD_CAP {
         let _ = std::fs::remove_file(&part);
-        return Err("download too large (cap 600M)".into());
+        return Err("download too large (cap 2G)".into());
     }
     if meta.len() == 0 {
         return Err("empty download".into());
     }
+    let dest = if gpu.unwrap_or(false) {
+        bin_gpu_dir()
+    } else {
+        bin_dir()
+    };
     let file = std::fs::File::open(&part).map_err(|e| format!("download incomplete: {e}"))?;
     let reader = std::io::BufReader::new(file);
     let mut archive = zip::ZipArchive::new(reader).map_err(|e| e.to_string())?;
-    std::fs::create_dir_all(bin_dir()).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&dest).map_err(|e| e.to_string())?;
     // flatten: release zips wrap everything in one folder ("Release/")
     for i in 0..archive.len() {
         let mut f = archive.by_index(i).map_err(|e| e.to_string())?;
@@ -161,12 +234,12 @@ pub async fn install_bin_finalize(key: String) -> Result<(), String> {
         if fname.is_empty() || fname.starts_with('.') {
             continue;
         }
-        let out = bin_dir().join(fname);
+        let out = dest.join(fname);
         let mut w = std::fs::File::create(&out).map_err(|e| e.to_string())?;
         std::io::copy(&mut f, &mut w).map_err(|e| e.to_string())?;
     }
     let _ = std::fs::remove_file(&part);
-    find_cli().ok_or_else(|| "zip extracted but no whisper-cli/main exe found".to_string())?;
+    find_cli_in(&dest).ok_or_else(|| "zip extracted but no whisper-cli/main exe found".to_string())?;
     Ok(())
 }
 
@@ -200,18 +273,31 @@ pub fn voice_remove_model(name: String) -> Result<(), String> {
     }
 }
 
+// deletes the GPU (cublas) engine directory; transcribe then falls back to
+// the CPU engine on the next call
+#[tauri::command]
+pub async fn voice_remove_gpu() -> Result<(), String> {
+    match std::fs::remove_dir_all(bin_gpu_dir()) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
 // runs whisper-cli over a 16 kHz mono s16 WAV produced by the webview;
 // returns the plain-text transcription (-nt strips timestamps). With
 // translate=true, whisper decodes any detected language straight into
-// English (used as the voice router's multilingual fallback pass)
+// English (used as the voice router's multilingual fallback pass).
+// gpu=true prefers the cublas engine in bin-gpu/ (NVIDIA); the result names
+// the engine that actually did the work ("gpu" | "cpu") and why it fell
+// back, since a cuda-less cublas build still succeeds while computing on cpu
 #[tauri::command]
 pub async fn voice_transcribe(
     audio: Vec<u8>,
     model: String,
     translate: Option<bool>,
-) -> Result<String, String> {
-    let cli = find_cli()
-        .ok_or_else(|| "voice engine not installed Ã¢â‚¬â€ set it up in Settings > Voice".to_string())?;
+    gpu: Option<bool>,
+) -> Result<TranscribeOut, String> {
     if !model.ends_with(".bin") || model.contains("..") {
         return Err("bad model name".into());
     }
@@ -234,69 +320,158 @@ pub async fn voice_transcribe(
         f.write_all(&audio).map_err(|e| e.to_string())?;
     }
 
-    let mut cmd = Command::new(&cli);
-    cmd.arg("-m").arg(&mp).arg("-f").arg(&tmp);
-    cmd.args(["-nt", "-np"]);
-    if translate.unwrap_or(false) {
-        // source language is auto-detected; the decode task becomes translate
-        cmd.arg("--translate");
+    let tr = translate.unwrap_or(false);
+    let gpu_cli = find_gpu_cli();
+    let cpu_cli = find_cli();
+    // GPU requested but no GPU engine installed → use the CPU one; a GPU
+    // engine that spawns but fails at runtime falls back below
+    let primary = if gpu.unwrap_or(false) {
+        gpu_cli.clone().or_else(|| cpu_cli.clone())
+    } else {
+        cpu_cli.clone()
     }
-    // release: CREATE_NO_WINDOW keeps a console from flashing next to the GUI;
-    // dev builds inherit stderr so whisper errors show in the terminal
-    #[cfg(all(windows, not(debug_assertions)))]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        cmd.creation_flags(CREATE_NO_WINDOW).stderr(Stdio::null());
-    }
-    cmd.stdout(Stdio::piped());
+    .ok_or_else(|| "voice engine not installed — set it up in Settings > Voice".to_string())?;
+    let want_gpu = Some(&primary) == gpu_cli.as_ref();
+    let cpu_fallback = if want_gpu { cpu_cli.clone() } else { None };
 
     // EH-10+TF-02: offload blocking wait to dedicated pool; single wait without double-reap
-    let blocking = tauri::async_runtime::spawn_blocking(move || -> Result<String, String> {
-        let mut child = cmd.spawn().map_err(|e| format!("failed to run whisper-cli: {e}"))?;
-        // hard cap so a wedged process can't pin the UI mic state forever
-        let deadline = Instant::now() + Duration::from_secs(180);
-        let status;
-        loop {
-            match child.try_wait().map_err(|e| e.to_string())? {
-                Some(s) => {
-                    status = s;
-                    break;
+    let tmp2 = tmp.clone();
+    let blocking = tauri::async_runtime::spawn_blocking(move || -> Result<TranscribeOut, String> {
+        let mut engine = if want_gpu { "gpu" } else { "cpu" };
+        let mut note = String::new();
+        let (text, stderr) = match run_whisper(&primary, &mp, &tmp2, tr) {
+            Ok(v) => v,
+            Err(e) => match cpu_fallback {
+                // engine crashed (old driver, missing CUDA dlls) → retry on CPU
+                Some(cpu) => {
+                    engine = "cpu";
+                    note = format!("engine failed: {e}");
+                    run_whisper(&cpu, &mp, &tmp2, tr)?
                 }
-                None => {
-                    if Instant::now() > deadline {
-                        let _ = child.kill();
-                        let _ = child.wait();
-                        return Err("transcription timed out".into());
-                    }
-                    std::thread::sleep(Duration::from_millis(40));
-                }
+                None => return Err(e),
+            },
+        };
+        if engine == "gpu" {
+            // a cublas build that can't reach CUDA still exits 0 while quietly
+            // computing on the cpu — verify from its own log that cuda engaged
+            // (device enumeration / backend registry) and didn't report an
+            // init failure; on mismatch surface whisper's own last lines
+            let low = stderr.to_ascii_lowercase();
+            let cuda_failed = low.contains("failed to initialize cuda") || low.contains("cuda_init: failed");
+            if !low.contains("cuda") || cuda_failed {
+                engine = "cpu";
+                let tail = stderr
+                    .lines()
+                    .rev()
+                    .take(2)
+                    .collect::<Vec<_>>()
+                    .join(" | ");
+                let tail: String = tail.chars().rev().take(160).collect::<Vec<_>>().into_iter().rev().collect();
+                note = format!("gpu build ran without cuda: {tail}");
             }
         }
-        // TF-02: avoid double wait_with_output after try_wait (child already reaped).
-        // Read remaining stdout directly instead of wait_with_output().
-        let mut stdout = Vec::new();
-        if let Some(mut out) = child.stdout.take() {
-            use std::io::Read;
-            let _ = out.read_to_end(&mut stdout);
-        }
-        if !status.success() && stdout.is_empty() {
-            return Err(format!("whisper-cli failed ({})", status));
-        }
-        let text = String::from_utf8_lossy(&stdout);
-        let clean = text
-            .lines()
-            .map(str::trim)
-            .filter(|l| !l.is_empty())
-            .collect::<Vec<_>>()
-            .join(" ");
-        Ok(clean)
+        Ok(TranscribeOut {
+            text,
+            engine: engine.into(),
+            note,
+        })
     })
     .await
     .map_err(|e| format!("task join failed: {e}"))?;
 
     let _ = std::fs::remove_file(&tmp);
     blocking
+}
+
+// what voice_transcribe hands back — text plus which engine actually did the
+// work ("gpu" | "cpu") and why it fell back, so the UI can show the truth
+#[derive(serde::Serialize)]
+pub struct TranscribeOut {
+    text: String,
+    engine: String,
+    note: String,
+}
+
+// one whisper-cli invocation over the temp wav — blocking, only call from
+// spawn_blocking. Hard cap so a wedged process can't pin the UI mic state.
+// Returns (transcription, stderr log) — stderr carries the backend/device
+// lines used to verify the gpu build engaged cuda.
+fn run_whisper(cli: &Path, mp: &Path, tmp: &Path, translate: bool) -> Result<(String, String), String> {
+    use std::io::Read;
+    let mut cmd = Command::new(cli);
+    cmd.arg("-m").arg(mp).arg("-f").arg(tmp);
+    cmd.args(["-nt", "-np"]);
+    if translate {
+        // source language is auto-detected; the decode task becomes translate
+        cmd.arg("--translate");
+    }
+    // release: CREATE_NO_WINDOW keeps a console from flashing next to the GUI
+    #[cfg(all(windows, not(debug_assertions)))]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+
+    let mut child = cmd.spawn().map_err(|e| format!("failed to run whisper-cli: {e}"))?;
+    // drain both pipes on threads so a chatty child can't deadlock on a full
+    // pipe while the poll loop waits (TF-02: child reaped via try_wait only)
+    let mut out_pipe = child.stdout.take();
+    let mut err_pipe = child.stderr.take();
+    let out_t = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        if let Some(p) = out_pipe.as_mut() {
+            let _ = p.read_to_end(&mut buf);
+        }
+        buf
+    });
+    let err_t = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        if let Some(p) = err_pipe.as_mut() {
+            let _ = p.read_to_end(&mut buf);
+        }
+        buf
+    });
+    let deadline = Instant::now() + Duration::from_secs(180);
+    let status;
+    loop {
+        match child.try_wait().map_err(|e| e.to_string())? {
+            Some(s) => {
+                status = s;
+                break;
+            }
+            None => {
+                if Instant::now() > deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    let _ = out_t.join();
+                    let _ = err_t.join();
+                    return Err("transcription timed out".into());
+                }
+                std::thread::sleep(Duration::from_millis(40));
+            }
+        }
+    }
+    let stdout = out_t.join().unwrap_or_default();
+    let stderr = err_t.join().unwrap_or_default();
+    if !status.success() && stdout.is_empty() {
+        let tail = String::from_utf8_lossy(&stderr)
+            .lines()
+            .rev()
+            .take(2)
+            .collect::<Vec<_>>()
+            .join(" | ");
+        return Err(format!("whisper-cli failed ({}): {}", status, tail));
+    }
+    let text = String::from_utf8_lossy(&stdout);
+    let clean = text
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+    Ok((clean, String::from_utf8_lossy(&stderr).to_string()))
 }
 
 // ---------- piper neural TTS (offline, better than system voices) ----------
@@ -345,9 +520,9 @@ pub async fn install_piper_bin(key: String) -> Result<(), String> {
     let part = part_path(&key)?;
     // EH-12: cap + stream instead of read whole file
     let meta = std::fs::metadata(&part).map_err(|e| format!("download incomplete: {e}"))?;
-    if meta.len() > 629145600 {
+    if meta.len() > DOWNLOAD_CAP {
         let _ = std::fs::remove_file(&part);
-        return Err("download too large (cap 600M)".into());
+        return Err("download too large (cap 2G)".into());
     }
     if meta.len() == 0 {
         return Err("empty download".into());

@@ -556,7 +556,7 @@ export default function SettingsDrawer({
                 <div>
                   <div className="setting-name">Voice &amp; speech</div>
                   <div className="setting-desc">
-                    Speech engine, hands-free dictation, neural voices &amp; spoken replies
+                    Speech engine, mic sensitivity, neural voices &amp; spoken replies
                   </div>
                 </div>
               </div>

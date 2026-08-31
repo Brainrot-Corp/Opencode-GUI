@@ -592,17 +592,17 @@ export default function ChatPage() {
         dispatch(act);
         return;
       }
-      // no match — the utterance may be in another language: one retry
-      // through whisper's translate task before giving up to dictation.
+      // no match — multilingual mode already translated the main pass;
+      // retry once with the native-language transcription before giving up.
       // Sequence token discards the result if newer speech arrived meanwhile
       if (settings.voice.multilingual) {
         const seq = ++seqRef.current;
-        void retranslateRef.current?.().then((en) => {
-          if (!en || seq !== seqRef.current) return;
-          const act2 = routeVoice(en, routeCtx());
+        void retranscribeRef.current?.().then((native) => {
+          if (!native || seq !== seqRef.current) return;
+          const act2 = routeVoice(native, routeCtx());
           if (settings.voice.debug)
             dbgPush(
-              `[en] "${en}" → ${act2 ? JSON.stringify(act2) : "no match · dictation"}`,
+              `[native] "${native}" → ${act2 ? JSON.stringify(act2) : "no match"}`,
             );
           if (act2) dispatch(act2);
         });
@@ -615,12 +615,14 @@ export default function ChatPage() {
   const voice = useVoice(
     handleVoiceTranscript,
     settings.voice.model,
-    settings.voice.handsFree,
     settings.voice.sens,
+    settings.voice.gpu,
+    settings.voice.debug ? dbgPush : undefined,
+    settings.voice.multilingual,
   );
-  // handler runs before useVoice returns — reach retranslate through a ref
-  const retranslateRef = useRef<(() => Promise<string | null>) | null>(null);
-  retranslateRef.current = voice.retranslate;
+  // handler runs before useVoice returns — reach retranscribe through a ref
+  const retranscribeRef = useRef<(() => Promise<string | null>) | null>(null);
+  retranscribeRef.current = voice.retranscribe;
 
   // Mic toggle — rebindable (default Ctrl+M)
   useEffect(() => {

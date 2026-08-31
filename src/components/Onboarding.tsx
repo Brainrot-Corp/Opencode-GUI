@@ -283,15 +283,6 @@ export default function Onboarding({
             </div>
 
             <ToggleRow
-              icon="fa-headset"
-              name={t.handsFreeName}
-              desc={t.handsFreeDesc}
-              on={settings.voice.handsFree}
-              onToggle={() =>
-                update({ voice: { ...settings.voice, handsFree: !settings.voice.handsFree } })
-              }
-            />
-            <ToggleRow
               icon="fa-language"
               name={t.multiName}
               desc={t.multiDesc}

@@ -101,13 +101,14 @@ export type AppSettings = {
   collapsed: boolean;
   voice: {
     model: string;
-    handsFree: boolean;
     sens: number;
     // debug transcript mode — show raw → router input → matched act
     debug: boolean;
     // no English match → re-run the utterance through whisper's
     // --translate task and retry routing
     multilingual: boolean;
+    // prefer the GPU (NVIDIA cublas) whisper engine when installed
+    gpu: boolean;
   };
   speakReplies: boolean;
   // piper voice file ("<id>.onnx") for spoken replies — "" = none yet
@@ -157,7 +158,7 @@ const DEFAULTS: AppSettings = {
   workspace: "",
   workspaces: [],
   collapsed: true,
-  voice: { model: "ggml-base.bin", handsFree: false, sens: 0.7, debug: false, multilingual: false },
+  voice: { model: "ggml-base.bin", sens: 0.7, debug: false, multilingual: false, gpu: false },
   speakReplies: false,
   ttsVoice: "",
   ttsVol: 1,
@@ -298,10 +299,10 @@ export function useSettings() {
             typeof p.voice?.model === "string" && p.voice.model
               ? p.voice.model
               : "ggml-base.bin",
-          handsFree: !!p.voice?.handsFree,
           sens: num(p.voice?.sens, DEFAULTS.voice.sens, 0, 1),
           debug: !!p.voice?.debug,
           multilingual: p.voice?.multilingual === undefined ? false : !!p.voice.multilingual,
+          gpu: !!p.voice?.gpu,
         },
         ttsVoice:
           typeof p.ttsVoice === "string" && p.ttsVoice.endsWith(".onnx") ? p.ttsVoice : "",

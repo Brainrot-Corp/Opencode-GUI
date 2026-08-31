@@ -7,6 +7,11 @@ import { invoke } from "@tauri-apps/api/core";
 
 export const WHISPER_BIN_URL =
   "https://github.com/ggml-org/whisper.cpp/releases/latest/download/whisper-bin-x64.zip";
+// GPU (NVIDIA cublas) build — no modern whisper.cpp release ships a Vulkan
+// build, so cublas is the pick; this is the newest CUDA the releases offer
+// (12.4, needs NVIDIA driver ≥ 552). Reinstalling swaps the whole bin-gpu dir
+export const WHISPER_GPU_BIN_URL =
+  "https://github.com/ggml-org/whisper.cpp/releases/latest/download/whisper-cublas-12.4.0-bin-x64.zip";
 export const MODEL_BASE = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/";
 export const VOICE_MODELS = [
   { id: "ggml-tiny.en.bin", label: "tiny.en · 78 MB · fastest, rougher" },

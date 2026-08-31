@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type { AppSettings } from "./useSettings";
 import {
   WHISPER_BIN_URL,
+  WHISPER_GPU_BIN_URL,
   MODEL_BASE,
   VOICE_MODELS,
   PIPER_BIN_URL,
@@ -11,13 +12,13 @@ import {
 
 const SAMPLE_TEXT = "Hey, this is how I will read replies aloud.";
 
-type EngineState = { bin: boolean; items: string[] };
-// Rust returns {bin, models} from voice_status and {bin, voices} from
-// tts_status — normalize both into one shape here so callers never see it
-type RawStatus = { bin?: boolean; models?: string[]; voices?: string[] };
+type EngineState = { bin: boolean; items: string[]; gpuBin?: boolean };
+// Rust returns {bin, gpu_bin, models} from voice_status and {bin, voices}
+// from tts_status — normalize both into one shape here so callers never see it
+type RawStatus = { bin?: boolean; gpu_bin?: boolean; models?: string[]; voices?: string[] };
 
 function normStatus(s?: RawStatus | null): EngineState {
-  return { bin: !!s?.bin, items: [...(s?.models ?? s?.voices ?? [])] };
+  return { bin: !!s?.bin, gpuBin: !!s?.gpu_bin, items: [...(s?.models ?? s?.voices ?? [])] };
 }
 
 // shared download/install pipeline for whisper STT + piper TTS — used by both
@@ -85,7 +86,7 @@ export function useVoiceInstall(
         setErr(String(e));
         return false;
       }
-      setVoice((v) => ({ bin: true, items: v?.items ?? [] }));
+      setVoice((v) => ({ bin: true, gpuBin: v?.gpuBin, items: v?.items ?? [] }));
     }
     if (!voice?.items.includes(modelId)) {
       // label is the bare model id — VoicesDialog matches it to mark the
@@ -98,9 +99,30 @@ export function useVoiceInstall(
         setErr(String(e));
         return false;
       }
-      setVoice((v) => ({ bin: v?.bin ?? false, items: [...(v?.items ?? []), modelId] }));
+      setVoice((v) => ({ bin: v?.bin ?? false, gpuBin: v?.gpuBin, items: [...(v?.items ?? []), modelId] }));
     }
     update({ voice: { ...settings.voice, model: modelId } });
+    return true;
+  }
+
+  // NVIDIA cublas engine → bin-gpu/ (install_bin_finalize {gpu:true}); flips
+  // settings.voice.gpu on success. force=true re-downloads the latest build
+  // over the existing one (engine upgrades); transcribe reports per utterance
+  // which engine actually ran and why, if any
+  async function installWhisperGpu(force = false): Promise<boolean> {
+    if (dl) return false;
+    if (!voice?.gpuBin || force) {
+      if (!(await downloadTo("whisper-gpu-bin", WHISPER_GPU_BIN_URL, "GPU voice engine")))
+        return false;
+      try {
+        await invoke("install_bin_finalize", { key: "whisper-gpu-bin", gpu: true });
+      } catch (e) {
+        setErr(String(e));
+        return false;
+      }
+      setVoice((v) => ({ bin: v?.bin ?? false, gpuBin: true, items: v?.items ?? [] }));
+    }
+    update({ voice: { ...settings.voice, gpu: true } });
     return true;
   }
 
@@ -174,12 +196,27 @@ export function useVoiceInstall(
     return true;
   }
 
+  // deletes the GPU engine dir and turns the gpu preference off so the row
+  // reflects reality; transcribe would fall back to CPU anyway
+  async function removeGpuEngine(): Promise<boolean> {
+    setErr("");
+    try {
+      await invoke("voice_remove_gpu");
+      setVoice((v) => ({ bin: v?.bin ?? false, gpuBin: false, items: v?.items ?? [] }));
+      if (settings.voice.gpu) update({ voice: { ...settings.voice, gpu: false } });
+      return true;
+    } catch (e) {
+      setErr(String(e));
+      return false;
+    }
+  }
+
   async function removeModel(name: string): Promise<boolean> {
     setErr("");
     try {
       await invoke("voice_remove_model", { name });
       const left = (voice?.items ?? []).filter((m) => m !== name);
-      setVoice((v) => ({ bin: v?.bin ?? false, items: left }));
+      setVoice((v) => ({ bin: v?.bin ?? false, gpuBin: v?.gpuBin, items: left }));
       if (settings.voice.model === name) {
         update({ voice: { ...settings.voice, model: left[0] ?? VOICE_MODELS[1].id } });
       }
@@ -213,6 +250,8 @@ export function useVoiceInstall(
     busy: !!dl,
     refresh,
     installWhisper,
+    installWhisperGpu,
+    removeGpuEngine,
     ensurePiper,
     removeModel,
     removePiperVoice,
