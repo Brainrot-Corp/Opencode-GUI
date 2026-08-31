@@ -305,7 +305,9 @@ export function useSettings() {
           gpu: !!p.voice?.gpu,
         },
         ttsVoice:
-          typeof p.ttsVoice === "string" && p.ttsVoice.endsWith(".onnx") ? p.ttsVoice : "",
+          typeof p.ttsVoice === "string" && p.ttsVoice && !p.ttsVoice.includes("/") && !p.ttsVoice.includes("\\") && !p.ttsVoice.includes("..") && p.ttsVoice.length < 64
+            ? p.ttsVoice
+            : "",
         ttsVol: num(p.ttsVol, DEFAULTS.ttsVol, 0, 1),
         ttsSpeed: num(p.ttsSpeed, DEFAULTS.ttsSpeed, 0.5, 2),
         secondaryModel: typeof p.secondaryModel === "string" ? p.secondaryModel : "",
@@ -364,7 +366,7 @@ export function useSettings() {
           }
           return out;
         })(),
-        speakReplies: !!p.speakReplies && typeof p.secondaryModel === "string" && !!p.secondaryModel && typeof p.ttsVoice === "string" && p.ttsVoice.endsWith(".onnx"),
+        speakReplies: !!p.speakReplies && typeof p.secondaryModel === "string" && !!p.secondaryModel && typeof p.ttsVoice === "string" && !!p.ttsVoice,
         // legacy showThinking (true = thinking expanded) inverts into the new
         // collapsed flag so existing users keep their default; fresh installs
         // start fully collapsed

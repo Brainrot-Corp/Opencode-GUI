@@ -13,7 +13,7 @@ use browser::{browser_back, browser_close, browser_forward, browser_navigate, br
 
 mod voice;
 use voice::{install_bin_finalize, install_model_finalize, install_piper_bin, install_tts_voice_part, 
-tts_remove_voice, tts_speak, tts_status, voice_download, voice_gpu, voice_remove_all, voice_remove_gpu, voice_remove_model,
+kokoro_remove_engine, install_kokoro_gpu_part, tts_gpu_remove, tts_remove_voice, tts_speak, tts_status, tts_stream, voice_download, voice_gpu, voice_remove_all, voice_remove_gpu, voice_remove_model,
     voice_status, voice_transcribe};
 
 mod git;
@@ -1853,9 +1853,13 @@ pub fn run() {
             voice_remove_gpu,
             tts_status,
             tts_speak,
+            tts_stream,
             install_piper_bin,
             install_tts_voice_part,
             tts_remove_voice,
+            install_kokoro_gpu_part,
+            tts_gpu_remove,
+            kokoro_remove_engine,
             voice_remove_all,
             git_status,
             git_stage,

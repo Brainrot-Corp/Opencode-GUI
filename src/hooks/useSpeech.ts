@@ -210,6 +210,60 @@ export function useSpeech(oc: SpeechOc, settings: AppSettings) {
     })();
   };
 
+  // streaming speech — while the assistant is still generating, speak
+  // complete sentences as they appear (low-latency). Uses Kokoro GPU → CPU
+  // auto fallback; each sentence is synthesized and queued as soon as it
+  // is complete, so playback starts before the full answer is ready.
+  const lastStreamIdRef = useRef("");
+  const lastStreamTextRef = useRef("");
+  useEffect(() => {
+    if (!settings.speakReplies || !settings.ttsVoice) return;
+    if (!oc.busy) return;
+    // find the currently streaming assistant message (not yet completed)
+    let streaming: Msg | undefined;
+    for (let i = oc.msgs.length - 1; i >= 0; i--) {
+      const m = oc.msgs[i];
+      if ((m.info as any).role === "assistant" && !(m.info as any).time?.completed) {
+        streaming = m;
+        break;
+      }
+    }
+    if (!streaming) return;
+    const id = streaming.info.id as string;
+    const full = full_text(streaming);
+    if (!full.trim()) return;
+    // new streaming turn?
+    if (id !== lastStreamIdRef.current) {
+      lastStreamIdRef.current = id;
+      lastStreamTextRef.current = "";
+      seenLive.current.add(id);
+    }
+    const prev = lastStreamTextRef.current;
+    if (full.length <= prev.length) return;
+    if (!full.startsWith(prev)) {
+      // text was edited/reset, just update
+      lastStreamTextRef.current = full;
+      return;
+    }
+    // find complete sentences in full that weren't in prev
+    const allSentences = full.match(/[^.!?]+[.!?]+/g) || [];
+    const prevSentences = prev.match(/[^.!?]+[.!?]+/g) || [];
+    if (allSentences.length > prevSentences.length) {
+      const newSentences = allSentences.slice(prevSentences.length);
+      for (const s of newSentences) {
+        const clean = cleanSpeech(s);
+        if (clean) queueSpeech(clean);
+      }
+      // update prev to include the new complete sentences, keep trailing incomplete for next time
+      const pos = full.lastIndexOf(newSentences[newSentences.length - 1]);
+      if (pos >= 0) {
+        lastStreamTextRef.current = full.slice(0, pos + newSentences[newSentences.length - 1].length);
+      } else {
+        lastStreamTextRef.current = prev + newSentences.join("");
+      }
+    }
+  }, [oc.msgs, oc.busy, settings.speakReplies, settings.ttsVoice, queueSpeech]);
+
   // no streaming speech — only when an answer finishes (even mid-turn) we decide
   // to queue it raw or via the commit-model summary, never cutting.
   // tail lookups scan backward in place: msgs identity changes per streaming
@@ -234,10 +288,35 @@ export function useSpeech(oc: SpeechOc, settings: AppSettings) {
     lastSpoken.current = id;
     const raw = full_text(last);
     if (!raw.trim()) return;
-    if (wordCount(raw) > 30) {
-      void summarizeWithCommitModel(raw);
+    // if we already streamed parts of this message, only speak the tail
+    let toSpeak = raw;
+    const wasStreamed = lastStreamIdRef.current === id;
+    if (wasStreamed) {
+      const prev = lastStreamTextRef.current;
+      if (raw.startsWith(prev)) {
+        toSpeak = raw.slice(prev.length).trim();
+        lastStreamIdRef.current = "";
+        lastStreamTextRef.current = "";
+        if (!toSpeak) return;
+      } else {
+        lastStreamIdRef.current = "";
+        lastStreamTextRef.current = "";
+      }
+    }
+    if (!wasStreamed && wordCount(toSpeak) > 30) {
+      void summarizeWithCommitModel(toSpeak);
     } else {
-      queueSpeech(raw);
+      // split tail into sentences for consistent queuing
+      const sents = toSpeak.match(/[^.!?]+[.!?]+/g) || [toSpeak];
+      let queued = false;
+      for (const s of sents) {
+        const c = cleanSpeech(s);
+        if (c) { queueSpeech(c); queued = true; }
+      }
+      if (!queued) {
+        const c = cleanSpeech(toSpeak);
+        if (c) queueSpeech(c);
+      }
     }
   }, [oc.msgs, oc.busy, settings.speakReplies, settings.ttsVoice, debriefing, queueSpeech, summarizeWithCommitModel]);
 
@@ -299,8 +378,27 @@ export function useSpeech(oc: SpeechOc, settings: AppSettings) {
     lastSpoken.current = last.info.id;
     const raw = full_text(last);
     if (!raw.trim()) return;
-    if (wordCount(raw) > 30) void summarizeWithCommitModel(raw);
-    else queueSpeech(raw);
+    let toSpeak = raw;
+    const wasStreamed = lastStreamIdRef.current === last.info.id;
+    if (wasStreamed) {
+      const prev = lastStreamTextRef.current;
+      if (raw.startsWith(prev)) {
+        toSpeak = raw.slice(prev.length).trim();
+        lastStreamIdRef.current = "";
+        lastStreamTextRef.current = "";
+        if (!toSpeak) return;
+      } else {
+        lastStreamIdRef.current = "";
+        lastStreamTextRef.current = "";
+      }
+    }
+    if (!wasStreamed && wordCount(toSpeak) > 30) void summarizeWithCommitModel(toSpeak);
+    else {
+      const sents = toSpeak.match(/[^.!?]+[.!?]+/g) || [toSpeak];
+      let queued = false;
+      for (const s of sents) { const c = cleanSpeech(s); if (c) { queueSpeech(c); queued = true; } }
+      if (!queued) { const c = cleanSpeech(toSpeak); if (c) queueSpeech(c); }
+    }
   }, [settings.speakReplies, settings.ttsVoice, oc.msgs, debriefing, queueSpeech, summarizeWithCommitModel]);
 
   // status cues: turn start is spoken via same queued FIFO — never cuts.

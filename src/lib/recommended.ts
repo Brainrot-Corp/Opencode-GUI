@@ -1,7 +1,7 @@
 // Remote "recommended setup" spec for the onboarding wizard — fetched from a
 // plain JSON file on GitHub so recommendations update without shipping a
 // build. Every download source can be overridden by full URL; anything absent
-// falls back to the built-in constants in piper.ts.
+// falls back to the built-in constants in kokoro.ts.
 //
 // ponytail: ids-only validation against known shapes, not live catalog
 // membership — a bad id fails at download time with the normal error row.

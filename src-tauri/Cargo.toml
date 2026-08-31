@@ -44,6 +44,9 @@ base64 = "0.23.1"
 discord-rich-presence = "0.2"
 sha2 = "0.10"
 tauri-plugin-clipboard-manager = "2.3.2"
+kokoro-en = { git = "https://github.com/pguso/kokoro", package = "kokoro-en", default-features = false, features = ["misaki-lean"] }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "sync", "time", "fs", "macros"] }
+futures = "0.3"
 
 [target."cfg(windows)".dependencies]
 window-vibrancy = "0.6"
@@ -51,5 +54,5 @@ jumplist_win = "0.0.4"
 winreg = "0.52"
 # version-matched to wry's — gives access to ICoreWebView2Controller
 webview2-com = "0.38"
-windows = { version = "0.58", features = ["Win32_System_Com", "Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_System_DataExchange", "Win32_Graphics_Gdi", "Win32_System_JobObjects", "Win32_System_Threading", "Win32_System_WindowsProgramming"] }
+windows = { version = "0.58", features = ["Win32_System_Com", "Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_System_DataExchange", "Win32_Graphics_Gdi", "Win32_System_JobObjects", "Win32_System_Threading", "Win32_System_WindowsProgramming", "Win32_System_LibraryLoader"] }
 
