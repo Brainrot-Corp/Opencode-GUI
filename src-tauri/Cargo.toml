@@ -10,6 +10,7 @@ edition = "2021"
 #   cargo tauri build --features noglass
 [features]
 noglass = []
+whisper = ["dep:whisper-rs"]
 
 # faster rebuilds when switching build variants (win10/win11) and small edits
 [profile.release]
@@ -38,8 +39,9 @@ serde_json = "1"
 tauri-plugin-dialog = "2.7.2"
 notify = "7"
 zip = { version = "4", default-features = false, features = ["deflate"] }
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "multipart", "stream", "blocking"] }
 portable-pty = "0.9.0"
+whisper-rs = { version = "0.14", optional = true }
 base64 = "0.23.1"
 discord-rich-presence = "0.2"
 sha2 = "0.10"

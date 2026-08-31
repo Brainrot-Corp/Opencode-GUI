@@ -914,6 +914,30 @@
     inset 0 1px 0 rgba(255, 255, 255, 0.05);
 }
 
+/* live partial transcript — streaming preview while speaking */
+.voice-partial {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  margin: 0 0 8px;
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 18%, transparent);
+  border-left: 2px solid var(--accent);
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text);
+  animation: voice-in 0.15s var(--ease);
+}
+.voice-partial .fa-waveform-lines { color: var(--accent); text-shadow: 0 0 6px var(--accent-glow); }
+.voice-caret {
+  width: 2px; height: 14px; background: var(--accent); margin-left: 2px;
+  animation: voice-caret 0.9s steps(1) infinite;
+  box-shadow: 0 0 6px var(--accent-glow);
+}
+@keyframes voice-caret { 0%,50%{opacity:1} 51%,100%{opacity:0} }
+
 /* voice feedback strip above the composer — audit trail (Settings › Voice)
    and yes/no confirmations share one material with the chat stage/composer:
    same surf gradient + blur, hairline border, inset top highlight, flush

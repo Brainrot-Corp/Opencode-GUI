@@ -421,6 +421,298 @@ pub struct TranscribeOut {
     note: String,
 }
 
+// ---------- Streaming STT helpers — PCM path + persistent backend ----------
+// PCM → WAV bytes (16-bit LE, 16 kHz mono). Used for the persistent
+// whisper-server multipart POST and for the CLI fallback temp file.
+// Keeps audio as f32 internally until the last moment, no double WAV decode.
+fn pcm_f32_to_wav_bytes(samples: &[f32], sample_rate: u32) -> Vec<u8> {
+    let mut out = Vec::with_capacity(44 + samples.len() * 2);
+    let len = samples.len() as u32;
+    out.extend_from_slice(b"RIFF");
+    out.extend_from_slice(&(36 + len * 2).to_le_bytes());
+    out.extend_from_slice(b"WAVE");
+    out.extend_from_slice(b"fmt ");
+    out.extend_from_slice(&16u32.to_le_bytes());
+    out.extend_from_slice(&1u16.to_le_bytes()); // PCM
+    out.extend_from_slice(&1u16.to_le_bytes()); // mono
+    out.extend_from_slice(&sample_rate.to_le_bytes());
+    out.extend_from_slice(&(sample_rate * 2).to_le_bytes());
+    out.extend_from_slice(&2u16.to_le_bytes());
+    out.extend_from_slice(&16u16.to_le_bytes());
+    out.extend_from_slice(b"data");
+    out.extend_from_slice(&(len * 2).to_le_bytes());
+    for s in samples {
+        let v = (s.clamp(-1.0, 1.0) * 32767.0) as i16;
+        out.extend_from_slice(&v.to_le_bytes());
+    }
+    out
+}
+
+fn find_server_in(dir: &Path) -> Option<PathBuf> {
+    for name in ["whisper-server.exe", "server.exe", "whisper-server"] {
+        let p = dir.join(name);
+        if p.exists() { return Some(p); }
+        // release zips put binaries under Release/ subdir
+        let p2 = dir.join("Release").join(name);
+        if p2.exists() { return Some(p2); }
+    }
+    None
+}
+fn find_server() -> Option<PathBuf> { find_server_in(&bin_dir()) }
+fn find_gpu_server() -> Option<PathBuf> { find_server_in(&bin_gpu_dir()) }
+
+struct WhisperServer {
+    port: u16,
+    child: std::process::Child,
+    model: String,
+    gpu: bool,
+}
+static WHISPER_SERVER: std::sync::OnceLock<Mutex<Option<WhisperServer>>> = std::sync::OnceLock::new();
+fn whisper_server_lock() -> &'static Mutex<Option<WhisperServer>> {
+    WHISPER_SERVER.get_or_init(|| Mutex::new(None))
+}
+fn is_server_alive(s: &mut WhisperServer) -> bool {
+    matches!(s.child.try_wait(), Ok(None))
+}
+fn kill_server(s: &mut WhisperServer) {
+    let _ = s.child.kill();
+    let _ = s.child.wait();
+}
+fn free_port() -> Option<u16> {
+    std::net::TcpListener::bind("127.0.0.1:0").ok()?.local_addr().ok().map(|a| a.port())
+}
+fn wait_for_server(port: u16, timeout: Duration) -> bool {
+    use std::io::{Read, Write};
+    use std::net::TcpStream;
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        if let Ok(mut c) = TcpStream::connect(format!("127.0.0.1:{port}")) {
+            let _ = c.set_read_timeout(Some(Duration::from_millis(300)));
+            let _ = c.set_write_timeout(Some(Duration::from_millis(300)));
+            let req = format!("GET / HTTP/1.0\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n");
+            if c.write_all(req.as_bytes()).is_ok() {
+                let mut buf = [0u8; 1024];
+                if let Ok(n) = c.read(&mut buf) { if n > 0 { return true; } }
+            }
+        }
+        std::thread::sleep(Duration::from_millis(80));
+    }
+    false
+}
+fn ensure_whisper_server(model_path: &Path, use_gpu: bool) -> Result<u16, String> {
+    let model_str = model_path.to_string_lossy().to_string();
+    let mut guard = whisper_server_lock().lock().map_err(|e| e.to_string())?;
+    if let Some(s) = guard.as_mut() {
+        if s.model == model_str && s.gpu == use_gpu && is_server_alive(s) {
+            return Ok(s.port);
+        }
+        // mismatched model/gpu or dead — tear down
+        let mut old = guard.take().unwrap();
+        kill_server(&mut old);
+    }
+    let bin = if use_gpu { find_gpu_server().or_else(find_server) } else { find_server().or_else(find_gpu_server) };
+    let server_bin = match bin {
+        Some(p) => p,
+        None => return Err("whisper-server not found — falling back to CLI".into()),
+    };
+    let port = free_port().ok_or("no free port for whisper-server")?;
+    let mut cmd = Command::new(&server_bin);
+    cmd.args(["-m", &model_str, "--host", "127.0.0.1", "--port", &port.to_string()]);
+    // use 4 threads by default, whisper-server will pick hardware concurrency
+    cmd.stdout(Stdio::null()).stderr(Stdio::piped());
+    #[cfg(all(windows, not(debug_assertions)))]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    let child = cmd.spawn().map_err(|e| format!("failed to spawn whisper-server: {e}"))?;
+    // assign to job object so it dies with GUI
+    #[cfg(windows)]
+    {
+        crate::job::assign(&child);
+    }
+    let mut handle = WhisperServer { port, child, model: model_str, gpu: use_gpu };
+    // wait for listen
+    let alive = wait_for_server(port, Duration::from_secs(10));
+    // also check child didn't exit early
+    match handle.child.try_wait() {
+        Ok(Some(st)) => return Err(format!("whisper-server exited early: {st}")),
+        Ok(None) if !alive => {
+            kill_server(&mut handle);
+            return Err("whisper-server not listening".into());
+        }
+        _ => {}
+    }
+    let p = handle.port;
+    *guard = Some(handle);
+    Ok(p)
+}
+pub fn shutdown_whisper_server() {
+    if let Some(lock) = WHISPER_SERVER.get() {
+        if let Ok(mut g) = lock.lock() {
+            if let Some(mut s) = g.take() { kill_server(&mut s); }
+        }
+    }
+}
+
+// Cache for whisper-rs contexts (CPU path) — model path → Arc<Mutex<WhisperContextState>>
+#[cfg(feature = "whisper")]
+mod whisper_cache {
+    use super::*;
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex, OnceLock};
+    use whisper_rs::{WhisperContext, WhisperContextParameters};
+    static CACHE: OnceLock<Mutex<HashMap<String, Arc<WhisperContext>>>> = OnceLock::new();
+    fn cache() -> &'static Mutex<HashMap<String, Arc<WhisperContext>>> {
+        CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+    }
+    pub fn get_or_load(model: &Path) -> Result<Arc<WhisperContext>, String> {
+        let key = model.to_string_lossy().to_string();
+        {
+            let g = cache().lock().map_err(|e| e.to_string())?;
+            if let Some(ctx) = g.get(&key) { return Ok(ctx.clone()); }
+        }
+        let ctx = WhisperContext::new_with_params(&key, WhisperContextParameters::default())
+            .map_err(|e| format!("whisper init failed: {e}"))?;
+        let arc = Arc::new(ctx);
+        cache().lock().map_err(|e| e.to_string())?.insert(key, arc.clone());
+        Ok(arc)
+    }
+}
+
+// PCM streaming transcription — persistent backend (whisper-rs or whisper-server),
+// PCM internal, no WAV temp file unless CLI fallback. Off UI thread via spawn_blocking.
+// Uses RTX 5080/CUDA when `gpu` true and cublas server is available.
+#[tauri::command]
+pub async fn voice_transcribe_pcm(
+    pcm: Vec<f32>,
+    model: String,
+    translate: Option<bool>,
+    gpu: Option<bool>,
+) -> Result<TranscribeOut, String> {
+    if !model.ends_with(".bin") || model.contains("..") {
+        return Err("bad model name".into());
+    }
+    let mp = models_dir().join(&model);
+    if !mp.exists() {
+        return Err(format!("model {} is not downloaded", mp.display()));
+    }
+    if pcm.len() < (16000 * 20 / 100) { // <20ms
+        return Ok(TranscribeOut { text: String::new(), engine: "cpu".into(), note: String::new() });
+    }
+    // clamp to 30s (whisper max) — rolling buffer is bounded frontend-side, but guard here
+    let pcm = if pcm.len() > 16000 * 30 { pcm[pcm.len() - 16000*30 ..].to_vec() } else { pcm };
+    let tr = translate.unwrap_or(false);
+    let want_gpu = gpu.unwrap_or(false);
+    let mp_clone = mp.clone();
+    let pcm_clone = pcm.clone();
+    // spawn_blocking keeps inference off Tauri's async pool
+    let res = tauri::async_runtime::spawn_blocking(move || -> Result<TranscribeOut, String> {
+        // 1) try whisper-rs in-process (CPU, zero-copy PCM) if compiled with feature
+        #[cfg(feature = "whisper")]
+        {
+            if !want_gpu {
+                if let Ok(ctx) = whisper_cache::get_or_load(&mp_clone) {
+                    if let Ok(mut state) = ctx.create_state() {
+                        let mut params = whisper_rs::FullParams::new(whisper_rs::SamplingStrategy::Greedy { best_of: 1 });
+                        params.set_translate(tr);
+                        params.set_language(None); // auto-detect
+                        params.set_print_special(false);
+                        params.set_print_progress(false);
+                        params.set_print_realtime(false);
+                        params.set_print_timestamps(false);
+                        params.set_no_context(true);
+                        params.set_single_segment(true);
+                        // threads = physical cores
+                        let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4).min(8) as i32;
+                        params.set_n_threads(threads);
+                        if state.full(params, &pcm_clone).is_ok() {
+                            let n = state.full_n_segments().unwrap_or(0);
+                            let mut out = String::new();
+                            for i in 0..n {
+                                if let Ok(seg) = state.full_get_segment_text(i) {
+                                    if !out.is_empty() { out.push(' '); }
+                                    out.push_str(seg.trim());
+                                }
+                            }
+                            let clean = out.lines().map(str::trim).filter(|l| !l.is_empty()).collect::<Vec<_>>().join(" ");
+                            return Ok(TranscribeOut { text: clean, engine: "cpu".into(), note: String::new() });
+                        }
+                    }
+                }
+            }
+        }
+        // 2) try persistent whisper-server (GPU path or CPU if server found)
+        if let Ok(port) = ensure_whisper_server(&mp_clone, want_gpu) {
+            // build WAV in memory for multipart POST
+            let wav = pcm_f32_to_wav_bytes(&pcm_clone, 16000);
+            // use blocking reqwest (spawn_blocking already)
+            let client = reqwest::blocking::Client::builder()
+                .timeout(Duration::from_secs(30))
+                .build().map_err(|e| e.to_string())?;
+            let form = reqwest::blocking::multipart::Form::new()
+                .part("file", reqwest::blocking::multipart::Part::bytes(wav).file_name("audio.wav").mime_str("audio/wav").unwrap())
+                .text("temperature", "0.0")
+                .text("response_format", "json");
+            let url = format!("http://127.0.0.1:{port}/inference");
+            let resp = client.post(&url).multipart(form).send().map_err(|e| format!("whisper-server request failed: {e}"))?;
+            if !resp.status().is_success() {
+                let txt = resp.text().unwrap_or_default();
+                return Err(format!("whisper-server inference failed: {txt}"));
+            }
+            let body: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
+            let text = body.get("text").and_then(|v| v.as_str()).unwrap_or("")
+                .lines().map(str::trim).filter(|l| !l.is_empty()).collect::<Vec<_>>().join(" ");
+            let engine = if want_gpu { "gpu" } else { "cpu" };
+            return Ok(TranscribeOut { text, engine: engine.into(), note: String::new() });
+        }
+        // 3) fallback: CLI per-inference via temp WAV (still PCM→WAV once, no frontend WAV)
+        let wav = pcm_f32_to_wav_bytes(&pcm_clone, 16000);
+        let tmp = unique_temp_path("oc-voice-pcm", "wav");
+        {
+            use std::fs::OpenOptions;
+            use std::io::Write;
+            let mut f = OpenOptions::new().write(true).create_new(true).open(&tmp)
+                .or_else(|_| std::fs::File::create(&tmp)).map_err(|e| e.to_string())?;
+            f.write_all(&wav).map_err(|e| e.to_string())?;
+        }
+        let gpu_cli = find_gpu_cli();
+        let cpu_cli = find_cli();
+        let primary = if want_gpu { gpu_cli.clone().or_else(|| cpu_cli.clone()) } else { cpu_cli.clone() }
+            .ok_or_else(|| "voice engine not installed — set it up in Settings > Voice".to_string())?;
+        let want_gpu_actual = Some(&primary) == gpu_cli.as_ref();
+        let cpu_fallback = if want_gpu_actual { cpu_cli.clone() } else { None };
+        let mut engine = if want_gpu_actual { "gpu" } else { "cpu" };
+        let mut note = String::new();
+        let tmp2 = tmp.clone();
+        let (text, stderr) = match run_whisper(&primary, &mp_clone, &tmp2, tr) {
+            Ok(v) => v,
+            Err(e) => match cpu_fallback {
+                Some(cpu) => {
+                    engine = "cpu";
+                    note = format!("engine failed: {e}");
+                    run_whisper(&cpu, &mp_clone, &tmp2, tr)?
+                }
+                None => { let _ = std::fs::remove_file(&tmp); return Err(e); }
+            },
+        };
+        let _ = std::fs::remove_file(&tmp);
+        if engine == "gpu" {
+            let low = stderr.to_ascii_lowercase();
+            let cuda_failed = low.contains("failed to initialize cuda") || low.contains("cuda_init: failed");
+            if !low.contains("cuda") || cuda_failed {
+                engine = "cpu";
+                let tail = stderr.lines().rev().take(2).collect::<Vec<_>>().join(" | ");
+                let tail: String = tail.chars().rev().take(160).collect::<Vec<_>>().into_iter().rev().collect();
+                note = format!("gpu build ran without cuda: {tail}");
+            }
+        }
+        Ok(TranscribeOut { text, engine: engine.into(), note })
+    }).await.map_err(|e| format!("task join failed: {e}"))??;
+    Ok(res)
+}
+
 // one whisper-cli invocation over the temp wav — blocking, only call from
 // spawn_blocking. Hard cap so a wedged process can't pin the UI mic state.
 // Returns (transcription, stderr log) — stderr carries the backend/device

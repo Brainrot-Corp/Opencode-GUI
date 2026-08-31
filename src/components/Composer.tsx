@@ -125,6 +125,7 @@ export default function Composer({
   voicePhase,
   voiceStreaming,
   voiceError,
+  voicePartial,
   onVoiceToggle,
   sessionId,
   cycleAgentHotkey,
@@ -167,6 +168,7 @@ export default function Composer({
   voicePhase?: "idle" | "recording" | "transcribing";
   voiceStreaming?: boolean;
   voiceError?: string;
+  voicePartial?: string;
   onVoiceToggle?: () => void;
   sessionId?: string;
   cycleAgentHotkey?: string | null;
@@ -1030,6 +1032,13 @@ export default function Composer({
       )}
       {attach.note && <div className="composer-note">{attach.note}</div>}
       {!attach.note && voiceError && <div className="composer-note">{voiceError}</div>}
+      {voicePartial && voiceStreaming && (
+        <div className="voice-partial" role="status" aria-live="polite">
+          <i className="fa-solid fa-waveform-lines" style={{ opacity: 0.6 }} />
+          <span className="mono">{voicePartial}</span>
+          <span className="voice-caret" />
+        </div>
+      )}
       <div className="composer-row">
         {findOpen && (
           <div className="comp-find" onMouseDown={(e) => e.preventDefault()}>

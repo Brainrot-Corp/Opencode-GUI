@@ -667,6 +667,23 @@ export default function ChatPage() {
     [routeCtx, dispatch, settings.voice.debug, dbgPush],
   );
 
+  const [voiceLive, setVoiceLive] = useState("");
+  useEffect(() => {
+    const onPart = (e: Event) => {
+      const d = (e as CustomEvent<{ text: string; isFinal: boolean }>).detail;
+      setVoiceLive(d?.isFinal ? "" : d?.text ?? "");
+    };
+    const onFinal = () => setVoiceLive("");
+    window.addEventListener("oc:voice-partial", onPart as EventListener);
+    window.addEventListener("oc:voice-final", onFinal);
+    return () => {
+      window.removeEventListener("oc:voice-partial", onPart as EventListener);
+      window.removeEventListener("oc:voice-final", onFinal);
+    };
+  }, []);
+  const handleLivePartial = useCallback((p: string, isFinal: boolean) => {
+    setVoiceLive(isFinal ? "" : p);
+  }, []);
   const voice = useVoice(
     handleVoiceTranscript,
     settings.voice.model,
@@ -675,6 +692,7 @@ export default function ChatPage() {
     settings.voice.debug ? dbgPush : undefined,
     settings.voice.multilingual,
     handleVoicePartial,
+    handleLivePartial,
   );
   // mic off ends dictation capture — nothing left to listen to
   useEffect(() => {
@@ -1267,6 +1285,7 @@ export default function ChatPage() {
                   voicePhase={voice.phase}
                   voiceStreaming={voice.streaming}
                   voiceError={voice.error}
+                  voicePartial={voice.partial || voiceLive}
                   onVoiceToggle={voice.toggle}
                   sessionId={oc.activeId}
                 />

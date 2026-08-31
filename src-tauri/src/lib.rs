@@ -14,7 +14,7 @@ use browser::{browser_back, browser_close, browser_forward, browser_navigate, br
 mod voice;
 use voice::{install_bin_finalize, install_model_finalize, install_piper_bin, install_tts_voice_part, 
 kokoro_remove_engine, install_kokoro_gpu_part, tts_gpu_remove, tts_remove_voice, tts_speak, tts_status, tts_stream, tts_debug_log, tts_clear_debug, voice_download, voice_gpu, voice_remove_all, voice_remove_gpu, voice_remove_model,
-    voice_status, voice_transcribe};
+    voice_status, voice_transcribe, voice_transcribe_pcm};
 
 mod git;
 use git::{git_commit, git_diff, git_diff_stat, git_discard, git_fetch, git_log, git_pull, git_push, git_stage, git_status, git_unstage};
@@ -1846,6 +1846,7 @@ pub fn run() {
             voice_status,
             voice_gpu,
             voice_transcribe,
+            voice_transcribe_pcm,
             voice_download,
             install_bin_finalize,
             install_model_finalize,
@@ -2081,6 +2082,8 @@ pub fn run() {
                 }
             }
             if let RunEvent::Exit = event {
+                // shutdown persistent whisper server (GPU) if running
+                voice::shutdown_whisper_server();
                 if let Some(mut child) = _app_handle
                     .state::<ServerState>()
                     .child
