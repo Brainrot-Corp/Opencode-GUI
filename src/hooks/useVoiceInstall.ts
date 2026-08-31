@@ -37,8 +37,15 @@ export function useVoiceInstall(
   const [dl, setDl] = useState<{ label: string; pct: number } | null>(null);
   const [err, setErr] = useState("");
   const previewRef = useRef<HTMLAudioElement | null>(null);
+  const previewSeq = useRef(0);
+  const previewUrlRef = useRef<string | null>(null);
 
-  useEffect(() => () => previewRef.current?.pause(), []);
+  useEffect(() => {
+    return () => {
+      previewRef.current?.pause();
+      if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
+    };
+  }, []);
 
   // live volume: sliders retune a running preview via oc:tts-vol
   useEffect(() => {
@@ -130,6 +137,7 @@ export function useVoiceInstall(
   }
 
   // plays a short sample — Kokoro voices are bare IDs (af_heart).
+  // guarded by a monotonic seq so rapid clicks / double-fires only play the latest.
   function previewVoice(value: string): boolean {
     let v = value?.replace(/\.onnx$/, "") ?? "";
     if (!v) {
@@ -144,19 +152,36 @@ export function useVoiceInstall(
       setErr("no neural voice yet — install Kokoro in the Voices tab");
       return false;
     }
+    const seq = ++previewSeq.current;
+    // stop previous preview and revoke its blob URL
     previewRef.current?.pause();
+    previewRef.current = null;
+    if (previewUrlRef.current) {
+      URL.revokeObjectURL(previewUrlRef.current);
+      previewUrlRef.current = null;
+    }
     invoke<number[]>("tts_speak", { text: SAMPLE_TEXT, voice: v, speed: settings.ttsSpeed })
       .then((bytes) => {
+        if (seq !== previewSeq.current) return;
         const url = URL.createObjectURL(
           new Blob([new Uint8Array(bytes)], { type: "audio/wav" }),
         );
+        previewUrlRef.current = url;
         const a = new Audio(url);
         a.volume = settings.ttsVol;
         previewRef.current = a;
-        a.onended = () => URL.revokeObjectURL(url);
+        a.onended = () => {
+          if (previewUrlRef.current === url) {
+            URL.revokeObjectURL(url);
+            previewUrlRef.current = null;
+          }
+        };
         a.play().catch((e) => setErr(`audio playback failed: ${e}`));
       })
-      .catch((e) => setErr(String(e)));
+      .catch((e) => {
+        if (seq !== previewSeq.current) return;
+        setErr(String(e));
+      });
     return true;
   }
 
