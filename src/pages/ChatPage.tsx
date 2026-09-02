@@ -40,11 +40,13 @@ import { isNewer, getAutoUpdateEnabled, setAutoUpdateEnabled } from "../lib/plug
 import { ContextMenuProvider } from "../hooks/useContextMenu";
 import SelectionMenu from "../components/SelectionMenu";
 import { getFindTarget, setFindTarget, targetFromElement } from "../lib/findContext";
+import { useTranslation } from "../lib/i18n";
 
 const SB_W_KEY = "oc.sb.w";
 const SB_C_KEY = "oc.sb.c";
 
 export default function ChatPage() {
+  const { t } = useTranslation();
   const oc = useOpencode();
   const {
     settings,
@@ -1202,9 +1204,9 @@ export default function ChatPage() {
             {!oc.activeId && !oc.booting && (
               <div className="messages">
                 <p className="empty">
-                  Select or create a session
+                  {t("chat.emptyNoSession").split("\n")[0]}
                   <br />
-                  to start.
+                  {t("chat.emptyNoSession").split("\n")[1] || ""}
                 </p>
               </div>
             )}
@@ -1251,17 +1253,17 @@ export default function ChatPage() {
                 {oc.revertId && (
                   <div className="revert-banner">
                     <i className="fa-solid fa-clock-rotate-left" />
-                    Viewing an earlier version of this conversation.
+                    {t("chat.rewind.banner")}
                     <button onClick={oc.unrevert}>
                       <i className="fa-solid fa-rotate-left" />
-                      Undo rewind
+                      {t("chat.rewind.undo")}
                     </button>
                   </div>
                 )}
                 {closeHint && (
                   <div className="revert-banner close-confirm">
                     <i className="fa-solid fa-trash-can" />
-                    Press Ctrl+W again to close this session
+                    {t("chat.closeConfirm")}
                   </div>
                 )}
                 {oc.permission && ((oc as any).securityMode ?? "user") === "user" && (

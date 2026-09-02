@@ -82,9 +82,11 @@ const DEFAULT_COLOR_SETS: AppColors = {
 };
 
 export type CustomShell = { id: string; name: string; path: string; args: string };
+export type Lang = "en" | "fr" | "es";
 export type TerminalSettings = { defaultProfileId: string | null; customShells: CustomShell[] };
 
 export type AppSettings = {
+  language: Lang;
   theme: ThemeName;
   mode: Mode;
   alwaysOnTop: boolean;
@@ -132,7 +134,18 @@ export type AppSettings = {
 const KEY = "oc.settings";
 const HEX = /^#[0-9a-f]{6}$/i;
 
+function detectLang(): Lang {
+  try {
+    const tag = (typeof navigator !== "undefined" ? navigator.language : "en").toLowerCase();
+    if (tag.startsWith("fr")) return "fr";
+    if (tag.startsWith("es")) return "es";
+    return "en";
+  } catch { return "en"; }
+}
+function isLang(v: unknown): v is Lang { return v === "en" || v === "fr" || v === "es"; }
+
 const DEFAULTS: AppSettings = {
+  language: detectLang(),
   theme: "cyan",
   mode: "dark",
   alwaysOnTop: false,
@@ -251,6 +264,7 @@ export function useSettings() {
       const theme: ThemeName = typeof p.theme === "string" && !legacy ? p.theme : "cyan";
       const mode: Mode = legacy ? "light" : p.mode === "light" ? "light" : "dark";
       return {
+        language: isLang(p.language) ? p.language : detectLang(),
         theme,
         mode,
         alwaysOnTop: !!p.alwaysOnTop,
@@ -424,6 +438,9 @@ export function useSettings() {
     } catch (e) {
       try { pushToast(`Failed to save settings: ${e}`); } catch {}
     }
+    // mirror language to standalone key + notify i18n hooks
+    try { localStorage.setItem("oc.language", settings.language); } catch {}
+    try { window.dispatchEvent(new CustomEvent("oc:language-changed", { detail: settings.language })); } catch {}
   }, [settings]);
 
   // keep Rust file + api directory in sync so local debug builds survive

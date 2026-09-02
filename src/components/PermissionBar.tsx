@@ -1,4 +1,5 @@
 import type { PermAsk } from "../types";
+import { useTranslation } from "../lib/i18n";
 import "../styles/permission.css";
 
 export default function PermissionBar({
@@ -8,22 +9,23 @@ export default function PermissionBar({
   permission: PermAsk;
   onRespond: (response: "once" | "always" | "reject") => void;
 }) {
+  const { t } = useTranslation();
   return (
     <div className="permission-bar">
-      <div className="title">Permission required · {permission.type}</div>
+      <div className="title">{t("permission.title", { type: permission.type })}</div>
       <div className="what">{permission.title}</div>
       <div className="actions">
         <button className="allow" onClick={() => onRespond("once")}>
           <i className="fa-solid fa-check" />
-          Allow once
+          {t("permission.allowOnce")}
         </button>
         <button className="allow" onClick={() => onRespond("always")}>
           <i className="fa-solid fa-check-double" />
-          Always allow
+          {t("permission.alwaysAllow")}
         </button>
         <button className="deny" onClick={() => onRespond("reject")}>
           <i className="fa-solid fa-ban" />
-          Deny
+          {t("permission.deny")}
         </button>
       </div>
     </div>

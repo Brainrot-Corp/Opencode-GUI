@@ -274,5 +274,16 @@ export function resolveObCopy(tag: string | undefined): ObCopy {
 }
 
 export function obCopy(): ObCopy {
-  return resolveObCopy(typeof navigator === "undefined" ? "en" : navigator.language);
+  // prefer persisted app language (oc.settings) so onboarding respects the Settings drawer choice,
+  // fallback to navigator for first run / tests
+  let tag: string | undefined;
+  try {
+    const raw = typeof localStorage !== "undefined" ? localStorage.getItem("oc.settings") : null;
+    if (raw) {
+      const j = JSON.parse(raw);
+      if (typeof j.language === "string" && j.language) tag = j.language;
+    }
+    if (!tag) tag = typeof navigator !== "undefined" ? navigator.language : "en";
+  } catch { tag = typeof navigator !== "undefined" ? navigator.language : "en"; }
+  return resolveObCopy(tag);
 }

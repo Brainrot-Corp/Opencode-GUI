@@ -17,6 +17,7 @@ import SlashMenu from "./SlashMenu";
 import { playSound } from "../lib/sounds";
 import { getDraft, setDraft } from "../lib/drafts";
 import { getRecentModels, pushRecentModel } from "../lib/recentModels";
+import { useTranslation } from "../lib/i18n";
 import "../styles/composer.css";
 import "../styles/find.css";
 
@@ -174,6 +175,7 @@ export default function Composer({
   cycleAgentHotkey?: string | null;
   hotkeys?: Record<string, string | null>;
 }) {
+  const { t } = useTranslation();
   const [input, setInput] = useState(() => getDraft(sessionId ?? ""));
   const [open, setOpen] = useState(false);
   const [hi, setHi] = useState(-1); // keyboard highlight index
@@ -1217,17 +1219,17 @@ export default function Composer({
                   }}
                   placeholder={
                     needsModel
-                      ? "Pick a model above to start chatting"
+                      ? t("composer.placeholder.needsModel")
                       : busy
-                        ? "Waiting for reply…"
-                        : "Ask anything (Enter to send, Shift+Enter for newline)"
+                        ? t("composer.placeholder.busy")
+                        : t("composer.placeholder.idle")
                   }
                 />
           </div>
                 {busy ? (
                   <button
                     className={`stop-btn${escHint ? " armed" : ""}`}
-                    data-tip={escHint ? "Press Esc again to stop" : "Stop generating"}
+                    data-tip={escHint ? t("composer.stop.armed") : t("composer.stop.tip")}
                     onClick={() => {
                       clearEscHint?.();
                       onAbort();
@@ -1238,7 +1240,7 @@ export default function Composer({
                 ) : (
                   <button
                     className="send-btn"
-                    data-tip="Send · Enter"
+                    data-tip={t("composer.send.tip")}
                     onClick={send}
                     disabled={(!input.trim() && !attach.readyFiles().length) || needsModel}
                   >

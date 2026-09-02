@@ -4,6 +4,7 @@ import { opencode, opencodeFor } from "../api";
 import { useContextMenu } from "../hooks/useContextMenu";
 import { invalidateFileCache, normalizeFilePath, useFileCache } from "../hooks/useFileCache";
 import { clipboardWrite } from "../lib/clipboard";
+import { useTranslation } from "../lib/i18n";
 import "../styles/files.css";
 import "../styles/find.css";
 
@@ -41,6 +42,7 @@ function FileIcon({ name }: { name: string }) {
 }
 
 export default function FileTree({ dir = "" }: { dir?: string }) {
+  const { t } = useTranslation();
   const { kids, error, load, isLoading } = useFileCache(dir);
   const [openDirs, setOpenDirs] = useState<Set<string>>(new Set());
   const [localErr, setLocalErr] = useState("");
@@ -239,23 +241,23 @@ export default function FileTree({ dir = "" }: { dir?: string }) {
     if (!ctx) return;
     const isDir = n.type === "directory";
     ctx.show(e.clientX, e.clientY, [
-      ...(isDir ? [] : [{ label: "Open", icon: "fa-arrow-up-right-from-square", action: () => openFile(n) } as any]),
-      { label: "Open With Default App", icon: "fa-up-right-from-square", action: () => void invoke("file_open", { path: n.absolute }).catch((er)=> setError(String(er))) },
+      ...(isDir ? [] : [{ label: t("fileTree.open"), icon: "fa-arrow-up-right-from-square", action: () => openFile(n) } as any]),
+      { label: t("fileTree.openWithDefault"), icon: "fa-up-right-from-square", action: () => void invoke("file_open", { path: n.absolute }).catch((er)=> setError(String(er))) },
       { separator: true },
-      { label: "Copy Path", icon: "fa-link", action: () => void clipboardWrite(n.absolute) },
-      { label: "Copy Relative Path", icon: "fa-code", action: () => void clipboardWrite(n.path) },
-      ...(isDir ? [] : [{ label: "Copy Content", icon: "fa-copy", action: async () => {
+      { label: t("fileTree.copyPath"), icon: "fa-link", action: () => void clipboardWrite(n.absolute) },
+      { label: t("fileTree.copyRelative"), icon: "fa-code", action: () => void clipboardWrite(n.path) },
+      ...(isDir ? [] : [{ label: t("fileTree.copyContent"), icon: "fa-copy", action: async () => {
         try { const { client } = dir ? await opencodeFor(dir) : await opencode(); const r:any = await (client.file as any).read({ query: { path: n.path }}); const txt = typeof r.data === "string" ? r.data : (r.data?.content ?? ""); await clipboardWrite(String(txt)); } catch (er) { setError(String(er)); }
       }} as any]),
       { separator: true },
       ...(isDir ? [
-        { label: "New File", icon: "fa-file-circle-plus", action: () => void doCreate(false, n) },
-        { label: "New Folder", icon: "fa-folder-plus", action: () => void doCreate(true, n) },
+        { label: t("fileTree.newFile"), icon: "fa-file-circle-plus", action: () => void doCreate(false, n) },
+        { label: t("fileTree.newFolder"), icon: "fa-folder-plus", action: () => void doCreate(true, n) },
       ] : []),
-      { label: "Duplicate", icon: "fa-copy", action: () => void doDuplicate(n) },
-      { label: "Rename", icon: "fa-pen", action: () => { setRenaming(n.path); setRenameVal(n.name); setTimeout(()=> document.querySelector<HTMLInputElement>(`input[data-ft-rename="${n.path}"]`)?.select(), 0); } },
+      { label: t("fileTree.duplicate"), icon: "fa-copy", action: () => void doDuplicate(n) },
+      { label: t("fileTree.rename"), icon: "fa-pen", action: () => { setRenaming(n.path); setRenameVal(n.name); setTimeout(()=> document.querySelector<HTMLInputElement>(`input[data-ft-rename="${n.path}"]`)?.select(), 0); } },
       { separator: true },
-      { label: isDir ? "Delete Folder" : "Delete File", icon: "fa-trash-can", danger: true, action: () => void doDelete(n) },
+      { label: isDir ? t("fileTree.deleteFolder") : t("fileTree.deleteFile"), icon: "fa-trash-can", danger: true, action: () => void doDelete(n) },
     ]);
   }
 
@@ -265,11 +267,11 @@ export default function FileTree({ dir = "" }: { dir?: string }) {
     e.preventDefault();
     if (!ctx) return;
     ctx.show(e.clientX, e.clientY, [
-      { label: "New File", icon: "fa-file-circle-plus", action: () => void doCreate(false, null) },
-      { label: "New Folder", icon: "fa-folder-plus", action: () => void doCreate(true, null) },
+      { label: t("fileTree.newFile"), icon: "fa-file-circle-plus", action: () => void doCreate(false, null) },
+      { label: t("fileTree.newFolder"), icon: "fa-folder-plus", action: () => void doCreate(true, null) },
       { separator: true },
-      { label: "Refresh", icon: "fa-arrows-rotate", action: () => void load("", true) },
-      { label: "Copy Workspace Path", icon: "fa-link", action: () => {
+      { label: t("fileTree.refresh"), icon: "fa-arrows-rotate", action: () => void load("", true) },
+      { label: t("fileTree.copyWorkspacePath"), icon: "fa-link", action: () => {
         const root = workspaceRootAbs();
         if (root) void clipboardWrite(root);
       }},
@@ -341,7 +343,7 @@ export default function FileTree({ dir = "" }: { dir?: string }) {
           <input
             ref={filterInputRef}
             className="ft-find-input mono"
-            placeholder="Find file"
+            placeholder={t("fileTree.find.placeholder")}
             value={filterQuery}
             autoFocus
             onChange={(e) => setFilterQuery(e.target.value)}
@@ -354,7 +356,7 @@ export default function FileTree({ dir = "" }: { dir?: string }) {
               }
             }}
           />
-          <button className="icon-btn" data-tip="Close (Esc)" onClick={() => { setFilterOpen(false); setFilterQuery(""); }}>
+          <button className="icon-btn" data-tip={t("fileTree.find.close")} onClick={() => { setFilterOpen(false); setFilterQuery(""); }}>
             <i className="fa-solid fa-xmark" />
           </button>
         </div>

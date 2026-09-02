@@ -10,6 +10,7 @@ import { stripComments } from "./themes";
 import { setPluginLexicon } from "./voiceLexicon";
 import { playSound as hostPlaySound } from "./sounds";
 import { matchesEvent as hostMatchesEvent, normalizeBinding as hostNormalizeBinding } from "./hotkeys";
+import { registerPluginTranslations, createPluginT, getLang } from "./i18n";
 
 export type PluginApi = {
   id: string;
@@ -24,6 +25,13 @@ export type PluginApi = {
   // hotkey helpers — same as core (so plugins respect user rebinds)
   matchesEvent: typeof hostMatchesEvent;
   normalizeBinding: typeof hostNormalizeBinding;
+  // i18n — plugins can register their own keys and translate via t
+  t: (key: string, params?: Record<string, string | number>) => string;
+  i18n: {
+    t: (key: string, params?: Record<string, string | number>) => string;
+    register: (bundles: Partial<Record<"en" | "fr" | "es", Record<string, string>>>) => void;
+    getLanguage: () => "en" | "fr" | "es";
+  };
 };
 
 export type PluginExt = {
@@ -257,6 +265,7 @@ async function loadOne(d: { dir: string; manifest: string; main: string; css: st
   active.set(d.dir, entry);
   // also keep an alias keyed by id for quick disable lookup when dir != id (same object)
   if (man.id !== d.dir) active.set(man.id, entry);
+  const pluginT = createPluginT(man.id);
   const api: PluginApi = {
     id: man.id,
     invoke,
@@ -276,6 +285,12 @@ async function loadOne(d: { dir: string; manifest: string; main: string; css: st
     },
     matchesEvent: hostMatchesEvent,
     normalizeBinding: hostNormalizeBinding,
+    t: pluginT as PluginApi["t"],
+    i18n: {
+      t: pluginT as PluginApi["i18n"]["t"],
+      register: (bundles) => registerPluginTranslations(man.id, bundles),
+      getLanguage: () => getLang(),
+    },
   };
   const raw = typeof mod.default === "function" ? await mod.default(api) : null;
   if (!raw) {

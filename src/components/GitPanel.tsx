@@ -10,6 +10,7 @@ import { buildCommitPrompt, cleanCommitMessage } from "../lib/commitPrompt";
 import Dialog from "./Dialog";
 import { DiffLines } from "./DiffPanel";
 import DropdownPortal from "./DropdownPortal";
+import { useTranslation } from "../lib/i18n";
 import "../styles/git.css";
 
 const GH_KEY = "oc.git.h";
@@ -143,6 +144,7 @@ export default function GitPanel() {
   const genIdRef = useRef(0);
   const genSidRef = useRef<string | null>(null);
   const [genHover, setGenHover] = useState(false);
+  const { t } = useTranslation();
   const dir = useRef(getDirectory());
   const autosizeMsg = useCallback(() => {
     const el = msgRef.current;
@@ -509,18 +511,18 @@ export default function GitPanel() {
       <div className="git-panel">
         <div className="gp-head gp-none">
           <i className="fa-solid fa-code-branch" />
-          <span>No git repository</span>
+          <span>{t("git.noRepo")}</span>
         </div>
       </div>
     );
 
   const primaryLabelMap: Record<PrimaryAction, string> = {
-    staged: "Commit Staged",
-    all: "Commit All",
-    stagedPush: "Commit Staged + Push",
-    allPush: "Commit All + Push",
-    stagedSync: "Commit Staged + Sync",
-    allSync: "Commit All + Sync",
+    staged: t("git.commit.staged"),
+    all: t("git.commit.all"),
+    stagedPush: t("git.commit.stagedPush"),
+    allPush: t("git.commit.allPush"),
+    stagedSync: t("git.commit.stagedSync"),
+    allSync: t("git.commit.allSync"),
   };
   const primaryHintMap: Record<PrimaryAction, string> = {
     staged: "Commit staged changes",
