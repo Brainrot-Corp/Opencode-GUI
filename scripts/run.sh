@@ -275,7 +275,12 @@ case "${CMD}" in
         rel="src-tauri/target/release"
         out="$rel/bundle/portable"
         for t in $TARGETS; do
-            build_one "$t" nobundle
+            # macOS portable must be a .app bundle — raw Mach-O binary always spawns Terminal on double-click
+            if [ "$OS" = "Darwin" ]; then
+                build_one "$t" "" ""
+            else
+                build_one "$t" nobundle
+            fi
             bundle="$rel/bundle"
             if [ "$IS_WINDOWS" = true ]; then
                 mkdir -p "$out/OpenCode"
@@ -291,18 +296,28 @@ case "${CMD}" in
                 if [ -f "$rel/opencode-gui" ]; then cp "$rel/opencode-gui" "$out/OpenCode/"; elif [ -f "$rel/opencode-gui.exe" ]; then cp "$rel/opencode-gui.exe" "$out/OpenCode/"; fi
                 # sidecar: prefer built, fallback to source sidecar
                 if [ -f "$rel/opencode" ]; then cp "$rel/opencode" "$out/OpenCode/"; elif [ -f "$rel/opencode.exe" ]; then cp "$rel/opencode.exe" "$out/OpenCode/"; elif [ -f "$SIDECAR" ]; then cp "$SIDECAR" "$out/OpenCode/" 2>/dev/null || true; fi
-                # on macOS also include .app bundle if built (Tauri may produce .app even with --no-bundle on some configs)
                 if [ "$OS" = "Darwin" ]; then
-                    _app=$(find "$bundle" -maxdepth 3 -name "*.app" -type d 2>/dev/null | head -1)
+                    _app=$(find "$bundle/macos" -maxdepth 2 -name "*.app" -type d 2>/dev/null | head -1)
+                    if [ -z "$_app" ]; then _app=$(find "$bundle" -maxdepth 3 -name "*.app" -type d 2>/dev/null | head -1); fi
                     if [ -n "$_app" ] && [ -d "$_app" ]; then
-                        echo ">> including $_app in portable"
-                        cp -R "$_app" "$out/OpenCode/" 2>/dev/null || true
+                        echo ">> portable is $_app (no Terminal on double-click)"
+                        # zip the .app directly — double-click the .app, not the raw binary
+                        _arch=$(uname -m)
+                        _app_name=$(basename "$_app")
+                        rm -rf "$out/$_app_name"
+                        cp -R "$_app" "$out/"
+                        (cd "$out" && zip -qr -y "opencode-gui-$t-$_arch.zip" "$_app_name")
+                        echo ">> portable [$t]: $out/opencode-gui-$t-$_arch.zip (double-click $_app_name)"
+                        ls -lh "$out/opencode-gui-$t-$_arch.zip" 2>/dev/null || true
+                        # also keep raw binaries alongside for CLI use, but warn
+                        echo ">> note: $out/OpenCode/opencode-gui is CLI-only (double-click opens Terminal); use the .app"
+                    else
+                        echo "!! .app not found in $bundle — falling back to raw binary (will open Terminal on double-click)"
+                        _arch=$(uname -m)
+                        (cd "$out" && zip -qr "opencode-gui-$t-$_arch.zip" OpenCode)
+                        echo ">> portable [$t]: $out/opencode-gui-$t-$_arch.zip"
+                        ls -lh "$out/opencode-gui-$t-$_arch.zip" 2>/dev/null || true
                     fi
-                    # macOS portable is a zip (native Finder)
-                    _arch=$(uname -m)
-                    (cd "$out" && zip -qr "opencode-gui-$t-$_arch.zip" OpenCode)
-                    echo ">> portable [$t]: $out/opencode-gui-$t-$_arch.zip"
-                    ls -lh "$out/opencode-gui-$t-$_arch.zip" 2>/dev/null || true
                 else
                     # Linux: tar.gz
                     _arch=$(uname -m)
