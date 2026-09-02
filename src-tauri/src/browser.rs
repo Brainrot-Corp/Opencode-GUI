@@ -476,12 +476,22 @@ pub async fn tiktok_open(
     let gen = FLOAT_GEN.fetch_add(1, Ordering::Relaxed);
     // persistent session (not incognito) so TikTok login survives restarts
     // glass: make webview transparent so injected rgba shows app's mica/acrylic behind
+    // Note: `transparent` on WebView requires `macos-private-api` on macOS (see tauri `webview/mod.rs:1022`),
+    // so only enable where available; fallback on macOS without feature is opaque webview with glass CSS still applied.
     let init_js = TIKTOK_GLASS_INIT_JS.replace("__CSS__", &TIKTOK_GLASS_CSS.replace('`', "'").replace('\\', "\\\\"));
+    let mut builder = WebviewBuilder::new("tiktok", WebviewUrl::External(parsed.clone()));
+    #[cfg(not(target_os = "macos"))]
+    {
+        builder = builder.transparent(true);
+    }
+    #[cfg(target_os = "macos")]
+    {
+        // transparent WebView on macOS needs `tauri/macos-private-api`; keep opaque fallback
+        let _ = &mut builder;
+    }
     let webview = win
         .add_child(
-            WebviewBuilder::new("tiktok", WebviewUrl::External(parsed.clone()))
-                .transparent(true)
-                .initialization_script(init_js),
+            builder.initialization_script(init_js),
             LogicalPosition::new(x, y),
             LogicalSize::new(w, h),
         )

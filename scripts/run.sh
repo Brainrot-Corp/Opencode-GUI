@@ -6,6 +6,26 @@
 set -e
 cd "$(dirname "$0")/.."
 
+# sudo guard: do not run with sudo (creates root-owned ~/.npm/_cacache → EACCES)
+# If invoked via `sudo ./scripts/run.sh`, warn and fix HOME. NOTE: placed before CMD parsing, so $CMD not yet available.
+if [ "$(id -u 2>/dev/null || echo 0)" -eq 0 ] && [ -n "${SUDO_USER:-}" ]; then
+    echo "!! you ran with sudo — do not use sudo for setup/build (creates root-owned files in ~/.npm, ~/.cargo)" >&2
+    echo "!!   fix existing: sudo chown -R $SUDO_USER \"$(eval echo ~$SUDO_USER)/.npm\" \"$(eval echo ~$SUDO_USER)/.cargo\" 2>/dev/null || true" >&2
+    echo "!!   re-run without sudo:  bash scripts/run.sh setup  (or ./scripts/run.sh setup after chmod +x)" >&2
+    # keep HOME as original user so npm/cargo don't write to /var/root
+    _orig_home=$(eval echo "~$SUDO_USER" 2>/dev/null || echo "$HOME")
+    if [ -n "$_orig_home" ] && [ -d "$_orig_home" ]; then
+        export HOME="$_orig_home"
+        export USER="$SUDO_USER"
+        if [ -f "$HOME/.cargo/env" ]; then . "$HOME/.cargo/env" 2>/dev/null || true; fi
+        for _d in "$HOME/.cargo/bin" "$HOME/.rustup/bin"; do
+            case ":$PATH:" in *":$_d:"*) ;; *) [ -d "$_d" ] && export PATH="$_d:$PATH" ;; esac
+        done
+        unset _d
+    fi
+    echo ">> continuing as $SUDO_USER (HOME=$HOME) — if this fails, re-run without sudo" >&2
+fi
+
 VERSION=""
 POS=()
 while [ $# -gt 0 ]; do
@@ -86,6 +106,84 @@ set_version() {
 }
 [ -n "$VERSION" ] && set_version "$VERSION"
 
+# ensure cargo is available in PATH for this session (rustup without restart)
+if [ -f "$HOME/.cargo/env" ]; then . "$HOME/.cargo/env" 2>/dev/null || true; fi
+for _d in "$HOME/.cargo/bin" "$HOME/.rustup/bin" "$USERPROFILE/.cargo/bin" "/c/Users/$USERNAME/.cargo/bin"; do
+    case ":$PATH:" in *":$_d:"*) ;; *) [ -d "$_d" ] && export PATH="$_d:$PATH" ;; esac
+done
+unset _d 2>/dev/null || true
+
+ensure_rust() {
+    if command -v cargo >/dev/null 2>&1; then
+        echo ">> cargo $(cargo --version) ready"
+        return 0
+    fi
+    echo ">> cargo not found, installing rustup..."
+    if [ "$IS_WINDOWS" = true ]; then
+        if command -v winget >/dev/null 2>&1; then
+            echo ">> trying winget install Rustlang.Rustup..."
+            winget install --id Rustlang.Rustup --silent --accept-package-agreements --accept-source-agreements || true
+            for _d in "$USERPROFILE/.cargo/bin" "$HOME/.cargo/bin" "/c/Users/$USERNAME/.cargo/bin"; do
+                [ -d "$_d" ] && export PATH="$_d:$PATH"
+            done
+            unset _d
+        fi
+        if ! command -v cargo >/dev/null 2>&1; then
+            echo ">> downloading rustup-init.exe..."
+            _tmp_exe=$(mktemp /tmp/rustup-init.XXXXXX.exe)
+            if curl -fsSL https://win.rustup.rs/x86_64 -o "$_tmp_exe"; then
+                "$_tmp_exe" -y --no-modify-path 2>&1 || "$_tmp_exe" -y 2>&1 || true
+                rm -f "$_tmp_exe"
+            else
+                echo "!! failed to download rustup-init.exe"
+                rm -f "$_tmp_exe"
+            fi
+            for _d in "$USERPROFILE/.cargo/bin" "$HOME/.cargo/bin" "/c/Users/$USERNAME/.cargo/bin"; do
+                [ -d "$_d" ] && export PATH="$_d:$PATH"
+            done
+            unset _d
+        fi
+    else
+        # macOS / Linux
+        if command -v curl >/dev/null 2>&1; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --no-modify-path || curl -fsSL https://sh.rustup.rs | sh -s -- -y --no-modify-path || true
+        else
+            echo "!! curl not found, cannot install rustup automatically"
+        fi
+        if [ -f "$HOME/.cargo/env" ]; then . "$HOME/.cargo/env" 2>/dev/null || true; fi
+        export PATH="$HOME/.cargo/bin:$PATH"
+        # Linux: hint about Tauri system deps if missing
+        if [ "$OS" = "Linux" ] && ! pkg-config --exists webkit2gtk-4.1 2>/dev/null && ! pkg-config --exists webkit2gtk-4.0 2>/dev/null; then
+            echo ">> note: Tauri on Linux requires webkit2gtk, libappindicator, etc. See https://v2.tauri.app/start/prerequisites/#linux"
+        fi
+    fi
+    if ! command -v cargo >/dev/null 2>&1; then
+        echo "!! cargo still not found after install. Add \$HOME/.cargo/bin to PATH and restart shell."
+        echo "!!   export PATH=\"\$HOME/.cargo/bin:\$PATH\""
+        exit 1
+    fi
+    echo ">> cargo installed: $(cargo --version) / rustc $(rustc --version 2>/dev/null || echo 'n/a')"
+}
+
+ensure_node_deps() {
+    echo ">> installing npm dependencies..."
+    if npm install 2>&1; then
+        return 0
+    fi
+    _code=$?
+    echo ">> npm install failed (code $_code), checking cache permissions..."
+    if find "${NPM_CONFIG_CACHE:-$HOME/.npm}" -user root 2>/dev/null | grep -q .; then
+        echo ">> found root-owned files in npm cache, retrying with temp cache..."
+    fi
+    # retry with isolated cache (works around EACCES from earlier sudo npm)
+    if NPM_CONFIG_CACHE=/tmp/npm-cache npm install; then
+        echo ">> npm install succeeded with temp cache (consider: sudo chown -R \$(id -u):\$(id -g) ~/.npm)"
+        return 0
+    fi
+    echo "!! npm install failed even with temp cache"
+    return 1
+}
+
 fetch_sidecar() {
     mkdir -p src-tauri/binaries
     echo ">> fetching $ASSET for $OS/$ARCH → $SIDECAR"
@@ -132,8 +230,11 @@ build_one() {
 
 case "${CMD}" in
     setup)
-        npm install
+        ensure_rust
+        ensure_node_deps
         fetch_sidecar
+        echo ">> verifying Rust toolchain..."
+        cargo --version 2>&1 || true
         echo ">> setup complete"
         ;;
     dev)
@@ -144,6 +245,10 @@ case "${CMD}" in
         npm run tauri dev
         ;;
     build)
+        if ! command -v cargo >/dev/null 2>&1; then
+            echo "!! cargo not found, run './scripts/run.sh setup' first (installs rustup)"
+            exit 1
+        fi
         for t in $TARGETS; do
             build_one "$t" "" "$BUNDLES"
             bundle="src-tauri/target/release/bundle"
@@ -163,22 +268,52 @@ case "${CMD}" in
         done
         ;;
     portable)
-        if [ "$IS_WINDOWS" = true ]; then
-            rel="src-tauri/target/release"
-            out="$rel/bundle/portable"
-            for t in $TARGETS; do
-                build_one "$t" nobundle
+        if ! command -v cargo >/dev/null 2>&1; then
+            echo "!! cargo not found, run './scripts/run.sh setup' first (installs rustup)"
+            exit 1
+        fi
+        rel="src-tauri/target/release"
+        out="$rel/bundle/portable"
+        for t in $TARGETS; do
+            build_one "$t" nobundle
+            bundle="$rel/bundle"
+            if [ "$IS_WINDOWS" = true ]; then
                 mkdir -p "$out/OpenCode"
                 cp "$rel/opencode-gui.exe" "$out/OpenCode/" 2>/dev/null || cp "$rel/opencode-gui" "$out/OpenCode/" 2>/dev/null || true
-                # sidecar
-                if [ -f "$rel/opencode.exe" ]; then cp "$rel/opencode.exe" "$out/OpenCode/"; elif [ -f "$rel/opencode" ]; then cp "$rel/opencode" "$out/OpenCode/"; fi
+                if [ -f "$rel/opencode.exe" ]; then cp "$rel/opencode.exe" "$out/OpenCode/"; elif [ -f "$rel/opencode" ]; then cp "$rel/opencode" "$out/OpenCode/"; elif [ -f "$SIDECAR" ]; then cp "$SIDECAR" "$out/OpenCode/opencode.exe" 2>/dev/null || cp "$SIDECAR" "$out/OpenCode/opencode" 2>/dev/null || true; fi
                 (cd "$out" && zip -qr "opencode-gui-$t-x64.zip" OpenCode)
                 echo ">> portable [$t]: $out/opencode-gui-$t-x64.zip"
-            done
-        else
-            echo ">> portable: on macOS/Linux use 'build' (produces .app/.dmg/.AppImage/.deb)"
-            for t in $TARGETS; do build_one "$t" "" "$BUNDLES"; done
-        fi
+                ls -lh "$out/opencode-gui-$t-x64.zip" 2>/dev/null || true
+            else
+                # macOS / Linux: create portable folder + archive
+                mkdir -p "$out/OpenCode"
+                # main binary
+                if [ -f "$rel/opencode-gui" ]; then cp "$rel/opencode-gui" "$out/OpenCode/"; elif [ -f "$rel/opencode-gui.exe" ]; then cp "$rel/opencode-gui.exe" "$out/OpenCode/"; fi
+                # sidecar: prefer built, fallback to source sidecar
+                if [ -f "$rel/opencode" ]; then cp "$rel/opencode" "$out/OpenCode/"; elif [ -f "$rel/opencode.exe" ]; then cp "$rel/opencode.exe" "$out/OpenCode/"; elif [ -f "$SIDECAR" ]; then cp "$SIDECAR" "$out/OpenCode/" 2>/dev/null || true; fi
+                # on macOS also include .app bundle if built (Tauri may produce .app even with --no-bundle on some configs)
+                if [ "$OS" = "Darwin" ]; then
+                    _app=$(find "$bundle" -maxdepth 3 -name "*.app" -type d 2>/dev/null | head -1)
+                    if [ -n "$_app" ] && [ -d "$_app" ]; then
+                        echo ">> including $_app in portable"
+                        cp -R "$_app" "$out/OpenCode/" 2>/dev/null || true
+                    fi
+                    # macOS portable is a zip (native Finder)
+                    _arch=$(uname -m)
+                    (cd "$out" && zip -qr "opencode-gui-$t-$_arch.zip" OpenCode)
+                    echo ">> portable [$t]: $out/opencode-gui-$t-$_arch.zip"
+                    ls -lh "$out/opencode-gui-$t-$_arch.zip" 2>/dev/null || true
+                else
+                    # Linux: tar.gz
+                    _arch=$(uname -m)
+                    (cd "$out" && tar -czf "opencode-gui-$t-$_arch.tar.gz" OpenCode 2>/dev/null || zip -qr "opencode-gui-$t-$_arch.zip" OpenCode)
+                    echo ">> portable [$t]: $out/opencode-gui-$t-$_arch.tar.gz"
+                    ls -lh "$out"/opencode-gui-$t-*.tar.gz "$out"/opencode-gui-$t-*.zip 2>/dev/null | head -5
+                fi
+                echo ">> portable content:"
+                ls -lh "$out/OpenCode/" 2>/dev/null || true
+            fi
+        done
         ;;
     check)
         npm run build
