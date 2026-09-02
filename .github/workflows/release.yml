@@ -9,7 +9,7 @@ permissions:
   contents: write
 
 jobs:
-  build:
+  build-windows:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -23,6 +23,9 @@ jobs:
           workspaces: src-tauri
       - name: Install dependencies
         run: npm ci
+      - name: Setup sidecar
+        shell: pwsh
+        run: ./scripts/run.ps1 setup
       - name: Build (Windows 11)
         run: npm run tauri build
       - name: Pack win11 portable zip
@@ -42,5 +45,75 @@ jobs:
             src-tauri/target/release/opencode-gui-win11-x64.zip
             src-tauri/target/release/opencode-gui-win10-x64.zip
             src-tauri/target/release/bundle/msi/*.msi
+          generate_release_notes: true
+          fail_on_unmatched_files: false
+
+  build-macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - name: Install dependencies
+        run: npm ci
+      - name: Setup sidecar
+        run: bash scripts/run.sh setup
+      - name: Build (macOS arm64)
+        run: npm run tauri build -- --target aarch64-apple-darwin
+      - name: Upload to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
+            src-tauri/target/aarch64-apple-darwin/release/bundle/macos/*.app.tar.gz
+          generate_release_notes: true
+          fail_on_unmatched_files: false
+
+  build-linux:
+    strategy:
+      matrix:
+        target: [x86_64-unknown-linux-gnu, aarch64-unknown-linux-gnu]
+        include:
+          - target: x86_64-unknown-linux-gnu
+            arch: x64
+          - target: aarch64-unknown-linux-gnu
+            arch: arm64
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install Linux deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - name: Install dependencies
+        run: npm ci
+      - name: Setup sidecar
+        run: bash scripts/run.sh setup
+      - name: Build (Linux ${{ matrix.arch }})
+        run: npm run tauri build -- --target ${{ matrix.target }}
+      - name: Upload to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            src-tauri/target/${{ matrix.target }}/release/bundle/deb/*.deb
+            src-tauri/target/${{ matrix.target }}/release/bundle/appimage/*.AppImage
           generate_release_notes: true
           fail_on_unmatched_files: false

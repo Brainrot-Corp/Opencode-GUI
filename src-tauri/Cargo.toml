@@ -50,8 +50,10 @@ kokoro-en = { git = "https://github.com/pguso/kokoro", package = "kokoro-en", de
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "sync", "time", "fs", "macros"] }
 futures = "0.3"
 
-[target."cfg(windows)".dependencies]
+[target.'cfg(any(windows, target_os = "macos"))'.dependencies]
 window-vibrancy = "0.6"
+
+[target."cfg(windows)".dependencies]
 jumplist_win = "0.0.4"
 winreg = "0.52"
 # version-matched to wry's — gives access to ICoreWebView2Controller

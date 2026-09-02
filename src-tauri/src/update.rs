@@ -22,12 +22,15 @@ fn sha256_of(path: &PathBuf) -> Result<String, String> {
     Ok(format!("{:x}", h.finalize()))
 }
 
-// which portable flavor this build is — decides which release zip the
-// updater downloads (noglass = Windows 10 build, default = Windows 11)
+// which flavor this build is — Windows uses noglass/win11, other OS return os-arch
 #[tauri::command]
 pub fn build_flavor() -> &'static str {
     if cfg!(feature = "noglass") {
         "win10"
+    } else if cfg!(target_os = "macos") {
+        "macos-arm64"
+    } else if cfg!(target_os = "linux") {
+        if cfg!(target_arch = "aarch64") { "linux-arm64" } else { "linux-x64" }
     } else {
         "win11"
     }
@@ -39,6 +42,9 @@ pub fn build_flavor() -> &'static str {
 // (opencode-gui.exe + opencode.exe sidecar).
 #[tauri::command]
 pub async fn update_download(url: String, sha256: String, version: String) -> Result<(), String> {
+    if !cfg!(windows) {
+        return Err("auto-update only available on Windows".into());
+    }
     if !url.starts_with("https://") {
         return Err("bad download url".into());
     }
@@ -46,7 +52,7 @@ pub async fn update_download(url: String, sha256: String, version: String) -> Re
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let zip_path = dir.join("update.zip");
 
-    let mut cmd = std::process::Command::new("curl.exe");
+    let mut cmd = std::process::Command::new(crate::platform::curl_bin());
     cmd.args(["-L", "--fail", "--silent", "--show-error", "--max-time", "1800", "-o"]);
     cmd.arg(&zip_path).arg(&url);
     // release: no console flash next to the frameless window
@@ -109,6 +115,9 @@ pub async fn update_download(url: String, sha256: String, version: String) -> Re
 // if empty. Verifies the exe exists and stages it under %TEMP%\oc-update.
 #[tauri::command]
 pub fn update_stage_local(folder: String, version: String) -> Result<(), String> {
+    if !cfg!(windows) {
+        return Err("local staging only on Windows".into());
+    }
     let raw = folder.trim();
     if raw.is_empty() {
         return Err("empty folder path".into());

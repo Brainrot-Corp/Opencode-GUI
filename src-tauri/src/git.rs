@@ -20,13 +20,13 @@ pub struct GitStatus {
     pub files: Vec<GitFile>,
 }
 
-// empty dir resolves to the server cwd (USERPROFILE), mirroring spawn_server
+// empty dir resolves to the server cwd (home_dir), mirroring spawn_server
 fn workdir(dir: &str) -> std::path::PathBuf {
     if dir.is_empty() {
-        let home = std::env::var("USERPROFILE").unwrap_or_default();
-        return std::path::PathBuf::from(home);
+        return crate::platform::home_dir();
     }
-    std::path::PathBuf::from(dir)
+    let p = std::path::PathBuf::from(dir);
+    if p.is_dir() { p } else { crate::platform::home_dir() }
 }
 
 fn run(dir: &str, args: &[&str]) -> Result<String, String> {

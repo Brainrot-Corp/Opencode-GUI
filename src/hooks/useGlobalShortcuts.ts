@@ -97,11 +97,9 @@ export function useGlobalShortcuts({
     return () => document.removeEventListener("click", click, true);
   }, [openBrowser]);
 
-  // Ctrl+wheel / Ctrl +/-/0 drive the uiScale setting through the shared
-  // zoom presets — preventDefault stays so WebView2's own zoom never kicks in
+  // Ctrl/Cmd+wheel / Ctrl +/-/0 drive the uiScale setting through the shared
+  // zoom presets — preventDefault stays so WebView zoom never kicks in
   useEffect(() => {
-    // one preset step per ~50px of accumulated wheel delta — trackpads emit
-    // many small deltas, mouse notches one big one
     let acc = 0;
     const stepZoom = (dir: 1 | -1) => {
       const i = UI_SCALES.indexOf(settings.uiScale);
@@ -110,7 +108,7 @@ export function useGlobalShortcuts({
       if (next !== settings.uiScale) update({ uiScale: next });
     };
     const wheel = (e: WheelEvent) => {
-      if (!e.ctrlKey) return;
+      if (!e.ctrlKey && !(e as any).metaKey) return;
       e.preventDefault();
       acc += e.deltaY;
       if (Math.abs(acc) >= 50) {
@@ -213,12 +211,11 @@ export function useGlobalShortcuts({
     return () => window.removeEventListener("keydown", onKey, true);
   }, []);
 
-  // Alt+Space: suppress Windows system menu and toggle window (tray) when focused.
-  // The Rust global-shortcut handles system-wide toggling, but when the window is
-  // focused Windows still shows the legacy Restore/Move/Size menu on Alt+Space
-  // before the global shortcut fires. Intercepting here restores the old
-  // "Alt+Space toggles app in focus / in the tray" behavior.
+  // Alt+Space: Windows only — suppress system menu and toggle window.
+  // On macOS Alt+Space is not a system menu (Cmd+Space is Spotlight).
   useEffect(() => {
+    const isMac = typeof navigator !== "undefined" && /Mac/i.test(navigator.platform || "");
+    if (isMac) return;
     const onKey = (e: KeyboardEvent) => {
       if (!e.altKey || e.ctrlKey || e.shiftKey || e.metaKey) return;
       const isSpace = e.code === "Space" || e.key === " " || e.key === "Spacebar";

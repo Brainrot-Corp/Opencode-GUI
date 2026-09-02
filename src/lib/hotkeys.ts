@@ -306,5 +306,9 @@ export function matchesEvent(e: KeyboardEvent, binding: string | null): boolean 
 
 export function formatBinding(b: string | null): string {
   if (!b) return "—";
+  try {
+    const isMac = typeof navigator !== "undefined" && /Mac/i.test(navigator.platform || (navigator as any).userAgent || "");
+    if (isMac) return b.replace(/Ctrl/g, "⌘").replace(/Alt/g, "⌥").replace(/Meta/g, "⌘");
+  } catch {}
   return b;
 }

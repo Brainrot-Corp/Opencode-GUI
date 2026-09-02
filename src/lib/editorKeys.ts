@@ -29,10 +29,13 @@ export function lineCommentForPath(path?: string): CommentStyle {
 }
 
 function getLineAt(text: string, pos: number) {
+  // handle \r\n: treat \n as delimiter, strip \r from line end
   const p = Math.max(0, Math.min(pos, text.length));
-  const start = text.lastIndexOf("\n", p - 1) + 1; // -1 -> 0
+  const start = text.lastIndexOf("\n", p - 1) + 1;
   const nl = text.indexOf("\n", p);
-  const end = nl === -1 ? text.length : nl;
+  let end = nl === -1 ? text.length : nl;
+  // strip \r before \n
+  if (end > start && text[end - 1] === "\r") end -= 1;
   const endWithNl = nl === -1 ? text.length : nl + 1;
   return { start, end, endWithNl };
 }
@@ -120,11 +123,13 @@ export function opDuplicate(text: string, selStart: number, selEnd: number, dir:
 }
 
 export function opMoveLine(text: string, selStart: number, selEnd: number, dir: "up" | "down"): { text: string; caret: number } | null {
-  const { start, end } = getBlockRange(text, selStart, selEnd);
-  // compute line indices via newline count (robust for trailing newline)
-  const startLine = (text.slice(0, start).match(/\n/g) ?? []).length;
-  const endLine = (text.slice(0, end).match(/\n/g) ?? []).length;
-  const lines = text.split("\n");
+  // normalize CRLF to LF for line ops (save normalizes to LF)
+  const hadCRLF = text.includes("\r\n");
+  const normText = hadCRLF ? text.replace(/\r\n/g, "\n") : text;
+  const { start, end } = getBlockRange(normText, selStart > text.length ? normText.length : selStart, selEnd > text.length ? normText.length : selEnd);
+  const startLine = (normText.slice(0, start).match(/\n/g) ?? []).length;
+  const endLine = (normText.slice(0, end).match(/\n/g) ?? []).length;
+  const lines = normText.split("\n");
   const count = endLine - startLine + 1;
   if (dir === "down") {
     if (endLine >= lines.length - 1) return null;
@@ -172,8 +177,9 @@ export function opInsertLine(text: string, pos: number, dir: "above" | "below"):
 }
 
 export function opToggleComment(text: string, selStart: number, selEnd: number, style: CommentStyle): { text: string; caret: number; selEnd: number } {
-  const { start, endWithNl } = getBlockRange(text, selStart, selEnd);
-  const block = text.slice(start, endWithNl);
+  const norm = text.includes("\r\n") ? text.replace(/\r\n/g, "\n") : text;
+  const { start, endWithNl } = getBlockRange(norm, selStart, selEnd);
+  const block = norm.slice(start, endWithNl);
   const lines = block.split("\n");
   const hasTrailingNl = block.endsWith("\n");
   const rawLines = hasTrailingNl ? lines.slice(0, -1) : lines;
@@ -225,7 +231,7 @@ export function opToggleComment(text: string, selStart: number, selEnd: number, 
 
   let newBlock = outLines.join("\n");
   if (hasTrailingNl) newBlock += "\n";
-  const nt = text.slice(0, start) + newBlock + text.slice(endWithNl);
+  const nt = norm.slice(0, start) + newBlock + norm.slice(endWithNl);
   // keep caret roughly at same offset (biased to start)
   const caret = Math.min(start, nt.length);
   const newSelEnd = caret + newBlock.length - (hasTrailingNl ? 1 : 0);

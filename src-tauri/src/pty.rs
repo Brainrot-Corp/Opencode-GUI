@@ -24,7 +24,7 @@ pub struct PtyState(pub Mutex<HashMap<u32, Arc<PtySession>>>);
 const MAX_TERMS: usize = 8;
 
 fn default_shell() -> String {
-    std::env::var("SHELL").unwrap_or_else(|_| "powershell.exe".into())
+    crate::platform::default_shell()
 }
 
 fn parse_shell_args(raw: Option<String>) -> Vec<String> {
@@ -56,12 +56,7 @@ fn parse_shell_args(raw: Option<String>) -> Vec<String> {
 }
 
 fn workdir(cwd: &str) -> std::path::PathBuf {
-    let p = if cwd.is_empty() {
-        std::path::PathBuf::from(std::env::var("USERPROFILE").unwrap_or_default())
-    } else {
-        std::path::PathBuf::from(cwd)
-    };
-    if p.is_dir() { p } else { std::path::PathBuf::from(std::env::var("USERPROFILE").unwrap_or_default()) }
+    crate::platform::resolve_workdir(cwd)
 }
 
 impl PtySession {

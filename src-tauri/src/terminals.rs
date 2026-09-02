@@ -1,5 +1,4 @@
-// Windows shell discovery — probes, WSL distros, Windows Terminal profiles.
-// No new deps: where.exe + wsl --list + winreg + serde_json (already present). Windows-only.
+// Shell discovery — Windows: where.exe + WSL + WT; Unix: which + /etc/shells
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
@@ -26,33 +25,20 @@ fn where_lookup(exe: &str) -> Option<String> {
             .creation_flags(CREATE_NO_WINDOW)
             .output()
             .ok()?;
-        if !out.status.success() {
-            return None;
-        }
+        if !out.status.success() { return None; }
         let txt = String::from_utf8_lossy(&out.stdout);
         let first = txt.lines().map(|l| l.trim()).find(|l| !l.is_empty())?;
-        if first.is_empty() {
-            None
-        } else {
-            Some(first.to_string())
-        }
+        if first.is_empty() { None } else { Some(first.to_string()) }
     }
     #[cfg(not(windows))]
     {
-        let out = std::process::Command::new("where")
-            .arg(exe)
-            .output()
-            .ok()?;
-        if !out.status.success() {
-            return None;
-        }
+        // strip .exe for Unix lookups
+        let needle = exe.trim_end_matches(".exe");
+        let out = std::process::Command::new("which").arg(needle).output().ok()?;
+        if !out.status.success() { return None; }
         let txt = String::from_utf8_lossy(&out.stdout);
         let first = txt.lines().map(|l| l.trim()).find(|l| !l.is_empty())?;
-        if first.is_empty() {
-            None
-        } else {
-            Some(first.to_string())
-        }
+        if first.is_empty() { None } else { Some(first.to_string()) }
     }
 }
 
@@ -139,146 +125,90 @@ fn parse_commandline(cmdline: &str) -> (String, Vec<String>) {
     (path, parts)
 }
 
+#[cfg(windows)]
 fn probe_shells(out: &mut Vec<TerminalProfile>) {
     // PowerShell (Windows PowerShell 5.x)
     if let Some(p) = where_lookup("powershell.exe") {
-        out.push(TerminalProfile {
-            id: "probe-powershell".into(),
-            name: "PowerShell".into(),
-            path: p,
-            args: vec![],
-            source: "probe".into(),
-            kind: "powershell".into(),
-        });
+        out.push(TerminalProfile { id: "probe-powershell".into(), name: "PowerShell".into(), path: p, args: vec![], source: "probe".into(), kind: "powershell".into() });
     } else if file_exists("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe") {
-        out.push(TerminalProfile {
-            id: "probe-powershell".into(),
-            name: "PowerShell".into(),
-            path: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe".into(),
-            args: vec![],
-            source: "probe".into(),
-            kind: "powershell".into(),
-        });
+        out.push(TerminalProfile { id: "probe-powershell".into(), name: "PowerShell".into(), path: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe".into(), args: vec![], source: "probe".into(), kind: "powershell".into() });
     } else {
-        // fallback bare name — let ConPTY resolve via PATH
-        out.push(TerminalProfile {
-            id: "probe-powershell".into(),
-            name: "PowerShell".into(),
-            path: "powershell.exe".into(),
-            args: vec![],
-            source: "probe".into(),
-            kind: "powershell".into(),
-        });
+        out.push(TerminalProfile { id: "probe-powershell".into(), name: "PowerShell".into(), path: "powershell.exe".into(), args: vec![], source: "probe".into(), kind: "powershell".into() });
     }
-
-    // PowerShell 7 (pwsh)
     if let Some(p) = where_lookup("pwsh.exe") {
-        out.push(TerminalProfile {
-            id: "probe-pwsh".into(),
-            name: "PowerShell 7 (pwsh)".into(),
-            path: p,
-            args: vec![],
-            source: "probe".into(),
-            kind: "pwsh".into(),
-        });
+        out.push(TerminalProfile { id: "probe-pwsh".into(), name: "PowerShell 7 (pwsh)".into(), path: p, args: vec![], source: "probe".into(), kind: "pwsh".into() });
     } else {
-        // check common install locations before omitting
-        for cand in [
-            "C:\\Program Files\\PowerShell\\7\\pwsh.exe",
-            "C:\\Program Files\\PowerShell\\7-preview\\pwsh.exe",
-        ] {
-            if file_exists(cand) {
-                out.push(TerminalProfile {
-                    id: "probe-pwsh".into(),
-                    name: "PowerShell 7 (pwsh)".into(),
-                    path: cand.into(),
-                    args: vec![],
-                    source: "probe".into(),
-                    kind: "pwsh".into(),
-                });
-                break;
-            }
+        for cand in ["C:\\Program Files\\PowerShell\\7\\pwsh.exe", "C:\\Program Files\\PowerShell\\7-preview\\pwsh.exe"] {
+            if file_exists(cand) { out.push(TerminalProfile { id: "probe-pwsh".into(), name: "PowerShell 7 (pwsh)".into(), path: cand.into(), args: vec![], source: "probe".into(), kind: "pwsh".into() }); break; }
         }
     }
-
-    // Command Prompt
     let cmd_path = std::env::var("COMSPEC").unwrap_or_else(|_| "C:\\Windows\\System32\\cmd.exe".into());
     if let Some(p) = where_lookup("cmd.exe") {
-        out.push(TerminalProfile {
-            id: "probe-cmd".into(),
-            name: "Command Prompt".into(),
-            path: p,
-            args: vec![],
-            source: "probe".into(),
-            kind: "cmd".into(),
-        });
+        out.push(TerminalProfile { id: "probe-cmd".into(), name: "Command Prompt".into(), path: p, args: vec![], source: "probe".into(), kind: "cmd".into() });
     } else if file_exists(&cmd_path) {
-        out.push(TerminalProfile {
-            id: "probe-cmd".into(),
-            name: "Command Prompt".into(),
-            path: cmd_path,
-            args: vec![],
-            source: "probe".into(),
-            kind: "cmd".into(),
-        });
+        out.push(TerminalProfile { id: "probe-cmd".into(), name: "Command Prompt".into(), path: cmd_path, args: vec![], source: "probe".into(), kind: "cmd".into() });
     } else {
-        out.push(TerminalProfile {
-            id: "probe-cmd".into(),
-            name: "Command Prompt".into(),
-            path: "cmd.exe".into(),
-            args: vec![],
-            source: "probe".into(),
-            kind: "cmd".into(),
-        });
+        out.push(TerminalProfile { id: "probe-cmd".into(), name: "Command Prompt".into(), path: "cmd.exe".into(), args: vec![], source: "probe".into(), kind: "cmd".into() });
     }
-
-    // Git Bash / bash.exe
     let mut bash_found = false;
     if let Some(p) = where_lookup("bash.exe") {
         let name = if p.to_lowercase().contains("git") { "Git Bash" } else { "Bash" };
-        out.push(TerminalProfile {
-            id: "probe-gitbash".into(),
-            name: name.into(),
-            path: p,
-            args: vec![],
-            source: "probe".into(),
-            kind: "gitbash".into(),
-        });
-        bash_found = true;
+        out.push(TerminalProfile { id: "probe-gitbash".into(), name: name.into(), path: p, args: vec![], source: "probe".into(), kind: "gitbash".into() }); bash_found = true;
     }
     if !bash_found {
-        for cand in [
-            "C:\\Program Files\\Git\\bin\\bash.exe",
-            "C:\\Program Files\\Git\\usr\\bin\\bash.exe",
-            "C:\\Program Files (x86)\\Git\\bin\\bash.exe",
-        ] {
-            if file_exists(cand) {
-                out.push(TerminalProfile {
-                    id: "probe-gitbash".into(),
-                    name: "Git Bash".into(),
-                    path: cand.into(),
-                    args: vec![],
-                    source: "probe".into(),
-                    kind: "gitbash".into(),
-                });
-                bash_found = true;
-                break;
-            }
+        for cand in ["C:\\Program Files\\Git\\bin\\bash.exe", "C:\\Program Files\\Git\\usr\\bin\\bash.exe", "C:\\Program Files (x86)\\Git\\bin\\bash.exe"] {
+            if file_exists(cand) { out.push(TerminalProfile { id: "probe-gitbash".into(), name: "Git Bash".into(), path: cand.into(), args: vec![], source: "probe".into(), kind: "gitbash".into() }); bash_found = true; break; }
         }
-        // scoop shim
         if !bash_found {
             if let Ok(home) = std::env::var("USERPROFILE") {
                 let scoop = PathBuf::from(home).join("scoop").join("shims").join("bash.exe");
-                if scoop.exists() {
-                    out.push(TerminalProfile {
-                        id: "probe-gitbash".into(),
-                        name: "Git Bash".into(),
-                        path: scoop.to_string_lossy().into_owned(),
-                        args: vec![],
-                        source: "probe".into(),
-                        kind: "gitbash".into(),
-                    });
-                }
+                if scoop.exists() { out.push(TerminalProfile { id: "probe-gitbash".into(), name: "Git Bash".into(), path: scoop.to_string_lossy().into_owned(), args: vec![], source: "probe".into(), kind: "gitbash".into() }); }
+            }
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn probe_shells(out: &mut Vec<TerminalProfile>) {
+    // Unix: probe bash, zsh, fish, pwsh, etc. via which + /etc/shells
+    let mut seen = std::collections::HashSet::new();
+    let probes: &[(&str, &str, &str, &str)] = &[
+        ("probe-bash", "Bash", "bash", "bash"),
+        ("probe-zsh", "Zsh", "zsh", "zsh"),
+        ("probe-fish", "Fish", "fish", "fish"),
+        ("probe-pwsh", "PowerShell 7 (pwsh)", "pwsh", "pwsh"),
+        ("probe-sh", "Sh", "sh", "sh"),
+    ];
+    for (id, name, exe, kind) in probes {
+        if let Some(p) = where_lookup(exe) {
+            if seen.insert(p.clone()) {
+                out.push(TerminalProfile { id: (*id).into(), name: (*name).into(), path: p, args: vec![], source: "probe".into(), kind: (*kind).into() });
+            }
+        }
+    }
+    // also scan /etc/shells for any missing
+    if let Ok(txt) = std::fs::read_to_string("/etc/shells") {
+        for line in txt.lines() {
+            let t = line.trim();
+            if t.is_empty() || t.starts_with('#') { continue; }
+            if !Path::new(t).exists() { continue; }
+            let kind = if t.contains("zsh") { "zsh" } else if t.contains("fish") { "fish" } else if t.contains("bash") { "bash" } else { "sh" };
+            let id = format!("probe-{}", kind);
+            if seen.contains(t) { continue; }
+            let name = match kind { "zsh" => "Zsh", "fish" => "Fish", "bash" => "Bash", _ => "Sh" };
+            // avoid duplicating already added via which
+            let already_has_kind = out.iter().any(|p| p.kind == kind);
+            if already_has_kind { continue; }
+            out.push(TerminalProfile { id, name: name.into(), path: t.into(), args: vec![], source: "probe".into(), kind: kind.into() });
+            seen.insert(t.into());
+        }
+    }
+    // fallback ensure at least bash
+    if out.is_empty() {
+        for cand in ["/bin/bash", "/bin/sh", "/bin/zsh"] {
+            if file_exists(cand) {
+                out.push(TerminalProfile { id: "probe-bash".into(), name: "Bash".into(), path: cand.into(), args: vec![], source: "probe".into(), kind: "bash".into() });
+                break;
             }
         }
     }
@@ -786,11 +716,13 @@ pub async fn list_terminals() -> Vec<TerminalProfile> {
     let out = tauri::async_runtime::spawn_blocking(|| {
         let mut o = Vec::new();
         probe_shells(&mut o);
-        // skip wsl completely when wsl.exe isn't present — saves ~500ms on machines without WSL
-        if wsl_available() {
-            wsl_distros(&mut o);
+        #[cfg(windows)]
+        {
+            if wsl_available() {
+                wsl_distros(&mut o);
+            }
+            wt_profiles(&mut o);
         }
-        wt_profiles(&mut o);
         o
     })
     .await

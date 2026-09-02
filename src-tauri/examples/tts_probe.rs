@@ -1,7 +1,8 @@
 use std::path::PathBuf;
 
 fn home() -> PathBuf {
-    PathBuf::from(std::env::var("USERPROFILE").unwrap_or_default())
+    let base = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")).unwrap_or_else(|_| std::env::temp_dir().to_string_lossy().into_owned());
+    PathBuf::from(base)
         .join(".config")
         .join(".opencode-gui")
         .join("kokoro")

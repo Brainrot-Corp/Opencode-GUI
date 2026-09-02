@@ -83,7 +83,9 @@ export default function FileEditor({
         setError("");
         return;
       }
-      const text = fc?.content ?? "";
+      const raw = fc?.content ?? "";
+      // normalize CRLF to LF for editing (save also as LF)
+      const text = raw.includes("\r") ? raw.replace(/\r\n/g, "\n").replace(/\r/g, "\n") : raw;
       setSaved(text);
       setDraft(text);
       historyRef.current = [];

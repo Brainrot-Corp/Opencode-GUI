@@ -49,6 +49,13 @@ invoke<boolean>("os_glass")
   })
   .catch(() => {});
 
+// mac traffic-light inset — keep custom titlebar flush but clear stoplights
+try {
+  if (typeof navigator !== "undefined" && /Mac/i.test(navigator.platform || (navigator as any).userAgent || "")) {
+    document.documentElement.classList.add("mac");
+  }
+} catch {}
+
 // sidebar resize cursor = the user's live Windows pointer scheme (WebView2
 // ignores schemes for CSS cursors, so Rust ships the real one as a data URL)
 invoke<{ url: string; x: number; y: number }>("resize_cursor")

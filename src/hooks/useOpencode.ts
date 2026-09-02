@@ -16,6 +16,7 @@ import { playSound } from "../lib/sounds";
 import { createSessionStore } from "../lib/sessionStore";
 import { splitModel } from "../lib/models";
 import { touchWorkspace } from "../lib/workspace";
+import { isWindows } from "../lib/platform";
 import { createBusyTracker } from "../lib/busyTracker";
 import {
   buildCmdList,
@@ -537,10 +538,17 @@ export function useOpencode() {
     const extras = getWorkspaces();
     const seen = new Set<string>();
     const out: string[] = [];
+    let seenEmpty = false;
     for (const d of [primary, ...extras]) {
       const t = (d ?? "").trim();
-      // allow empty primary (server cwd) as "" key
-      const key = t.toLowerCase();
+      if (!t) {
+        if (seenEmpty) continue;
+        seenEmpty = true;
+        seen.add("__EMPTY__");
+        out.push("");
+        continue;
+      }
+      const key = isWindows() ? t.toLowerCase() : t;
       if (seen.has(key)) continue;
       seen.add(key);
       out.push(t);
@@ -574,8 +582,10 @@ export function useOpencode() {
       all.push(...list);
     }
     // preserve pending creations whose dir still exists
-    const dirSet = new Set(dirs.map((d) => d.toLowerCase()));
-    for (const [id, dir] of sessionDirRef.current) if (!nextMap.has(id) && dirSet.has((dir ?? "").toLowerCase())) nextMap.set(id, dir);
+    const norm = (s: string) => isWindows() ? s.toLowerCase() : s;
+    const dirSet = new Set(dirs.map((d) => (d ? norm(d) : "__EMPTY__")));
+    const hasDir = (dir: string) => dirSet.has(dir ? norm(dir) : "__EMPTY__");
+    for (const [id, dir] of sessionDirRef.current) if (!nextMap.has(id) && hasDir(dir ?? "")) nextMap.set(id, dir);
     sessionDirRef.current = nextMap;
     const out = applyOverrides(all);
     const finalMap = new Map<string, string>();
@@ -583,7 +593,7 @@ export function useOpencode() {
       const d = (s as any)._dir ?? nextMap.get(s.id) ?? getDirectory();
       finalMap.set(s.id, d);
     }
-    for (const [id, dir] of nextMap) if (!finalMap.has(id) && dirSet.has((dir ?? "").toLowerCase())) finalMap.set(id, dir);
+    for (const [id, dir] of nextMap) if (!finalMap.has(id) && hasDir(dir ?? "")) finalMap.set(id, dir);
     sessionDirRef.current = finalMap;
     setSessions(out);
     return out;

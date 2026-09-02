@@ -30,7 +30,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["msi"],
+    "targets": "all",
     "externalBin": [
       "binaries/opencode"
     ],

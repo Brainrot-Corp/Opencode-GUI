@@ -1,6 +1,7 @@
 import { open } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
 import { getDirectory, setDirectory } from "../api";
+import { isWindows } from "./platform";
 
 const MAX_EXTRA = 5;
 const LAST_WS_KEY = "oc.lastWorkspace";
@@ -58,11 +59,20 @@ export function getAllWorkspaces(): string[] {
   const extras = readExtras();
   const seen = new Set<string>();
   const out: string[] = [];
+  let seenEmpty = false;
   for (const d of [primary, ...extras]) {
-    const key = (d ?? "").toLowerCase();
+    const t = (d ?? "").trim();
+    if (!t) {
+      if (seenEmpty) continue;
+      seenEmpty = true;
+      seen.add("__EMPTY__");
+      out.push("");
+      continue;
+    }
+    const key = isWindows() ? t.toLowerCase() : t;
     if (seen.has(key)) continue;
     seen.add(key);
-    out.push(d);
+    out.push(t);
   }
   return out;
 }
@@ -71,14 +81,13 @@ export async function addWorkspace(path: string, atIndex?: number): Promise<bool
   if (!p) return false;
   const isDir = await invoke<boolean>("workspace_is_dir", { path: p }).catch(() => false);
   if (!isDir) return false;
-  const primary = getDirectory().toLowerCase();
-  if (p.toLowerCase() === primary) return false;
-  // atomic read-modify-write: re-read latest inside transaction to avoid cross-tab lost update
+  const primary = getDirectory().trim();
+  const norm = (s: string) => isWindows() ? s.toLowerCase() : s;
+  if (norm(p) === norm(primary)) return false;
   try {
     const raw = JSON.parse(localStorage.getItem("oc.settings") ?? "{}");
     let extras: string[] = Array.isArray(raw.workspaces) ? raw.workspaces.filter((x: unknown) => typeof x === "string") : [];
-    const low = p.toLowerCase();
-    if (extras.some((e) => e.toLowerCase() === low)) return false;
+    if (extras.some((e) => norm(e) === norm(p))) return false;
     if (extras.length >= MAX_EXTRA) return false;
     if (typeof atIndex === "number" && atIndex >= 0 && atIndex <= extras.length) extras.splice(atIndex, 0, p);
     else extras.push(p);
@@ -89,8 +98,9 @@ export async function addWorkspace(path: string, atIndex?: number): Promise<bool
   return true;
 }
 export function removeWorkspace(path: string) {
-  const low = path.toLowerCase();
-  safeWriteExtras((prev) => prev.filter((e) => e.toLowerCase() !== low));
+  const norm = (s: string) => isWindows() ? s.toLowerCase() : s;
+  const target = norm(path.trim());
+  safeWriteExtras((prev) => prev.filter((e) => norm(e) !== target));
 }
 export function reorderWorkspaces(from: number, to: number) {
   safeWriteExtras((prev) => {

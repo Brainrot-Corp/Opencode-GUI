@@ -29,10 +29,9 @@ fn unique_temp_path(prefix: &str, ext: &str) -> PathBuf {
     std::env::temp_dir().join(format!("{prefix}-{pid}-{ts}-{seq:04}-{rnd:04x}.{ext}"))
 }
 
-// everything lives under ~/.config/.opencode-gui/whisper/ Ã¢â‚¬â€ same root as themes.json
+// everything lives under config_root/whisper — same root as themes/plugins
 fn whisper_dir() -> PathBuf {
-    let home = std::env::var("USERPROFILE").unwrap_or_default();
-    PathBuf::from(home)
+    crate::platform::home_dir()
         .join(".config")
         .join(".opencode-gui")
         .join("whisper")
@@ -57,10 +56,22 @@ fn downloads_dir() -> PathBuf {
 }
 
 fn find_cli_in(dir: &Path) -> Option<PathBuf> {
-    for name in ["whisper-cli.exe", "main.exe"] {
-        let p = dir.join(name);
-        if p.exists() {
-            return Some(p);
+    #[cfg(windows)]
+    {
+        for name in ["whisper-cli.exe", "main.exe"] {
+            let p = dir.join(name);
+            if p.exists() {
+                return Some(p);
+            }
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        for name in ["whisper-cli", "whisper-cli.exe", "main", "main.exe"] {
+            let p = dir.join(name);
+            if p.exists() {
+                return Some(p);
+            }
         }
     }
     None
@@ -114,62 +125,70 @@ pub struct GpuStatus {
 
 #[tauri::command]
 pub async fn voice_gpu() -> GpuStatus {
-    let (nvidia, compute_cap) = tauri::async_runtime::spawn_blocking(|| -> (Option<String>, String) {
-        let name = (|| {
-            let mut cmd = Command::new("powershell");
-            cmd.args([
-                "-NoProfile",
-                "-Command",
-                "Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty Name",
-            ]);
-            #[cfg(all(windows, not(debug_assertions)))]
-            {
-                use std::os::windows::process::CommandExt;
-                const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-                cmd.creation_flags(CREATE_NO_WINDOW);
-            }
-            cmd.stdout(Stdio::piped()).stderr(Stdio::null());
-            let out = cmd.output().ok()?;
-            if !out.status.success() {
-                return None;
-            }
-            String::from_utf8_lossy(&out.stdout)
-                .lines()
-                .map(str::trim)
-                .find(|l| l.to_lowercase().contains("nvidia"))
-                .map(str::to_string)
-        })();
-        let cap = if name.is_some() {
-            let mut cmd = Command::new("nvidia-smi");
-            cmd.args(["--query-gpu=compute_cap", "--format=csv,noheader,nounits"]);
-            #[cfg(all(windows, not(debug_assertions)))]
-            {
-                use std::os::windows::process::CommandExt;
-                const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-                cmd.creation_flags(CREATE_NO_WINDOW);
-            }
-            cmd.stdout(Stdio::piped()).stderr(Stdio::null());
-            cmd.output()
-                .ok()
-                .filter(|o| o.status.success())
-                .and_then(|o| {
-                    String::from_utf8_lossy(&o.stdout)
-                        .lines()
-                        .next()
-                        .map(|s| s.trim().to_string())
-                })
-                .unwrap_or_default()
-        } else {
-            String::new()
-        };
-        (name, cap)
-    })
-    .await
-    .ok()
-    .unwrap_or((None, String::new()));
-    match nvidia {
-        Some(name) => GpuStatus { nvidia: true, name, compute_cap },
-        None => GpuStatus { nvidia: false, name: String::new(), compute_cap: String::new() },
+    #[cfg(not(windows))]
+    {
+        // CPU-only outside Windows for now; CoreML/MPS deferred
+        return GpuStatus { nvidia: false, name: String::new(), compute_cap: String::new() };
+    }
+    #[cfg(windows)]
+    {
+        let (nvidia, compute_cap) = tauri::async_runtime::spawn_blocking(|| -> (Option<String>, String) {
+            let name = (|| {
+                let mut cmd = Command::new("powershell");
+                cmd.args([
+                    "-NoProfile",
+                    "-Command",
+                    "Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty Name",
+                ]);
+                #[cfg(all(windows, not(debug_assertions)))]
+                {
+                    use std::os::windows::process::CommandExt;
+                    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+                    cmd.creation_flags(CREATE_NO_WINDOW);
+                }
+                cmd.stdout(Stdio::piped()).stderr(Stdio::null());
+                let out = cmd.output().ok()?;
+                if !out.status.success() {
+                    return None;
+                }
+                String::from_utf8_lossy(&out.stdout)
+                    .lines()
+                    .map(str::trim)
+                    .find(|l| l.to_lowercase().contains("nvidia"))
+                    .map(str::to_string)
+            })();
+            let cap = if name.is_some() {
+                let mut cmd = Command::new("nvidia-smi");
+                cmd.args(["--query-gpu=compute_cap", "--format=csv,noheader,nounits"]);
+                #[cfg(all(windows, not(debug_assertions)))]
+                {
+                    use std::os::windows::process::CommandExt;
+                    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+                    cmd.creation_flags(CREATE_NO_WINDOW);
+                }
+                cmd.stdout(Stdio::piped()).stderr(Stdio::null());
+                cmd.output()
+                    .ok()
+                    .filter(|o| o.status.success())
+                    .and_then(|o| {
+                        String::from_utf8_lossy(&o.stdout)
+                            .lines()
+                            .next()
+                            .map(|s| s.trim().to_string())
+                    })
+                    .unwrap_or_default()
+            } else {
+                String::new()
+            };
+            (name, cap)
+        })
+        .await
+        .ok()
+        .unwrap_or((None, String::new()));
+        match nvidia {
+            Some(name) => GpuStatus { nvidia: true, name, compute_cap },
+            None => GpuStatus { nvidia: false, name: String::new(), compute_cap: String::new() },
+        }
     }
 }
 
@@ -194,7 +213,7 @@ pub async fn voice_download(key: String, url: String) -> Result<(), String> {
     }
     let part = part_path(&key)?;
     std::fs::create_dir_all(downloads_dir()).map_err(|e| e.to_string())?;
-    let mut cmd = Command::new("curl.exe");
+    let mut cmd = Command::new(crate::platform::curl_bin());
     cmd.args([
         "-L",
         "--fail",
@@ -456,10 +475,14 @@ fn pcm_f32_to_wav_bytes(samples: &[f32], sample_rate: u32) -> Vec<u8> {
 }
 
 fn find_server_in(dir: &Path) -> Option<PathBuf> {
-    for name in ["whisper-server.exe", "server.exe", "whisper-server"] {
+    let names: &[&str] = if cfg!(windows) {
+        &["whisper-server.exe", "server.exe", "whisper-server"]
+    } else {
+        &["whisper-server", "whisper-server.exe", "server", "server.exe"]
+    };
+    for name in names {
         let p = dir.join(name);
         if p.exists() { return Some(p); }
-        // release zips put binaries under Release/ subdir
         let p2 = dir.join("Release").join(name);
         if p2.exists() { return Some(p2); }
     }
@@ -886,8 +909,7 @@ fn run_whisper(cli: &Path, mp: &Path, tmp: &Path, translate: bool) -> Result<(St
 // Replaces Piper — same Tauri command names for frontend compat, but
 // backed by Kokoro-82M via ONNX Runtime. Auto-selects CUDA → DirectML → CPU.
 fn kokoro_dir() -> PathBuf {
-    let home = std::env::var("USERPROFILE").unwrap_or_default();
-    PathBuf::from(home)
+    crate::platform::home_dir()
         .join(".config")
         .join(".opencode-gui")
         .join("kokoro")
