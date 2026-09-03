@@ -21,7 +21,7 @@ const ll = createLowlight(common);
 const MAX_PARTIAL = 8192;
 const MAX_BLOCK_LINES = 120;
 const MAX_BLOCK_BYTES = 12288;
-const FLUSH_MS = 90;
+const FLUSH_MS = 16;
 // generous: the first highlight compiles grammars and can take tens of ms —
 // only sustained slowness (pathological floods) should trip the ban
 const HL_BAN_MS = 2000;
@@ -201,7 +201,11 @@ export class TermHighlighter {
       this.out("\x1b[0m");
       return;
     }
-    // hold tails briefly; continuous output keeps deferring the timer —
+    // hold tails briefly to coalesce micro-frames into fewer term.write calls —
+    // MUST stay ≈1 frame (16ms): zsh echoes typed keys as plain text (no ESC),
+    // so interactive echo lives here while typing, and every keystroke resets
+    // the timer. Higher values batch keystrokes into visible bursts. Escape-
+    // carrying chunks (PSReadLine redraws, spinners) bypass this hold entirely;
     // the line/byte caps above are the real flood valve
     clearTimeout(this.timer);
     this.timer = setTimeout(() => this.flush(), FLUSH_MS) as unknown as number;
