@@ -18,6 +18,7 @@ import { playSound } from "../lib/sounds";
 import { getDraft, setDraft } from "../lib/drafts";
 import { getRecentModels, pushRecentModel } from "../lib/recentModels";
 import { useTranslation } from "../lib/i18n";
+import { cleanTypedText, isGarbageInput } from "../lib/platform";
 import "../styles/composer.css";
 import "../styles/find.css";
 
@@ -1138,7 +1139,14 @@ export default function Composer({
                   rows={1}
                   value={input}
                   disabled={needsModel}
-                  onChange={(e) => setInput(e.target.value)}
+                  onBeforeInput={(e) => {
+                    // WKWebView+unstable leaks arrow/fn keys as invisible
+                    // PUA/control chars (tauri#10194) — drop them before the
+                    // caret ever sees them
+                    const d = (e.nativeEvent as InputEvent).data;
+                    if (isGarbageInput(d)) e.preventDefault();
+                  }}
+                  onChange={(e) => setInput(cleanTypedText(e.target.value))}
                   onPaste={(e) => {
                     const fs = e.clipboardData?.files;
                     if (fs?.length) {

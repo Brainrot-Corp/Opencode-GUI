@@ -69,3 +69,22 @@ export function displayHotkey(binding: string | null): string {
   if (isMac()) return binding.replace(/Ctrl/g, "⌘").replace(/Alt/g, "⌥").replace(/Meta/g, "⌘");
   return binding;
 }
+
+// WKWebView with tauri's `unstable` feature (needed for embedded-browser
+// child webviews, tauri#10194) leaks macOS function-key private-use chars
+// (U+F700-F703 arrows, U+F728 forward-delete, …) and stray C0 controls into
+// text fields when the native caret-move selector falls through — i.e. at
+// the end of the text. They have no glyph in Inter/JetBrains Mono and render
+// as tofu squares. Never legitimate user input — matched wherever users type.
+const WK_GARBAGE_INPUT_RE = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\uF700-\uF74F]/;
+
+/** True when an beforeinput/input chunk carries only WebView keyboard garbage. */
+export function isGarbageInput(data: string | null | undefined): boolean {
+  return !!data && WK_GARBAGE_INPUT_RE.test(data);
+}
+
+/** Strip WebView keyboard garbage from a typed string (falls back for
+ * surfaces that can't intercept beforeinput). Keeps \t (\u0009), \n, \r. */
+export function cleanTypedText(s: string): string {
+  return s.replace(new RegExp(WK_GARBAGE_INPUT_RE.source, "g"), "");
+}
