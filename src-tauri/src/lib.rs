@@ -1377,6 +1377,23 @@ fn hide_to_tray(app: tauri::AppHandle) {
     hide_main(&app);
 }
 
+// mirrors the frontend "Close on X" setting so NATIVE close paths (mac red
+// stoplight, taskbar "Close window") can honor it. false = hide to tray,
+// matching the setting's default before the webview syncs.
+static CLOSE_ON_X: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+#[tauri::command]
+fn set_close_on_x(on: bool) {
+    CLOSE_ON_X.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+// real quit that bypasses the CloseRequested guard — used by the custom X
+// button when it means "quit" (setting on, or Ctrl-held invert)
+#[tauri::command]
+fn quit_app(app: tauri::AppHandle) {
+    app.exit(0);
+}
+
 #[tauri::command]
 fn toggle_window(app: tauri::AppHandle) {
     toggle_main(&app);
@@ -1780,6 +1797,8 @@ pub fn run() {
             os_glass,
             workspace_get,
             workspace_set,
+            set_close_on_x,
+            quit_app,
             theme_config_read,
             theme_config_write,
             write_file,
@@ -2012,6 +2031,13 @@ pub fn run() {
             // first Alt+Space must see "visible and focused" to hide again
             show_main(app.handle());
 
+            // mac: align the native traffic lights with the HTML titlebar's
+            // vertical center (macOS parks them at the stock titlebar height)
+            #[cfg(target_os = "macos")]
+            if let Some(w) = app.handle().get_webview_window("main") {
+                crate::platform::center_traffic_lights(&w);
+            }
+
             #[cfg(windows)]
             {
                 // per-instance IPC hook for last-focused hotkey forwarding
@@ -2054,6 +2080,21 @@ pub fn run() {
                     }
                 }
             }
+            // mac: fullscreen/zoom transitions reset the traffic-light
+            // frames — re-center on every focus (idempotent, cheap)
+            #[cfg(target_os = "macos")]
+            if let RunEvent::WindowEvent {
+                label,
+                event: WindowEvent::Focused(true),
+                ..
+            } = &event
+            {
+                if label == "main" {
+                    if let Some(w) = _app_handle.get_webview_window("main") {
+                        crate::platform::center_traffic_lights(&w);
+                    }
+                }
+            }
             // keep the browser webview glued below the top bar across
             // window resizes / DPI changes while it is open
             if let RunEvent::WindowEvent {
@@ -2064,6 +2105,66 @@ pub fn run() {
             {
                 if label == "main" {
                     browser::on_main_resize(_app_handle, *size);
+                }
+            }
+            // mac: fullscreen/zoom transitions reset the traffic-light frames
+            // asynchronously — AFTER the final resize of the animation, and
+            // fullscreen never changes focus. Debounce a re-center on resizes
+            // so it lands once the layout has settled (idempotent, cheap)
+            #[cfg(target_os = "macos")]
+            if let RunEvent::WindowEvent {
+                label,
+                event: WindowEvent::Resized(_),
+                ..
+            } = &event
+            {
+                if label == "main" {
+                    use std::sync::atomic::{AtomicUsize, Ordering};
+                    static TL_GEN: AtomicUsize = AtomicUsize::new(0);
+                    let gen = TL_GEN.fetch_add(1, Ordering::Relaxed) + 1;
+                    let h = _app_handle.clone();
+                    std::thread::spawn(move || {
+                        // two passes: right after the animation settles, then
+                        // again in case AppKit re-laid the buttons later
+                        for delay_ms in [250, 600] {
+                            std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+                            if TL_GEN.load(Ordering::Relaxed) != gen {
+                                return; // a newer resize superseded this pass
+                            }
+                            // AppKit calls MUST run on the main thread — the
+                            // off-main path crashed during fullscreen resizes
+                            let hc = h.clone();
+                            let ht = hc.clone();
+                            let _ = hc.run_on_main_thread(move || {
+                                if let Some(w) = ht.get_webview_window("main") {
+                                    crate::platform::center_traffic_lights(&w);
+                                }
+                            });
+                        }
+                    });
+                }
+            }
+            // mac: Dock icon click while trayed — macOS fires Reopen
+            // (applicationShouldHandleReopen). An explicit reopen is always
+            // show intent, mirroring the tray click's else branch
+            #[cfg(target_os = "macos")]
+            if let RunEvent::Reopen { .. } = &event {
+                show_main(_app_handle);
+            }
+            // native close paths (mac red stoplight, taskbar "Close window"):
+            // default to hide-to-tray like every other path out of the app,
+            // unless the user opted into real quits ("Close on X" setting)
+            if let RunEvent::WindowEvent {
+                label,
+                event: WindowEvent::CloseRequested { api, .. },
+                ..
+            } = &event
+            {
+                if label == "main"
+                    && !CLOSE_ON_X.load(std::sync::atomic::Ordering::Relaxed)
+                {
+                    api.prevent_close();
+                    hide_main(_app_handle);
                 }
             }
             if let RunEvent::Exit = event {

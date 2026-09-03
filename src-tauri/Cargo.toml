@@ -53,6 +53,10 @@ futures = "0.3"
 [target.'cfg(any(windows, target_os = "macos"))'.dependencies]
 window-vibrancy = "0.6"
 
+# mac traffic-light alignment — NSWindow standardWindowButton access
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-app-kit = "0.3"
+
 [target."cfg(windows)".dependencies]
 jumplist_win = "0.0.4"
 winreg = "0.52"

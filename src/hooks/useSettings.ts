@@ -454,6 +454,11 @@ export function useSettings() {
     if (getDirectory() !== settings.workspace) setDirectory(settings.workspace);
   }, [settings.workspace]);
 
+  // native close button (mac stoplight / taskbar close) honors this Rust-side
+  useEffect(() => {
+    invoke("set_close_on_x", { on: settings.closeOnX }).catch(() => {});
+  }, [settings.closeOnX]);
+
   useEffect(() => {
     setSoundPrefs(settings.sounds);
   }, [settings.sounds]);
