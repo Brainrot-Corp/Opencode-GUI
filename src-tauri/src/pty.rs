@@ -148,6 +148,13 @@ pub fn pty_spawn(
         cmd.arg(a);
     }
     cmd.cwd(workdir(&cwd));
+    // The shell talks to xterm.js, not whatever terminal launched the app. GUI
+    // launches (Finder/Dock/Start Menu) inherit no TERM — without it zsh's ZLE
+    // loses terminfo keybindings (dead arrow keys, no erase, Ctrl+L won't
+    // clear). Force a TERM matching the front-end surface unconditionally, so
+    // an inherited screen/tmux TERM can't lie either.
+    cmd.env("TERM", "xterm-256color");
+    cmd.env("COLORTERM", "truecolor");
     let child = pair.slave.spawn_command(cmd).map_err(|e| format!("{}: {e}", shell_cmd))?;
     drop(pair.slave);
 
