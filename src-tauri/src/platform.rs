@@ -222,3 +222,51 @@ pub fn which_bin() -> &'static str {
         "which"
     }
 }
+
+/// macOS: vertically center the native traffic lights on the custom HTML
+/// titlebar (42px — keep in sync with `src/components/Titlebar.tsx` TB_H).
+/// macOS parks them at the stock titlebar height, which sits a few px above
+/// the label's center. Re-call on window focus — fullscreen/zoom transitions
+/// reset the frames. Non-fatal on failure.
+#[cfg(target_os = "macos")]
+pub fn center_traffic_lights(win: &tauri::WebviewWindow) {
+    use objc2_app_kit::{NSWindow, NSWindowButton};
+
+    /// titlebar height / 2 — sync with Titlebar.tsx TB_H (42px)
+    const CENTER_Y: f64 = 21.0;
+
+    let ptr = match win.ns_window() {
+        Ok(p) if !p.is_null() => p,
+        _ => return,
+    };
+    let ns: &NSWindow = unsafe { &*(ptr as *const NSWindow) };
+
+    unsafe {
+        // buttons share one superview (NSTitlebarView); its frame height is
+        // the coordinate space their origins live in (bottom-left origin)
+        let Some(close) = ns.standardWindowButton(NSWindowButton::CloseButton) else {
+            return;
+        };
+        let Some(container) = close.superview() else {
+            return;
+        };
+        let ch = container.frame().size.height;
+        for kind in [
+            NSWindowButton::CloseButton,
+            NSWindowButton::MiniaturizeButton,
+            NSWindowButton::ZoomButton,
+        ] {
+            if let Some(btn) = ns.standardWindowButton(kind) {
+                let mut frame = btn.frame();
+                // origin.y counts from container bottom; place the button so
+                // its center lands at CENTER_Y from the window's top edge
+                frame.origin.y = ch - CENTER_Y - frame.size.height / 2.0;
+                btn.setFrameOrigin(frame.origin);
+            }
+        }
+    }
+}
+
+/// Non-mac no-op so callers need no cfg.
+#[cfg(not(target_os = "macos"))]
+pub fn center_traffic_lights(_win: &tauri::WebviewWindow) {}

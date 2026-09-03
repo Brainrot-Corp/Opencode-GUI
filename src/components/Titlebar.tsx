@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { invoke } from "@tauri-apps/api/core";
+import { isMac } from "../lib/platform";
 import { playSound } from "../lib/sounds";
 import { useTranslation } from "../lib/i18n";
 
@@ -141,45 +142,52 @@ export default function Titlebar({
         >
           <i className={`fa-solid fa-thumbtack${pinned ? " fa-rotate-45" : ""}`} />
         </button>
-        <span className="ctrl-sep" />
-        <button
-          className="icon-btn"
-          data-tip={t("titlebar.minimize")}
-          onClick={() => {
-            playSound("hide");
-            getCurrentWindow().minimize();
-          }}
-        >
-          <i className="fa-solid fa-minus" />
-        </button>
-        <button
-          className="icon-btn"
-          data-tip={t("titlebar.maximize")}
-          onClick={() => {
-            playSound("maximize");
-            getCurrentWindow().toggleMaximize();
-          }}
-        >
-          <i className="fa-regular fa-square" />
-        </button>
-        <button
-          className="icon-btn close"
-          data-tip={closeOnX ? t("titlebar.close.quit") : t("titlebar.close.hide")}
-          onClick={(e) => {
-            playSound("close");
-            // holding Ctrl inverts the configured behavior
-            const quit = e.ctrlKey ? !closeOnX : closeOnX;
-            if (quit) {
-              window.setTimeout(() => getCurrentWindow().close(), 130);
-            } else {
-              // Rust-side hide: applies the pre-hide size reset like every
-              // other path to the tray (Alt+Space, tray click, tray menu)
-              window.setTimeout(() => invoke("hide_to_tray"), 130);
-            }
-          }}
-        >
-          <i className="fa-solid fa-xmark" />
-        </button>
+        {/* mac uses the native traffic lights — custom window controls only
+            on Windows/Linux; the sep + last three buttons stay unmounted */}
+        {!isMac() && (
+          <>
+            <span className="ctrl-sep" />
+            <button
+              className="icon-btn"
+              data-tip={t("titlebar.minimize")}
+              onClick={() => {
+                playSound("hide");
+                getCurrentWindow().minimize();
+              }}
+            >
+              <i className="fa-solid fa-minus" />
+            </button>
+            <button
+              className="icon-btn"
+              data-tip={t("titlebar.maximize")}
+              onClick={() => {
+                playSound("maximize");
+                getCurrentWindow().toggleMaximize();
+              }}
+            >
+              <i className="fa-regular fa-square" />
+            </button>
+            <button
+              className="icon-btn close"
+              data-tip={closeOnX ? t("titlebar.close.quit") : t("titlebar.close.hide")}
+              onClick={(e) => {
+                playSound("close");
+                // holding Ctrl inverts the configured behavior
+                const quit = e.ctrlKey ? !closeOnX : closeOnX;
+                if (quit) {
+                  // real quit — bypasses the Rust CloseRequested guard
+                  window.setTimeout(() => invoke("quit_app"), 130);
+                } else {
+                  // Rust-side hide: applies the pre-hide size reset like every
+                  // other path to the tray (Alt+Space, tray click, tray menu)
+                  window.setTimeout(() => invoke("hide_to_tray"), 130);
+                }
+              }}
+            >
+              <i className="fa-solid fa-xmark" />
+            </button>
+          </>
+        )}
       </div>
     </header>
   );
