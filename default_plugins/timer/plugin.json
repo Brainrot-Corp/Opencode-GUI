@@ -1,0 +1,6 @@
+{
+  "id": "timer",
+  "name": "Timer",
+  "version": "1.0.0",
+  "description": "Single countdown timer (24h max) — floating Apple-Clock-style panel, Alt+T to toggle, live titlebar countdown, loops alarm until stopped"
+}
