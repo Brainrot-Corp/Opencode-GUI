@@ -230,7 +230,7 @@ pub fn which_bin() -> &'static str {
 /// reset the frames. Non-fatal on failure.
 #[cfg(target_os = "macos")]
 pub fn center_traffic_lights(win: &tauri::WebviewWindow) {
-    use objc2_app_kit::{NSWindow, NSWindowButton};
+    use objc2_app_kit::{NSWindow, NSWindowButton, NSWindowStyleMask};
 
     /// titlebar height / 2 — sync with Titlebar.tsx TB_H (42px)
     const CENTER_Y: f64 = 21.0;
@@ -240,6 +240,12 @@ pub fn center_traffic_lights(win: &tauri::WebviewWindow) {
         _ => return,
     };
     let ns: &NSWindow = unsafe { &*(ptr as *const NSWindow) };
+
+    // fullscreen tears down the titlebar container (system hides the lights)
+    // — touching the buttons mid-transition can crash
+    if unsafe { ns.styleMask() }.contains(NSWindowStyleMask::FullScreen) {
+        return;
+    }
 
     unsafe {
         // buttons share one superview (NSTitlebarView); its frame height is

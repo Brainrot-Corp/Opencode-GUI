@@ -2131,12 +2131,25 @@ pub fn run() {
                             if TL_GEN.load(Ordering::Relaxed) != gen {
                                 return; // a newer resize superseded this pass
                             }
-                            if let Some(w) = h.get_webview_window("main") {
-                                crate::platform::center_traffic_lights(&w);
-                            }
+                            // AppKit calls MUST run on the main thread — the
+                            // off-main path crashed during fullscreen resizes
+                            let hc = h.clone();
+                            let ht = hc.clone();
+                            let _ = hc.run_on_main_thread(move || {
+                                if let Some(w) = ht.get_webview_window("main") {
+                                    crate::platform::center_traffic_lights(&w);
+                                }
+                            });
                         }
                     });
                 }
+            }
+            // mac: Dock icon click while trayed — macOS fires Reopen
+            // (applicationShouldHandleReopen). An explicit reopen is always
+            // show intent, mirroring the tray click's else branch
+            #[cfg(target_os = "macos")]
+            if let RunEvent::Reopen { .. } = &event {
+                show_main(_app_handle);
             }
             // native close paths (mac red stoplight, taskbar "Close window"):
             // default to hide-to-tray like every other path out of the app,
