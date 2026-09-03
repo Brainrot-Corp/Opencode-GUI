@@ -29,7 +29,9 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["tray-icon", "unstable"] }
+# macos-private-api: WKWebView drawsBackground=false — required for
+# transparent webview so the macOS vibrancy layer shows through
+tauri = { version = "2", features = ["tray-icon", "unstable", "macos-private-api"] }
 tauri-plugin-global-shortcut = "2"
 tauri-plugin-window-state = "2"
 tauri-plugin-autostart = "2"

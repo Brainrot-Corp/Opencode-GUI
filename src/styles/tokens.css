@@ -6,7 +6,7 @@
   --bg-1: #0d1218;
   /* appearance overrides â€” written by useSettings at runtime */
   --base-rgb: 9, 12, 16;
-  --base-a: 0.6;
+  --base-a: 0.7;
   --surf-rgb: 23, 40, 48;
   --surf-a: 0.33;
   /* chrome (titlebar + sidebar) tint */
