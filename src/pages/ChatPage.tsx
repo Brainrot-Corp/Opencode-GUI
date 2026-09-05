@@ -1083,10 +1083,10 @@ export default function ChatPage() {
                   const activeDir = oc.activeId ? ((oc as any).getDirForSession?.(oc.activeId) ?? settings.workspace) : settings.workspace;
                   if (!activeDir) return null;
                   return (
-                    <div className="stage-head" data-tip={activeDir} data-tip-cursor="">
-                      <i className="fa-solid fa-folder-open" />
+                    <button type="button" className="stage-head stage-head--action" data-tip={activeDir} data-tip-cursor="" aria-label="Open workspace" onClick={() => void pickWorkspace()}>
+                      <i className="fa-solid fa-folder-open" aria-hidden="true" />
                       <span className="mono">{activeDir}</span>
-                    </div>
+                    </button>
                   );
                 })()}
                 <MessageList

@@ -114,6 +114,31 @@
   opacity: 0.75;
   flex-shrink: 0;
 }
+/* clickable variant — resting visual identical to .stage-head (button reset).
+   NOTE: no font/color reset here on purpose: .stage-head already sets the
+   mono font + faint color, and any inherit shorthand would override them. */
+.stage-head--action {
+  appearance: none;
+  border-radius: 0;
+  text-align: left;
+  cursor: pointer;
+}
+.stage-head--action:hover {
+  color: var(--accent);
+  background: linear-gradient(
+    180deg,
+    rgba(var(--surf-rgb), min(1, calc(var(--surf-a) * 1.15))),
+    color-mix(in srgb, var(--accent) 7%, transparent)
+  );
+}
+.stage-head--action:hover i {
+  opacity: 1;
+}
+.stage-head--action:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+  color: var(--accent);
+}
 
 /* attachment parts inside messages */
 .msg .file-img {
