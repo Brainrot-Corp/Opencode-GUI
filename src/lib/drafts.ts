@@ -14,14 +14,22 @@ export function getDraft(sid: string): string {
   return read()[sid] ?? "";
 }
 
-export function setDraft(sid: string, val: string): void {
-  if (!sid) return;
-  const m = read();
-  if (val) m[sid] = val;
-  else delete m[sid];
+// ponytail: re-reads immediately before write to minimize cross-tab lost-update race;
+// if contention grows, use BroadcastChannel lock (global lock, per-tab merge)
+function safeWrite(mutator: (m: Record<string, string>) => void) {
   try {
+    const m = read();
+    mutator(m);
     localStorage.setItem(KEY, JSON.stringify(m));
   } catch {}
+}
+
+export function setDraft(sid: string, val: string): void {
+  if (!sid) return;
+  safeWrite((m) => {
+    if (val) m[sid] = val;
+    else delete m[sid];
+  });
 }
 
 export function clearDraft(sid: string): void {

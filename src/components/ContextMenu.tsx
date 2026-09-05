@@ -22,16 +22,28 @@ export default function ContextMenu({
   const [pos, setPos] = useState<CSSProperties>({ position: "fixed", left: x, top: y, zIndex: 100 });
   const [hl, setHl] = useState(0);
 
-  // position flip/clamp like DropdownPortal
+  // position flip/clamp like DropdownPortal — height hugs content, capped to viewport
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
+    // cap to available viewport so short menus hug and long ones scroll
+    const vh0 = window.innerHeight;
+    el.style.maxHeight = `${Math.max(96, vh0 - y - 14)}px`;
+    el.style.height = "auto";
     requestAnimationFrame(() => {
       const b = el.getBoundingClientRect();
       let nx = x;
       let ny = y;
       const vw = window.innerWidth;
       const vh = window.innerHeight;
+      // re-cap after flip: use whichever side has more room
+      const roomBelow = vh - y - 8;
+      const roomAbove = y - 8;
+      if (b.height > roomBelow && roomAbove > roomBelow) {
+        el.style.maxHeight = `${Math.max(96, roomAbove)}px`;
+      } else {
+        el.style.maxHeight = `${Math.max(96, roomBelow)}px`;
+      }
       // flip horizontal if overflow right
       if (x + b.width > vw - 8) nx = Math.max(8, x - b.width);
       // flip vertical if overflow bottom
@@ -40,6 +52,11 @@ export default function ContextMenu({
       if (nx < 8) nx = 8;
       if (ny < 8) ny = 8;
       setPos({ position: "fixed", left: nx, top: ny, zIndex: 100 });
+      // final clamp after flip position — ensure not overflowing viewport
+      requestAnimationFrame(() => {
+        const bb = el.getBoundingClientRect();
+        if (bb.bottom > vh - 8) el.style.maxHeight = `${Math.max(96, vh - ny - 8)}px`;
+      });
     });
   }, [x, y, items]);
 

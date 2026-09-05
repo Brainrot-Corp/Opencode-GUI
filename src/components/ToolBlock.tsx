@@ -242,10 +242,28 @@ function TaskView({ t }: { t: any }) {
   );
 }
 
+// extract sub-agent child session id from a task tool's output (<task id="ses_..."> or plain ses_ id)
+function taskIdFromOutput(out: string): string | null {
+  if (!out) return null;
+  const m = out.match(/ses_[a-zA-Z0-9_-]+/);
+  return m ? m[0] : null;
+}
+function fmtTok(n: number) {
+  return n >= 1000 ? `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k` : `${n}`;
+}
+
 // one tool call — streams through pending → running → completed|error as
 // part.updated replaces this part; default open/closed follows the global
 // /collapse flag (errors always force-expand), eye icon toggles THIS block
-export default function ToolBlock({ part, collapsedDefault }: { part: Part; collapsedDefault: boolean }) {
+export default function ToolBlock({
+  part,
+  collapsedDefault,
+  taskCosts,
+}: {
+  part: Part;
+  collapsedDefault: boolean;
+  taskCosts?: Record<string, { cost: number; tokens: number }>;
+}) {
   const t = part as any;
   const st = t.state ?? {};
   const status: string = st.status ?? "";
@@ -359,6 +377,20 @@ export default function ToolBlock({ part, collapsedDefault }: { part: Part; coll
           </span>
         )}
         {dur && <span className="tool-dur">{dur}</span>}
+        {(() => {
+          if (toolName !== "task") return null;
+          const tid = taskIdFromOutput(out);
+          const tc = tid ? taskCosts?.[tid] : null;
+          if (!tc || (!tc.cost && !tc.tokens)) return null;
+          const tok = tc.tokens ? fmtTok(tc.tokens) : "";
+          return (
+            <span className="tool-cost mono" data-tip={`${tc.tokens.toLocaleString()} tokens${tc.cost ? ` · $${tc.cost.toFixed(4)}` : ""}`}>
+              {tok && `${tok} tok`}
+              {tok && tc.cost ? " · " : ""}
+              {tc.cost ? `$${tc.cost.toFixed(4)}` : ""}
+            </span>
+          );
+        })()}
         {copyText && (
           <button
             type="button"

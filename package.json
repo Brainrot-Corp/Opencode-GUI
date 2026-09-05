@@ -1,7 +1,7 @@
 {
   "name": "opencode-gui",
   "private": true,
-  "version": "2.0.0",
+  "version": "2.1.5",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -12,6 +12,7 @@
   "dependencies": {
     "@fortawesome/fontawesome-free": "^7.3.1",
     "@opencode-ai/sdk": "^1.18.21",
+    "@ozymandiasthegreat/vad": "^2.0.7",
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-autostart": "^2.5.1",
     "@tauri-apps/plugin-clipboard-manager": "^2.3.2",

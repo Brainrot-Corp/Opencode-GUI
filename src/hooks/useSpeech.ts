@@ -8,13 +8,16 @@ import {
   withDeadline,
 } from "../api";
 import { playSound } from "../lib/sounds";
+import { pushToast } from "./useToast";
 import { splitModel } from "../lib/models";
 import {
   buildEnumPhrase,
   cleanSpeech,
   full_text,
   lowVariantFor,
+  playPcm,
   playWav,
+  splitForSpeech,
   wordCount,
 } from "../lib/speechText";
 import type { AppSettings } from "./useSettings";
@@ -44,15 +47,32 @@ export function useSpeech(oc: SpeechOc, settings: AppSettings) {
   // the fallback may read; restored/session history never qualifies
   const seenLive = useRef<Set<string>>(new Set());
   const replyAudio = useRef<HTMLAudioElement | null>(null);
+  const pcmStop = useRef<(() => void) | null>(null);
 
   // queued speech — sentences awaiting piper playback
   const ttsQ = useRef<string[]>([]);
   const ttsPumping = useRef(false);
+  const pumpGen = useRef(0);
   const ttsHushed = useRef(false); // user hit stop-speech: mute this reply's rest
   const pendingEnum = useRef<string | null>(null); // "*" = enumeration waiting for pump to free
   const pendingAnswers = useRef<string[]>([]); // answer sentences waiting behind pendingEnum
   const settingsNow = useRef(settings);
   settingsNow.current = settings;
+  const providersRef = useRef(oc.providers);
+  providersRef.current = oc.providers;
+  // RL-03: cap queue to 8, drop oldest when unbounded — prevents memory blow-up on long turns
+  const capQueue = () => {
+    while (ttsQ.current.length > 8) ttsQ.current.shift();
+  };
+
+  // keep Kokoro warm on GPU — first synth JITs CUDA kernels, warm avoids paying it on first sentence
+  useEffect(() => {
+    if (!settings.ttsVoice) return;
+    let cancelled = false;
+    // fire once per voice; ignore errors (model not yet installed)
+    invoke<string>("tts_warm").catch(() => {});
+    return () => { cancelled = !cancelled; void cancelled; };
+  }, [settings.ttsVoice]);
 
   // queued speech — single FIFO, never cuts (debrief's cut is the only cutter)
   // if an answer is queued while an enumeration is pending, flush both together
@@ -70,6 +90,7 @@ export function useSpeech(oc: SpeechOc, settings: AppSettings) {
       ttsQ.current.push(...pendingAnswers.current);
       pendingAnswers.current = [];
     }
+    capQueue();
     // spoken — next enumeration reports only what happened after this
     toolCounts.current.clear();
     pumpTTS();
@@ -84,6 +105,7 @@ export function useSpeech(oc: SpeechOc, settings: AppSettings) {
         flushPendingEnum();
       } else {
         ttsQ.current.push(cleaned);
+        capQueue();
         pumpTTS();
       }
     },
@@ -129,7 +151,8 @@ export function useSpeech(oc: SpeechOc, settings: AppSettings) {
         let summary = "";
         try {
           const [providerID, modelID] = splitModel(secondaryModel);
-          const variant = lowVariantFor(secondaryModel, oc.providers as any);
+          // EH-15: read providers via ref at call time, not stale closure — avoids picking non-existent variant 400
+          const variant = lowVariantFor(secondaryModel, providersRef.current as any);
           const r = await withDeadline(
             client.session.prompt({
               path: { id: sid },
@@ -149,51 +172,195 @@ export function useSpeech(oc: SpeechOc, settings: AppSettings) {
         }
         if (summary) queueSpeech(summary);
         else queueSpeech(raw);
-      } catch {
+      } catch (e) {
+        pushToast(String(e));
         queueSpeech(raw);
       }
     },
-    [queueSpeech, debriefing, oc.providers],
+    [queueSpeech, debriefing],
   );
 
-  // serialized synth→play pump; 'pause' resolves alongside 'ended' so the
-  // stop-speech button breaks the wait instead of deadlocking the queue
+  // pipelined synth→play: synthesis of chunk N+1 starts while N plays,
+  // and PCM path bypasses WAV/Blob overhead. Falls back to WAV on failure.
+  // ponytail: 30s cap guards against wedged Rust synth hanging pump forever (ttsPumping stays true)
+  const withSynthTimeout = <T>(p: Promise<T>, ms = 30000) =>
+    Promise.race([p, new Promise<never>((_, rej) => setTimeout(() => rej(new Error("TTS synth timed out")), ms))]) as Promise<T>;
+  const synthOne = async (phrase: string, st: AppSettings): Promise<{ bytes: number[]; isPcm: boolean } | null> => {
+    // prefer PCM (i16 LE, no WAV header) — smaller IPC, no browser WAV decode
+    try {
+      const pcm = await withSynthTimeout(invoke<number[]>("tts_speak_pcm", { text: phrase, voice: st.ttsVoice, speed: st.ttsSpeed }));
+      if (pcm && pcm.length >= 200) return { bytes: pcm, isPcm: true };
+    } catch {}
+    try {
+      const wav = await withSynthTimeout(invoke<number[]>("tts_speak", { text: phrase, voice: st.ttsVoice, speed: st.ttsSpeed }));
+      if (wav && wav.length >= 1000) return { bytes: wav, isPcm: false };
+    } catch (e) { pushToast(String(e)); }
+    return null;
+  };
+
+  const forceResetTTS = useCallback(() => {
+    // ponytail: hard reset for wedged TTS — clears everything so next speech can start without reboot (user reported loop until reboot after cut)
+    ttsQ.current = [];
+    pendingEnum.current = null;
+    pendingAnswers.current = [];
+    toolCounts.current.clear();
+    ttsHushed.current = false;
+    ttsPumping.current = false;
+    pumpGen.current++;
+    setTalking(false);
+    try { pcmStop.current?.(); } catch {}
+    pcmStop.current = null;
+    try { replyAudio.current?.pause(); } catch {}
+    replyAudio.current = null;
+    try { replyAudio.current = null as any; } catch {}
+  }, []);
+
   const pumpTTS = () => {
     if (ttsPumping.current) return;
     ttsPumping.current = true;
+    const myGen = ++pumpGen.current;
     setTalking(true);
+    let watchdog: number | undefined;
+    // ponytail: watchdog guarantees pump never stays stuck forever even if a promise never settles — user reported loop until reboot
+    watchdog = window.setTimeout(() => {
+      if (pumpGen.current === myGen && ttsPumping.current) {
+        console.warn("[TTS] watchdog force reset");
+        forceResetTTS();
+      }
+    }, 45000);
     (async () => {
       try {
-        while (ttsQ.current.length && !ttsHushed.current) {
-          const phrase = ttsQ.current.shift()!;
+        // prefetch first chunk while loop sets up
+        let prefetch: Promise<{ bytes: number[]; isPcm: boolean } | null> | null = null;
+        const nextPhrase = () => ttsQ.current[0];
+        const startPrefetch = () => {
+          const nxt = nextPhrase();
+          if (!nxt || ttsHushed.current) return null;
           const st = settingsNow.current;
-          const bytes = await invoke<number[]>("tts_speak", {
-            text: phrase,
-            voice: st.ttsVoice,
-            speed: st.ttsSpeed,
-          }).catch(() => null);
-          if (!bytes || ttsHushed.current || bytes.length < 1000) continue;
-          const a = playWav(bytes, st.ttsVol);
-          replyAudio.current = a;
-          // 'error'/failed play() must release the wait too, or the pump
-          // deadlocks and the queue never drains
-          await new Promise<void>((res) => {
-            a.addEventListener("ended", () => res(), { once: true });
-            a.addEventListener("pause", () => res(), { once: true });
-            a.addEventListener("error", () => res(), { once: true });
-          });
+          return synthOne(nxt, st);
+        };
+        if (ttsQ.current.length) prefetch = startPrefetch();
+        while (ttsQ.current.length && !ttsHushed.current) {
+          const phrase = ttsQ.current[0]; // peek — consume only after synth succeeds
+          const st = settingsNow.current;
+          // use prefetched result if it matches this phrase, else synth now
+          let res: { bytes: number[]; isPcm: boolean } | null = null;
+          if (prefetch) {
+            try { res = await Promise.race([prefetch, new Promise<null>((r) => setTimeout(() => r(null), 32000))]); } catch {}
+            // verify prefetch was for this phrase (queue may have shifted on hush)
+            // if queue head changed, discard and re-synth
+            if (ttsQ.current[0] !== phrase) { prefetch = startPrefetch(); continue; }
+          } else {
+            try { res = await Promise.race([synthOne(phrase, st), new Promise<null>((r) => setTimeout(() => r(null), 32000))]); } catch {}
+          }
+          // consume queue entry now
+          ttsQ.current.shift();
+          // kick off next synth in background while current plays
+          prefetch = ttsQ.current.length && !ttsHushed.current ? startPrefetch() : null;
+          if (!res || ttsHushed.current) continue;
+          const { bytes, isPcm } = res;
+          // playback — PCM via AudioContext, WAV via Audio element
+          // ponytail: outer race guards against AudioContext suspended/interrupted where onended never fires — cut mid sentence would hang pump forever (ttsPumping stays true, future speech never drains)
+          if (isPcm) {
+            let h: ReturnType<typeof playPcm> | null = null;
+            try { h = playPcm(bytes, st.ttsVol); } catch (e) { pushToast(String(e)); continue; }
+            if (!h) continue;
+            pcmStop.current = h.stop;
+            const pcmTimeoutMs = Math.max((bytes.length / 2 / 24000) * 1000 + 5000, 8000);
+            try { await Promise.race([h.ended, new Promise<void>((r) => setTimeout(r, pcmTimeoutMs))]); } catch (e) { pushToast(String(e)); }
+            finally { if (pumpGen.current === myGen) pcmStop.current = null; }
+            // also allow pause to break
+            if (ttsHushed.current) { try { h.stop(); } catch {} }
+          } else {
+            let a: HTMLAudioElement | null = null;
+            try { a = playWav(bytes, st.ttsVol); } catch (e) { pushToast(String(e)); continue; }
+            if (!a) continue;
+            replyAudio.current = a;
+            try {
+              await Promise.race([
+                new Promise<void>((res2, rej) => {
+                  a.addEventListener("ended", () => res2(), { once: true });
+                  a.addEventListener("pause", () => res2(), { once: true });
+                  a.addEventListener("error", () => rej(new Error("TTS playback failed")), { once: true });
+                }),
+                new Promise<void>((r) => setTimeout(r, 40000)),
+              ]);
+            } catch (e) { pushToast(String(e)); }
+            finally { if (pumpGen.current === myGen && replyAudio.current === a) replyAudio.current = null; }
+          }
         }
       } finally {
-        ttsPumping.current = false;
-        setTalking(false);
+        if (watchdog !== undefined) clearTimeout(watchdog);
+        if (pumpGen.current === myGen) {
+          ttsPumping.current = false;
+          setTalking(false);
+        }
       }
     })();
   };
 
+  // streaming speech — while the assistant is still generating, speak
+  // complete sentences/clauses as they appear (low-latency). Prefers
+  // sentence terminals but will split long clauses at ,;:— once >=80 chars
+  // to keep perceived latency low while preserving prosody (≥40 chars).
+  const lastStreamIdRef = useRef("");
+  const lastStreamTextRef = useRef("");
+  useEffect(() => {
+    if (!settings.speakReplies || !settings.ttsVoice) return;
+    if (!oc.busy) return;
+    let streaming: Msg | undefined;
+    for (let i = oc.msgs.length - 1; i >= 0; i--) {
+      const m = oc.msgs[i];
+      if ((m.info as any).role === "assistant" && !(m.info as any).time?.completed) {
+        streaming = m; break;
+      }
+    }
+    if (!streaming) return;
+    const id = streaming.info.id as string;
+    const full = full_text(streaming);
+    if (!full.trim()) return;
+    if (id !== lastStreamIdRef.current) {
+      lastStreamIdRef.current = id;
+      lastStreamTextRef.current = "";
+      seenLive.current.add(id);
+    }
+    const prev = lastStreamTextRef.current;
+    if (full.length <= prev.length) return;
+    if (!full.startsWith(prev)) { lastStreamTextRef.current = full; return; }
+    // pending text not yet queued
+    const pending = full.slice(prev.length);
+    // incrementally extract complete chunks from pending's start
+    let consumed = 0;
+    let buf = "";
+    // scan by small clause pieces so we can emit early at clause marks
+    const pieces = pending.match(/[^.!?,;:—]+[.!?,;:—]*\s*/g) || [pending];
+    for (const piece of pieces) {
+      buf += piece;
+      const tr = buf.trim();
+      const endsSentence = /[.!?]\s*$/.test(buf);
+      const endsClause = /[,;:—]\s*$/.test(buf);
+      const ready = (endsSentence && tr.length >= 20) || (endsClause && tr.length >= 60) || tr.length >= 220;
+      if (ready) {
+        const clean = cleanSpeech(tr);
+        if (clean) queueSpeech(clean);
+        consumed += buf.length;
+        // advance prev by what we consumed
+        lastStreamTextRef.current = prev + pending.slice(0, consumed);
+        buf = "";
+      }
+    }
+    // tail buf stays pending until more text arrives or turn completes
+  }, [oc.msgs, oc.busy, settings.speakReplies, settings.ttsVoice, queueSpeech]);
+
   // no streaming speech — only when an answer finishes (even mid-turn) we decide
   // to queue it raw or via the commit-model summary, never cutting.
+  // tail lookups scan backward in place: msgs identity changes per streaming
+  // delta, and [...msgs].reverse() copies the whole history each time
   useEffect(() => {
-    const last = [...oc.msgs].reverse().find((m) => (m.info as any).role === "assistant");
+    let last: Msg | undefined;
+    for (let i = oc.msgs.length - 1; i >= 0; i--) {
+      if ((oc.msgs[i].info as any).role === "assistant") { last = oc.msgs[i]; break; }
+    }
     if (!last) return;
     const id = last.info.id;
     const info = last.info as any;
@@ -209,10 +376,25 @@ export function useSpeech(oc: SpeechOc, settings: AppSettings) {
     lastSpoken.current = id;
     const raw = full_text(last);
     if (!raw.trim()) return;
-    if (wordCount(raw) > 30) {
-      void summarizeWithCommitModel(raw);
+    // if we already streamed parts of this message, only speak the tail
+    let toSpeak = raw;
+    const wasStreamed = lastStreamIdRef.current === id;
+    if (wasStreamed) {
+      const prev = lastStreamTextRef.current;
+      if (raw.startsWith(prev)) {
+        toSpeak = raw.slice(prev.length).trim();
+        lastStreamIdRef.current = "";
+        lastStreamTextRef.current = "";
+        if (!toSpeak) return;
+      } else {
+        lastStreamIdRef.current = "";
+        lastStreamTextRef.current = "";
+      }
+    }
+    if (!wasStreamed && wordCount(toSpeak) > 30) {
+      void summarizeWithCommitModel(toSpeak);
     } else {
-      queueSpeech(raw);
+      for (const chunk of splitForSpeech(toSpeak)) queueSpeech(chunk);
     }
   }, [oc.msgs, oc.busy, settings.speakReplies, settings.ttsVoice, debriefing, queueSpeech, summarizeWithCommitModel]);
 
@@ -222,18 +404,28 @@ export function useSpeech(oc: SpeechOc, settings: AppSettings) {
     const stop = () => {
       ttsHushed.current = true;
       ttsQ.current = []; // nothing queued survives the stop
+      pendingEnum.current = null;
+      pendingAnswers.current = [];
+      toolCounts.current.clear();
+      lastStreamIdRef.current = "";
+      lastStreamTextRef.current = "";
       replyAudio.current?.pause();
+      try { pcmStop.current?.(); } catch {}
+      pcmStop.current = null;
     };
     const vol = (e: Event) => {
       if (replyAudio.current) replyAudio.current.volume = (e as CustomEvent<number>).detail;
     };
+    const reset = () => { forceResetTTS(); };
     window.addEventListener("oc:tts-stop", stop);
     window.addEventListener("oc:tts-vol", vol);
+    window.addEventListener("oc:tts-reset", reset as EventListener);
     return () => {
       window.removeEventListener("oc:tts-stop", stop);
       window.removeEventListener("oc:tts-vol", vol);
+      window.removeEventListener("oc:tts-reset", reset as EventListener);
     };
-  }, []);
+  }, [forceResetTTS]);
 
   // --- working pulse ----------------------------------------------------------
   // speech is OFF → total silence, no exceptions. While it's ON and a turn
@@ -264,16 +456,32 @@ export function useSpeech(oc: SpeechOc, settings: AppSettings) {
   // fallback for silent completions — same word-count gate, queued never cuts
   useEffect(() => {
     if (!settings.speakReplies || !settings.ttsVoice || ttsHushed.current || debriefing) return;
-    const last = [...oc.msgs]
-      .reverse()
-      .find((m) => (m.info as any).role === "assistant" && (m.info as any).time?.completed);
+    let last: Msg | undefined;
+    for (let i = oc.msgs.length - 1; i >= 0; i--) {
+      const m = oc.msgs[i];
+      if ((m.info as any).role === "assistant" && (m.info as any).time?.completed) { last = m; break; }
+    }
     if (!last || last.info.id === lastSpoken.current) return;
     if (!seenLive.current.has(last.info.id)) return;
     lastSpoken.current = last.info.id;
     const raw = full_text(last);
     if (!raw.trim()) return;
-    if (wordCount(raw) > 30) void summarizeWithCommitModel(raw);
-    else queueSpeech(raw);
+    let toSpeak = raw;
+    const wasStreamed = lastStreamIdRef.current === last.info.id;
+    if (wasStreamed) {
+      const prev = lastStreamTextRef.current;
+      if (raw.startsWith(prev)) {
+        toSpeak = raw.slice(prev.length).trim();
+        lastStreamIdRef.current = "";
+        lastStreamTextRef.current = "";
+        if (!toSpeak) return;
+      } else {
+        lastStreamIdRef.current = "";
+        lastStreamTextRef.current = "";
+      }
+    }
+    if (!wasStreamed && wordCount(toSpeak) > 30) void summarizeWithCommitModel(toSpeak);
+    else { for (const chunk of splitForSpeech(toSpeak)) queueSpeech(chunk); }
   }, [settings.speakReplies, settings.ttsVoice, oc.msgs, debriefing, queueSpeech, summarizeWithCommitModel]);
 
   // status cues: turn start is spoken via same queued FIFO — never cuts.
@@ -292,6 +500,8 @@ export function useSpeech(oc: SpeechOc, settings: AppSettings) {
   // batched tool enumeration — array of tool uses, spoken every 10s
   const toolSeen = useRef<Set<string>>(new Set());
   const toolCounts = useRef<Map<string, number>>(new Map());
+  // tail signature of the last collector scan — skips O(parts) rescans on deltas
+  const collectorSig = useRef(" init");
 
   const prevBusy = useRef(false);
   const lastPromptId = useRef("");
@@ -301,7 +511,10 @@ export function useSpeech(oc: SpeechOc, settings: AppSettings) {
     prevBusy.current = oc.busy;
     // a new live prompt — latest user message changed. Covers back-to-back
     // turns too (drained queue), where busy never visibly rises again.
-    const lastUser = [...oc.msgs].reverse().find((m) => (m.info as any).role === "user");
+    let lastUser: Msg | undefined;
+    for (let i = oc.msgs.length - 1; i >= 0; i--) {
+      if ((oc.msgs[i].info as any).role === "user") { lastUser = oc.msgs[i]; break; }
+    }
     const newPrompt = !!lastUser && lastUser.info.id !== lastPromptId.current;
     if (lastUser) lastPromptId.current = lastUser.info.id;
     // reset batch on a fresh prompt, but never cut queued voice (only debrief cuts)
@@ -327,18 +540,29 @@ export function useSpeech(oc: SpeechOc, settings: AppSettings) {
       toolCounts.current.clear();
       pendingEnum.current = null;
       // flush any answers that were waiting behind a last enumeration
-      if (pendingAnswers.current.length) {
+      if (ttsHushed.current) {
+        // stop was hit — discard stale tail instead of looping it into next turn
+        pendingAnswers.current = [];
+      } else if (pendingAnswers.current.length) {
         ttsQ.current.push(...pendingAnswers.current);
         pendingAnswers.current = [];
+        capQueue();
         pumpTTS();
       }
     }
   }, [oc.busy, oc.msgs, announce]);
 
-  // collector: count distinct tool parts once when they appear (pending/running/completed)
+  // collector: count distinct tool parts once when they appear (pending/running/completed).
+  // ponytail: tail-signature gate — while streaming, tool parts only ever append
+  // to the tail message, so an unchanged (count, tailId, tailPartsLen) signature
+  // means nothing new to count; a fetch re-shuffle recounts at the next append
   useEffect(() => {
     if (!oc.busy) return;
-    let changed = false;
+    const n = oc.msgs.length;
+    const tail = oc.msgs[n - 1];
+    const sig = `${n}:${(tail as any)?.info?.id ?? ""}:${tail?.parts.length ?? 0}`;
+    if (sig === collectorSig.current) return;
+    collectorSig.current = sig;
     for (const m of oc.msgs)
       for (const p of m.parts ?? []) {
         if ((p as any).type !== "tool") continue;
@@ -349,10 +573,8 @@ export function useSpeech(oc: SpeechOc, settings: AppSettings) {
         toolSeen.current.add(key);
         const tool = String((p as any).tool ?? "unknown").toLowerCase();
         toolCounts.current.set(tool, (toolCounts.current.get(tool) ?? 0) + 1);
-        changed = true;
       }
     // no speech here — ticker handles it every 10s
-    void changed;
   }, [oc.msgs, oc.busy]);
 
   // ticker: every 10s while busy, speak what happened since the LAST
@@ -410,6 +632,7 @@ export function useSpeech(oc: SpeechOc, settings: AppSettings) {
                 ttsQ.current.push(...pendingAnswers.current);
                 pendingAnswers.current = [];
               }
+              capQueue();
               // spoken — next enumeration reports only what happened after this
               toolCounts.current.clear();
               pumpTTS();
@@ -423,6 +646,7 @@ export function useSpeech(oc: SpeechOc, settings: AppSettings) {
             ttsQ.current.push(...pendingAnswers.current);
             pendingAnswers.current = [];
           }
+          capQueue();
           // spoken — next enumeration reports only what happened after this
           toolCounts.current.clear();
           pumpTTS();
@@ -472,30 +696,37 @@ export function useSpeech(oc: SpeechOc, settings: AppSettings) {
         pendingEnum.current = null;
         pendingAnswers.current = [];
         replyAudio.current?.pause();
+        try { pcmStop.current?.(); } catch {}
         {
           const c = cleanSpeech("Debriefing...");
-          if (c) { ttsQ.current.push(c); pumpTTS(); }
+          if (c) { ttsQ.current.push(c); capQueue(); pumpTTS(); }
         }
+        let sid: string | null = null;
+        let dir = "";
         try {
-          let secondaryModel = "";
-          try {
-            secondaryModel = JSON.parse(localStorage.getItem("oc.settings") ?? "{}").secondaryModel ?? "";
-          } catch {}
+          const st = settingsNow.current;
+          // prefer live settings, fallback to localStorage for hot reload edge
+          let secondaryModel = st.secondaryModel ?? "";
           if (!secondaryModel) {
-            { const c = cleanSpeech("Pick a Secondary model in Settings, then try debrief again."); if (c) { ttsQ.current.push(c); pumpTTS(); } }
+            try { secondaryModel = JSON.parse(localStorage.getItem("oc.settings") ?? "{}").secondaryModel ?? ""; } catch {}
+          }
+          if (!secondaryModel) {
+            { const c = cleanSpeech("Pick a Secondary model in Settings, then try debrief again."); if (c) { ttsQ.current.push(c); capQueue(); pumpTTS(); } }
             window.dispatchEvent(new Event("oc:settings"));
             return;
           }
-          const st = settingsNow.current;
           if (!st.ttsVoice) {
-            { const c = cleanSpeech("Install a neural voice in Settings, then try debrief again."); if (c) { ttsQ.current.push(c); pumpTTS(); } }
+            { const c = cleanSpeech("Install a neural voice in Settings, then try debrief again."); if (c) { ttsQ.current.push(c); capQueue(); pumpTTS(); } }
             return;
           }
-          const dir = getDirectory();
-          const [diff, log] = await Promise.all([
+          dir = getDirectory();
+          // include both staged and unstaged — staged-only changes were invisible before
+          const [diffUnstaged, diffStaged, log] = await Promise.all([
             invoke<string>("git_diff", { dir, path: "", staged: false }).catch(() => ""),
+            invoke<string>("git_diff", { dir, path: "", staged: true }).catch(() => ""),
             invoke<string>("git_log", { dir }).catch(() => ""),
           ]);
+          const diff = [diffStaged, diffUnstaged].filter(Boolean).join("\n");
           const recent = msgsRef.current
             .filter((m) => (m.info as any).role === "user")
             .slice(-6)
@@ -505,7 +736,7 @@ export function useSpeech(oc: SpeechOc, settings: AppSettings) {
           const diffTrim = diff.trim().slice(0, 9000);
           const logTrim = log.trim().slice(0, 2000);
           if (!diffTrim && !logTrim && !recent.trim()) {
-            { const c = cleanSpeech("No recent changes or prompts to summarize."); if (c) { ttsQ.current.push(c); pumpTTS(); } }
+            { const c = cleanSpeech("No recent changes or prompts to summarize."); if (c) { ttsQ.current.push(c); capQueue(); pumpTTS(); } }
             return;
           }
           // locale from piper voice id: en_US-amy-medium -> en_US
@@ -525,43 +756,76 @@ export function useSpeech(oc: SpeechOc, settings: AppSettings) {
             `\n\nGIT DIFF (working tree, may be empty):\n${diffTrim || "(empty)"}` +
             `\n\nGIT LOG (last commits):\n${logTrim || "(empty)"}` +
             `\n\nRECENT USER PROMPTS (why, most recent last):\n${recent || "(none)"}`;
-          // hidden temp session on the secondary model — same pattern as GitPanel genMsg
+          // hidden temp session — use promptAsync + polling like GitPanel (sync prompt hangs on stalled provider)
           const { client } = await opencode();
-          const sid = await tempSession();
+          sid = await tempSession(dir || undefined);
           let summary = "";
-          try {
-            const [providerID, modelID] = splitModel(secondaryModel);
-            const variant = lowVariantFor(secondaryModel, oc.providers as any);
-            const r = await withDeadline(
-              client.session.prompt({
+          const [providerID, modelID] = splitModel(secondaryModel);
+          if (!providerID || !modelID) throw new Error(`Bad model "${secondaryModel}" — expected provider/model`);
+          const variant = lowVariantFor(secondaryModel, providersRef.current as any);
+          // helper: promptAsync + poll messages until completed or deadline
+          const pollOnce = async (v?: string) => {
+            await withDeadline(
+              (client.session as any).promptAsync({
                 path: { id: sid },
-                body: {
-                  parts: [{ type: "text", text: prompt }],
-                  model: { providerID, modelID },
-                  ...(variant ? { variant } : {}),
-                },
+                body: { parts: [{ type: "text", text: prompt }], model: { providerID, modelID }, ...(v ? { variant: v } : {}) },
               }),
-              180_000,
+              30_000,
               "Debrief",
             );
-            const parts: any[] = ((r.data as any)?.parts ?? []) as any[];
-            summary = parts.filter((p) => p.type === "text").map((p) => p.text ?? "").join("").trim();
-            if (!summary) {
-              // fallback: some SDK shapes nest under data.message
-              const alt = (r.data as any)?.message ?? (r.data as any);
-              if (Array.isArray(alt?.parts)) summary = alt.parts.filter((p: any)=>p.type==="text").map((p:any)=>p.text).join("").trim();
+            const start = Date.now();
+            while (Date.now() - start < 150_000) {
+              await new Promise((r) => setTimeout(r, 260));
+              try {
+                const r: any = await (client.session as any).messages({ path: { id: sid } });
+                const list: any[] = (r.data ?? []) as any[];
+                const assistants = list.filter((m: any) => m.info?.role === "assistant");
+                const last = assistants[assistants.length - 1];
+                if (!last) continue;
+                const parts: any[] = (last.parts ?? []) as any[];
+                const raw = parts.filter((p: any) => p.type === "text").map((p: any) => p.text ?? "").join("").trim();
+                if (raw) summary = raw;
+                if (last.info?.time?.completed) break;
+                if (summary && Date.now() - start > 8000 && raw === summary) {
+                  // if stalled after we have text, give it a bit then break
+                }
+              } catch {}
             }
-          } finally {
-            await dropSession(sid);
+          };
+          try {
+            await pollOnce(variant);
+          } catch (e) {
+            const msg = String(e);
+            // variant 400 → retry without variant (stale provider list)
+            if (variant && /variant|400|bad request/i.test(msg)) {
+              summary = "";
+              await pollOnce(undefined);
+            } else throw e;
           }
           if (!summary) {
-            { const c = cleanSpeech("Debrief had nothing to say."); if (c) { ttsQ.current.push(c); pumpTTS(); } }
+            // fallback shape: some SDKs nest under data.message
+            try {
+              const r: any = await (client.session as any).messages({ path: { id: sid } });
+              const list: any[] = (r.data ?? []) as any[];
+              const last = list.filter((m: any) => m.info?.role === "assistant").pop();
+              const alt = (last as any)?.message ?? last;
+              if (Array.isArray(alt?.parts)) summary = alt.parts.filter((p: any)=>p.type==="text").map((p:any)=>p.text).join("").trim();
+            } catch {}
+          }
+          if (!summary) {
+            { const c = cleanSpeech("Debrief had nothing to say."); if (c) { ttsQ.current.push(c); capQueue(); pumpTTS(); } }
             return;
           }
-          { const c = cleanSpeech(summary); if (c) { ttsQ.current.push(c); pumpTTS(); } }
+          { const c = cleanSpeech(summary); if (c) { ttsQ.current.push(c); capQueue(); pumpTTS(); } }
         } catch (e) {
-          { const c = cleanSpeech(`Debrief failed: ${String(e).slice(0, 200)}`); if (c) { ttsQ.current.push(c); pumpTTS(); } }
+          // surface verbatim so auth/model errors are actionable, not silent
+          pushToast(String(e));
+          { const c = cleanSpeech(`Debrief failed: ${String(e).slice(0, 200)}`); if (c) { ttsQ.current.push(c); capQueue(); pumpTTS(); } }
         } finally {
+          if (sid) {
+            try { await (await opencode()).client.session.abort({ path: { id: sid } } as any).catch(()=>{}); } catch {}
+            await dropSession(sid, dir || undefined).catch(()=>{});
+          }
           debriefBusy.current = false;
           setDebriefing(false);
         }
@@ -569,11 +833,12 @@ export function useSpeech(oc: SpeechOc, settings: AppSettings) {
     };
     window.addEventListener("oc:debrief", onDebrief);
     return () => window.removeEventListener("oc:debrief", onDebrief);
-  }, [oc.providers]);
+  }, []);
 
   // voice "quiet" command — pause current playback without clearing the queue
   const pauseSpeech = useCallback(() => {
     replyAudio.current?.pause();
+    try { pcmStop.current?.(); } catch {}
   }, []);
 
   return { talking, debriefing, announce, pauseSpeech };

@@ -3,24 +3,29 @@ import { invoke } from "@tauri-apps/api/core";
 import type { AppSettings } from "./useSettings";
 import {
   WHISPER_BIN_URL,
+  WHISPER_GPU_BIN_URL,
   MODEL_BASE,
   VOICE_MODELS,
-  PIPER_BIN_URL,
-  piperUrl,
-} from "../lib/piper";
+  KOKORO_MODEL_URL,
+  KOKORO_MODEL_URL_FP32,
+  KOKORO_VOICES,
+  kokoroGpuPartsFor,
+  kokoroVoiceUrl,
+} from "../lib/kokoro";
 
 const SAMPLE_TEXT = "Hey, this is how I will read replies aloud.";
 
-type EngineState = { bin: boolean; items: string[] };
-// Rust returns {bin, models} from voice_status and {bin, voices} from
-// tts_status — normalize both into one shape here so callers never see it
-type RawStatus = { bin?: boolean; models?: string[]; voices?: string[] };
+type EngineState = { bin: boolean; items: string[]; gpuBin?: boolean };
+// Rust returns {bin, gpu_bin, models} from voice_status and {bin, gpu, voices}
+// from tts_status — normalize both into one shape here so callers never see it
+// (gpu_bin = whisper GPU engine, gpu = kokoro CUDA pack → both `gpuBin`)
+type RawStatus = { bin?: boolean; gpu_bin?: boolean; gpu?: boolean; models?: string[]; voices?: string[] };
 
 function normStatus(s?: RawStatus | null): EngineState {
-  return { bin: !!s?.bin, items: [...(s?.models ?? s?.voices ?? [])] };
+  return { bin: !!s?.bin, gpuBin: !!(s?.gpu_bin || s?.gpu), items: [...(s?.models ?? s?.voices ?? [])] };
 }
 
-// shared download/install pipeline for whisper STT + piper TTS — used by both
+// shared download/install pipeline for whisper STT + Kokoro TTS — used by both
 // the VoicesDialog and the first-launch Onboarding wizard. Public ops never
 // throw: they surface errors in `err` and resolve false so multi-step flows
 // can abort cleanly.
@@ -33,8 +38,15 @@ export function useVoiceInstall(
   const [dl, setDl] = useState<{ label: string; pct: number } | null>(null);
   const [err, setErr] = useState("");
   const previewRef = useRef<HTMLAudioElement | null>(null);
+  const previewSeq = useRef(0);
+  const previewUrlRef = useRef<string | null>(null);
 
-  useEffect(() => () => previewRef.current?.pause(), []);
+  useEffect(() => {
+    return () => {
+      previewRef.current?.pause();
+      if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
+    };
+  }, []);
 
   // live volume: sliders retune a running preview via oc:tts-vol
   useEffect(() => {
@@ -73,7 +85,7 @@ export function useVoiceInstall(
   // whisper engine zip + one ggml model; skips whatever is already installed.
   // URL overrides (from the remote recommended.json) replace built-in sources
   async function installWhisper(
-    modelId: string = settings.voice.model || VOICE_MODELS[1].id,
+    modelId: string = settings.voice.model || VOICE_MODELS.find((m) => m.id === "ggml-large-v3-turbo-q8_0.bin")?.id || VOICE_MODELS[VOICE_MODELS.length - 1]!.id,
     urls?: { binUrl?: string; modelUrl?: string },
   ): Promise<boolean> {
     if (!voice?.bin) {
@@ -85,7 +97,7 @@ export function useVoiceInstall(
         setErr(String(e));
         return false;
       }
-      setVoice((v) => ({ bin: true, items: v?.items ?? [] }));
+      setVoice((v) => ({ bin: true, gpuBin: v?.gpuBin, items: v?.items ?? [] }));
     }
     if (!voice?.items.includes(modelId)) {
       // label is the bare model id — VoicesDialog matches it to mark the
@@ -98,48 +110,94 @@ export function useVoiceInstall(
         setErr(String(e));
         return false;
       }
-      setVoice((v) => ({ bin: v?.bin ?? false, items: [...(v?.items ?? []), modelId] }));
+      setVoice((v) => ({ bin: v?.bin ?? false, gpuBin: v?.gpuBin, items: [...(v?.items ?? []), modelId] }));
     }
     update({ voice: { ...settings.voice, model: modelId } });
     return true;
   }
 
-  // plays a short sample through the given piper voice — value is "<id>.onnx".
-  // falls back to the first downloaded voice so the button never dead-ends
-  function previewVoice(value: string): boolean {
-    const v = value || (piper?.items.length ? `${piper.items[0]}.onnx` : "");
-    if (!v) {
-      setErr("no neural voice yet — install Piper and download one in the Voices tab");
-      return false;
+  // NVIDIA cublas engine → bin-gpu/ (install_bin_finalize {gpu:true}); flips
+  // settings.voice.gpu on success. force=true re-downloads the latest build
+  // over the existing one (engine upgrades); transcribe reports per utterance
+  // which engine actually ran and why, if any
+  async function installWhisperGpu(force = false): Promise<boolean> {
+    if (dl) return false;
+    if (!voice?.gpuBin || force) {
+      if (!(await downloadTo("whisper-gpu-bin", WHISPER_GPU_BIN_URL, "GPU voice engine")))
+        return false;
+      try {
+        await invoke("install_bin_finalize", { key: "whisper-gpu-bin", gpu: true });
+      } catch (e) {
+        setErr(String(e));
+        return false;
+      }
+      setVoice((v) => ({ bin: v?.bin ?? false, gpuBin: true, items: v?.items ?? [] }));
     }
-    previewRef.current?.pause();
-    invoke<number[]>("tts_speak", { text: SAMPLE_TEXT, voice: v, speed: settings.ttsSpeed })
-      .then((bytes) => {
-        const url = URL.createObjectURL(
-          new Blob([new Uint8Array(bytes)], { type: "audio/wav" }),
-        );
-        const a = new Audio(url);
-        a.volume = settings.ttsVol;
-        previewRef.current = a;
-        a.onended = () => URL.revokeObjectURL(url);
-        a.play().catch((e) => setErr(`audio playback failed: ${e}`));
-      })
-      .catch((e) => setErr(String(e)));
+    update({ voice: { ...settings.voice, gpu: true } });
     return true;
   }
 
-  // fetches whatever is missing (engine first, then the onnx + json sidecar
-  // pair), then selects and previews it
-  async function ensurePiper(
-    id: string,
-    urls?: { binUrl?: string; voiceUrl?: string; cfgUrl?: string },
-  ): Promise<boolean> {
+  // plays a short sample — Kokoro voices are bare IDs (af_heart).
+  // guarded by a monotonic seq so rapid clicks / double-fires only play the latest.
+  function previewVoice(value: string): boolean {
+    let v = value?.replace(/\.onnx$/, "") ?? "";
+    if (!v) {
+      const first = piper?.items[0] ?? "";
+      if (!first) {
+        setErr("no neural voice yet — install Kokoro in the Voices tab");
+        return false;
+      }
+      v = first.replace(/\.onnx$/, "");
+    }
+    if (!v) {
+      setErr("no neural voice yet — install Kokoro in the Voices tab");
+      return false;
+    }
+    const seq = ++previewSeq.current;
+    // stop previous preview and revoke its blob URL
+    previewRef.current?.pause();
+    previewRef.current = null;
+    if (previewUrlRef.current) {
+      URL.revokeObjectURL(previewUrlRef.current);
+      previewUrlRef.current = null;
+    }
+    invoke<number[]>("tts_speak", { text: SAMPLE_TEXT, voice: v, speed: settings.ttsSpeed })
+      .then((bytes) => {
+        if (seq !== previewSeq.current) return;
+        const url = URL.createObjectURL(
+          new Blob([new Uint8Array(bytes)], { type: "audio/wav" }),
+        );
+        previewUrlRef.current = url;
+        const a = new Audio(url);
+        a.volume = settings.ttsVol;
+        previewRef.current = a;
+        a.onended = () => {
+          if (previewUrlRef.current === url) {
+            URL.revokeObjectURL(url);
+            previewUrlRef.current = null;
+          }
+        };
+        a.play().catch((e) => setErr(`audio playback failed: ${e}`));
+      })
+      .catch((e) => {
+        if (seq !== previewSeq.current) return;
+        setErr(String(e));
+      });
+    return true;
+  }
+
+  // Kokoro — single model + voices.bin covers all voices
+  async function ensurePiper(id: string, _urls?: any): Promise<boolean> {
     if (dl) return false;
+    if (!KOKORO_VOICES.includes(id)) {
+      setErr(`unknown voice ${id}`);
+      return false;
+    }
     if (!piper?.bin) {
-      if (!(await downloadTo("piper-bin", urls?.binUrl ?? PIPER_BIN_URL, "piper engine")))
+      if (!(await downloadTo("kokoro-model", KOKORO_MODEL_URL, "kokoro model")))
         return false;
       try {
-        await invoke("install_piper_bin", { key: "piper-bin" });
+        await invoke("install_piper_bin", { key: "kokoro-model" });
       } catch (e) {
         setErr(String(e));
         return false;
@@ -147,31 +205,34 @@ export function useVoiceInstall(
       setPiper((t) => ({ bin: true, items: t?.items ?? [] }));
     }
     if (!(piper?.items ?? []).includes(id)) {
-      if (!(await downloadTo(`tts-${id}`, urls?.voiceUrl ?? piperUrl(id), `${id} · voice`)))
-        return false;
-      if (
-        !(await downloadTo(
-          `tts-${id}-cfg`,
-          urls?.cfgUrl ?? piperUrl(id, ".onnx.json"),
-          `${id} · config`,
-        ))
-      )
+      if (!(await downloadTo(`kokoro-${id}`, kokoroVoiceUrl(id), `${id} · voice`)))
         return false;
       try {
-        await invoke("install_tts_voice_part", { key: `tts-${id}`, name: `${id}.onnx` });
-        await invoke("install_tts_voice_part", {
-          key: `tts-${id}-cfg`,
-          name: `${id}.onnx.json`,
-        });
+        await invoke("install_tts_voice_part", { key: `kokoro-${id}`, name: `${id}.bin` });
       } catch (e) {
         setErr(String(e));
         return false;
       }
       setPiper((t) => ({ bin: true, items: [...(t?.items ?? []), id].sort() }));
     }
-    update({ ttsVoice: `${id}.onnx` });
-    previewVoice(`${id}.onnx`);
+    update({ ttsVoice: id });
+    previewVoice(id);
     return true;
+  }
+
+  // deletes the GPU engine dir and turns the gpu preference off so the row
+  // reflects reality; transcribe would fall back to CPU anyway
+  async function removeGpuEngine(): Promise<boolean> {
+    setErr("");
+    try {
+      await invoke("voice_remove_gpu");
+      setVoice((v) => ({ bin: v?.bin ?? false, gpuBin: false, items: v?.items ?? [] }));
+      if (settings.voice.gpu) update({ voice: { ...settings.voice, gpu: false } });
+      return true;
+    } catch (e) {
+      setErr(String(e));
+      return false;
+    }
   }
 
   async function removeModel(name: string): Promise<boolean> {
@@ -179,9 +240,9 @@ export function useVoiceInstall(
     try {
       await invoke("voice_remove_model", { name });
       const left = (voice?.items ?? []).filter((m) => m !== name);
-      setVoice((v) => ({ bin: v?.bin ?? false, items: left }));
+      setVoice((v) => ({ bin: v?.bin ?? false, gpuBin: v?.gpuBin, items: left }));
       if (settings.voice.model === name) {
-        update({ voice: { ...settings.voice, model: left[0] ?? VOICE_MODELS[1].id } });
+        update({ voice: { ...settings.voice, model: left[0] || VOICE_MODELS.find((m) => m.id === "ggml-large-v3-turbo-q8_0.bin")?.id || VOICE_MODELS[VOICE_MODELS.length - 1]!.id } });
       }
       return true;
     } catch (e) {
@@ -193,10 +254,124 @@ export function useVoiceInstall(
   async function removePiperVoice(id: string): Promise<boolean> {
     setErr("");
     try {
-      await invoke("tts_remove_voice", { name: `${id}.onnx` });
+      await invoke("tts_remove_voice", { name: `${id}.bin` });
       const left = (piper?.items ?? []).filter((v) => v !== id);
       setPiper((t) => ({ bin: t?.bin ?? false, items: left }));
-      if (settings.ttsVoice === `${id}.onnx`) update({ ttsVoice: "" });
+      if (settings.ttsVoice === id || settings.ttsVoice === `${id}.onnx`) update({ ttsVoice: "" });
+      return true;
+    } catch (e) {
+      setErr(String(e));
+      return false;
+    }
+  }
+
+  async function installKokoro(): Promise<boolean> {
+    if (dl) return false;
+    if (piper?.bin) return true;
+    if (!(await downloadTo("kokoro-model", KOKORO_MODEL_URL, "kokoro model"))) return false;
+    try {
+      await invoke("install_piper_bin", { key: "kokoro-model" });
+    } catch (e) {
+      setErr(String(e));
+      return false;
+    }
+    // also need at least one voice for TTS to be usable — install default af_heart
+    if (!(await downloadTo("kokoro-af_heart", kokoroVoiceUrl("af_heart"), "af_heart · voice"))) return false;
+    try {
+      await invoke("install_tts_voice_part", { key: "kokoro-af_heart", name: "af_heart.bin" });
+    } catch (e) {
+      setErr(String(e));
+      return false;
+    }
+    setPiper({ bin: true, items: ["af_heart"] });
+    update({ ttsVoice: "af_heart" });
+    return true;
+  }
+
+  async function reinstallKokoro(): Promise<boolean> {
+    if (dl) return false;
+    if (!(await downloadTo("kokoro-model", KOKORO_MODEL_URL, "kokoro model"))) return false;
+    try {
+      await invoke("install_piper_bin", { key: "kokoro-model" });
+    } catch (e) {
+      setErr(String(e));
+      return false;
+    }
+    // re-download default voice as well
+    if (!(await downloadTo("kokoro-af_heart", kokoroVoiceUrl("af_heart"), "af_heart · voice"))) return false;
+    try {
+      await invoke("install_tts_voice_part", { key: "kokoro-af_heart", name: "af_heart.bin" });
+    } catch (e) {
+      setErr(String(e));
+      return false;
+    }
+    setPiper({ bin: true, items: ["af_heart"] });
+    return true;
+  }
+
+  async function removeKokoro(): Promise<boolean> {
+    setErr("");
+    try {
+      await invoke("kokoro_remove_engine");
+      setPiper({ bin: false, items: [] });
+      if (KOKORO_VOICES.includes(settings.ttsVoice) || KOKORO_VOICES.includes(settings.ttsVoice.replace(/\.onnx$/, ""))) {
+        update({ ttsVoice: "" });
+      }
+      return true;
+    } catch (e) {
+      setErr(String(e));
+      return false;
+    }
+  }
+
+  // optional CUDA pack (ort provider + NVIDIA cudart/cuBLAS/cuDNN) →
+  // kokoro/gpu-dlls; first synth self-tests the GPU and falls back to CPU
+  // automatically. Picks Blackwell vs pre-Blackwell ORT provider by compute
+  // cap (≥12.0 → sm_120). force=true re-downloads all four parts. On Blackwell,
+  // also swaps the quantized model for FP32 (INT8 has no sm_120 kernels and
+  // Conv ops fallback to slow CPU path).
+  async function installKokoroGpu(force = false, computeCap = ""): Promise<boolean> {
+    if (dl) return false;
+    if (piper?.gpuBin && !force) return true;
+    // resolve compute cap: explicit arg wins, else probe live via voice_gpu
+    let cap = computeCap;
+    if (!cap) {
+      try {
+        const g = await invoke<{ nvidia: boolean; compute_cap: string }>("voice_gpu");
+        cap = g.compute_cap ?? "";
+      } catch {}
+    }
+    for (const part of kokoroGpuPartsFor(cap)) {
+      if (!(await downloadTo(part.key, part.url, part.label))) return false;
+      try {
+        await invoke("install_kokoro_gpu_part", { key: part.key });
+      } catch (e) {
+        setErr(String(e));
+        return false;
+      }
+    }
+    // Blackwell + quantized model (92 MB) has no sm_120 INT8 kernels → Conv
+    // runs on CPU and spikes. Auto-swap to FP32 (325 MB) for full GPU.
+    if (parseFloat(cap) >= 12.0) {
+      // always ensure FP32 on Blackwell — quantized will be slow even with GPU pack
+      if (!(await downloadTo("kokoro-model", KOKORO_MODEL_URL_FP32, "kokoro model (FP32 for Blackwell)"))) return false;
+      try {
+        await invoke("install_piper_bin", { key: "kokoro-model" });
+      } catch (e) {
+        setErr(String(e));
+        return false;
+      }
+      setPiper((t) => ({ bin: true, items: t?.items ?? [] }));
+    }
+    setPiper((t) => ({ bin: t?.bin ?? false, gpuBin: true, items: t?.items ?? [] }));
+    return true;
+  }
+
+  async function removeKokoroGpu(): Promise<boolean> {
+    setErr("");
+    try {
+      await invoke("tts_gpu_remove");
+      setPiper((t) => ({ bin: t?.bin ?? false, gpuBin: false, items: t?.items ?? [] }));
       return true;
     } catch (e) {
       setErr(String(e));
@@ -213,9 +388,16 @@ export function useVoiceInstall(
     busy: !!dl,
     refresh,
     installWhisper,
+    installWhisperGpu,
+    removeGpuEngine,
     ensurePiper,
     removeModel,
     removePiperVoice,
     previewVoice,
+    installKokoro,
+    reinstallKokoro,
+    removeKokoro,
+    installKokoroGpu,
+    removeKokoroGpu,
   };
 }

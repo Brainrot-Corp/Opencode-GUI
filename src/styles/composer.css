@@ -66,6 +66,30 @@
   color: var(--accent-bright);
   text-shadow: 0 0 10px var(--accent-glow);
 }
+/* agent dropdown — reuses model-menu glass, disabled rows dimmed; height hugs content */
+.agent-menu-wrap { display: inline-flex; }
+.agent-menu {
+  min-width: 240px;
+  width: 300px;
+  height: auto;
+  min-height: 0;
+  max-height: min(320px, 50vh);
+  overflow-y: auto;
+}
+/* override fixed 300px from .model-menu when combined class is present */
+.model-menu.agent-menu {
+  height: auto;
+  min-height: 0;
+  max-height: min(320px, 50vh);
+  padding: 4px;
+}
+.agent-opt { gap: 8px; }
+.agent-opt-name { display: inline-flex; align-items: center; gap: 6px; flex: 1; min-width: 0; }
+.agent-opt-mode { font-size: 10px; color: var(--text-faint); text-transform: lowercase; margin-left: 2px; }
+.agent-opt.disabled { opacity: 0.45; }
+.agent-opt.disabled span:first-child { text-decoration: line-through; text-decoration-color: var(--text-faint); }
+.agent-opt.disabled.hl { opacity: 0.7; background: color-mix(in srgb, var(--danger) calc(0.08 * 100%), transparent); }
+.agent-disabled-badge { margin-left: auto; font-size: 9px; letter-spacing: 0.06em; color: var(--text-faint); border: 1px solid var(--line); padding: 1px 5px; border-radius: 4px; background: color-mix(in srgb, var(--danger) calc(0.08 * 100%), transparent); }
 /* usage readout is informational, not a button */
 .usage-chip {
   cursor: default;
@@ -195,9 +219,9 @@
   min-width: 280px;
   width: 340px;
   max-width: min(340px, calc(100vw - 16px));
-  height: 300px;
-  min-height: 300px;
-  max-height: 300px;
+  height: auto;
+  min-height: 0;
+  max-height: min(360px, 60vh);
   overflow-y: auto;
   padding: 0 4px 4px;
   /* heavy blur + near-opaque tint so the content behind is fully hidden */
@@ -350,7 +374,9 @@
   right: 8px;
   bottom: calc(100% - 4px);
   z-index: 45;
-  max-height: 300px;
+  height: auto;
+  min-height: 0;
+  max-height: min(300px, 50vh);
   overflow-y: auto;
   padding: 4px;
   background: var(--drawer-bg);
@@ -888,6 +914,30 @@
     inset 0 1px 0 rgba(255, 255, 255, 0.05);
 }
 
+/* live partial transcript — streaming preview while speaking */
+.voice-partial {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  margin: 0 0 8px;
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 18%, transparent);
+  border-left: 2px solid var(--accent);
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text);
+  animation: voice-in 0.15s var(--ease);
+}
+.voice-partial .fa-waveform-lines { color: var(--accent); text-shadow: 0 0 6px var(--accent-glow); }
+.voice-caret {
+  width: 2px; height: 14px; background: var(--accent); margin-left: 2px;
+  animation: voice-caret 0.9s steps(1) infinite;
+  box-shadow: 0 0 6px var(--accent-glow);
+}
+@keyframes voice-caret { 0%,50%{opacity:1} 51%,100%{opacity:0} }
+
 /* voice feedback strip above the composer — audit trail (Settings › Voice)
    and yes/no confirmations share one material with the chat stage/composer:
    same surf gradient + blur, hairline border, inset top highlight, flush
@@ -922,6 +972,41 @@
 .voice-note.reject {
   border-color: color-mix(in srgb, var(--danger) calc(0.3 * 100%), transparent);
   color: var(--text-dim);
+}
+/* structured debug lines: colored tag + message, one row each —
+   cmd (accent) = command fired · heard = whisper output · !! (danger) =
+   engine trouble · · (faint) = housekeeping */
+.voice-debug .vd-line {
+  display: flex;
+  gap: 9px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.voice-debug .vd-tag {
+  flex: none;
+  min-width: 46px;
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 0.09em;
+  padding-top: 1px;
+  color: var(--text-dim);
+}
+.voice-debug .vd-act .vd-tag {
+  color: var(--accent);
+}
+.voice-debug .vd-act .vd-msg {
+  color: var(--text);
+}
+.voice-debug .vd-warn .vd-tag,
+.voice-debug .vd-warn .vd-msg {
+  color: var(--danger);
+}
+.voice-debug .vd-say .vd-msg {
+  color: var(--text-dim);
+}
+.voice-debug .vd-hint {
+  opacity: 0.5;
 }
 @keyframes voice-in {
   from {

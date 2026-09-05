@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { Attachment, ProviderGroup } from "../types";
 import { prettySize, iconFor } from "../lib/attachments";
@@ -10,10 +10,15 @@ import { handleComposerKeys } from "../lib/editorKeys";
 import { findMatches, highlightFindInHtml } from "../lib/find";
 import { matchesEvent } from "../lib/hotkeys";
 import ModelMenu, { type ModelEntry } from "./ModelMenu";
+import AgentMenu from "./AgentMenu";
+import VariantMenu from "./VariantMenu";
+import SecurityMenu from "./SecurityMenu";
 import SlashMenu from "./SlashMenu";
 import { playSound } from "../lib/sounds";
 import { getDraft, setDraft } from "../lib/drafts";
 import { getRecentModels, pushRecentModel } from "../lib/recentModels";
+import { useTranslation } from "../lib/i18n";
+import { cleanTypedText, isGarbageInput } from "../lib/platform";
 import "../styles/composer.css";
 import "../styles/find.css";
 
@@ -105,19 +110,28 @@ export default function Composer({
   agents,
   agentSel,
   onCycleAgent,
+  disabledAgents,
+  onSelectAgent,
+  onToggleDisabled,
+  onRefreshAgents,
   onCycleVariant,
   hasVariants,
   variantSel,
+  modelVariants,
+  onSelectVariant,
   securityMode,
   onCycleSecurity,
+  onSelectSecurity,
   usage,
   caps,
   voicePhase,
   voiceStreaming,
   voiceError,
+  voicePartial,
   onVoiceToggle,
   sessionId,
   cycleAgentHotkey,
+  hotkeys,
 }: {
   busy: boolean;
   // double-Escape stop gesture armed — the stop button shows its countdown
@@ -139,20 +153,30 @@ export default function Composer({
   agents?: { name: string; mode: string }[];
   agentSel?: string;
   onCycleAgent?: () => void;
+  disabledAgents?: Set<string>;
+  onSelectAgent?: (name: string) => void;
+  onToggleDisabled?: (name: string) => void;
+  onRefreshAgents?: () => void;
   onCycleVariant?: () => void;
   hasVariants?: boolean;
   variantSel?: string;
+  modelVariants?: string[];
+  onSelectVariant?: (v: string) => void;
   securityMode?: "full" | "user" | "block";
   onCycleSecurity?: () => void;
+  onSelectSecurity?: (m: "full" | "user" | "block") => void;
   caps?: { attachment?: boolean; input?: string[] };
   usage?: { cost: number; tokens: number };
   voicePhase?: "idle" | "recording" | "transcribing";
   voiceStreaming?: boolean;
   voiceError?: string;
+  voicePartial?: string;
   onVoiceToggle?: () => void;
   sessionId?: string;
   cycleAgentHotkey?: string | null;
+  hotkeys?: Record<string, string | null>;
 }) {
+  const { t } = useTranslation();
   const [input, setInput] = useState(() => getDraft(sessionId ?? ""));
   const [open, setOpen] = useState(false);
   const [hi, setHi] = useState(-1); // keyboard highlight index
@@ -162,6 +186,8 @@ export default function Composer({
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const hlRef = useRef<HTMLDivElement>(null);
+  const composerRef = useRef<HTMLDivElement>(null);
+  const borderRef = useRef<number | null>(null);
   const historyRef = useRef<string[]>([]);
   const futureRef = useRef<string[]>([]);
   const isUndoRedoRef = useRef(false);
@@ -189,21 +215,22 @@ export default function Composer({
     else if (findCur >= compMatches.length) setFindCur(compMatches.length - 1);
   }, [compMatches.length, findCur]);
 
-  // live highlight layer: rebuilt synchronously. Plain text bypasses the
-  // overlay entirely (hasCode gate) so many newlines never drift; code
-  // blocks keep the trailing "\n" sentinel to make pre-wrap render the last
-  // empty line (textarea shows it natively).
+  // live highlight layer: deferred so typing stays 60fps — hlHtml runs
+  // lowlight auto-detect per fenced block which blocks the main thread.
+  // Plain text bypasses the overlay entirely (hasCode gate) so many
+  // newlines never drift; code blocks keep the trailing "\n" sentinel.
+  const deferredInput = useDeferredValue(input);
   const rawMarkup = useMemo(() => {
-    if (!input) return "";
-    const base = draftHtml(input);
-    const needsSentinel = base.includes("comp-codeblock") && /\n$/.test(input);
+    if (!deferredInput) return "";
+    const base = draftHtml(deferredInput);
+    const needsSentinel = base.includes("comp-codeblock") && /\n$/.test(deferredInput);
     return needsSentinel ? base + "\n" : base;
-  }, [input]);
+  }, [deferredInput]);
   const hasCode = rawMarkup.includes("comp-codeblock");
-  const hasFind = findOpen && findQuery.length > 0;
-  const hasOverlay = (hasCode || hasFind) && input.length > 0;
+  const hasFind = findOpen && findQuery.length > 0 && deferredInput.length > 0;
+  const hasOverlay = (hasCode || hasFind) && deferredInput.length > 0;
   const markup = useMemo(() => {
-    if (!input) return "";
+    if (!deferredInput) return "";
     let base = rawMarkup;
     // when find is active but no code block, base is still plain escaped text
     // draftHtml already produced it; if somehow empty (plain without code, still has content)
@@ -215,17 +242,25 @@ export default function Composer({
       // rawMarkup already is that (or empty if input empty which we early returned)
     }
     if (hasFind && findQuery) {
-      // ponytail: highlight counts from raw text indices but injected by scanning
-      // html text nodes — misses cross-token boundaries, ok for single-token queries
+      // ponytail: known entity boundary off-by-one, fix if reported — highlight
+      // counts from raw text indices but injected by scanning html text nodes
       base = highlightFindInHtml(base, findQuery, findCase, findCur);
     }
     return base;
-  }, [input, rawMarkup, hasFind, hasCode, findQuery, findCase, findCur]);
+  }, [deferredInput, rawMarkup, hasFind, hasCode, findQuery, findCase, findCur]);
 
   // the composer used to be drag-resizable (oc.comp.h) — clear any stale
   // stored height so old installs fall back to auto sizing
   useEffect(() => {
     localStorage.removeItem("oc.comp.h");
+  }, []);
+
+  // cache textarea border once — offsetHeight after height:auto jitters
+  useEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    const cs = getComputedStyle(el);
+    borderRef.current = parseFloat(cs.borderTopWidth || "0") + parseFloat(cs.borderBottomWidth || "0");
   }, []);
 
   // auto-grow: the whole input follows its line count — the textarea (and
@@ -235,9 +270,12 @@ export default function Composer({
     const el = inputRef.current;
     if (!el) return;
     const max = Math.round(window.innerHeight * 0.5);
+    if (borderRef.current === null) {
+      const cs = getComputedStyle(el);
+      borderRef.current = parseFloat(cs.borderTopWidth || "0") + parseFloat(cs.borderBottomWidth || "0");
+    }
+    const border = borderRef.current ?? 2;
     el.style.height = "auto";
-    // border is 1px top+bottom inside border-box, scrollHeight excludes it → +2 avoids 1px overflow that shows a scrollbar on one line
-    const border = el.offsetHeight - el.clientHeight;
     const h = Math.max(46, Math.min(el.scrollHeight + border, max));
     el.style.height = `${h}px`;
     // single line (or any fits) → no scrollbar at all; only scroll when capped at max
@@ -245,12 +283,21 @@ export default function Composer({
   }, [input]);
 
   // keep highlight overlay scroll in sync — onScroll alone misses auto-grow
-  // height changes (many newlines -> permanent offset)
+  // height changes (many newlines -> permanent offset). rAF avoids jitter
+  // when markup re-creates the overlay DOM via dangerouslySetInnerHTML
+  const rafRef = useRef<number | null>(null);
+  const syncHl = () => {
+    if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
+    rafRef.current = requestAnimationFrame(() => {
+      if (hlRef.current && inputRef.current) {
+        hlRef.current.scrollTop = inputRef.current.scrollTop;
+        hlRef.current.scrollLeft = inputRef.current.scrollLeft;
+      }
+    });
+  };
+  useEffect(() => () => { if (rafRef.current !== null) cancelAnimationFrame(rafRef.current); }, []);
   useEffect(() => {
-    if (hlRef.current && inputRef.current) {
-      hlRef.current.scrollTop = inputRef.current.scrollTop;
-      hlRef.current.scrollLeft = inputRef.current.scrollLeft;
-    }
+    syncHl();
   }, [input, markup]);
 
   // per-session draft: input is restored when returning to a session
@@ -258,9 +305,17 @@ export default function Composer({
   const sidRef = useRef(sessionId);
   useEffect(() => {
     if (sessionId === sidRef.current) return;
+    const prev = sidRef.current;
     sidRef.current = sessionId;
     suppressSaveRef.current = true;
-    setInput(getDraft(sessionId ?? ""));
+    const draft = getDraft(sessionId ?? "");
+    // preserve boot-typed text: if we typed while sessionId was empty
+    // (booting) and the new session has no saved draft, keep current input
+    if (!prev && draft === "" && inputRef2.current !== "") {
+      // keep what was typed before session loaded
+    } else {
+      setInput(draft);
+    }
     setFindOpen(false);
     // next tick allow saving again — avoids saving old input under new sid
     queueMicrotask(() => {
@@ -348,10 +403,7 @@ export default function Composer({
     const line = (input.slice(0, start).match(/\n/g) ?? []).length;
     try {
       ta.scrollTop = Math.max(0, line * lh - ta.clientHeight / 2);
-      if (hlRef.current) {
-        hlRef.current.scrollTop = ta.scrollTop;
-        hlRef.current.scrollLeft = ta.scrollLeft;
-      }
+      syncHl();
     } catch {}
   };
 
@@ -447,7 +499,7 @@ export default function Composer({
           c.name.toLowerCase().includes(q) ||
           c.description.toLowerCase().includes(q),
       )
-      .slice(0, 12);
+      .slice(0, 24);
   }, [slashQ, commands]);
   const cmdOpen = slashQ !== null && !cmdClosed && cmdEntries.length > 0;
   useEffect(() => {
@@ -525,6 +577,7 @@ export default function Composer({
   // priority: model menu → slash suggestions → plain Enter send / Tab cycle
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (!composerRef.current?.contains(document.activeElement)) return;
       // find open has priority over model/slash/send
       if (findOpen) {
         if (e.key === "Escape") {
@@ -606,14 +659,14 @@ export default function Composer({
         return;
       }
 
-      // --- cycleAgent hotkey — default Tab ---
+      // --- cycleAgent hotkey — default Tab (skip when agent menu open — its own Arrows/Enter own Tab)
       if (onCycleAgent) {
+        if (document.querySelector(".agent-menu")) return;
         const b = cycleAgentHotkey ?? "Tab";
         const should = b ? matchesEvent(e as any, b) : e.key === "Tab" && !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey;
         if (should) {
           const t = e.target as HTMLElement | null;
           if (t && (t.tagName === "INPUT" || t.tagName === "SELECT" || t.isContentEditable)) {
-            // allow native tab in inputs/selects unless rebind is explicitly that
             if (b === "Tab") return;
           }
           e.preventDefault();
@@ -626,12 +679,12 @@ export default function Composer({
     return () => window.removeEventListener("keydown", onKey);
   });
 
-  // type-to-focus: when terminal isn't focused and a session is active,
-  // printable keys (and Backspace/Delete) that would otherwise go nowhere
-  // focus the composer at the caret position. Shortcuts and overlays are excluded.
+  // type-to-focus: first keystroke should always land in the composer
+  // (even when the terminal dock is open or during boot) unless the
+  // user is already focused inside the terminal. Prevents the Windows
+  // beep that happens when body owns keyboard on launch.
   useEffect(() => {
     const onTypeToFocus = (e: KeyboardEvent) => {
-      if (!sessionId) return;
       const ta = inputRef.current;
       if (!ta || ta.disabled) return;
       if (document.activeElement === ta) return;
@@ -645,12 +698,8 @@ export default function Composer({
       const isEditable = (el: HTMLElement | null) =>
         !!el && (!!el.closest?.("input, textarea, select, [contenteditable]") || (el as HTMLElement).isContentEditable);
       if (isEditable(target) || isEditable(ae)) return;
-      // terminal owns its keys — only block when the dock is open (not .closed)
-      const tDock = target?.closest?.(".term-dock") as HTMLElement | null;
-      const aeDock = ae?.closest?.(".term-dock") as HTMLElement | null;
-      const dock = tDock || aeDock;
-      if (dock && !dock.classList.contains("closed")) return;
-      if (ae?.closest?.(".xterm") || target?.closest?.(".xterm")) return;
+      // only yield when focus is already inside the terminal
+      if (ae?.closest?.(".xterm, .term-dock") || target?.closest?.(".xterm, .term-dock")) return;
       // overlays own typing — blocked per user choice
       if (document.querySelector(".cmd-menu, .model-menu, .ctx-menu, .dlg-scrim, .drawer-scrim.open, .permission-bar")) return;
       e.preventDefault();
@@ -695,9 +744,9 @@ export default function Composer({
         } catch {}
       });
     };
-    window.addEventListener("keydown", onTypeToFocus);
-    return () => window.removeEventListener("keydown", onTypeToFocus);
-  }, [sessionId]);
+    window.addEventListener("keydown", onTypeToFocus, true);
+    return () => window.removeEventListener("keydown", onTypeToFocus, true);
+  }, []);
 
   const fillCmd = (c: CmdEntry) => {
     setInput(`/${c.name} `);
@@ -823,6 +872,7 @@ export default function Composer({
 
   return (
     <div
+      ref={composerRef}
       className={`composer${attach.dragOver ? " dragover" : ""}`}
       onDragOver={(e) => {
         if (!Array.from(e.dataTransfer.types).includes("Files")) return;
@@ -841,51 +891,62 @@ export default function Composer({
     >
       <div className="model-row">
         <span>{currentLabel()}</span>
-        {onCycleAgent && agents && (
-          <button
-            type="button"
-            className="agent-chip"
-            data-tip={`Agent — Tab to cycle (${agents.length} available)`}
-            onClick={() => onCycleAgent()}
-          >
-            <i className="fa-solid fa-robot" />
-            {agentSel || agents[0]?.name || "build"}
-          </button>
-        )}
-        {(variantSel || hasVariants) && (
-          <button
-            type="button"
-            className="agent-chip"
-            data-tip={`Thinking effort: ${variantSel || "default"} — click to cycle`}
-            onClick={() => onCycleVariant?.()}
-          >
-            <i className="fa-solid fa-gauge-high" />
-            {variantSel || "default"}
-          </button>
-        )}
-        <button
-          type="button"
-          className={`agent-chip security-chip sec-${securityMode ?? "user"}`}
-          data-tip={
-            securityMode === "full"
-              ? "Full control — no permission prompts (auto-allow)"
-              : securityMode === "block"
-                ? "Block — auto-deny permission requests"
-                : "User mode — classic allow once / always prompts — click to cycle"
-          }
-          onClick={() => onCycleSecurity?.()}
-        >
-          <i
-            className={`fa-solid ${
-              securityMode === "full"
-                ? "fa-bolt"
-                : securityMode === "block"
-                  ? "fa-lock"
-                  : "fa-user-shield"
-            }`}
+        {agents && agents.length > 0 && (
+          <AgentMenu
+            agents={agents}
+            agentSel={agentSel}
+            disabled={disabledAgents ?? new Set<string>()}
+            onSelect={(n) => (onSelectAgent ? onSelectAgent(n) : onCycleAgent?.())}
+            onToggleDisabled={(n) => onToggleDisabled?.(n)}
+            onRefresh={onRefreshAgents}
           />
-          {securityMode === "full" ? "Full" : securityMode === "block" ? "Block" : "User"}
-        </button>
+        )}
+        {(variantSel || hasVariants || (modelVariants && modelVariants.length > 0)) ? (
+          onSelectVariant ? (
+            <VariantMenu
+              variants={modelVariants ?? []}
+              variantSel={variantSel ?? ""}
+              onSelect={(v) => onSelectVariant(v)}
+            />
+          ) : (
+            <button
+              type="button"
+              className="agent-chip"
+              data-tip={`Thinking effort: ${variantSel || "default"} — click to cycle`}
+              onClick={() => onCycleVariant?.()}
+            >
+              <i className="fa-solid fa-gauge-high" />
+              {variantSel || "default"}
+            </button>
+          )
+        ) : null}
+        {onSelectSecurity ? (
+          <SecurityMenu securityMode={securityMode} onSelect={(m) => onSelectSecurity(m)} />
+        ) : (
+          <button
+            type="button"
+            className={`agent-chip security-chip sec-${securityMode ?? "user"}`}
+            data-tip={
+              securityMode === "full"
+                ? "Full control — no permission prompts (auto-allow)"
+                : securityMode === "block"
+                  ? "Block — auto-deny permission requests"
+                  : "User mode — classic allow once / always prompts — click to cycle"
+            }
+            onClick={() => onCycleSecurity?.()}
+          >
+            <i
+              className={`fa-solid ${
+                securityMode === "full"
+                  ? "fa-bolt"
+                  : securityMode === "block"
+                    ? "fa-lock"
+                    : "fa-user-shield"
+              }`}
+            />
+            {securityMode === "full" ? "Full" : securityMode === "block" ? "Block" : "User"}
+          </button>
+        )}
         {usage && usage.tokens > 0 && (
           <span
             className="agent-chip usage-chip"
@@ -974,6 +1035,13 @@ export default function Composer({
       )}
       {attach.note && <div className="composer-note">{attach.note}</div>}
       {!attach.note && voiceError && <div className="composer-note">{voiceError}</div>}
+      {voicePartial && voiceStreaming && (
+        <div className="voice-partial" role="status" aria-live="polite">
+          <i className="fa-solid fa-waveform-lines" style={{ opacity: 0.6 }} />
+          <span className="mono">{voicePartial}</span>
+          <span className="voice-caret" />
+        </div>
+      )}
       <div className="composer-row">
         {findOpen && (
           <div className="comp-find" onMouseDown={(e) => e.preventDefault()}>
@@ -1071,7 +1139,14 @@ export default function Composer({
                   rows={1}
                   value={input}
                   disabled={needsModel}
-                  onChange={(e) => setInput(e.target.value)}
+                  onBeforeInput={(e) => {
+                    // WKWebView+unstable leaks arrow/fn keys as invisible
+                    // PUA/control chars (tauri#10194) — drop them before the
+                    // caret ever sees them
+                    const d = (e.nativeEvent as InputEvent).data;
+                    if (isGarbageInput(d)) e.preventDefault();
+                  }}
+                  onChange={(e) => setInput(cleanTypedText(e.target.value))}
                   onPaste={(e) => {
                     const fs = e.clipboardData?.files;
                     if (fs?.length) {
@@ -1099,10 +1174,15 @@ export default function Composer({
                     }
                   }}
                   onScroll={(e) => {
-                    if (hlRef.current) {
-                      hlRef.current.scrollTop = e.currentTarget.scrollTop;
-                      hlRef.current.scrollLeft = e.currentTarget.scrollLeft;
-                    }
+                    const st = e.currentTarget.scrollTop;
+                    const sl = e.currentTarget.scrollLeft;
+                    if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
+                    rafRef.current = requestAnimationFrame(() => {
+                      if (hlRef.current) {
+                        hlRef.current.scrollTop = st;
+                        hlRef.current.scrollLeft = sl;
+                      }
+                    });
                   }}
                   onKeyDown={(e) => {
                     if (findOpen && e.key === "Escape") {
@@ -1136,7 +1216,7 @@ export default function Composer({
                       redoComposer();
                       return;
                     }
-                    if (handleComposerKeys(e, el, input, setInput)) return;
+                    if (handleComposerKeys(e, el, input, setInput, hotkeys ?? (()=>{ try{ return JSON.parse(localStorage.getItem("oc.settings")||"{}").hotkeys; }catch{ return undefined; }})())) return;
                     // typing sounds only — all key ROUTING (menus, send,
                     // agent cycle) lives in the single global handler
                     if (!e.ctrlKey && !e.metaKey && !e.altKey) {
@@ -1147,17 +1227,17 @@ export default function Composer({
                   }}
                   placeholder={
                     needsModel
-                      ? "Pick a model above to start chatting"
+                      ? t("composer.placeholder.needsModel")
                       : busy
-                        ? "Waiting for reply…"
-                        : "Ask anything (Enter to send, Shift+Enter for newline)"
+                        ? t("composer.placeholder.busy")
+                        : t("composer.placeholder.idle")
                   }
                 />
           </div>
                 {busy ? (
                   <button
                     className={`stop-btn${escHint ? " armed" : ""}`}
-                    data-tip={escHint ? "Press Esc again to stop" : "Stop generating"}
+                    data-tip={escHint ? t("composer.stop.armed") : t("composer.stop.tip")}
                     onClick={() => {
                       clearEscHint?.();
                       onAbort();
@@ -1168,7 +1248,7 @@ export default function Composer({
                 ) : (
                   <button
                     className="send-btn"
-                    data-tip="Send · Enter"
+                    data-tip={t("composer.send.tip")}
                     onClick={send}
                     disabled={(!input.trim() && !attach.readyFiles().length) || needsModel}
                   >

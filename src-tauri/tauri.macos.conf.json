@@ -1,0 +1,20 @@
+{
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "OpenCode",
+        "width": 1100,
+        "height": 720,
+        "minWidth": 900,
+        "minHeight": 600,
+        "transparent": true,
+        "visible": false,
+        "dragDropEnabled": true,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --autoplay-policy=no-user-gesture-required"
+      }
+    ]
+  }
+}

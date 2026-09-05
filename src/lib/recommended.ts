@@ -1,7 +1,7 @@
 // Remote "recommended setup" spec for the onboarding wizard — fetched from a
 // plain JSON file on GitHub so recommendations update without shipping a
 // build. Every download source can be overridden by full URL; anything absent
-// falls back to the built-in constants in piper.ts.
+// falls back to the built-in constants in kokoro.ts.
 //
 // ponytail: ids-only validation against known shapes, not live catalog
 // membership — a bad id fails at download time with the normal error row.
@@ -14,8 +14,8 @@ export const RECO_URL =
 
 export const DEFAULT_RECO: Reco = {
   version: 1,
-  whisperModel: "ggml-base.bin",
-  ttsVoice: "en_US-amy-medium",
+  whisperModel: "ggml-large-v3-turbo-q8_0.bin",
+  ttsVoice: "af_heart",
 };
 
 export type Reco = {
@@ -38,6 +38,7 @@ export type Reco = {
 
 const GGML = /^ggml-[\w.+-]+\.bin$/;
 const PIPER_ID = /^[a-z]{2}_[A-Z]{2,3}-[\w-]+-(x_)?(low|medium|high)$/;
+const KOKORO_ID = /^[a-z]{2}_[a-z0-9_]+$/;
 const HTTPS = /^https:\/\/[\w.-]+(:\d+)?\/\S+$/;
 
 function isStr(v: unknown, re: RegExp): v is string {
@@ -54,7 +55,7 @@ export function parseReco(body: string): Reco | null {
   } catch {
     return null;
   }
-  if (!isStr(j?.whisperModel, GGML) || !isStr(j?.ttsVoice, PIPER_ID)) return null;
+  if (!isStr(j?.whisperModel, GGML) || (!isStr(j?.ttsVoice, PIPER_ID) && !isStr(j?.ttsVoice, KOKORO_ID))) return null;
   const out: Reco = {
     version: typeof j.version === "number" ? j.version : 1,
     whisperModel: j.whisperModel,

@@ -69,8 +69,9 @@ fn classify(b: &mut Browser, url: &str) -> (bool, bool) {
 }
 
 fn spawn_poll(app: AppHandle, gen: u64) {
+    // ponytail: poll collapses JS redirects, NavigationCompleted event if WebView2 exposes
     std::thread::spawn(move || loop {
-        std::thread::sleep(Duration::from_millis(400));
+        std::thread::sleep(Duration::from_millis(200));
         let wv = {
             let state = app.state::<BrowserState>();
             let Ok(mut guard) = state.0.lock() else { return };
@@ -240,11 +241,6 @@ pub async fn open_external(url: String) -> Result<(), String> {
     parse_http(&url)?;
     #[cfg(windows)]
     {
-        // `cmd /c start` needs careful quoting for `&` in query strings, and
-        // `explorer` opens File Explorer on some setups. `rundll32` delegates
-        // to the shell's FileProtocolHandler which opens the default browser
-        // and passes the full URL (including `&`) as a single argument.
-        // Fall back to PowerShell `Start-Process` if rundll32 is unavailable.
         let r = std::process::Command::new("rundll32")
             .args(["url.dll,FileProtocolHandler", &url])
             .spawn();
@@ -258,18 +254,22 @@ pub async fn open_external(url: String) -> Result<(), String> {
                 .map_err(|e| e.to_string())?;
         }
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
     {
-        std::process::Command::new("xdg-open")
-            .arg(&url)
-            .spawn()
-            .map_err(|e| e.to_string())?;
+        std::process::Command::new("open").arg(&url).spawn().map_err(|e| e.to_string())?;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        std::process::Command::new("xdg-open").arg(&url).spawn().map_err(|e| e.to_string())?;
+    }
+    #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
+    {
+        std::process::Command::new("xdg-open").arg(&url).spawn().map_err(|e| e.to_string())?;
     }
     Ok(())
 }
 
-// ---------- voice app launcher: "launch google chrome" ----------
-
+// ---------- voice app launcher: removed — will become plugin (Windows-only impl kept) ----------
 #[cfg(windows)]
 use std::process::Command;
 #[cfg(windows)]
@@ -277,250 +277,98 @@ use std::os::windows::process::CommandExt;
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
-// lowercase alphanumerics only — comparison key immune to spacing/punctuation
-// differences between the Start Menu label and a whisper transcript
+#[cfg(windows)]
 fn norm_app(s: &str) -> String {
-    s.chars()
-        .filter(|c| c.is_ascii_alphanumeric())
-        .flat_map(|c| c.to_lowercase())
-        .collect()
+    s.chars().filter(|c| c.is_ascii_alphanumeric()).flat_map(|c| c.to_lowercase()).collect()
 }
-
+#[cfg(windows)]
 fn collect_lnks(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>, depth: u32) {
-    if depth > 6 {
-        return;
-    }
-    let rd = match std::fs::read_dir(dir) {
-        Ok(rd) => rd,
-        Err(_) => return,
-    };
+    if depth > 6 { return; }
+    let rd = match std::fs::read_dir(dir) { Ok(rd) => rd, Err(_) => return };
     for e in rd.flatten() {
         let p = e.path();
-        if p.is_dir() {
-            collect_lnks(&p, out, depth + 1);
-        } else if p.extension().and_then(|x| x.to_str()) == Some("lnk") {
-            out.push(p);
-        }
+        if p.is_dir() { collect_lnks(&p, out, depth + 1); }
+        else if p.extension().and_then(|x| x.to_str()) == Some("lnk") { out.push(p); }
     }
 }
-
-// does every word of `cand` appear somewhere in the app name?
+#[cfg(windows)]
 fn words_contained(cand: &[String], stem: &str) -> bool {
-    cand.iter()
-        .all(|w| stem.to_lowercase().contains(w.as_str()))
+    cand.iter().all(|w| stem.to_lowercase().contains(w.as_str()))
 }
-
-// launch an installed app by spoken phrase: scan Start Menu .lnk files and
-// try progressively shorter prefixes of the phrase (longest-first), scoring
-// exact > prefix > all-words-contained; fall back to PATH for bare exes.
-// Returns the resolved display name so the UI can speak it.
-//
-// ponytail: rescans Start Menu on every call (hundreds of files, single-digit
-// ms) and skips the App Paths registry check — add a cache / reg query if a
-// missing app ever bites.
+#[cfg(windows)]
 #[tauri::command]
 pub async fn open_app(name: String) -> Result<String, String> {
     let phrase = name.trim().to_string();
-    if phrase.is_empty()
-        || phrase.len() > 64
-        || !phrase
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, ' ' | '.' | '-' | '_'))
-    {
+    if phrase.is_empty() || phrase.len() > 64 || !phrase.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, ' ' | '.' | '-' | '_')) {
         return Err("bad app name".into());
     }
-
-    // prefix candidates longest-first: "visual studio code" → … → "visual"
     let words: Vec<String> = phrase.split_whitespace().map(String::from).collect();
-
     let mut lnks = Vec::new();
-    for root in [
-        std::env::var("ProgramData").ok(),
-        std::env::var("APPDATA").ok(),
-    ]
-    .into_iter()
-    .flatten()
-    {
-        collect_lnks(
-            std::path::Path::new(&root)
-                .join("Microsoft")
-                .join("Windows")
-                .join("Start Menu")
-                .join("Programs")
-                .as_path(),
-            &mut lnks,
-            0,
-        );
+    for root in [std::env::var("ProgramData").ok(), std::env::var("APPDATA").ok()].into_iter().flatten() {
+        collect_lnks(std::path::Path::new(&root).join("Microsoft").join("Windows").join("Start Menu").join("Programs").as_path(), &mut lnks, 0);
     }
-
-    let mut best: Option<(u8, String)> = None; // (score, display stem)
+    let mut best: Option<(u8, String)> = None;
     for n in (1..=words.len()).rev() {
         let cand_words = &words[..n];
         let cand = norm_app(&cand_words.join(""));
-        if cand.is_empty() {
-            continue;
-        }
+        if cand.is_empty() { continue; }
         for p in &lnks {
             let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
             let ns = norm_app(&stem);
-            let score = if ns == cand {
-                3
-            } else if ns.starts_with(&cand) {
-                2
-            } else if words_contained(cand_words, &stem) {
-                1
-            } else {
-                continue;
-            };
-            if best.as_ref().map(|(s, _)| score > *s).unwrap_or(true) {
-                best = Some((score, stem));
-                if score == 3 {
-                    break;
-                }
-            }
+            let score = if ns == cand { 3 } else if ns.starts_with(&cand) { 2 } else if words_contained(cand_words, &stem) { 1 } else { continue };
+            if best.as_ref().map(|(s, _)| score > *s).unwrap_or(true) { best = Some((score, stem)); if score == 3 { break; } }
         }
-        if best.as_ref().map(|(s, _)| *s == 3).unwrap_or(false) {
-            break;
-        }
+        if best.as_ref().map(|(s, _)| *s == 3).unwrap_or(false) { break; }
     }
-
     if let Some((_, stem)) = best {
-        let path = lnks
-            .iter()
-            .find(|p| {
-                p.file_stem().and_then(|s| s.to_str()) == Some(stem.as_str())
-            })
-            .ok_or("match lost")?;
+        let path = lnks.iter().find(|p| p.file_stem().and_then(|s| s.to_str()) == Some(stem.as_str())).ok_or("match lost")?;
         launch_detached(&path.to_string_lossy())?;
         return Ok(stem);
     }
-
-    // no Start Menu hit: try PATH for bare executables ("notepad", "code")
     for n in (1..=words.len()).rev() {
         let exe = format!("{}.exe", words[..n].join("-"));
-        let output = Command::new("where")
-            .arg(&exe)
-            .creation_flags(CREATE_NO_WINDOW)
-            .output();
-        if let Ok(o) = output {
-            if o.status.success() {
-                let full = String::from_utf8_lossy(&o.stdout)
-                    .lines()
-                    .next()
-                    .unwrap_or("")
-                    .trim()
-                    .to_string();
-                if !full.is_empty() {
-                    launch_detached(&full)?;
-                    return Ok(exe.trim_end_matches(".exe").replace('-', " "));
-                }
-            }
-        }
+        let output = Command::new("where").arg(&exe).creation_flags(CREATE_NO_WINDOW).output();
+        if let Ok(o) = output { if o.status.success() { let full = String::from_utf8_lossy(&o.stdout).lines().next().unwrap_or("").trim().to_string(); if !full.is_empty() { launch_detached(&full)?; return Ok(exe.trim_end_matches(".exe").replace('-', " ")); } } }
     }
-
     Err(format!("no app found for '{phrase}'"))
 }
-
+#[cfg(not(windows))]
+#[tauri::command]
+pub async fn open_app(_name: String) -> Result<String, String> {
+    Err("app launching moved to plugin — not available on this platform".into())
+}
+#[cfg(windows)]
 fn launch_detached(target: &str) -> Result<(), String> {
-    Command::new("cmd")
-        .args(["/c", "start", "", target])
-        .creation_flags(CREATE_NO_WINDOW)
-        .spawn()
-        .map(|_| ())
-        .map_err(|e| format!("failed to launch: {e}"))
+    Command::new("cmd").args(["/c", "start", "", target]).creation_flags(CREATE_NO_WINDOW).spawn().map(|_| ()).map_err(|e| format!("failed to launch: {e}"))
 }
-
-// same charset guard as open_app
+#[cfg(windows)]
 fn sane_phrase(phrase: &str) -> bool {
-    !phrase.is_empty()
-        && phrase.len() <= 64
-        && phrase
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, ' ' | '.' | '-' | '_'))
+    !phrase.is_empty() && phrase.len() <= 64 && phrase.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, ' ' | '.' | '-' | '_'))
 }
-
-// escape a spoken word for use as a PowerShell -match regex literal
+#[cfg(windows)]
 fn regex_esc(w: &str) -> String {
-    w.chars()
-        .flat_map(|c| {
-            if "\\.^$|?*+()[]{}".contains(c) {
-                vec!['\\', c]
-            } else {
-                vec![c]
-            }
-        })
-        .collect()
+    w.chars().flat_map(|c| if "\\.^$|?*+()[]{}".contains(c) { vec!['\\', c] } else { vec![c] }).collect()
 }
-
-// close ("quit"), minimize, or force-kill the app behind a spoken phrase:
-// match PROCESS names (not window titles — those are locale/document
-// dependent), trying the longest prefix of the spoken words first so
-// "visual studio code" lands on the "Code" process via its last word.
-// Only processes that actually own a window are touched. CloseMainWindow
-// asks nicely (WM_CLOSE); minimize is ShowWindow(SW_MINIMIZE); kill
-// resolves the process name then taskkill /F's everything under it.
-// Returns the matched process name for the UI to speak.
-//
-// ponytail: shells PowerShell instead of a Win32 EnumWindows dependency —
-// a few hundred ms per call is fine for voice; swap for the windows crate
-// if it ever feels slow.
+#[cfg(windows)]
 #[tauri::command]
 pub async fn window_app(name: String, action: String) -> Result<String, String> {
     let phrase = name.trim().to_string();
-    if !sane_phrase(&phrase) {
-        return Err("bad app name".into());
-    }
-    let minimize = match action.as_str() {
-        "close" => false,
-        "minimize" => true,
-        "kill" => false,
-        _ => return Err("bad action".into()),
-    };
-    // longest-prefix-first candidates: every word AND-ed into one lookahead
-    // regex ("-match" is case-insensitive); quotes stripped up front
+    if !sane_phrase(&phrase) { return Err("bad app name".into()); }
+    let minimize = match action.as_str() { "close" => false, "minimize" => true, "kill" => false, _ => return Err("bad action".into()) };
     let words: Vec<String> = phrase.split_whitespace().map(String::from).collect();
-    let pats: Vec<String> = (1..=words.len())
-        .rev()
-        .map(|n| {
-            words[..n]
-                .iter()
-                .map(|w| format!("(?=.*{})", regex_esc(w)))
-                .collect()
-        })
-        .collect();
-    let ps_pats = pats
-        .iter()
-        .map(|p| format!("'{}'", p.replace('\'', "''")))
-        .collect::<Vec<_>>()
-        .join(",");
-    let add_type = if minimize {
-        "if(-not('U.W' -as [type])){Add-Type -MemberDefinition '[DllImport(\"user32.dll\")] public static extern bool ShowWindow(IntPtr h,int c);' -Name W -Namespace U};"
-    } else {
-        ""
-    };
-    // close/minimize act per window; kill goes through taskkill so hidden
-    // child processes die too
-    let act = if action == "kill" {
-        "$ps|Select-Object -Unique -ExpandProperty ProcessName|ForEach-Object{& taskkill /F /IM ($_+'.exe')|Out-Null}".to_string()
-    } else if minimize {
-        "foreach($p in $ps){[void][U.W]::ShowWindow($p.MainWindowHandle,6)}".to_string()
-    } else {
-        "foreach($p in $ps){[void]$p.CloseMainWindow()}".to_string()
-    };
-    let script = format!(
-        "$ErrorActionPreference='SilentlyContinue';{add_type}$ps=$null;foreach($pat in @({ps_pats})){{$ps=Get-Process|Where-Object{{$_.MainWindowHandle -ne 0 -and $_.ProcessName -match $pat}};if($ps){{break}}}};{act};if($ps){{Write-Output $ps[0].ProcessName}}"
-    );
-    let out = Command::new("powershell")
-        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
-        .creation_flags(CREATE_NO_WINDOW)
-        .output()
-        .map_err(|e| format!("shell failed: {e}"))?;
+    let pats: Vec<String> = (1..=words.len()).rev().map(|n| words[..n].iter().map(|w| format!("(?=.*{})", regex_esc(w))).collect()).collect();
+    let ps_pats = pats.iter().map(|p| format!("'{}'", p.replace('\'', "''"))).collect::<Vec<_>>().join(",");
+    let add_type = if minimize { "if(-not('U.W' -as [type])){Add-Type -MemberDefinition '[DllImport(\"user32.dll\")] public static extern bool ShowWindow(IntPtr h,int c);' -Name W -Namespace U};" } else { "" };
+    let act = if action == "kill" { "$ps|Select-Object -Unique -ExpandProperty ProcessName|ForEach-Object{& taskkill /F /IM ($_+'.exe')|Out-Null}".to_string() } else if minimize { "foreach($p in $ps){[void][U.W]::ShowWindow($p.MainWindowHandle,6)}".to_string() } else { "foreach($p in $ps){[void]$p.CloseMainWindow()}".to_string() };
+    let script = format!("$ErrorActionPreference='SilentlyContinue';{add_type}$ps=$null;foreach($pat in @({ps_pats})){{$ps=Get-Process|Where-Object{{$_.MainWindowHandle -ne 0 -and $_.ProcessName -match $pat}};if($ps){{break}}}};{act};if($ps){{Write-Output $ps[0].ProcessName}}");
+    let out = Command::new("powershell").args(["-NoProfile", "-NonInteractive", "-Command", &script]).creation_flags(CREATE_NO_WINDOW).output().map_err(|e| format!("shell failed: {e}"))?;
     let proc_name = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    if proc_name.is_empty() {
-        Err(format!("no app found for '{phrase}'"))
-    } else {
-        Ok(proc_name)
-    }
+    if proc_name.is_empty() { Err(format!("no app found for '{phrase}'")) } else { Ok(proc_name) }
+}
+#[cfg(not(windows))]
+#[tauri::command]
+pub async fn window_app(_name: String, _action: String) -> Result<String, String> {
+    Err("app launching moved to plugin — not available on this platform".into())
 }
 
 // ----------- TikTok floating webview (persistent, tiktok-only) -----------
@@ -628,12 +476,22 @@ pub async fn tiktok_open(
     let gen = FLOAT_GEN.fetch_add(1, Ordering::Relaxed);
     // persistent session (not incognito) so TikTok login survives restarts
     // glass: make webview transparent so injected rgba shows app's mica/acrylic behind
+    // Note: `transparent` on WebView requires `macos-private-api` on macOS (see tauri `webview/mod.rs:1022`),
+    // so only enable where available; fallback on macOS without feature is opaque webview with glass CSS still applied.
     let init_js = TIKTOK_GLASS_INIT_JS.replace("__CSS__", &TIKTOK_GLASS_CSS.replace('`', "'").replace('\\', "\\\\"));
+    let mut builder = WebviewBuilder::new("tiktok", WebviewUrl::External(parsed.clone()));
+    #[cfg(not(target_os = "macos"))]
+    {
+        builder = builder.transparent(true);
+    }
+    #[cfg(target_os = "macos")]
+    {
+        // transparent WebView on macOS needs `tauri/macos-private-api`; keep opaque fallback
+        let _ = &mut builder;
+    }
     let webview = win
         .add_child(
-            WebviewBuilder::new("tiktok", WebviewUrl::External(parsed.clone()))
-                .transparent(true)
-                .initialization_script(init_js),
+            builder.initialization_script(init_js),
             LogicalPosition::new(x, y),
             LogicalSize::new(w, h),
         )
@@ -736,13 +594,10 @@ pub fn on_main_resize(app: &AppHandle, size: PhysicalSize<u32>) {
     });
 }
 
-#[cfg(test)]
+#[cfg(all(test, windows))]
 mod tests {
     use super::*;
 
-    // the window_app scripts rely on $vars and 'quoted' strings surviving
-    // Command::new → powershell.exe arg passing; this runs the same shape of
-    // script for real so quoting regressions fail loudly here, not in voice
     #[test]
     fn ps_quoting_survives_command_invocation() {
         let out = Command::new("powershell")

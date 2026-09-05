@@ -23,12 +23,14 @@ export default function FileEditor({
   absolute,
   onDirty,
   onClose,
+  hotkeys,
 }: {
   path: string;
   absolute: string;
   // lets the tree ask before replacing a dirty editor with another file
   onDirty?: (dirty: boolean) => void;
   onClose: () => void;
+  hotkeys?: Record<string, string | null>;
 }) {
   const [saved, setSaved] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
@@ -81,7 +83,9 @@ export default function FileEditor({
         setError("");
         return;
       }
-      const text = fc?.content ?? "";
+      const raw = fc?.content ?? "";
+      // normalize CRLF to LF for editing (save also as LF)
+      const text = raw.includes("\r") ? raw.replace(/\r\n/g, "\n").replace(/\r/g, "\n") : raw;
       setSaved(text);
       setDraft(text);
       historyRef.current = [];
@@ -246,17 +250,21 @@ export default function FileEditor({
     return findMatches(draft, query, matchCase);
   }, [draft, query, matchCase, findOpen]);
 
-  const syncScroll = () => {
-    const hl = hlRef.current;
-    const ta = taRef.current;
-    if (!hl || !ta) return;
-    hl.scrollTop = ta.scrollTop;
-    hl.scrollLeft = ta.scrollLeft;
-  };
+  const rafRef = useRef<number | null>(null);
+  const syncScroll = useCallback(() => {
+    if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
+    rafRef.current = requestAnimationFrame(() => {
+      const hl = hlRef.current;
+      const ta = taRef.current;
+      if (!hl || !ta) return;
+      hl.scrollTop = ta.scrollTop;
+      hl.scrollLeft = ta.scrollLeft;
+    });
+  }, []);
+  useEffect(() => () => { if (rafRef.current !== null) cancelAnimationFrame(rafRef.current); }, []);
   useEffect(() => {
     syncScroll();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draft]);
+  }, [draft, syncScroll]);
 
   const deferred = useDeferredValue(draft);
   const lang = extLang(path);
@@ -269,6 +277,12 @@ export default function FileEditor({
     if (!findOpen || !query || !matches.length) return hlBase;
     return highlightFindInHtml(hlBase, query, matchCase, cur);
   }, [hlBase, findOpen, query, matchCase, cur, matches.length]);
+
+  // deferred highlight can be shorter than textarea while typing — sync
+  // clamps then; re-sync after highlight paints so offset doesn't stick
+  useEffect(() => {
+    syncScroll();
+  }, [hlMarkup, syncScroll]);
 
   const goto = (idx: number) => {
     if (!matches.length) return;
@@ -400,7 +414,7 @@ export default function FileEditor({
       redo();
       return;
     }
-    if (handleEditorKeys(e, ta, draft, applyEdit, { path, allowInsert: true })) return;
+    if (handleEditorKeys(e, ta, draft, applyEdit, { path, allowInsert: true, hotkeys: hotkeys ?? (()=>{ try{ return JSON.parse(localStorage.getItem("oc.settings")||"{}").hotkeys; }catch{ return undefined; }})() })) return;
     if (e.key === "Tab") {
       e.preventDefault();
       const s = ta.selectionStart;

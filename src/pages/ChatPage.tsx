@@ -21,15 +21,18 @@ const Onboarding = lazy(() => import("../components/Onboarding"));
 const FileEditorHost = lazy(() => import("../components/FileEditorHost"));
 const TerminalPanel = lazy(() => import("../components/Terminal"));
 import { HelpDialog, ShareDialog, VariantsDialog } from "../components/CommandDialog";
+import AgentBoard from "../components/AgentBoard";
 import { useOpencode } from "../hooks/useOpencode";
 import { useSettings } from "../hooks/useSettings";
 import { useGlobalShortcuts } from "../hooks/useGlobalShortcuts";
-import { useVoice } from "../hooks/useVoice";
+import { usePluginHotkeys } from "../hooks/usePluginHotkeys";
+import { useVoice, type VdbgKind } from "../hooks/useVoice";
 import { routeVoice, routerInput, type VoiceAct } from "../lib/voiceRouter";
 import { ensureDict } from "../lib/dictWords";
 import { pickWorkspace, getLastWorkspace, getAllWorkspaces } from "../lib/workspace";
 import { playSound } from "../lib/sounds";
 import { useSpeech } from "../hooks/useSpeech";
+import { pushToast, dismissToast } from "../hooks/useToast";
 import { matchesEvent } from "../lib/hotkeys";
 import { usePlugins } from "../hooks/usePlugins";
 import { loadPluginsCatalog, fetchPluginFiles, pluginRawUrl, type PluginCatalogEntry } from "../lib/pluginsCatalog";
@@ -37,11 +40,13 @@ import { isNewer, getAutoUpdateEnabled, setAutoUpdateEnabled } from "../lib/plug
 import { ContextMenuProvider } from "../hooks/useContextMenu";
 import SelectionMenu from "../components/SelectionMenu";
 import { getFindTarget, setFindTarget, targetFromElement } from "../lib/findContext";
+import { useTranslation } from "../lib/i18n";
 
 const SB_W_KEY = "oc.sb.w";
 const SB_C_KEY = "oc.sb.c";
 
 export default function ChatPage() {
+  const { t } = useTranslation();
   const oc = useOpencode();
   const {
     settings,
@@ -50,14 +55,14 @@ export default function ChatPage() {
     updateSounds,
     updateColors,
     resetColors,
+    resetThemes,
     themes,
-    themeError,
     activeModes,
     effectiveMode,
     colorsFor,
   } = useSettings();
-  // runtime plugins — voice intents, sidebar/titlebar widgets, overlays, error banner
-  const { plugins, exts, sidebarWidgets, titlebarItems, overlays, error: pluginError, toggleEnabled, removeDisabled } = usePlugins();
+  // runtime plugins — voice intents, sidebar/titlebar widgets, overlays
+  const { plugins, exts, sidebarWidgets, titlebarItems, overlays, toggleEnabled, removeDisabled } = usePlugins();
   // spoken replies / narration / debrief — the whole piper voice pipeline
   const { talking, debriefing, announce, pauseSpeech } = useSpeech(
     { msgs: oc.msgs, busy: oc.busy, permission: oc.permission, providers: oc.providers },
@@ -134,6 +139,7 @@ export default function ChatPage() {
     return Math.min(Math.max(280, w), 440);
   });
   const [sbClosed, setSbClosed] = useState(() => localStorage.getItem(SB_C_KEY) === "1");
+  const [agentsOpen, setAgentsOpen] = useState(() => localStorage.getItem("oc.agentBoard.open") === "1");
   // chat history find — routed when composer not focused and file not last active
   const [chatFindOpen, setChatFindOpen] = useState(false);
   const [chatFindQuery, setChatFindQuery] = useState("");
@@ -227,6 +233,7 @@ export default function ChatPage() {
     });
   }, []);
 
+  const toggleAgents = useCallback(() => setAgentsOpen(v => !v), []);
   const { stopArmed, clearStopArmed } = useGlobalShortcuts({
     settings,
     update,
@@ -253,7 +260,9 @@ export default function ChatPage() {
       }
       void (oc as any).newSession();
     },
+    onToggleAgents: toggleAgents,
   });
+  usePluginHotkeys({ settings, plugins });
 
   // spoken rendering of a voice act — used to read embedded commands back
   // before they run
@@ -423,12 +432,22 @@ export default function ChatPage() {
   // read back and waits for a spoken yes/no. Any other speech (or 15s)
   // cancels — chatter can't leave stale traps.
   const pendingRef = useRef<{ act: VoiceAct; until: number } | null>(null);
+  const pendingToastRef = useRef<number | undefined>(undefined);
+  const pendingTimerRef = useRef<number>(0);
   // guards the async translate fallback: newer speech invalidates an
   // in-flight re-route
   const seqRef = useRef(0);
+  // dictation capture mode — bare "prompt" (no args) opens it: speech appends
+  // to the composer until "send", "clear" or any other command ends it
+  const captureRef = useRef(false);
   // warm the typo-corrector's dictionary veto once per launch
   useEffect(() => {
     void ensureDict();
+  }, []);
+  // cleanup pending confirmation toast/timer on unmount
+  useEffect(() => () => {
+    if (pendingTimerRef.current) clearTimeout(pendingTimerRef.current);
+    if (pendingToastRef.current !== undefined) dismissToast(pendingToastRef.current);
   }, []);
   const refreshCatalog = useCallback(async (force = false) => {
     setCatalogLoading(true);
@@ -507,10 +526,12 @@ export default function ChatPage() {
       }
     })();
   }, [autoUpdateEnabled, pluginCatalog, plugins, catalogLoading]);
-  // debug transcript mode (Settings › Voice): last few utterance audits
-  const [vdbg, setVdbg] = useState<string[]>([]);
+  // debug transcript mode (Settings › Voice): structured audit trail —
+  // colored kind tag + short message, newest at the bottom
+  const VD_TAG: Record<VdbgKind, string> = { act: "cmd", say: "heard", warn: "!!", hint: "·" };
+  const [vdbg, setVdbg] = useState<{ kind: VdbgKind; msg: string }[]>([]);
   const dbgPush = useCallback(
-    (s: string) => setVdbg((d) => [...d.slice(-4), s]),
+    (kind: VdbgKind, msg: string) => setVdbg((d) => [...d.slice(-7), { kind, msg }]),
     [],
   );
   // visible confirmation for voice yes/no outcomes — works even when TTS is
@@ -522,15 +543,72 @@ export default function ChatPage() {
     clearTimeout(vnoteTimer.current);
     vnoteTimer.current = window.setTimeout(() => setVnote(""), 2600);
   }, []);
+  const routeCtx = useCallback(
+    () => ({
+      themes: themes.map((t) => t.id),
+      commands: oc.cmdList.map((c) => c.name),
+      exts,
+    }),
+    [themes, oc.cmdList, exts],
+  );
+
+  // executes a routed act — shared by the native, partial and capture paths
+  const dispatch = useCallback(
+    (act: VoiceAct) => {
+      playSound("click");
+      if (act.type === "embedded") {
+        // plugin-driven confirmation: a plugin can opt out via
+        // `requiresConfirmation = false` or `requiresConfirmation = (act)=>boolean`
+        const inner = act.act as unknown as { type?: string; plugin?: string; act?: unknown };
+        if (inner?.type === "plugin" && typeof inner.plugin === "string") {
+          const ext = extById[inner.plugin];
+          const flag = ext?.requiresConfirmation as unknown as boolean | ((a: unknown) => boolean) | undefined;
+          const needs = typeof flag === "function" ? flag(inner.act) : flag !== false;
+          if (!needs) {
+            execAct(act.act);
+            return;
+          }
+        }
+        // active session: a command ran recently → trust the streak, skip
+        // the read-back (25s window). Fuzzy matches (command + trailing
+        // clause) always read back — they're only probable.
+        if (!act.fuzzy && Date.now() - lastExecRef.current < 25000) {
+          execAct(act.act);
+          return;
+        }
+        pendingRef.current = { act: act.act, until: Date.now() + 15000 };
+        const d = describeAct(act.act);
+        const question = `Okay — ${d.charAt(0).toLowerCase()}${d.slice(1)}?`;
+        announce(question);
+        if (pendingToastRef.current !== undefined) dismissToast(pendingToastRef.current);
+        if (pendingTimerRef.current) clearTimeout(pendingTimerRef.current);
+        pendingToastRef.current = pushToast(`${question} Say yes or no.`, { variant: "info", ttl: 15000 });
+        pendingTimerRef.current = window.setTimeout(() => {
+          pendingRef.current = null;
+          if (pendingToastRef.current !== undefined) {
+            dismissToast(pendingToastRef.current);
+            pendingToastRef.current = undefined;
+          }
+          pendingTimerRef.current = 0;
+        }, 15000);
+        return;
+      }
+      execAct(act);
+    },
+    [execAct, describeAct, announce, extById],
+  );
+
   const handleVoiceTranscript = useCallback(
     (text: string) => {
       const p = pendingRef.current;
       if (p && Date.now() < p.until) {
-        if (settings.voice.debug) dbgPush(`"${text}" → consumed by yes/no prompt`);
+        if (settings.voice.debug) dbgPush("hint", `yes/no — "${text}"`);
         const t0 = text.toLowerCase().replace(/[.,!?;:]+$/, "").trim();
         // yes/no in EN/FR/ES — "si" matches Spanish sí (whisper drops accents)
         if (/^(yes|yeah|yep|yup|sure|do it|confirm|go ahead|oui|ouais|ouep|vas-?y|si|sí|claro|dale|vale)\b/.test(t0)) {
           pendingRef.current = null;
+          if (pendingToastRef.current !== undefined) { dismissToast(pendingToastRef.current); pendingToastRef.current = undefined; }
+          if (pendingTimerRef.current) { clearTimeout(pendingTimerRef.current); pendingTimerRef.current = 0; }
           playSound("click");
           const d = describeAct(p.act);
           const acks = ["Done.", "You got it.", "On it.", "Sure thing."];
@@ -540,81 +618,134 @@ export default function ChatPage() {
           execAct(p.act);
         } else if (/^(no|nope|nah|cancel|forget it|non|annule|annuler|anula|cancela)\b/.test(t0)) {
           pendingRef.current = null;
+          if (pendingToastRef.current !== undefined) { dismissToast(pendingToastRef.current); pendingToastRef.current = undefined; }
+          if (pendingTimerRef.current) { clearTimeout(pendingTimerRef.current); pendingTimerRef.current = 0; }
           const nos = ["No problem.", "Okay, skipping that.", "Cancelled."];
           announce(nos[Math.floor(Math.random() * nos.length)]);
           confirmNote("✗ Cancelled");
         } else {
           pendingRef.current = null; // unrelated chatter kills the question
+          if (pendingToastRef.current !== undefined) { dismissToast(pendingToastRef.current); pendingToastRef.current = undefined; }
+          if (pendingTimerRef.current) { clearTimeout(pendingTimerRef.current); pendingTimerRef.current = 0; }
         }
         return;
       }
-      pendingRef.current = null;
+      if (p) {
+        pendingRef.current = null;
+        if (pendingToastRef.current !== undefined) { dismissToast(pendingToastRef.current); pendingToastRef.current = undefined; }
+        if (pendingTimerRef.current) { clearTimeout(pendingTimerRef.current); pendingTimerRef.current = 0; }
+      } else {
+        pendingRef.current = null;
+      }
 
-      const routeCtx = () => ({
-        themes: themes.map((t) => t.id),
-        commands: oc.cmdList.map((c) => c.name),
-        exts,
-      });
-      // executes a routed act — shared by the native and translated paths
-      const dispatch = (act: VoiceAct) => {
-        playSound("click");
-        if (act.type === "embedded") {
-          // active session: a command ran recently → trust the streak, skip
-          // the read-back (25s window). Fuzzy matches (command + trailing
-          // clause) always read back — they're only probable.
-          if (!act.fuzzy && Date.now() - lastExecRef.current < 25000) {
-            execAct(act.act);
-            return;
-          }
-          pendingRef.current = { act: act.act, until: Date.now() + 15000 };
-          // natural read-back: "Okay — turn the lights off?"
-          const d = describeAct(act.act);
-          announce(`Okay — ${d.charAt(0).toLowerCase()}${d.slice(1)}?`);
+      // dictation capture mode: everything said appends to the composer until
+      // "send"/"clear"/any other command ends it
+      if (captureRef.current) {
+        const act = routeVoice(text, routeCtx());
+        if (!act) {
+          if (settings.voice.debug) dbgPush("say", `+ ${text}`);
+          dispatch({ type: "dictate", arg: text });
           return;
         }
-        execAct(act);
-      };
+        if (act.type === "dictate") {
+          if (settings.voice.debug) dbgPush("say", `+ ${act.arg}`);
+          return; // more args — keep capturing
+        }
+        captureRef.current = false;
+        if (settings.voice.debug) dbgPush("act", `capture → ${describeAct(act)}`);
+        dispatch(act);
+        return;
+      }
 
       const act = routeVoice(text, routeCtx());
-      if (settings.voice.debug)
-        dbgPush(
-          `"${text}" → "${routerInput(text)}" → ${
-            act ? JSON.stringify(act) : "no match · dictation"
-          }`,
-        );
+      if (settings.voice.debug) {
+        if (act) dbgPush("act", describeAct(act));
+        else dbgPush("hint", `no match — ${text}`);
+      }
       if (act) {
         dispatch(act);
         return;
       }
-      // no match — the utterance may be in another language: one retry
-      // through whisper's translate task before giving up to dictation.
+      // bare "prompt" — open dictation capture: following speech appends to
+      // the composer until "send", "clear" or any other command
+      if (routerInput(text) === "prompt") {
+        captureRef.current = true;
+        confirmNote("Listening — speak your prompt, then say send");
+        if (settings.voice.debug) dbgPush("act", "capture on — listening");
+        return;
+      }
+      // no match — multilingual mode already translated the main pass;
+      // retry once with the native-language transcription before giving up.
       // Sequence token discards the result if newer speech arrived meanwhile
       if (settings.voice.multilingual) {
         const seq = ++seqRef.current;
-        void retranslateRef.current?.().then((en) => {
-          if (!en || seq !== seqRef.current) return;
-          const act2 = routeVoice(en, routeCtx());
-          if (settings.voice.debug)
-            dbgPush(
-              `[en] "${en}" → ${act2 ? JSON.stringify(act2) : "no match · dictation"}`,
-            );
+        void retranscribeRef.current?.().then((native) => {
+          if (!native || seq !== seqRef.current) return;
+          const act2 = routeVoice(native, routeCtx());
+          if (settings.voice.debug) {
+            if (act2) dbgPush("act", `native → ${describeAct(act2)}`);
+            else dbgPush("hint", `native pass — no match: ${native}`);
+          }
           if (act2) dispatch(act2);
         });
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [themes, oc.cmdList, exts, execAct, describeAct, settings.voice.debug, settings.voice.multilingual, dbgPush],
+    [routeCtx, dispatch, settings.voice.debug, settings.voice.multilingual, dbgPush],
   );
 
+  // rolling partial pass — fires one-shot commands the moment they're fully
+  // spoken (no pause needed). Arg-carrying and embedded acts wait for the
+  // authoritative utterance pass; returning true makes the hook forget the
+  // buffer so fired words can't double-fire on the close pass. Disabled
+  // during dictation capture (the words are the payload there)
+  const handleVoicePartial = useCallback(
+    (partial: string): boolean => {
+      if (captureRef.current) return false;
+      const act = routeVoice(partial, routeCtx());
+      if (!act || act.type === "embedded") return false;
+      if (settings.voice.debug) dbgPush("act", `early — ${describeAct(act)}`);
+      dispatch(act);
+      return true;
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [routeCtx, dispatch, settings.voice.debug, dbgPush],
+  );
+
+  const [voiceLive, setVoiceLive] = useState("");
+  useEffect(() => {
+    const onPart = (e: Event) => {
+      const d = (e as CustomEvent<{ text: string; isFinal: boolean }>).detail;
+      setVoiceLive(d?.isFinal ? "" : d?.text ?? "");
+    };
+    const onFinal = () => setVoiceLive("");
+    window.addEventListener("oc:voice-partial", onPart as EventListener);
+    window.addEventListener("oc:voice-final", onFinal);
+    return () => {
+      window.removeEventListener("oc:voice-partial", onPart as EventListener);
+      window.removeEventListener("oc:voice-final", onFinal);
+    };
+  }, []);
+  const handleLivePartial = useCallback((p: string, isFinal: boolean) => {
+    setVoiceLive(isFinal ? "" : p);
+  }, []);
   const voice = useVoice(
     handleVoiceTranscript,
     settings.voice.model,
-    settings.voice.handsFree,
     settings.voice.sens,
+    settings.voice.gpu,
+    settings.voice.debug ? dbgPush : undefined,
+    settings.voice.multilingual,
+    handleVoicePartial,
+    handleLivePartial,
   );
-  // handler runs before useVoice returns — reach retranslate through a ref
-  const retranslateRef = useRef<(() => Promise<string | null>) | null>(null);
-  retranslateRef.current = voice.retranslate;
+  // mic off ends dictation capture — nothing left to listen to
+  useEffect(() => {
+    if (!voice.streaming) captureRef.current = false;
+  }, [voice.streaming]);
+  // handler runs before useVoice returns — reach retranscribe through a ref
+  const retranscribeRef = useRef<(() => Promise<string | null>) | null>(null);
+  retranscribeRef.current = voice.retranscribe;
 
   // Mic toggle — rebindable (default Ctrl+M)
   useEffect(() => {
@@ -947,6 +1078,9 @@ export default function ChatPage() {
           hasPluginUpdate={hasPluginUpdate}
           talking={talking}
           debriefing={debriefing}
+          onToggleAgents={toggleAgents}
+          agentsOpen={agentsOpen}
+          agentsHotkey={settings.hotkeys.toggleAgents}
           titlebarExtras={
             titlebarItems.length ? (
               <>
@@ -996,11 +1130,13 @@ export default function ChatPage() {
             updateSounds={updateSounds}
             updateColors={updateColors}
             resetColors={resetColors}
+            resetThemes={resetThemes}
             themes={themes}
             colorsFor={colorsFor}
             modes={activeModes}
             effectiveMode={effectiveMode}
             pluginDocs={pluginDocs}
+            plugins={plugins}
           />
         </Suspense>
         <PluginsDialog
@@ -1065,15 +1201,12 @@ export default function ChatPage() {
             }
           />
           <div className="main">
-            {oc.error && <div className="banner">{oc.error}</div>}
-            {themeError && <div className="banner">{themeError}</div>}
-            {pluginError && <div className="banner">{pluginError}</div>}
             {!oc.activeId && !oc.booting && (
               <div className="messages">
                 <p className="empty">
-                  Select or create a session
+                  {t("chat.emptyNoSession").split("\n")[0]}
                   <br />
-                  to start.
+                  {t("chat.emptyNoSession").split("\n")[1] || ""}
                 </p>
               </div>
             )}
@@ -1098,6 +1231,7 @@ export default function ChatPage() {
                   onRevert={oc.revertTo}
                   onFork={oc.forkFrom}
                   sessionId={oc.activeId}
+                  taskCosts={(oc as any).childTaskCosts}
                   findOpen={chatFindOpen}
                   findQuery={chatFindQuery}
                   findCase={chatFindCase}
@@ -1119,17 +1253,17 @@ export default function ChatPage() {
                 {oc.revertId && (
                   <div className="revert-banner">
                     <i className="fa-solid fa-clock-rotate-left" />
-                    Viewing an earlier version of this conversation.
+                    {t("chat.rewind.banner")}
                     <button onClick={oc.unrevert}>
                       <i className="fa-solid fa-rotate-left" />
-                      Undo rewind
+                      {t("chat.rewind.undo")}
                     </button>
                   </div>
                 )}
                 {closeHint && (
                   <div className="revert-banner close-confirm">
                     <i className="fa-solid fa-trash-can" />
-                    Press Ctrl+W again to close this session
+                    {t("chat.closeConfirm")}
                   </div>
                 )}
                 {oc.permission && ((oc as any).securityMode ?? "user") === "user" && (
@@ -1150,7 +1284,10 @@ export default function ChatPage() {
                 {settings.voice.debug && vdbg.length > 0 && (
                   <div className="voice-debug" role="log">
                     {vdbg.map((l, i) => (
-                      <div key={i}>{l}</div>
+                      <div key={i} className={`vd-line vd-${l.kind}`}>
+                        <span className="vd-tag">{VD_TAG[l.kind]}</span>
+                        <span className="vd-msg">{l.msg}</span>
+                      </div>
                     ))}
                   </div>
                 )}
@@ -1171,20 +1308,29 @@ export default function ChatPage() {
                   workspace={settings.workspace}
                   commands={oc.cmdList}
                   cycleAgentHotkey={settings.hotkeys.cycleAgent}
+                  hotkeys={settings.hotkeys}
                   onCommandsOpen={oc.refreshCommands}
                   agents={oc.agents}
                   agentSel={oc.agentSel}
                   onCycleAgent={oc.cycleAgent}
+                  disabledAgents={(oc as any).disabledAgents}
+                  onSelectAgent={(oc as any).setAgentSel}
+                  onToggleDisabled={(oc as any).toggleDisabledAgent}
+                  onRefreshAgents={(oc as any).refreshAgents}
                   onCycleVariant={oc.cycleVariant}
                   hasVariants={oc.modelVariants.length > 0}
                   variantSel={oc.variantSel}
+                  modelVariants={oc.modelVariants}
+                  onSelectVariant={(oc as any).setVariantSel}
                   securityMode={(oc as any).securityMode ?? "user"}
                   onCycleSecurity={(oc as any).cycleSecurityMode}
+                  onSelectSecurity={(oc as any).setSecurityMode}
                   usage={oc.sessionUsage}
                   caps={oc.modelCaps}
                   voicePhase={voice.phase}
                   voiceStreaming={voice.streaming}
                   voiceError={voice.error}
+                  voicePartial={voice.partial || voiceLive}
                   onVoiceToggle={voice.toggle}
                   sessionId={oc.activeId}
                 />
@@ -1217,8 +1363,23 @@ export default function ChatPage() {
           />
         )}
         {diffOpen && oc.activeId && <DiffPanel sessionId={oc.activeId} onClose={() => setDiffOpen(false)} />}
+        <AgentBoard
+          open={agentsOpen}
+          onClose={() => setAgentsOpen(false)}
+          sessions={oc.sessions}
+          busyIds={oc.busyIds}
+          compactingIds={oc.compactingIds}
+          attentionIds={oc.attentionIds}
+          agents={oc.agents}
+          getDirForSession={(id: string) => (oc as any).getDirForSession?.(id) ?? ""}
+          onOpenSession={(id) => void oc.openSession(id)}
+          activeId={oc.activeId}
+          msgs={oc.msgs as any}
+          activeChildren={oc.activeChildren as any}
+          childTaskCosts={oc.childTaskCosts as any}
+        />
         <Suspense fallback={null}>
-          <FileEditorHost />
+          <FileEditorHost hotkeys={settings.hotkeys} />
         </Suspense>
         {overlays.map((w) => {
           const C = w.Overlay!;

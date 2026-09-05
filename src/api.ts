@@ -31,13 +31,12 @@ function withDir(args: any, dir = directory) {
 // wrap the SDK client so every namespaced method (session.*, file.*, …)
 // carries the workspace directory automatically
 function wrap(obj: any, dir?: string): any {
-  const d = dir ?? directory;
   return new Proxy(obj, {
     get(t, prop) {
       const v = t[prop];
       if (typeof v === "function")
-        return (...a: any[]) => v.call(t, withDir(a[0], d), ...a.slice(1));
-      if (v && typeof v === "object") return wrap(v, d);
+        return (...a: any[]) => v.call(t, withDir(a[0], dir ?? directory), ...a.slice(1));
+      if (v && typeof v === "object") return wrap(v, dir);
       return v;
     },
   });
@@ -57,18 +56,34 @@ export async function serverFetchFor(dir: string, path: string, init?: RequestIn
 }
 
 // a rejected invoke must not stay cached, or silent-retry boot would spin
-// on the same failure forever
+// on the same failure forever. Retry once quickly: the Rust side now waits
+// for the port to be listening, but a cold start can still take a few hundred
+// ms after setup; a transient invoke error shouldn't hard-fail the boot.
 export function opencode() {
-  cached ??= invoke<string>("server_url")
-    .then((base) => ({
+  if (cached) return cached;
+  const attempt = () =>
+    invoke<string>("server_url").then((base) => ({
       base,
       client: wrap(createOpencodeClient({ baseUrl: base })),
-    }))
-    .catch((e) => {
-      cached = null;
-      throw e;
-    });
+    }));
+  // single cached promise that atomically includes the retry — concurrent
+  // callers share the same 400 ms timer, no thundering herd
+  cached = (async () => {
+    try {
+      return await attempt();
+    } catch (e) {
+      await new Promise<void>((r) => setTimeout(r, 400));
+      return attempt();
+    }
+  })().catch((e) => {
+    cached = null;
+    throw e;
+  });
   return cached;
+}
+
+export function resetOpencodeCache() {
+  cached = null;
 }
 
 // raw fetch for endpoints missing from the stale SDK types (/question*) —
@@ -104,18 +119,38 @@ export async function dropSession(id: string, dir?: string) {
 
 // sync prompts have no deadline server-side — a stalled provider hangs the
 // caller forever (e.g. the git-panel spinner). Reject instead.
-export function withDeadline<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
-  return new Promise<T>((res, rej) => {
-    const t = window.setTimeout(() => rej(new Error(`${label} timed out`)), ms);
-    p.then(
-      (v) => {
-        clearTimeout(t);
-        res(v);
-      },
-      (e) => {
-        clearTimeout(t);
-        rej(e);
-      },
-    );
+export function withDeadline<T>(p: Promise<T>, ms: number, label: string): Promise<T>;
+export function withDeadline<T>(p: Promise<T>, ms: number, label: string, signal: AbortSignal | AbortController): Promise<T>;
+export function withDeadline<T>(
+  p: Promise<T>,
+  ms: number,
+  label: string,
+  signal?: AbortSignal | AbortController,
+): Promise<T> {
+  const sig: AbortSignal | undefined =
+    signal instanceof AbortController ? signal.signal : (signal as AbortSignal | undefined);
+  const ctrl: AbortController | undefined =
+    signal instanceof AbortController ? signal : undefined;
+  let timer: number | undefined;
+  let onAbort: (() => void) | null = null;
+  const timeout = new Promise<never>((_, rej) => {
+    timer = window.setTimeout(() => {
+      try {
+        ctrl?.abort(new DOMException(`${label} timed out`, "TimeoutError"));
+      } catch {}
+      rej(new Error(`${label} timed out`));
+    }, ms);
+    if (sig) {
+      onAbort = () => {
+        clearTimeout(timer);
+        rej(sig.reason ?? new DOMException("Aborted", "AbortError"));
+      };
+      if (sig.aborted) onAbort();
+      else sig.addEventListener("abort", onAbort, { once: true });
+    }
+  });
+  return (Promise.race([p, timeout]) as Promise<T>).finally(() => {
+    clearTimeout(timer);
+    if (sig && onAbort) sig.removeEventListener("abort", onAbort);
   });
 }

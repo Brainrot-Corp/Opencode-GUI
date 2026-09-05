@@ -1,6 +1,7 @@
 import { open } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
 import { getDirectory, setDirectory } from "../api";
+import { isWindows } from "./platform";
 
 const MAX_EXTRA = 5;
 const LAST_WS_KEY = "oc.lastWorkspace";
@@ -31,6 +32,8 @@ function readExtras(): string[] {
     return Array.isArray(raw.workspaces) ? raw.workspaces.filter((x: unknown) => typeof x === "string") : [];
   } catch { return []; }
 }
+// ponytail: re-reads localStorage immediately before write to minimize cross-tab
+// lost-update race; if contention grows use BroadcastChannel lock (global lock, per-tab merge)
 function writeExtras(list: string[]) {
   try {
     const raw = JSON.parse(localStorage.getItem("oc.settings") ?? "{}");
@@ -39,17 +42,37 @@ function writeExtras(list: string[]) {
   } catch {}
   window.dispatchEvent(new CustomEvent("oc:workspaces-changed"));
 }
+// transaction helper that re-reads before write and merges via updater — mitigates RC-05
+function safeWriteExtras(updater: (prev: string[]) => string[]) {
+  try {
+    const raw = JSON.parse(localStorage.getItem("oc.settings") ?? "{}");
+    const prev: string[] = Array.isArray(raw.workspaces) ? raw.workspaces.filter((x: unknown) => typeof x === "string") : [];
+    raw.workspaces = updater(prev).slice(0, MAX_EXTRA);
+    localStorage.setItem("oc.settings", JSON.stringify(raw));
+  } catch {}
+  window.dispatchEvent(new CustomEvent("oc:workspaces-changed"));
+}
+void writeExtras;
 export function getExtraWorkspaces(): string[] { return readExtras(); }
 export function getAllWorkspaces(): string[] {
   const primary = getDirectory();
   const extras = readExtras();
   const seen = new Set<string>();
   const out: string[] = [];
+  let seenEmpty = false;
   for (const d of [primary, ...extras]) {
-    const key = (d ?? "").toLowerCase();
+    const t = (d ?? "").trim();
+    if (!t) {
+      if (seenEmpty) continue;
+      seenEmpty = true;
+      seen.add("__EMPTY__");
+      out.push("");
+      continue;
+    }
+    const key = isWindows() ? t.toLowerCase() : t;
     if (seen.has(key)) continue;
     seen.add(key);
-    out.push(d);
+    out.push(t);
   }
   return out;
 }
@@ -58,27 +81,35 @@ export async function addWorkspace(path: string, atIndex?: number): Promise<bool
   if (!p) return false;
   const isDir = await invoke<boolean>("workspace_is_dir", { path: p }).catch(() => false);
   if (!isDir) return false;
-  const primary = getDirectory().toLowerCase();
-  if (p.toLowerCase() === primary) return false;
-  let extras = readExtras();
-  const low = p.toLowerCase();
-  if (extras.some((e) => e.toLowerCase() === low)) return false;
-  if (extras.length >= MAX_EXTRA) return false;
-  if (typeof atIndex === "number" && atIndex >= 0 && atIndex <= extras.length) extras.splice(atIndex, 0, p);
-  else extras.push(p);
-  writeExtras(extras);
+  const primary = getDirectory().trim();
+  const norm = (s: string) => isWindows() ? s.toLowerCase() : s;
+  if (norm(p) === norm(primary)) return false;
+  try {
+    const raw = JSON.parse(localStorage.getItem("oc.settings") ?? "{}");
+    let extras: string[] = Array.isArray(raw.workspaces) ? raw.workspaces.filter((x: unknown) => typeof x === "string") : [];
+    if (extras.some((e) => norm(e) === norm(p))) return false;
+    if (extras.length >= MAX_EXTRA) return false;
+    if (typeof atIndex === "number" && atIndex >= 0 && atIndex <= extras.length) extras.splice(atIndex, 0, p);
+    else extras.push(p);
+    raw.workspaces = extras.slice(0, MAX_EXTRA);
+    localStorage.setItem("oc.settings", JSON.stringify(raw));
+  } catch { return false; }
+  window.dispatchEvent(new CustomEvent("oc:workspaces-changed"));
   return true;
 }
 export function removeWorkspace(path: string) {
-  const low = path.toLowerCase();
-  writeExtras(readExtras().filter((e) => e.toLowerCase() !== low));
+  const norm = (s: string) => isWindows() ? s.toLowerCase() : s;
+  const target = norm(path.trim());
+  safeWriteExtras((prev) => prev.filter((e) => norm(e) !== target));
 }
 export function reorderWorkspaces(from: number, to: number) {
-  const extras = readExtras();
-  if (from < 0 || from >= extras.length || to < 0 || to >= extras.length) return;
-  const [moved] = extras.splice(from, 1);
-  extras.splice(to, 0, moved);
-  writeExtras(extras);
+  safeWriteExtras((prev) => {
+    if (from < 0 || from >= prev.length || to < 0 || to >= prev.length) return prev;
+    const next = [...prev];
+    const [moved] = next.splice(from, 1);
+    next.splice(to, 0, moved);
+    return next;
+  });
 }
 export async function pickExtraWorkspace(atIndex?: number) {
   const def = getDirectory() || undefined;

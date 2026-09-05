@@ -1,7 +1,7 @@
 {
     "version": 1,
-    "whisperModel": "ggml-tiny-q8_0.bin",
-    "ttsVoice": "en_US-ljspeech-high",
+    "whisperModel": "ggml-large-v3-turbo-q8_0.bin",
+    "ttsVoice": "af_heart",
     "secondaryModel": "opencode/muse-spark-1.2-contributor-free",
-    "note": "Dev setup: base multilingual STT, LJ Speech high-quality US English voice"
+    "note": "Recommended: large-v3-turbo-q8_0 · Heart — US English (F), fast"
 }

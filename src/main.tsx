@@ -5,6 +5,7 @@ import "@fortawesome/fontawesome-free/css/all.min.css";
 import "./styles/tokens.css";
 import "./styles/syntax.css";
 import "./styles/layout.css";
+import "./styles/toast.css";
 import { getDirectory, setDirectory } from "./api";
 
 // debug local builds use http://localhost:1420 origin — localStorage there is
@@ -47,6 +48,13 @@ invoke<boolean>("os_glass")
     if (!g) document.documentElement.classList.add("no-glass");
   })
   .catch(() => {});
+
+// mac traffic-light inset — keep custom titlebar flush but clear stoplights
+try {
+  if (typeof navigator !== "undefined" && /Mac/i.test(navigator.platform || (navigator as any).userAgent || "")) {
+    document.documentElement.classList.add("mac");
+  }
+} catch {}
 
 // sidebar resize cursor = the user's live Windows pointer scheme (WebView2
 // ignores schemes for CSS cursors, so Rust ships the real one as a data URL)

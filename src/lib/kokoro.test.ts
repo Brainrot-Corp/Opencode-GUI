@@ -1,5 +1,5 @@
-// runnable self-check: node src/lib/piper.test.ts
-import { parsePiperCatalog, parseWhisperCatalog, whisperLabel, wmGroup } from "./piper.ts";
+// runnable self-check: node src/lib/kokoro.test.ts
+import { parsePiperCatalog, parseWhisperCatalog, whisperLabel, wmGroup } from "./kokoro.ts";
 
 let n = 0;
 function eq(actual: unknown, expected: unknown, label: string) {

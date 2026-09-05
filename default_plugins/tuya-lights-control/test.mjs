@@ -1,18 +1,17 @@
 // runnable self-check: node default_plugins/tuya-lights-control/test.mjs
-// Exercises the plugin's voice layer through the real router (with the
-// lexicon registered) plus the DP-code value mappers.
+// Merged lights + curtains plugin — exercises voice through real router + mappers.
 import { routeVoice, routerInput } from "../../src/lib/voiceRouter.ts";
 import { setPluginLexicon } from "../../src/lib/voiceLexicon.ts";
 import { ensureDict } from "../../src/lib/dictWords.ts";
 import {
-  parseVoice, describeLight, brightVal, tempVal, colorData,
+  parseVoice, describeLight, describeCurtain, describe, brightVal, tempVal, colorData,
+  parseLightSlashArgs, parseCurtainSlashArgs,
   TRIGGERS, VOCAB, LEXICON,
 } from "./main.js";
 import { createElement as h } from "react";
 import { renderToString } from "react-dom/server";
 
 setPluginLexicon(LEXICON);
-// warm the dictionary so the phonetic-repair veto is active for these checks
 await ensureDict();
 
 const ext = { id: "tuya-lights-control", parse: parseVoice, triggers: TRIGGERS, vocab: VOCAB };
@@ -31,8 +30,7 @@ function eq(actual, expected, label) {
   if (a !== e) throw new Error(`FAIL ${label}: got ${a}, want ${e}`);
 }
 
-// embedded scan — commands buried in conversation come back wrapped for
-// spoken confirmation; direct hits stay unwrapped
+// embedded scan
 eq(
   routeVoice("yeah anyway turn the lights off", ctx),
   { type: "embedded", act: P({ type: "light", sw: "off", name: "" }) },
@@ -60,11 +58,6 @@ eq(
   { type: "embedded", act: P({ type: "light", sw: "on", name: "" }), fuzzy: true },
   "ambiguous head still just asks — never silent-fires",
 );
-
-// Non-English phrasing (allume la lumière, luz roja, éteins la lampe du
-// bureau…) is covered live: unmatched transcripts get a second whisper pass
-// with --translate and re-route on the English output — not reproducible in
-// node without the whisper engine.
 
 // naturalness — fillers and whisper typos
 eq(
@@ -106,12 +99,34 @@ eq(routeVoice("lights purpul", ctx), P({ type: "lightColor", color: "purple", na
 eq(routeVoice("open settings", ctx), { type: "settings", open: true }, "settings still beats light intents");
 eq(routeVoice("make it warm in here", ctx), null, "sentence stays dictation");
 
-// spoken read-back used by the yes/no confirmation flow
+// ---- curtain intents (merged) ----
+eq(routeVoice("open the curtains", ctx), P({ type: "curtain", sw: "open", name: "" }), "curtain bare open");
+eq(routeVoice("close the curtains", ctx), P({ type: "curtain", sw: "close", name: "" }), "curtain bare close");
+eq(routeVoice("stop the curtains", ctx), P({ type: "curtain", sw: "stop", name: "" }), "curtain bare stop");
+eq(routeVoice("open the bedroom curtains", ctx), P({ type: "curtain", sw: "open", name: "bedroom" }), "curtain open named");
+eq(routeVoice("curtains open", ctx), P({ type: "curtain", sw: "open", name: "" }), "curtain device then verb");
+eq(routeVoice("bedroom curtains close", ctx), P({ type: "curtain", sw: "close", name: "bedroom" }), "curtain name then close");
+eq(routeVoice("close the bedroom blinds", ctx), P({ type: "curtain", sw: "close", name: "bedroom" }), "curtain blinds synonym");
+eq(routeVoice("pause the curtains", ctx), P({ type: "curtain", sw: "stop", name: "" }), "curtain pause maps to stop");
+eq(routeVoice("set curtains to 50 percent", ctx), P({ type: "curtainPos", pct: 50, name: "" }), "curtain set 50%");
+eq(routeVoice("set the bedroom curtains to fifty percent", ctx), P({ type: "curtainPos", pct: 50, name: "bedroom" }), "curtain word number");
+eq(routeVoice("set curtains to 0 percent", ctx), P({ type: "curtainPos", pct: 0, name: "" }), "curtain 0% allowed");
+eq(routeVoice("curtains fifty percent", ctx), P({ type: "curtainPos", pct: 50, name: "" }), "curtain bare percent");
+eq(routeVoice("blinds up", ctx), P({ type: "curtain", sw: "open", name: "" }), "curtain lexicon blinds up");
+eq(routeVoice("blinds down", ctx), P({ type: "curtain", sw: "close", name: "" }), "curtain lexicon blinds down");
+eq(routeVoice("set the curtians to 50 percent", ctx), P({ type: "curtainPos", pct: 50, name: "" }), "curtain typo curtians");
+
+// spoken read-back
 eq(describeLight({ type: "light", sw: "off", name: "" }), "Turn the lights off", "describe switch");
 eq(describeLight({ type: "lightBright", pct: 40, name: "desk" }), "Set desk to 40% brightness", "describe bright");
 eq(describeLight({ type: "lightTemp", tone: "warm", name: "" }), "Set the lights to warm white", "describe tone");
 eq(describeLight({ type: "lightColor", color: "red", name: "" }), "Make the lights red", "describe color");
 eq(describeLight({ type: "mystery" }), "", "unknown act describes empty");
+eq(describeCurtain({ type: "curtain", sw: "open", name: "" }), "Open the curtains", "describe curtain open");
+eq(describeCurtain({ type: "curtain", sw: "stop", name: "bedroom" }), "Stop bedroom", "describe curtain stop");
+eq(describeCurtain({ type: "curtainPos", pct: 40, name: "bedroom" }), "Set bedroom to 40%", "describe curtain pos");
+eq(describe({ type: "curtain", sw: "open", name: "" }), "Open the curtains", "describe unified curtain");
+eq(describe({ type: "light", sw: "on", name: "" }), "Turn the lights on", "describe unified light");
 
 // brightness: % → dp range (v2: 10..1000, v1: 25..255), clamped at both ends
 eq(brightVal(50, true), 500, "v2 mid");
@@ -135,6 +150,20 @@ eq(
   '{"h":240,"s":1000,"v":1000}',
   "json-reporting device gets json back",
 );
+
+// slash parsing — lights
+eq(parseLightSlashArgs("on"), { type: "light", sw: "on", name: "" }, "slash lights on bare");
+eq(parseLightSlashArgs("off bedroom"), { type: "light", sw: "off", name: "bedroom" }, "slash lights off named");
+eq(parseLightSlashArgs("50"), { type: "lightBright", pct: 50, name: "" }, "slash lights 50 bare");
+eq(parseLightSlashArgs("blue bedroom"), { type: "lightColor", color: "blue", name: "bedroom" }, "slash lights blue named");
+eq(parseLightSlashArgs("warm"), { type: "lightTemp", tone: "warm", name: "" }, "slash lights warm");
+eq(parseLightSlashArgs(""), null, "slash lights empty -> null");
+// slash parsing — curtains
+eq(parseCurtainSlashArgs("open"), { type: "curtain", sw: "open", name: "" }, "slash curtains open bare");
+eq(parseCurtainSlashArgs("close bedroom"), { type: "curtain", sw: "close", name: "bedroom" }, "slash curtains close named");
+eq(parseCurtainSlashArgs("50"), { type: "curtainPos", pct: 50, name: "" }, "slash curtains 50 bare");
+eq(parseCurtainSlashArgs("50 bedroom"), { type: "curtainPos", pct: 50, name: "bedroom" }, "slash curtains 50 named");
+eq(parseCurtainSlashArgs(""), null, "slash curtains empty -> null");
 
 // mock localStorage so Settings renders expanded
 if (typeof globalThis.localStorage === "undefined") {
@@ -161,7 +190,7 @@ const plugin = activate(api);
 const html = renderToString(
   h(plugin.Settings, { open: true, settings: {}, updatePlugin: () => {} }),
 );
-for (const probe of ["sound-box-head", "tuya-in", "Find bulbs", "not configured", "Europe"]) {
+for (const probe of ["sound-box-head", "tuya-in", "Find devices", "not configured", "Europe"]) {
   n++;
   if (!html.includes(probe)) throw new Error(`FAIL settings render: missing "${probe}"`);
 }
@@ -170,5 +199,11 @@ for (const probe of ["sound-box-head", "tuya-in", "Find bulbs", "not configured"
 n++;
 if (!plugin.info?.voice?.length || plugin.info.voice[0][0] !== "lights on / lights off")
   throw new Error("FAIL info: missing voice documentation rows");
+n++;
+if (!plugin.slash || plugin.slash.length < 4) throw new Error("FAIL slash: missing slash commands");
+n++;
+if (!plugin.slash.find(s => s.name === "lights")) throw new Error("FAIL slash: missing lights");
+n++;
+if (!plugin.slash.find(s => s.name === "curtains")) throw new Error("FAIL slash: missing curtains");
 
 console.log(`tuya-lights-control: ${n} checks passed`);

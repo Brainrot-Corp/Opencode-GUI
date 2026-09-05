@@ -157,7 +157,7 @@
   text-decoration: underline;
 }
 
-/* Hotkeys rebind — glass pills (InfoDialog keys tab) */
+/* Hotkeys rebind — keycap style (replaces glass pills for binds) */
 .cmd-row.hk-row {
   align-items: center;
 }
@@ -167,16 +167,17 @@
   letter-spacing: 0.02em;
   color: var(--text-faint);
 }
+/* legacy pill kept for non-hotkey uses, but hotkeys now use keycaps */
 .hk-pill {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 3px 8px;
+  padding: 4px 8px;
   border: 1px solid var(--line);
   background: var(--inset-bg);
   border-radius: 4px;
   font-size: 11.5px;
-  line-height: 1;
+  line-height: 1.35;
   color: var(--text);
   cursor: pointer;
   transition: border-color 0.15s var(--ease), background 0.15s var(--ease), box-shadow 0.2s var(--ease), color 0.15s var(--ease);
@@ -262,3 +263,448 @@
 .cmd-row.hk-row.static {
   opacity: 0.95;
 }
+/* keycap visuals — each physical key is its own cap with + between — crisp, no fractional blur */
+.kc-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+  flex-wrap: wrap;
+}
+.kc {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 20px;
+  padding: 0 6px;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1;
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  user-select: none;
+  white-space: nowrap;
+  /* crisp rendering on Windows — avoid grayscale AA blur of 10.5px + gradient */
+  -webkit-font-smoothing: auto;
+  -moz-osx-font-smoothing: auto;
+  text-rendering: geometricPrecision;
+  transform: none;
+  filter: none;
+  box-shadow: none;
+}
+.kc.off {
+  color: var(--text-faint);
+  background: var(--inset-bg);
+  border-style: dashed;
+  opacity: 1;
+  box-shadow: none;
+}
+.kc-plus {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 10px;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-faint);
+  user-select: none;
+  -webkit-font-smoothing: auto;
+  text-rendering: geometricPrecision;
+}
+.kc-sep {
+  display: inline-flex;
+  align-items: center;
+  margin: 0 4px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-faint);
+}
+.kc-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 4px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: border-color 0.15s var(--ease), background 0.15s var(--ease), box-shadow 0.15s var(--ease);
+  transform: none;
+  filter: none;
+}
+.kc-btn:hover {
+  background: color-mix(in srgb, var(--accent) calc(0.06 * 100%), transparent);
+  border-color: color-mix(in srgb, var(--accent) calc(0.22 * 100%), transparent);
+}
+.kc-btn.rec {
+  border-color: color-mix(in srgb, var(--accent) calc(0.45 * 100%), transparent);
+  background: color-mix(in srgb, var(--accent) calc(0.08 * 100%), transparent);
+  box-shadow: 0 0 12px -6px var(--accent-glow);
+  animation: hk-rec 1.1s ease-in-out infinite;
+}
+.kc-btn.rec .kc {
+  border-color: color-mix(in srgb, var(--accent) calc(0.45 * 100%), transparent);
+  color: var(--accent-bright);
+}
+.kc-btn.conflict .kc {
+  border-color: color-mix(in srgb, var(--danger) calc(0.45 * 100%), transparent);
+  box-shadow: 0 0 8px -6px color-mix(in srgb, var(--danger) 35%, transparent);
+}
+.kc-rec-text {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--accent-bright);
+  white-space: nowrap;
+  -webkit-font-smoothing: auto;
+  text-rendering: geometricPrecision;
+}
+.kc-hint {
+  margin-left: 4px;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-faint);
+  -webkit-font-smoothing: auto;
+}
+.hk-lock {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 3px;
+  color: var(--text-faint);
+  background: var(--inset-bg);
+  border: 1px solid var(--line);
+  font-size: 8px;
+  flex: none;
+  opacity: 0.85;
+}
+.vc-row.hk.static .hk-lock {
+  margin-left: 2px;
+}
+.vc-row.hk.static {
+  opacity: 1;
+}
+.vc-row.hk.locked {
+  border-style: dashed;
+  opacity: 1;
+}
+.vc-row.hk.locked .kc {
+  border-style: dashed;
+}
+.hk-rebind-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 6px;
+  font-family: var(--sans);
+  font-size: 9px;
+  letter-spacing: 0.04em;
+  color: var(--text-faint);
+  opacity: 0;
+  transition: opacity 0.15s var(--ease);
+}
+.vc-row.hk:hover .hk-rebind-hint {
+  opacity: 1;
+}
+.kc-btn .hk-rebind-hint {
+  opacity: 0.7;
+}
+.kc-btn:hover .hk-rebind-hint {
+  opacity: 1;
+  color: var(--text-dim);
+}
+
+/* equal-width pills — JS sets inline width to longest pill; keep flex row intact so pill stays left and desc stays right in one line */
+.cmd-group--pills .hk-pill {
+  justify-content: flex-start;
+  flex-shrink: 0;
+  box-sizing: border-box;
+}
+.cmd-group--pills .cmd-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 4px 6px;
+}
+.cmd-group--pills .cmd-desc,
+.cmd-group--pills .hk-desc {
+  flex: 1;
+  min-width: 0;
+}
+
+/* ── voice + commands redesign ────────────────────────────────── */
+.vc-tip {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 2px 0 4px;
+  padding: 8px 10px;
+  background: color-mix(in srgb, var(--accent) calc(0.06 * 100%), var(--inset-bg));
+  border: 1px solid color-mix(in srgb, var(--accent) calc(0.14 * 100%), var(--line));
+  border-left: 2px solid color-mix(in srgb, var(--accent) calc(0.55 * 100%), transparent);
+  font-family: var(--sans);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-dim);
+}
+.vc-tip i {
+  flex: none;
+  margin-top: 1px;
+  font-size: 11px;
+  color: var(--accent);
+  opacity: 0.9;
+}
+.vc-tip strong {
+  color: var(--text);
+  font-weight: 600;
+}
+.vc-search {
+  padding: 2px 0 4px;
+}
+.vc-search .model-search-wrap {
+  position: relative;
+  top: auto;
+  margin: 0;
+  background: var(--inset-bg);
+  border: 1px solid var(--line);
+}
+.vc-search .model-search-wrap:focus-within {
+  border-color: color-mix(in srgb, var(--accent) calc(0.35 * 100%), transparent);
+  box-shadow: 0 0 10px -6px var(--accent-glow);
+}
+.vc-search .model-search {
+  font-size: 11.5px;
+}
+.vc-empty {
+  padding: 14px 10px;
+  text-align: center;
+  font-family: var(--sans);
+  font-size: 11.5px;
+  color: var(--text-faint);
+  background: var(--inset-bg);
+  border: 1px dashed var(--line);
+}
+
+/* outer frame — whole content englobed like .browse-list in plugins/voices */
+.vc-frame {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px;
+  background: var(--inset-bg);
+  border: 1px solid var(--line);
+}
+
+/* section — collapsable card group */
+.vc-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 0;
+}
+.vc-section.collapsed .vc-list {
+  display: none;
+}
+.vc-section-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 2px 0;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  cursor: pointer;
+  user-select: none;
+  background: none;
+  border: none;
+  width: 100%;
+  text-align: left;
+  transition: color 0.15s var(--ease);
+}
+.vc-section-head:hover {
+  color: var(--text);
+}
+.vc-section-head i {
+  width: 14px;
+  text-align: center;
+  font-size: 11px;
+  color: var(--accent);
+  opacity: 0.9;
+  flex: none;
+}
+.vc-section-head .vc-chevron {
+  width: 10px;
+  font-size: 8px;
+  color: var(--text-faint);
+  transition: transform 0.15s var(--ease);
+}
+.vc-section.collapsed .vc-chevron {
+  transform: rotate(-90deg);
+}
+.vc-section-head .vc-count {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 400;
+  letter-spacing: 0.06em;
+  color: var(--text-faint);
+  background: color-mix(in srgb, var(--accent) calc(0.08 * 100%), transparent);
+  border: 1px solid var(--line);
+  padding: 1px 5px;
+  border-radius: 4px;
+  flex: none;
+}
+.vc-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* row: plugin-row-style card — each content englobed like .plugin-row */
+.vc-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 9px 10px 8px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  transition: border-color 0.2s var(--ease), background 0.2s var(--ease);
+}
+.vc-row:hover {
+  background: color-mix(in srgb, var(--surface) 96%, var(--accent) 4%);
+  border-color: color-mix(in srgb, var(--accent) calc(0.18 * 100%), var(--line));
+}
+.vc-row.hk {
+  flex-direction: row;
+  align-items: center;
+  gap: 12px;
+}
+.vc-row.hk .kc-btn {
+  flex-shrink: 0;
+}
+.vc-row.hk .vc-desc {
+  flex: 1 1 auto;
+}
+.vc-name {
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--accent-bright);
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  white-space: normal;
+}
+.vc-or {
+  font-family: var(--sans);
+  font-size: 11px;
+  color: var(--text-faint);
+  margin: 0 4px;
+}
+.vc-desc {
+  font-family: var(--sans);
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--text-dim);
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  white-space: normal;
+}
+.vc-ex {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  line-height: 1.4;
+  color: var(--text-faint);
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  white-space: normal;
+}
+.vc-ex span {
+  color: var(--text-dim);
+}
+.vc-ex i {
+  margin-right: 4px;
+  font-size: 9px;
+  opacity: 0.7;
+}
+.vc-badge {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 6px;
+  padding: 1px 5px;
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  background: var(--inset-bg);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  vertical-align: middle;
+}
+.vc-badge.accent {
+  color: var(--accent-bright);
+  border-color: color-mix(in srgb, var(--accent) calc(0.35 * 100%), var(--line));
+  background: color-mix(in srgb, var(--accent) calc(0.08 * 100%), transparent);
+}
+.vc-badge.danger {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) calc(0.35 * 100%), transparent);
+  background: color-mix(in srgb, var(--danger) calc(0.08 * 100%), transparent);
+}
+.info-hero {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 10px 10px 9px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+}
+.info-hero i {
+  font-size: 14px;
+  color: var(--accent);
+  margin-top: 2px;
+  flex: none;
+}
+.info-hero-title {
+  font-family: var(--sans);
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: 0.02em;
+}
+.info-hero-desc {
+  margin-top: 2px;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--text-dim);
+}
+.info-hero-desc strong { color: var(--text); font-weight: 600; }
+.info-stat-row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+.info-stat {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+  background: var(--inset-bg);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+}
+.info-stat i { font-size: 10px; color: var(--accent); opacity: 0.9; }
+.info-stat strong { color: var(--text); font-weight: 600; }

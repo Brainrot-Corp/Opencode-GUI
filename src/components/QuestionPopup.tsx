@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { QuestionAsk } from "../types";
+import { useTranslation } from "../lib/i18n";
 import "../styles/question.css";
 
 type Props = {
@@ -14,6 +15,7 @@ type Props = {
 // straight from the option; anything else accumulates picks behind Answer.
 // "Other…" is always offered for a typed custom answer.
 export default function QuestionPopup({ ask, onAnswer, onReject }: Props) {
+  const { t } = useTranslation();
   const qs = ask.questions;
   const instant = qs.length === 1 && !qs[0].multiple;
 
@@ -100,8 +102,8 @@ export default function QuestionPopup({ ask, onAnswer, onReject }: Props) {
     kbNav.current = false;
     hoverLock.current = true; // swallow the mouseenter storm mid-scroll
     listRef.current?.querySelector('[data-hl="true"]')?.scrollIntoView({ block: "nearest" });
-    const t = window.setTimeout(() => (hoverLock.current = false), 150);
-    return () => clearTimeout(t);
+    const timer = window.setTimeout(() => (hoverLock.current = false), 150);
+    return () => clearTimeout(timer);
   }, [hi]);
 
   const hoverRow = (i: number) => {
@@ -112,7 +114,7 @@ export default function QuestionPopup({ ask, onAnswer, onReject }: Props) {
 
   return (
     <div className="permission-bar question-pop" role="dialog">
-      <div className="title">AI question</div>
+      <div className="title">{t("question.title")}</div>
       <div ref={listRef} className="q-body">
         {qs.map((q, qi) => (
           <div className="q-section" key={qi}>
@@ -154,7 +156,7 @@ export default function QuestionPopup({ ask, onAnswer, onReject }: Props) {
               <i className="fa-solid fa-pen" />
               <input
                 data-q={qi}
-                placeholder="Other…"
+                placeholder={t("question.other")}
                 value={customs[qi]}
                 onChange={(e) => typeCustom(qi, e.target.value)}
                 onKeyDown={(e) => {
@@ -172,14 +174,14 @@ export default function QuestionPopup({ ask, onAnswer, onReject }: Props) {
         {!instant && (
           <button className="allow" disabled={!complete} onClick={submitAll}>
             <i className="fa-solid fa-reply" />
-            Answer
+            {t("question.answer")}
           </button>
         )}
         <button className="deny" onClick={onReject}>
           <i className="fa-solid fa-ban" />
-          Dismiss
+          {t("question.dismiss")}
         </button>
-        <div className="q-hint">↑↓ · Enter {instant ? "select" : "answer"} · Esc dismiss</div>
+        <div className="q-hint">{instant ? t("question.hint.instant") : t("question.hint.multi")}</div>
       </div>
     </div>
   );

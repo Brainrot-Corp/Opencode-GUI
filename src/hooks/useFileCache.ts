@@ -13,6 +13,7 @@ let kids = new Map<string, FileNode[]>();
 let err = "";
 let loadingPath = "";
 const pending = new Map<string, Promise<FileNode[]>>();
+const needsRefresh = new Set<string>();
 let version = 0;
 const subs = new Set<() => void>();
 
@@ -28,8 +29,19 @@ function getVersion() {
   return version;
 }
 
+function normalizePath(p: string): string {
+  const f = p.replace(/\\/g, "/");
+  // strip trailing slashes (keep root "/" and "C:/" intact)
+  if (f.length > 1 && f.endsWith("/")) {
+    if (/^[A-Za-z]:\/$/.test(f)) return f;
+    return f.replace(/\/+$/, "");
+  }
+  return f;
+}
+export function normalizeFilePath(p: string): string { return normalizePath(p); }
+
 function cacheKey(dir: string, path: string) {
-  return `${dir}\0${path}`;
+  return `${normalizePath(dir)}\0${normalizePath(path)}`;
 }
 
 async function fetchKids(path: string, retries = 2, dir = ""): Promise<FileNode[]> {
@@ -60,6 +72,10 @@ async function fetchKids(path: string, retries = 2, dir = ""): Promise<FileNode[
       loadingPath = "";
       pending.delete(key);
       notify();
+      if (needsRefresh.has(key)) {
+        needsRefresh.delete(key);
+        window.setTimeout(() => void fetchKids(path, 2, dir).catch(() => {}), 50);
+      }
     }
   })();
   pending.set(key, p);
@@ -80,12 +96,14 @@ export function invalidateFileCache(path?: string, dir = "") {
     kids = new Map();
   } else {
     const key = cacheKey(dir, path);
+    const normDir = normalizePath(dir);
+    const normPath = normalizePath(path);
     const next = new Map(kids);
     next.delete(key);
     for (const k of [...next.keys()]) {
       const [d, p] = k.split("\0");
-      if (d !== dir) continue;
-      if (p === path || p.startsWith(path + "/")) next.delete(k);
+      if (d !== normDir) continue;
+      if (p === normPath || p.startsWith(normPath + "/")) next.delete(k);
     }
     kids = next;
   }
@@ -96,12 +114,18 @@ export function invalidateFileCache(path?: string, dir = "") {
 let watcherSetup = false;
 const watcherTimers = new Map<string, number>();
 function scheduleFetch(key: string, dir: string, path: string) {
-  if (pending.has(key)) return;
+  if (pending.has(key)) {
+    needsRefresh.add(key);
+    return;
+  }
   const prev = watcherTimers.get(key);
   if (prev) window.clearTimeout(prev);
   const id = window.setTimeout(() => {
     watcherTimers.delete(key);
-    if (pending.has(key)) return;
+    if (pending.has(key)) {
+      needsRefresh.add(key);
+      return;
+    }
     void fetchKids(path, 2, dir).catch(() => {});
   }, 180);
   watcherTimers.set(key, id);
@@ -112,7 +136,7 @@ function setupWatcher() {
   window.addEventListener("oc:file-changed", ((e: Event) => {
     const raw = (e as CustomEvent<string>).detail || "";
     if (!raw) return;
-    const norm = raw.replace(/\\/g, "/");
+    const norm = normalizePath(raw);
     if (norm.includes(":") || norm.startsWith("/")) {
       // absolute — refresh root for primary dir (others via their own watchers)
       for (const k of kids.keys()) if (k.endsWith("\0")) scheduleFetch(k, k.split("\0")[0], "");
@@ -166,10 +190,11 @@ export function useFileCache(dir = "") {
   const invalidate = useCallback((path?: string) => invalidateFileCache(path, dir), [dir]);
 
   // view filtered to this dir
+  const normDir = normalizePath(dir);
   const dirKids = new Map<string, FileNode[]>();
   for (const [k, v2] of kids) {
     const [d, p] = k.split("\0");
-    if (d === dir) dirKids.set(p, v2);
+    if (d === normDir) dirKids.set(p, v2);
   }
   const isLoading = useCallback((p: string) => {
     const k = cacheKey(dir, p);

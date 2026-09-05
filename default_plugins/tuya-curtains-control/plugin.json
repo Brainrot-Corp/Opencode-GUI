@@ -1,6 +1,0 @@
-{
-  "id": "tuya-curtains-control",
-  "name": "Curtains",
-  "version": "1.0.0",
-  "description": "Voice + slash control for Tuya Smart Life curtains/blinds — open/close/stop and percentage via the Tuya Cloud API"
-}

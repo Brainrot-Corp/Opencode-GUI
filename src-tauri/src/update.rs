@@ -22,12 +22,15 @@ fn sha256_of(path: &PathBuf) -> Result<String, String> {
     Ok(format!("{:x}", h.finalize()))
 }
 
-// which portable flavor this build is — decides which release zip the
-// updater downloads (noglass = Windows 10 build, default = Windows 11)
+// which flavor this build is — Windows uses noglass/win11, other OS return os-arch
 #[tauri::command]
 pub fn build_flavor() -> &'static str {
     if cfg!(feature = "noglass") {
         "win10"
+    } else if cfg!(target_os = "macos") {
+        "macos-arm64"
+    } else if cfg!(target_os = "linux") {
+        if cfg!(target_arch = "aarch64") { "linux-arm64" } else { "linux-x64" }
     } else {
         "win11"
     }
@@ -39,6 +42,9 @@ pub fn build_flavor() -> &'static str {
 // (opencode-gui.exe + opencode.exe sidecar).
 #[tauri::command]
 pub async fn update_download(url: String, sha256: String, version: String) -> Result<(), String> {
+    if !cfg!(windows) {
+        return Err("auto-update only available on Windows".into());
+    }
     if !url.starts_with("https://") {
         return Err("bad download url".into());
     }
@@ -46,7 +52,7 @@ pub async fn update_download(url: String, sha256: String, version: String) -> Re
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let zip_path = dir.join("update.zip");
 
-    let mut cmd = std::process::Command::new("curl.exe");
+    let mut cmd = std::process::Command::new(crate::platform::curl_bin());
     cmd.args(["-L", "--fail", "--silent", "--show-error", "--max-time", "1800", "-o"]);
     cmd.arg(&zip_path).arg(&url);
     // release: no console flash next to the frameless window
@@ -109,6 +115,9 @@ pub async fn update_download(url: String, sha256: String, version: String) -> Re
 // if empty. Verifies the exe exists and stages it under %TEMP%\oc-update.
 #[tauri::command]
 pub fn update_stage_local(folder: String, version: String) -> Result<(), String> {
+    if !cfg!(windows) {
+        return Err("local staging only on Windows".into());
+    }
     let raw = folder.trim();
     if raw.is_empty() {
         return Err("empty folder path".into());
@@ -270,6 +279,11 @@ pub fn apply_on_exit() {
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         const DETACHED_PROCESS: u32 = 0x0000_0008;
         const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+        // 2.0.5+: the GUI puts itself in its own KILL_ON_JOB_CLOSE job (lib.rs
+        // job::assign); helpers spawned while dying would inherit that job and
+        // be killed when the old process's last job handle closes — break away
+        // so the relaunch survives (BREAKAWAY_OK is set on the job)
+        const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x0100_0000;
         let exe_quoted = format!("\"{}\"", exe_path.display());
         trace(&format!("exe_path: {} quoted={}", exe_path.display(), exe_quoted));
         // 1.5.5 simply did `Command::new(exe).spawn()` with no wait — worked on Win11
@@ -290,7 +304,7 @@ pub fn apply_on_exit() {
             trace("batch write ok");
             let mut cmd = std::process::Command::new("cmd");
             cmd.args(["/C", &batch_path.to_string_lossy().to_string()]);
-            cmd.creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
+            cmd.creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_BREAKAWAY_FROM_JOB);
             match cmd.spawn() {
                 Ok(_) => { trace("batch spawn ok"); spawned = true; }
                 Err(e) => trace(&format!("batch spawn failed: {e}")),
@@ -318,7 +332,7 @@ pub fn apply_on_exit() {
                 "-Command",
                 &ps_cmd,
             ]);
-            cmd.creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
+            cmd.creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_BREAKAWAY_FROM_JOB);
             match cmd.spawn() {
                 Ok(_) => { trace("powershell spawn ok"); spawned = true; }
                 Err(e) => {
@@ -334,7 +348,7 @@ pub fn apply_on_exit() {
                         "-Command",
                         &ps_cmd,
                     ]);
-                    alt.creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
+                    alt.creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_BREAKAWAY_FROM_JOB);
                     match alt.spawn() {
                         Ok(_) => { trace("pwsh spawn ok"); spawned = true; }
                         Err(e2) => {
@@ -343,7 +357,7 @@ pub fn apply_on_exit() {
                             let mut fallback = std::process::Command::new(&exe_path);
                             fallback.arg("--new-instance");
                             fallback.creation_flags(
-                                CREATE_NO_WINDOW | DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP,
+                                CREATE_NO_WINDOW | DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_BREAKAWAY_FROM_JOB,
                             );
                             match fallback.spawn() {
                                 Ok(_) => { trace("direct fallback spawn ok"); spawned = true; }

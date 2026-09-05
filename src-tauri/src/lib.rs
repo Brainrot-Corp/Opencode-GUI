@@ -13,11 +13,13 @@ use browser::{browser_back, browser_close, browser_forward, browser_navigate, br
 
 mod voice;
 use voice::{install_bin_finalize, install_model_finalize, install_piper_bin, install_tts_voice_part, 
-tts_remove_voice, tts_speak, tts_status, voice_download, voice_remove_all, voice_remove_model,
-    voice_status, voice_transcribe};
+kokoro_remove_engine, install_kokoro_gpu_part, tts_gpu_remove, tts_remove_voice, tts_speak, tts_speak_pcm, tts_warm, tts_status, tts_stream, tts_debug_log, tts_clear_debug, voice_download, voice_gpu, voice_remove_all, voice_remove_gpu, voice_remove_model,
+    voice_status, voice_transcribe, voice_transcribe_pcm};
 
 mod git;
-use git::{git_commit, git_diff, git_diff_stat, git_discard, git_log, git_pull, git_push, git_stage, git_status, git_unstage};
+use git::{git_commit, git_diff, git_diff_stat, git_discard, git_fetch, git_log, git_pull, git_push, git_stage, git_status, git_unstage};
+
+mod platform;
 
 mod pty;
 use pty::{kill_all as pty_kill_all, pty_kill, pty_resize, pty_spawn, pty_write, PtyState};
@@ -40,6 +42,72 @@ struct ServerState {
     port: u16,
     child: Mutex<Option<Child>>,
     error: Option<String>,
+}
+
+// Windows Job Object: child dies with parent even on crash (KILL_ON_JOB_CLOSE).
+// Without it a hard renderer crash orphans opencode.exe on its port.
+#[cfg(windows)]
+mod job {
+    use std::os::windows::io::AsRawHandle;
+    use std::process::Child;
+    use std::sync::OnceLock;
+    use windows::Win32::Foundation::HANDLE;
+    use windows::Win32::System::JobObjects::{
+        AssignProcessToJobObject, CreateJobObjectW, SetInformationJobObject, JobObjectExtendedLimitInformation,
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_BREAKAWAY_OK,
+        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+    };
+    use windows::Win32::System::Threading::GetCurrentProcess;
+
+    struct JobHandle(HANDLE);
+    unsafe impl Send for JobHandle {}
+    unsafe impl Sync for JobHandle {}
+    static JOB: OnceLock<JobHandle> = OnceLock::new();
+
+    fn get() -> Option<HANDLE> {
+        if let Some(h) = JOB.get() {
+            return Some(h.0);
+        }
+        unsafe {
+            let h = CreateJobObjectW(None, None).ok()?;
+            let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
+            // BREAKAWAY_OK allows nested jobs (enterprise/debugger already in a job) to
+            // still create a child job; without it AssignProcessToJobObject fails with
+            // ERROR_ACCESS_DENIED and nested grandchildren outlive the GUI.
+            info.BasicLimitInformation.LimitFlags =
+                JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_BREAKAWAY_OK;
+            let _ = SetInformationJobObject(
+                h,
+                JobObjectExtendedLimitInformation,
+                &info as *const _ as *const _,
+                std::mem::size_of_val(&info) as u32,
+            );
+            let _ = JOB.set(JobHandle(h));
+            Some(h)
+        }
+    }
+
+    pub fn assign(child: &Child) {
+        let Some(job) = get() else { return };
+        unsafe {
+            let proc = GetCurrentProcess();
+            // ensure current process is also in the job so nested children are covered
+            if let Err(e) = AssignProcessToJobObject(job, proc) {
+                // ERROR_ACCESS_DENIED means we're already in a job (enterprise policy / debugger)
+                // — log instead of silently ignoring; child is still assigned but grandchildren may survive
+                eprintln!("[job] AssignProcessToJobObject(current) failed: {} (already in job? nested children may outlive GUI)", e);
+            }
+            let h = HANDLE(child.as_raw_handle() as *mut _);
+            if let Err(e) = AssignProcessToJobObject(job, h) {
+                eprintln!("[job] AssignProcessToJobObject(child) failed: {}", e);
+            }
+        }
+    }
+}
+#[cfg(not(windows))]
+mod job {
+    use std::process::Child;
+    pub fn assign(_: &Child) {}
 }
 
 // workspace persistence — saved per local dev build so debug restarts reopen
@@ -83,40 +151,187 @@ fn read_saved_workspace(app: &tauri::AppHandle) -> Option<PathBuf> {
     if p.is_dir() { Some(p) } else { None }
 }
 
-// ponytail: kill-on-exit handler covers normal close; a hard crash can orphan
-// the server. Windows Job Objects (KILL_ON_JOB_CLOSE) if that ever matters.
+fn resolve_opencode_exe(exe_dir: &std::path::Path) -> PathBuf {
+    // bundled sidecar next to the GUI exe or dev triple-suffixed name — use centralized candidates
+    for name in crate::platform::sidecar_candidates() {
+        let p = exe_dir.join(name);
+        if p.is_file() {
+            eprintln!("[opencode] resolved sidecar: {}", p.display());
+            return p;
+        }
+    }
+    // dev: exe is target/debug/opencode-gui(.exe), sidecar lives in src-tauri/binaries
+    if let Ok(cur) = std::env::current_exe() {
+        let mut anc = cur.parent().map(|p| p.to_owned());
+        loop {
+            let Some(dir) = anc.clone() else { break };
+            for name in crate::platform::sidecar_candidates() {
+                let cand = dir.join("src-tauri").join("binaries").join(name);
+                if cand.is_file() {
+                    eprintln!("[opencode] resolved sidecar: {}", cand.display());
+                    return cand;
+                }
+                let cand2 = dir.join("binaries").join(name);
+                if cand2.is_file() {
+                    eprintln!("[opencode] resolved sidecar: {}", cand2.display());
+                    return cand2;
+                }
+            }
+            let parent = dir.parent().map(|p| p.to_owned());
+            if parent.is_none() || parent == anc {
+                break;
+            }
+            anc = parent;
+        }
+    }
+    // last resort: PATH lookup (bare `opencode` + Windows variants)
+    if let Ok(path) = std::env::var("PATH") {
+        for dir in std::env::split_paths(&path) {
+            for name in crate::platform::sidecar_candidates() {
+                let p = dir.join(name);
+                if p.is_file() {
+                    eprintln!("[opencode] resolved sidecar via PATH: {}", p.display());
+                    return p;
+                }
+            }
+            if cfg!(windows) {
+                let p2 = dir.join("opencode.cmd");
+                if p2.is_file() {
+                    eprintln!("[opencode] resolved sidecar via PATH: {}", p2.display());
+                    return p2;
+                }
+            }
+        }
+        // also try bare `opencode` explicitly (already in candidates but ensure)
+        for dir in std::env::split_paths(&path) {
+            let p = dir.join("opencode");
+            if p.is_file() {
+                eprintln!("[opencode] resolved sidecar via PATH: {}", p.display());
+                return p;
+            }
+        }
+    }
+    let fallback = exe_dir.join(crate::platform::sidecar_candidates().first().copied().unwrap_or("opencode"));
+    eprintln!("[opencode] resolved sidecar fallback: {}", fallback.display());
+    fallback
+}
+
+fn wait_for_port(port: u16, timeout: std::time::Duration) -> bool {
+    use std::io::{Read, Write};
+    use std::net::TcpStream;
+    use std::time::Instant;
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        if let Ok(mut stream) = TcpStream::connect(format!("127.0.0.1:{port}")) {
+            let _ = stream.set_read_timeout(Some(std::time::Duration::from_millis(400)));
+            let _ = stream.set_write_timeout(Some(std::time::Duration::from_millis(400)));
+            let req = format!(
+                "GET /health HTTP/1.0\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"
+            );
+            if stream.write_all(req.as_bytes()).is_ok() {
+                let mut buf = [0u8; 8192];
+                if let Ok(n) = stream.read(&mut buf) {
+                    if n > 0 {
+                        let resp = String::from_utf8_lossy(&buf[..n]);
+                        // EH-07: validate HTTP 200 + JSON payload, not just TCP connect (port-steal race)
+                        if resp.contains("200") && resp.contains('{') {
+                            std::thread::sleep(std::time::Duration::from_millis(80));
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    false
+}
+
 fn spawn_server(workspace: Option<PathBuf>) -> std::io::Result<(Child, u16)> {
-    let port = TcpListener::bind("127.0.0.1:0")?.local_addr()?.port();
+    const RETRIES: u32 = 5;
     let exe_dir = std::env::current_exe()?
         .parent()
-        .expect("exe has parent")
+        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "exe has no parent"))?
         .to_owned();
-    let home = std::env::var("USERPROFILE").unwrap_or_default();
-    let mut cmd = Command::new(exe_dir.join("opencode.exe"));
-    cmd.args(["serve", "--port", &port.to_string(), "--hostname", "127.0.0.1"]);
-    // ponytail: server reflects any Origin by default (verified), no --cors flags needed
-    if let Some(ws) = workspace {
-        if ws.is_dir() {
-            cmd.current_dir(ws);
-        } else if !home.is_empty() {
+    let exe_path = resolve_opencode_exe(&exe_dir);
+    let home = crate::platform::home_dir();
+
+    let mut last_err: Option<std::io::Error> = None;
+    for attempt in 0..RETRIES {
+        let port = TcpListener::bind("127.0.0.1:0")?.local_addr()?.port();
+        let mut cmd = Command::new(&exe_path);
+        cmd.args(["serve", "--port", &port.to_string(), "--hostname", "127.0.0.1"]);
+        if let Some(ref ws) = workspace {
+            if ws.is_dir() {
+                cmd.current_dir(ws);
+            } else if home.is_dir() {
+                cmd.current_dir(&home);
+            }
+        } else if home.is_dir() {
             cmd.current_dir(&home);
         }
-    } else if !home.is_empty() {
-        cmd.current_dir(&home);
+        #[cfg(debug_assertions)]
+        let _ = cmd.stdout(Stdio::inherit()).stderr(Stdio::inherit());
+        #[cfg(all(windows, not(debug_assertions)))]
+        {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+            cmd.creation_flags(CREATE_NO_WINDOW)
+                .stdout(Stdio::null())
+                .stderr(Stdio::null());
+        }
+        #[cfg(all(not(windows), not(debug_assertions)))]
+        {
+            let _ = cmd.stdout(Stdio::null()).stderr(Stdio::null());
+        }
+        let mut child = match cmd.spawn() {
+            Ok(c) => c,
+            Err(e) => {
+                last_err = Some(e);
+                if attempt + 1 < RETRIES { std::thread::sleep(std::time::Duration::from_millis(200)); continue; }
+                else { break; }
+            }
+        };
+        job::assign(&child);
+
+        // wait until the server is actually listening; catches port races
+        // where the child fails to bind (port taken) and exits early
+        let listening = wait_for_port(port, std::time::Duration::from_secs(8));
+        // if child died immediately, it's a bind failure — retry on next port
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                last_err = Some(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("opencode exited early on port {port}: {status}"),
+                ));
+                if attempt + 1 < RETRIES {
+                    std::thread::sleep(std::time::Duration::from_millis(250));
+                    continue;
+                } else { break; }
+            }
+            Ok(None) if !listening => {
+                // still not listening but child alive — could be slow start; give it a bit more
+                if wait_for_port(port, std::time::Duration::from_secs(3)) {
+                    return Ok((child, port));
+                }
+                let _ = child.kill();
+                let _ = child.wait();
+                last_err = Some(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    format!("opencode not listening on port {port}"),
+                ));
+                if attempt + 1 < RETRIES { std::thread::sleep(std::time::Duration::from_millis(300)); continue; }
+                else { break; }
+            }
+            Ok(None) => return Ok((child, port)),
+            Err(e) => {
+                last_err = Some(e);
+                if attempt + 1 < RETRIES { std::thread::sleep(std::time::Duration::from_millis(200)); continue; }
+                else { break; }
+            }
+        }
     }
-    #[cfg(debug_assertions)]
-    let _ = cmd.stdout(Stdio::inherit()).stderr(Stdio::inherit());
-    // release: null stdio AND CREATE_NO_WINDOW Ã¢â‚¬â€ without the flag a visible
-    // console window pops up next to our frameless GUI
-    #[cfg(all(windows, not(debug_assertions)))]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        cmd.creation_flags(CREATE_NO_WINDOW)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
-    }
-    Ok((cmd.spawn()?, port))
+    Err(last_err.unwrap_or_else(|| std::io::Error::new(std::io::ErrorKind::Other, "failed to start opencode after retries")))
 }
 
 #[tauri::command]
@@ -142,26 +357,31 @@ fn apply_glass(app: &tauri::AppHandle) {
     let Some(w) = app.get_webview_window("main") else {
         return;
     };
-    // replicate the pre-split look exactly: the old config-level
-    // ["acrylic", "mica"] resolved to Acrylic (first match wins in tauri's
-    // vibrancy code), applied with no tint. Acrylic drags badly only on
-    // Win10 v1903+ / early Win11 builds — that's what the noglass build
-    // avoids.
     if window_vibrancy::apply_acrylic(&w, None).is_ok() {
         GLASS.store(true, std::sync::atomic::Ordering::Relaxed);
     }
 }
 
-#[cfg(any(not(windows), feature = "noglass"))]
-fn apply_glass(_app: &tauri::AppHandle) {}
-
-// theme config: ~/.config/.opencode-gui/themes.json Ã¢â‚¬â€ read by the frontend,
-// seeded once by it, and watched here so edits hot-reload the UI
-fn themes_dir() -> PathBuf {
-    let home = std::env::var("USERPROFILE").unwrap_or_default();
-    PathBuf::from(home).join(".config").join(".opencode-gui")
+#[cfg(all(target_os = "macos", not(feature = "noglass")))]
+fn apply_glass(app: &tauri::AppHandle) {
+    use tauri::Manager;
+    let Some(w) = app.get_webview_window("main") else {
+        return;
+    };
+    // macOS vibrancy — Sidebar material preserves design glass with blur
+    if window_vibrancy::apply_vibrancy(&w, window_vibrancy::NSVisualEffectMaterial::Sidebar, None, Some(12.0)).is_ok() {
+        GLASS.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
 }
 
+#[cfg(any(target_os = "linux", feature = "noglass", all(not(windows), not(target_os = "macos"))))]
+fn apply_glass(_app: &tauri::AppHandle) {}
+
+// theme config: read by frontend, seeded once, watched for hot-reload
+fn themes_dir() -> PathBuf {
+    let home = crate::platform::home_dir();
+    home.join(".config").join(".opencode-gui")
+}
 fn plugins_dir() -> PathBuf {
     themes_dir().join("plugins")
 }
@@ -177,9 +397,13 @@ struct PluginDir {
 }
 
 #[tauri::command]
-fn plugins_scan() -> Vec<PluginDir> {
+fn plugins_scan(app: tauri::AppHandle) -> Vec<PluginDir> {
+    // prefer app-aware dir, fallback to legacy for existing installs
+    let dir = crate::platform::plugins_dir(&app);
+    let fallback = plugins_dir();
     let mut out = Vec::new();
-    let Ok(entries) = std::fs::read_dir(plugins_dir()) else {
+    let entries = std::fs::read_dir(&dir).or_else(|_| std::fs::read_dir(&fallback));
+    let Ok(entries) = entries else {
         return out;
     };
     for e in entries.flatten() {
@@ -198,7 +422,8 @@ fn plugins_scan() -> Vec<PluginDir> {
 }
 
 // generic https fetch for plugins (signing etc. happens JS-side) — plain
-// request/response envelope, no cookies, 10s timeout
+// request/response envelope, no cookies, 10s timeout.
+// Public http is blocked; private LAN http (Hue bridge etc.) is allowed.
 #[tauri::command]
 async fn http_json(
     method: String,
@@ -206,8 +431,29 @@ async fn http_json(
     headers: std::collections::HashMap<String, String>,
     body: Option<String>,
 ) -> Result<serde_json::Value, String> {
-    if !url.starts_with("https://") {
-        return Err("only https:// urls are allowed".into());
+    let is_https = url.starts_with("https://");
+    let is_private_http = url.starts_with("http://192.168.")
+        || url.starts_with("http://10.")
+        || url.starts_with("http://172.16.")
+        || url.starts_with("http://172.17.")
+        || url.starts_with("http://172.18.")
+        || url.starts_with("http://172.19.")
+        || url.starts_with("http://172.20.")
+        || url.starts_with("http://172.21.")
+        || url.starts_with("http://172.22.")
+        || url.starts_with("http://172.23.")
+        || url.starts_with("http://172.24.")
+        || url.starts_with("http://172.25.")
+        || url.starts_with("http://172.26.")
+        || url.starts_with("http://172.27.")
+        || url.starts_with("http://172.28.")
+        || url.starts_with("http://172.29.")
+        || url.starts_with("http://172.30.")
+        || url.starts_with("http://172.31.")
+        || url.starts_with("http://127.0.0.1")
+        || url.starts_with("http://localhost");
+    if !(is_https || is_private_http) {
+        return Err("only https:// and private http:// (Hue LAN) urls are allowed".into());
     }
     let m = reqwest::Method::from_bytes(method.as_bytes()).map_err(|e| e.to_string())?;
     let client = reqwest::Client::builder()
@@ -247,12 +493,15 @@ async fn http_json(
 }
 
 #[tauri::command]
-fn theme_config_read() -> Result<String, String> {
-    let p = themes_dir().join("themes.json");
-    if !p.exists() {
+fn theme_config_read(app: tauri::AppHandle) -> Result<String, String> {
+    // try app-aware dir first, fallback to legacy
+    let p = crate::platform::themes_dir(&app).join("themes.json");
+    let p2 = themes_dir().join("themes.json");
+    let path = if p.exists() { p } else if p2.exists() { p2 } else { p };
+    if !path.exists() {
         return Ok(String::new());
     }
-    std::fs::read_to_string(&p).map_err(|e| e.to_string())
+    std::fs::read_to_string(&path).map_err(|e| e.to_string())
 }
 
 // save edited workspace files from the centered file viewer — the opencode
@@ -334,67 +583,31 @@ fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> std::io::
 #[tauri::command]
 fn file_reveal(path: String) -> Result<(), String> {
     if path.trim().is_empty() { return Err("empty path".into()); }
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        std::process::Command::new("explorer")
-            .arg(format!("/select,{}", path))
-            .creation_flags(CREATE_NO_WINDOW)
-            .spawn().map_err(|e| e.to_string())?;
-    }
-    #[cfg(not(windows))]
-    {
-        let dir = std::path::Path::new(&path).parent().unwrap_or(std::path::Path::new(&path));
-        std::process::Command::new("xdg-open").arg(dir).spawn().map_err(|e| e.to_string())?;
-    }
+    crate::platform::reveal_path(&path).map(|_| ()).map_err(|e| e.to_string())?;
     Ok(())
 }
 
 #[tauri::command]
 fn file_open(path: String) -> Result<(), String> {
     if path.trim().is_empty() { return Err("empty path".into()); }
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        std::process::Command::new("cmd").args(["/C", "start", "", &path]).creation_flags(CREATE_NO_WINDOW).spawn().map_err(|e| e.to_string())?;
-    }
-    #[cfg(not(windows))]
-    {
-        std::process::Command::new("xdg-open").arg(&path).spawn().map_err(|e| e.to_string())?;
-    }
+    crate::platform::open_path(&path).map(|_| ()).map_err(|e| e.to_string())?;
     Ok(())
 }
 
 #[tauri::command]
-fn theme_config_write(content: String) -> Result<(), String> {
-    let dir = themes_dir();
+fn theme_config_write(app: tauri::AppHandle, content: String) -> Result<(), String> {
+    let dir = crate::platform::themes_dir(&app);
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    std::fs::write(dir.join("themes.json"), content).map_err(|e| e.to_string())
+    std::fs::write(dir.join("themes.json"), content).map_err(|e| e.to_string())?;
+    // also migrate legacy if existed
+    Ok(())
 }
 
 #[tauri::command]
-fn reveal_config_dir() -> Result<(), String> {
-    let dir = themes_dir();
+fn reveal_config_dir(app: tauri::AppHandle) -> Result<(), String> {
+    let dir = crate::platform::themes_dir(&app);
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        std::process::Command::new("explorer")
-            .arg(&dir)
-            .creation_flags(CREATE_NO_WINDOW)
-            .spawn()
-            .map_err(|e| e.to_string())?;
-    }
-    #[cfg(not(windows))]
-    {
-        std::process::Command::new("xdg-open")
-            .arg(&dir)
-            .spawn()
-            .map_err(|e| e.to_string())?;
-    }
+    crate::platform::reveal_dir(&dir).map(|_| ()).map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -405,31 +618,15 @@ fn workspace_is_dir(path: String) -> bool {
 }
 
 #[tauri::command]
-fn reveal_plugins_dir() -> Result<(), String> {
-    let dir = plugins_dir();
+fn reveal_plugins_dir(app: tauri::AppHandle) -> Result<(), String> {
+    let dir = crate::platform::plugins_dir(&app);
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        std::process::Command::new("explorer")
-            .arg(&dir)
-            .creation_flags(CREATE_NO_WINDOW)
-            .spawn()
-            .map_err(|e| e.to_string())?;
-    }
-    #[cfg(not(windows))]
-    {
-        std::process::Command::new("xdg-open")
-            .arg(&dir)
-            .spawn()
-            .map_err(|e| e.to_string())?;
-    }
+    crate::platform::reveal_dir(&dir).map(|_| ()).map_err(|e| e.to_string())?;
     Ok(())
 }
 
 #[tauri::command]
-fn plugin_remove(dir: String) -> Result<(), String> {
+fn plugin_remove(app: tauri::AppHandle, dir: String) -> Result<(), String> {
     let name = dir.trim().to_string();
     if name.is_empty() {
         return Err("empty plugin name".into());
@@ -437,22 +634,28 @@ fn plugin_remove(dir: String) -> Result<(), String> {
     if name.contains('/') || name.contains('\\') || name.contains("..") || name.contains(':') {
         return Err("invalid plugin name".into());
     }
-    let target = plugins_dir().join(&name);
+    let base = crate::platform::plugins_dir(&app);
+    let target = base.join(&name);
+    // fallback to legacy if not found in new
+    let target = if target.exists() { target } else { plugins_dir().join(&name) };
     if !target.exists() {
         return Err("plugin not found".into());
     }
-    // ensure target is still inside plugins_dir (prevent traversal)
-    let canon_plugins = plugins_dir().canonicalize().unwrap_or_else(|_| plugins_dir());
+    let canon_plugins = base.canonicalize().unwrap_or_else(|_| base.clone());
     let canon_target = target.canonicalize().map_err(|e| e.to_string())?;
     if !canon_target.starts_with(&canon_plugins) {
-        return Err("invalid plugin path".into());
+        // also allow legacy base
+        let legacy_base = plugins_dir().canonicalize().unwrap_or_else(|_| plugins_dir());
+        if !canon_target.starts_with(&legacy_base) {
+            return Err("invalid plugin path".into());
+        }
     }
     std::fs::remove_dir_all(&canon_target).map_err(|e| e.to_string())?;
     Ok(())
 }
 
 #[tauri::command]
-fn plugin_install_files(dir: String, manifest: String, main: String, css: String) -> Result<(), String> {
+fn plugin_install_files(app: tauri::AppHandle, dir: String, manifest: String, main: String, css: String) -> Result<(), String> {
     let name = dir.trim().to_string();
     if name.is_empty() {
         return Err("empty plugin name".into());
@@ -466,12 +669,11 @@ fn plugin_install_files(dir: String, manifest: String, main: String, css: String
     if main.trim().is_empty() {
         return Err("missing main.js".into());
     }
-    // validate manifest is JSON with fallback handling done frontend-side
     serde_json::from_str::<serde_json::Value>(&manifest).map_err(|e| format!("bad plugin.json: {e}"))?;
-    let target = plugins_dir().join(&name);
+    let base = crate::platform::plugins_dir(&app);
+    let target = base.join(&name);
     std::fs::create_dir_all(&target).map_err(|e| e.to_string())?;
-    // ensure still inside plugins_dir
-    let canon_plugins = plugins_dir().canonicalize().unwrap_or_else(|_| plugins_dir());
+    let canon_plugins = base.canonicalize().unwrap_or_else(|_| base.clone());
     let canon_target = target.canonicalize().map_err(|e| e.to_string())?;
     if !canon_target.starts_with(&canon_plugins) {
         return Err("invalid plugin path".into());
@@ -649,7 +851,7 @@ mod ipc_hook {
 
     pub fn set_app(app: tauri::AppHandle) {
         let m = IPC_APP.get_or_init(|| Mutex::new(None));
-        *m.lock().unwrap() = Some(app);
+        *m.lock().unwrap_or_else(|e| e.into_inner()) = Some(app);
     }
 
     unsafe extern "system" fn wndproc(
@@ -660,7 +862,7 @@ mod ipc_hook {
     ) -> LRESULT {
         if msg == WM_COPYDATA {
             let cds = &*(lparam.0 as *const COPYDATASTRUCT);
-            let app_opt = IPC_APP.get().and_then(|m| m.lock().unwrap().clone());
+            let app_opt = IPC_APP.get().and_then(|m| m.lock().unwrap_or_else(|e| e.into_inner()).clone());
             if let Some(app) = app_opt {
                 match cds.dwData as usize {
                     super::IPC_TOGGLE => {
@@ -1028,7 +1230,7 @@ fn unpoison_input(app: &tauri::AppHandle) {
         let _ = app.run_on_main_thread(move || {
             if let Some(w) = app4.get_webview_window("main") {
                 let _ = w.eval(
-                    "setTimeout(()=>{ try{ window.focus(); var a=document.activeElement; if(!a||a===document.body){ var f=document.querySelector('.composer textarea')||document.querySelector('.fe-ta')||document.body; if(f){ if(!f.hasAttribute('tabindex')&&f===document.body) f.setAttribute('tabindex','-1'); f.focus({preventScroll:true}); } } else { try{a.focus({preventScroll:true});}catch(e){} } window.focus(); }catch(e){} }, 0)",
+                    "setTimeout(()=>{ try{ window.focus(); var a=document.activeElement; if(!a||a===document.body){ var isTerm=!!window.__oc_lastWasTerm; var term=document.querySelector('.term-dock:not(.closed) .xterm-helper-textarea'); var comp=document.querySelector('.composer textarea'); var f=(isTerm&&term)?term:(comp||term||document.querySelector('.fe-ta')||document.body); if(f){ if(!f.hasAttribute('tabindex')&&f===document.body) f.setAttribute('tabindex','-1'); f.focus({preventScroll:true}); } } else { try{a.focus({preventScroll:true});}catch(e){} } window.focus(); }catch(e){} }, 0)",
                 );
             }
         });
@@ -1091,6 +1293,14 @@ mod webfocus {
             // let normal activation routing run first...
             let r = DefSubclassProc(hwnd, msg, wparam, lparam);
             if (wparam as u16) != WA_INACTIVE {
+                // immediate child focus attempt — the deferred MoveFocus alone is
+                // one message loop late, so the very first keydown after Alt+Tab
+                // would hit the outer HWND, be swallowed and cause a Windows beep.
+                // Best-effort synchronous SetFocus on the Chrome_WidgetWin child
+                // plus the deferred MoveFocus covers both immediate and settled.
+                let _ = std::panic::catch_unwind(|| {
+                    super::wininput::focus_webview(hwnd);
+                });
                 PostMessageW(hwnd, MSG_REFOCUS, 0, 0);
             }
             return r;
@@ -1165,6 +1375,23 @@ fn toggle_main(app: &tauri::AppHandle) {
 #[tauri::command]
 fn hide_to_tray(app: tauri::AppHandle) {
     hide_main(&app);
+}
+
+// mirrors the frontend "Close on X" setting so NATIVE close paths (mac red
+// stoplight, taskbar "Close window") can honor it. false = hide to tray,
+// matching the setting's default before the webview syncs.
+static CLOSE_ON_X: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+#[tauri::command]
+fn set_close_on_x(on: bool) {
+    CLOSE_ON_X.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+// real quit that bypasses the CloseRequested guard — used by the custom X
+// button when it means "quit" (setting on, or Ctrl-held invert)
+#[tauri::command]
+fn quit_app(app: tauri::AppHandle) {
+    app.exit(0);
 }
 
 #[tauri::command]
@@ -1401,6 +1628,115 @@ fn resize_cursor() -> Option<serde_json::Value> {
     None
 }
 
+fn handle_global_shortcut(
+    app: &tauri::AppHandle,
+    shortcut: &tauri_plugin_global_shortcut::Shortcut,
+    event: tauri_plugin_global_shortcut::ShortcutEvent,
+) {
+    // Windows auto-repeats held hotkeys (WM_HOTKEY ~33ms apart after
+    // ~500ms hold) — act only on FRESH presses: ones where this key
+    // was physically released since its previous press
+    use std::sync::Mutex;
+    static HELD: Mutex<Option<u32>> = Mutex::new(None);
+    let mut held = HELD.lock().unwrap_or_else(|e| e.into_inner());
+    match event.state() {
+        tauri_plugin_global_shortcut::ShortcutState::Released => {
+            if *held == Some(event.id) {
+                *held = None;
+            }
+            return;
+        }
+        tauri_plugin_global_shortcut::ShortcutState::Pressed => {
+            let prev = held.replace(event.id);
+            if prev == Some(event.id) {
+                return; // auto-repeat of a key still held down
+            }
+        }
+    }
+    drop(held);
+    // shortcut.to_string() renders "shift+control+KeyM" style —
+    // never equal to the registered spelling, so compare parsed
+    let Ok(mic): Result<tauri_plugin_global_shortcut::Shortcut, _> = "ctrl+shift+m".parse() else { return; };
+    if *shortcut == mic {
+        // mic toggle — forward to last focused instance if different
+        #[cfg(windows)]
+        {
+            let my_hwnd = app
+                .get_webview_window("main")
+                .and_then(|w| w.hwnd().ok())
+                .map(|h| h.0 as isize)
+                .unwrap_or(0);
+            let fg = unsafe {
+                windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow().0 as isize
+            };
+            let target = if fg != 0 && is_opencode_window(fg) {
+                Some(fg)
+            } else {
+                read_last_focused(app)
+            };
+            if let Some(t) = target {
+                if t != my_hwnd && t != 0 && send_ipc_to_hwnd(t, IPC_MIC) {
+                    return;
+                }
+            }
+            use tauri::Emitter;
+            let _ = app.emit("mic://toggle", ());
+        }
+        #[cfg(not(windows))]
+        {
+            use tauri::Emitter;
+            let _ = app.emit("mic://toggle", ());
+        }
+    } else {
+        // Alt+Space toggle — apply to last focused instance system-wide
+        #[cfg(windows)]
+        {
+            let my_hwnd = app
+                .get_webview_window("main")
+                .and_then(|w| w.hwnd().ok())
+                .map(|h| h.0 as isize)
+                .unwrap_or(0);
+            let fg = unsafe {
+                windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow().0 as isize
+            };
+            let target = if fg != 0 && is_opencode_window(fg) {
+                Some(fg)
+            } else {
+                read_last_focused(app)
+            };
+            if let Some(t) = target {
+                if t != my_hwnd && t != 0 {
+                    if send_ipc_to_hwnd(t, IPC_TOGGLE) {
+                        return;
+                    }
+                    // SendMessage failed (target closed), fallback to self
+                }
+            }
+            if let Some(w) = app.get_webview_window("main") {
+                let visible = w.is_visible().unwrap_or(false);
+                let focused = window_focused(&w);
+                if visible && focused {
+                    hide_main(app);
+                } else {
+                    show_main(app);
+                }
+            }
+        }
+        #[cfg(not(windows))]
+        {
+            if let Some(w) = app.get_webview_window("main") {
+                let visible = w.is_visible().unwrap_or(false);
+                let focused = window_focused(&w);
+                if visible && focused {
+                    hide_main(app);
+                } else {
+                    show_main(app);
+                }
+            }
+        }
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // --new-instance bypasses the single-instance mutex so an explicit
@@ -1461,6 +1797,8 @@ pub fn run() {
             os_glass,
             workspace_get,
             workspace_set,
+            set_close_on_x,
+            quit_app,
             theme_config_read,
             theme_config_write,
             write_file,
@@ -1497,16 +1835,27 @@ pub fn run() {
               open_app,
               window_app,
             voice_status,
+            voice_gpu,
             voice_transcribe,
+            voice_transcribe_pcm,
             voice_download,
             install_bin_finalize,
             install_model_finalize,
             voice_remove_model,
+            voice_remove_gpu,
             tts_status,
             tts_speak,
+            tts_speak_pcm,
+            tts_warm,
+            tts_stream,
             install_piper_bin,
             install_tts_voice_part,
             tts_remove_voice,
+            install_kokoro_gpu_part,
+            tts_gpu_remove,
+            tts_debug_log,
+            tts_clear_debug,
+            kokoro_remove_engine,
             voice_remove_all,
             git_status,
             git_stage,
@@ -1515,6 +1864,7 @@ pub fn run() {
             git_commit,
             git_push,
             git_pull,
+            git_fetch,
             git_diff,
             git_diff_stat,
             git_log,
@@ -1538,128 +1888,14 @@ pub fn run() {
             resize_cursor,
         ]);
 
-    // global hotkeys, work system-wide.
-    // If a combo is already taken (PowerToys Run, etc.), warn and continue
-    // instead of panicking — tray click still works as fallback.
-    // Second instance can't own the same global hotkey (first holds Alt+Space) — skip to avoid panic at build()
-    let builder = if is_new_instance {
-        builder
-    } else {
-        match tauri_plugin_global_shortcut::Builder::new()
-        .with_handler(|app, shortcut, event| {
-            // Windows auto-repeats held hotkeys (WM_HOTKEY ~33ms apart after
-            // ~500ms hold) — act only on FRESH presses: ones where this key
-            // was physically released since its previous press
-            use std::sync::Mutex;
-            static HELD: Mutex<Option<u32>> = Mutex::new(None);
-            let mut held = HELD.lock().unwrap_or_else(|e| e.into_inner());
-            match event.state() {
-                tauri_plugin_global_shortcut::ShortcutState::Released => {
-                    if *held == Some(event.id) {
-                        *held = None;
-                    }
-                    return;
-                }
-                tauri_plugin_global_shortcut::ShortcutState::Pressed => {
-                    let prev = held.replace(event.id);
-                    if prev == Some(event.id) {
-                        return; // auto-repeat of a key still held down
-                    }
-                }
-            }
-            drop(held);
-            // shortcut.to_string() renders "shift+control+KeyM" style —
-            // never equal to the registered spelling, so compare parsed
-            let mic: tauri_plugin_global_shortcut::Shortcut =
-                "ctrl+shift+m".parse().expect("valid hotkey");
-                if *shortcut == mic {
-                    // mic toggle — forward to last focused instance if different
-                    #[cfg(windows)]
-                    {
-                        let my_hwnd = app
-                            .get_webview_window("main")
-                            .and_then(|w| w.hwnd().ok())
-                            .map(|h| h.0 as isize)
-                            .unwrap_or(0);
-                        let fg = unsafe {
-                            windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow().0 as isize
-                        };
-                        let target = if fg != 0 && is_opencode_window(fg) {
-                            Some(fg)
-                        } else {
-                            read_last_focused(app)
-                        };
-                        if let Some(t) = target {
-                            if t != my_hwnd && t != 0 && send_ipc_to_hwnd(t, IPC_MIC) {
-                                return;
-                            }
-                        }
-                        use tauri::Emitter;
-                        let _ = app.emit("mic://toggle", ());
-                    }
-                    #[cfg(not(windows))]
-                    {
-                        use tauri::Emitter;
-                        let _ = app.emit("mic://toggle", ());
-                    }
-                } else {
-                    // Alt+Space toggle — apply to last focused instance system-wide
-                    #[cfg(windows)]
-                    {
-                        let my_hwnd = app
-                            .get_webview_window("main")
-                            .and_then(|w| w.hwnd().ok())
-                            .map(|h| h.0 as isize)
-                            .unwrap_or(0);
-                        let fg = unsafe {
-                            windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow().0 as isize
-                        };
-                        let target = if fg != 0 && is_opencode_window(fg) {
-                            Some(fg)
-                        } else {
-                            read_last_focused(app)
-                        };
-                        if let Some(t) = target {
-                            if t != my_hwnd && t != 0 {
-                                if send_ipc_to_hwnd(t, IPC_TOGGLE) {
-                                    return;
-                                }
-                                // SendMessage failed (target closed), fallback to self
-                            }
-                        }
-                        if let Some(w) = app.get_webview_window("main") {
-                            let visible = w.is_visible().unwrap_or(false);
-                            let focused = window_focused(&w);
-                            if visible && focused {
-                                hide_main(app);
-                            } else {
-                                show_main(app);
-                            }
-                        }
-                    }
-                    #[cfg(not(windows))]
-                    {
-                        if let Some(w) = app.get_webview_window("main") {
-                            let visible = w.is_visible().unwrap_or(false);
-                            let focused = window_focused(&w);
-                            if visible && focused {
-                                hide_main(app);
-                            } else {
-                                show_main(app);
-                            }
-                        }
-                    }
-                }
-        })
-        .with_shortcuts(["alt+space", "ctrl+shift+m"])
-    {
-        Ok(shortcuts_builder) => builder.plugin(shortcuts_builder.build()),
-        Err(e) => {
-            eprintln!("global shortcut Alt+Space unavailable: {e}");
-            builder
-        }
-        }
-    };
+    // global hotkeys, work system-wide. The plugin itself registers nothing;
+    // combos are registered per-shortcut in setup() via on_shortcut so a
+    // taken combo (second instance, PowerToys Run) only skips that combo —
+    // with_shortcuts would abort plugin setup and the app, which is why
+    // --new-instance used to skip the plugin entirely, silently leaving the
+    // app with NO hotkeys after every auto-update relaunch (update.rs spawns
+    // --new-instance while the old owner is already gone).
+    let builder = builder.plugin(tauri_plugin_global_shortcut::Builder::new().build());
 
     builder
         .setup(|app| {
@@ -1670,6 +1906,19 @@ pub fn run() {
                 menu::{Menu, MenuItem},
                 tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
             };
+            use tauri_plugin_global_shortcut::GlobalShortcutExt;
+
+            // register global hotkeys one by one: a taken combo (second
+            // instance, PowerToys Run) only skips that combo instead of
+            // aborting plugin setup
+            for combo in ["alt+space", "ctrl+shift+m"] {
+                if let Err(e) = app
+                    .global_shortcut()
+                    .on_shortcut(combo, handle_global_shortcut)
+                {
+                    eprintln!("global shortcut {combo} unavailable: {e}");
+                }
+            }
 
             let show = MenuItem::with_id(app, "show", "Show/Hide OpenCode GUI", true, None::<&str>)?;
             let new_win = MenuItem::with_id(app, "new-instance", "Open new window", true, None::<&str>)?;
@@ -1751,8 +2000,19 @@ pub fn run() {
             app.manage(DiscordState::default());
             update::cleanup_old();
             let h = app.handle().clone();
-            watch_dir(h.clone(), themes_dir(), "themes://changed", false);
-            watch_dir(h, plugins_dir(), "plugins://changed", true);
+            let new_themes = crate::platform::themes_dir(&h);
+            let new_plugins = crate::platform::plugins_dir(&h);
+            watch_dir(h.clone(), new_themes.clone(), "themes://changed", false);
+            watch_dir(h.clone(), new_plugins.clone(), "plugins://changed", true);
+            // fallback legacy watch for existing installs that may still use old path
+            {
+                let legacy_themes = themes_dir();
+                let legacy_plugins = plugins_dir();
+                if legacy_themes != new_themes {
+                    watch_dir(h.clone(), legacy_themes, "themes://changed", false);
+                    watch_dir(h.clone(), legacy_plugins, "plugins://changed", true);
+                }
+            }
             apply_glass(app.handle());
             // the window is created hidden (tauri.conf.json "visible": false)
             // so any launch-time resize happens on an invisible window — a
@@ -1771,6 +2031,13 @@ pub fn run() {
             // first Alt+Space must see "visible and focused" to hide again
             show_main(app.handle());
 
+            // mac: align the native traffic lights with the HTML titlebar's
+            // vertical center (macOS parks them at the stock titlebar height)
+            #[cfg(target_os = "macos")]
+            if let Some(w) = app.handle().get_webview_window("main") {
+                crate::platform::center_traffic_lights(&w);
+            }
+
             #[cfg(windows)]
             {
                 // per-instance IPC hook for last-focused hotkey forwarding
@@ -1788,7 +2055,10 @@ pub fn run() {
             Ok(())
         })
         .build(tauri::generate_context!())
-        .expect("error while building tauri application")
+        .unwrap_or_else(|e| {
+            eprintln!("tauri build failed: {e}");
+            std::process::exit(1);
+        })
         .run(|_app_handle, event| {
             // track last focused HWND for system-wide hotkeys across multiple
             // instances. Keyboard-focus repair on reactivation lives in the
@@ -1810,6 +2080,21 @@ pub fn run() {
                     }
                 }
             }
+            // mac: fullscreen/zoom transitions reset the traffic-light
+            // frames — re-center on every focus (idempotent, cheap)
+            #[cfg(target_os = "macos")]
+            if let RunEvent::WindowEvent {
+                label,
+                event: WindowEvent::Focused(true),
+                ..
+            } = &event
+            {
+                if label == "main" {
+                    if let Some(w) = _app_handle.get_webview_window("main") {
+                        crate::platform::center_traffic_lights(&w);
+                    }
+                }
+            }
             // keep the browser webview glued below the top bar across
             // window resizes / DPI changes while it is open
             if let RunEvent::WindowEvent {
@@ -1822,15 +2107,80 @@ pub fn run() {
                     browser::on_main_resize(_app_handle, *size);
                 }
             }
+            // mac: fullscreen/zoom transitions reset the traffic-light frames
+            // asynchronously — AFTER the final resize of the animation, and
+            // fullscreen never changes focus. Debounce a re-center on resizes
+            // so it lands once the layout has settled (idempotent, cheap)
+            #[cfg(target_os = "macos")]
+            if let RunEvent::WindowEvent {
+                label,
+                event: WindowEvent::Resized(_),
+                ..
+            } = &event
+            {
+                if label == "main" {
+                    use std::sync::atomic::{AtomicUsize, Ordering};
+                    static TL_GEN: AtomicUsize = AtomicUsize::new(0);
+                    let gen = TL_GEN.fetch_add(1, Ordering::Relaxed) + 1;
+                    let h = _app_handle.clone();
+                    std::thread::spawn(move || {
+                        // two passes: right after the animation settles, then
+                        // again in case AppKit re-laid the buttons later
+                        for delay_ms in [250, 600] {
+                            std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+                            if TL_GEN.load(Ordering::Relaxed) != gen {
+                                return; // a newer resize superseded this pass
+                            }
+                            // AppKit calls MUST run on the main thread — the
+                            // off-main path crashed during fullscreen resizes
+                            let hc = h.clone();
+                            let ht = hc.clone();
+                            let _ = hc.run_on_main_thread(move || {
+                                if let Some(w) = ht.get_webview_window("main") {
+                                    crate::platform::center_traffic_lights(&w);
+                                }
+                            });
+                        }
+                    });
+                }
+            }
+            // mac: Dock icon click while trayed — macOS fires Reopen
+            // (applicationShouldHandleReopen). An explicit reopen is always
+            // show intent, mirroring the tray click's else branch
+            #[cfg(target_os = "macos")]
+            if let RunEvent::Reopen { .. } = &event {
+                show_main(_app_handle);
+            }
+            // native close paths (mac red stoplight, taskbar "Close window"):
+            // default to hide-to-tray like every other path out of the app,
+            // unless the user opted into real quits ("Close on X" setting)
+            if let RunEvent::WindowEvent {
+                label,
+                event: WindowEvent::CloseRequested { api, .. },
+                ..
+            } = &event
+            {
+                if label == "main"
+                    && !CLOSE_ON_X.load(std::sync::atomic::Ordering::Relaxed)
+                {
+                    api.prevent_close();
+                    hide_main(_app_handle);
+                }
+            }
             if let RunEvent::Exit = event {
+                // shutdown persistent whisper server (GPU) if running
+                voice::shutdown_whisper_server();
                 if let Some(mut child) = _app_handle
                     .state::<ServerState>()
                     .child
                     .lock()
-                    .unwrap()
+                    .unwrap_or_else(|e| e.into_inner())
                     .take()
                 {
                     let _ = child.kill();
+                    // give the OS a moment to release the port / file lock so
+                    // the next launch or the updater's file swap doesn't collide
+                    let _ = child.wait();
                 }
                 // staged update swap + relaunch — after the sidecar is dead
                 // so its image file is no longer locked

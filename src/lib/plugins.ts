@@ -9,6 +9,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { stripComments } from "./themes";
 import { setPluginLexicon } from "./voiceLexicon";
 import { playSound as hostPlaySound } from "./sounds";
+import { matchesEvent as hostMatchesEvent, normalizeBinding as hostNormalizeBinding } from "./hotkeys";
+import { registerPluginTranslations, createPluginT, getLang } from "./i18n";
 
 export type PluginApi = {
   id: string;
@@ -20,6 +22,16 @@ export type PluginApi = {
   // the live oc.settings blob (persisted synchronously on every change)
   settings: () => Record<string, unknown>;
   playSound: (kind: string) => void;
+  // hotkey helpers — same as core (so plugins respect user rebinds)
+  matchesEvent: typeof hostMatchesEvent;
+  normalizeBinding: typeof hostNormalizeBinding;
+  // i18n — plugins can register their own keys and translate via t
+  t: (key: string, params?: Record<string, string | number>) => string;
+  i18n: {
+    t: (key: string, params?: Record<string, string | number>) => string;
+    register: (bundles: Partial<Record<"en" | "fr" | "es", Record<string, string>>>) => void;
+    getLanguage: () => "en" | "fr" | "es";
+  };
 };
 
 export type PluginExt = {
@@ -32,6 +44,10 @@ export type PluginExt = {
   exec?: (act: unknown) => Promise<string | void> | string | void;
   triggers?: string[];
   vocab?: string[];
+  // whether an embedded (mid-sentence) trigger needs spoken yes/no.
+  // false → embedded fires immediately like a direct hit. true (default)
+  // → waits for confirmation + toast/TTS. Can be per-act.
+  requiresConfirmation?: boolean | ((act: unknown) => boolean);
   // phrasing rewrites applied after the built-in lexicon rules
   lexicon?: [RegExp, string][];
   // React component rendered as a Settings drawer section
@@ -69,6 +85,21 @@ export type PluginExt = {
     takesArgs?: boolean;
     handle: (args: string) => Promise<string | void> | string | void;
   }[];
+  // app-wide hotkeys contributed by the plugin — appear as rebindable pills
+  // in the keybinds menu (same as core hotkeys). Handled via onHotkey or
+  // per-entry handle, dispatched centrally through matchesEvent.
+  hotkeys?: {
+    id: string;
+    default: string | null;
+    label: string;
+    description?: string;
+    handle?: () => void | Promise<void>;
+  }[];
+  onHotkey?: (id: string) => void | Promise<void>;
+  // lifecycle: called once after successful load (boot, enable, hot-reload).
+  // Generic background hook — e.g. light plugins refresh device list here.
+  // Failures are swallowed; not all plugins need it.
+  init?: () => void | Promise<void>;
 };
 
 export type LoadedPlugin = {
@@ -172,9 +203,13 @@ export function removeDisabledId(id: string): void {
 // slash registry — aggregated from loaded plugins for handleSlash/buildCmdList
 let slashStore: { name: string; description: string; takesArgs?: boolean; handle: (args: string) => Promise<string | void> | string | void }[] = [];
 export function getPluginSlash() { return slashStore; }
-function setSlashFrom(plugins: LoadedPlugin[]) {
+export function setSlashFrom(plugins: LoadedPlugin[]) {
   slashStore = plugins.flatMap((p) => (p.disabled ? [] : p.ext?.slash ?? []));
   try { window.dispatchEvent(new CustomEvent("oc:plugin-slash", { detail: slashStore.map((s) => s.name) })); } catch {}
+}
+export function syncPluginVocabAndSlash(plugins: LoadedPlugin[]) {
+  setPluginLexicon(plugins.flatMap((p) => (p.disabled ? [] : p.ext?.lexicon ?? [])));
+  setSlashFrom(plugins);
 }
 
  // assets of the last load — active resources keyed by dir so a single
@@ -185,13 +220,18 @@ const active = new Map<string, { url?: string; style?: HTMLStyleElement }>();
 const lastScan = new Map<string, { manifest: string; main: string; css: string }>();
 
 function revokeActive(dir: string, id?: string) {
+  const seen = new Set<object>();
   for (const key of [dir, id].filter(Boolean) as string[]) {
     const a = active.get(key);
-    if (a) {
-      if (a.url) URL.revokeObjectURL(a.url);
+    if (!a) continue;
+    if (!seen.has(a)) {
+      seen.add(a);
+      if (a.url) {
+        try { URL.revokeObjectURL(a.url); } catch {}
+      }
       a.style?.remove();
-      active.delete(key);
     }
+    active.delete(key);
   }
   // style is also indexed by id (dataset.plugin) — remove that too if dir!=id
   if (id && id !== dir) {
@@ -213,11 +253,19 @@ async function loadOne(d: { dir: string; manifest: string; main: string; css: st
   // replace any previous resources for this dir/id before re-importing
   revokeActive(d.dir, man.id);
   const url = URL.createObjectURL(new Blob([d.main], { type: "text/javascript" }));
-  const mod = await import(/* @vite-ignore */ url);
+  let mod: any;
+  let loaded = false;
+  try {
+    mod = await import(/* @vite-ignore */ url);
+    loaded = true;
+  } finally {
+    if (!loaded) URL.revokeObjectURL(url);
+  }
   const entry: { url?: string; style?: HTMLStyleElement } = { url };
   active.set(d.dir, entry);
   // also keep an alias keyed by id for quick disable lookup when dir != id (same object)
   if (man.id !== d.dir) active.set(man.id, entry);
+  const pluginT = createPluginT(man.id);
   const api: PluginApi = {
     id: man.id,
     invoke,
@@ -235,6 +283,14 @@ async function loadOne(d: { dir: string; manifest: string; main: string; css: st
     playSound: (kind: string) => {
       try { (hostPlaySound as unknown as (k: string) => void)(kind as never); } catch {}
     },
+    matchesEvent: hostMatchesEvent,
+    normalizeBinding: hostNormalizeBinding,
+    t: pluginT as PluginApi["t"],
+    i18n: {
+      t: pluginT as PluginApi["i18n"]["t"],
+      register: (bundles) => registerPluginTranslations(man.id, bundles),
+      getLanguage: () => getLang(),
+    },
   };
   const raw = typeof mod.default === "function" ? await mod.default(api) : null;
   if (!raw) {
@@ -248,14 +304,30 @@ async function loadOne(d: { dir: string; manifest: string; main: string; css: st
     const cur = active.get(d.dir);
     if (cur) cur.style = style;
   }
-  return { id: man.id, name: man.name, dir: d.dir, version: man.version, description: man.description, ext: { ...raw, id: man.id, name: man.name }, error: "", disabled: false };
+  const ext: PluginExt = { ...raw, id: man.id, name: man.name };
+  // generic lifecycle — no hardcoded ids; plugins that need background work
+  // (e.g. refresh available lights/rooms) wire it via ext.init
+  const initFn = (raw as { init?: unknown }).init;
+  if (typeof initFn === "function") {
+    Promise.resolve()
+      .then(() => (initFn as () => unknown).call(raw))
+      .catch(() => {});
+  }
+  return { id: man.id, name: man.name, dir: d.dir, version: man.version, description: man.description, ext, error: "", disabled: false };
 }
 
 export async function loadPlugins(): Promise<LoadedPlugin[]> {
   // full reload — used at boot. Clears everything and rebuilds from scan.
-  for (const [, a] of active) {
-    if (a.url) URL.revokeObjectURL(a.url);
-    a.style?.remove();
+  {
+    const seen = new Set<object>();
+    for (const [, a] of active) {
+      if (seen.has(a)) continue;
+      seen.add(a);
+      if (a.url) {
+        try { URL.revokeObjectURL(a.url); } catch {}
+      }
+      a.style?.remove();
+    }
   }
   active.clear();
   lastScan.clear();

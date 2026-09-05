@@ -1,14 +1,29 @@
 // voice lexicon — normalizes transcripts into the canonical English the
-// router matches against. Multilingual phrasing needs no tables here: an
-// unmatched utterance gets a second whisper pass with --translate before
-// routing gives up (see ChatPage), so this module only handles English
-// politeness wrappers and typo repair. Plugins add domain idioms via
-// ext.lexicon (applied after nothing else — they're the only rewrite table).
-//
+// router matches against. Core FR covers only generic UI commands; device
+// French (lights/curtains/…) lives in each plugin's own `lexicon` — the
+// plugin host aggregates all `ext.lexicon` arrays (see src/lib/plugins.ts) so
+// no French has to be hardcoded in core. Weak whisper models (tiny/base)
+// often return the source language instead of translating short clips, so
+// each plugin ships its own end-anchored French phrases.
 // Accents are stripped BEFORE matching (JS \b treats "é" as a non-word char,
 // which silently kills accented patterns).
 
 const deaccent = (s: string) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+
+// Core UI — generic French phrases (full-utterance, end-anchored so
+// dictation never collides). Device phrases are plugin-owned.
+const FR: [RegExp, string][] = [
+  [/\b(?:arretes?|arreter|stoppe|annule|annuler)(?:\s+(?:ca|sa|la|le|les|it|that|generation|lecture))*$/, "stop"],
+  [/\b(?:envoie|envoi|envoyer)\s*(?:ca|sa|le message|it|that)?$/, "send"],
+  [/\b(?:envoie|envoi|envoyer)\s+(.+)$/, "send $1"],
+  [/\bdicte\s+(?:moi\s+)?(.+)$/, "prompt $1"],
+  [/\bdicte$/, "prompt"],
+  [/\b(?:nouvelle|nouveau)\s+(?:session|conversation|chat)$/, "new session"],
+  [/\bouvre(?:r|z)?\s+(?:les?\s+)?(?:parametres|reglages)$/, "open the settings"],
+  [/\b(?:ferme|fermer)\s+(?:les?\s+)?(?:parametres|reglages)$/, "close the settings"],
+  [/\b(?:montre|affiche)(?:r|z)?\s+(?:moi\s+)?(?:les?\s+)?(?:parametres|reglages)$/, "show the settings"],
+  [/\b(?:tu\s+)?m'entends(?:\s*-?\s*tu)?$/, "hear me"],
+];
 
 // plugin-contributed rewrites (ext.lexicon) — replaceable wholesale so
 // hot-reloading a plugin swaps its vocabulary cleanly
@@ -28,6 +43,7 @@ import { isRealWord } from "./dictWords.ts";
 export function expandVoice(t: string): string {
   let prev = deaccent(t).replace(LEAD, "");
   while (TAIL.test(prev)) prev = prev.replace(TAIL, "");
+  for (const [re, to] of FR) prev = prev.replace(re, to);
   for (const [re, to] of EXTRA) prev = prev.replace(re, to);
   return prev.replace(/\s+/g, " ").trim();
 }

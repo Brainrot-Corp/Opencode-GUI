@@ -250,11 +250,11 @@ export default function TerminalPanel({
   const workspaceRef = useRef(workspace);
   useEffect(() => { workspaceRef.current = workspace; }, [workspace]);
 
+  const termsRef = useRef(terms);
+  useEffect(() => { termsRef.current = terms; }, [terms]);
+
   const onTitle = useCallback((id: number, title: string) => {
     setTerms((prev) => prev.map((t) => (t.id === id ? { ...t, title: title.slice(0, 80) } : t)));
-  }, []);
-  const onDead = useCallback((id: number, dead: boolean) => {
-    setTerms((prev) => prev.map((t) => (t.id === id ? { ...t, dead } : t)));
   }, []);
   const onErr = useCallback((id: number, err: string) => {
     setTerms((prev) => prev.map((t) => (t.id === id ? { ...t, err } : t)));
@@ -276,58 +276,59 @@ export default function TerminalPanel({
       return next;
     });
   }, [activeId, onClose]);
+  const onDead = useCallback((id: number, dead: boolean) => {
+    if (!dead) {
+      setTerms((prev) => prev.map((t) => (t.id === id ? { ...t, dead } : t)));
+      return;
+    }
+    // any exited terminal instance should be closed — auto-remove instead of lingering as "exited"
+    onExit(id);
+  }, [onExit]);
 
   const addTerm = useCallback((profileId?: string | null) => {
-    let createdId: number | null = null;
-    let didAdd = false;
-    setTerms((prev) => {
-      if (prev.length >= 8) return prev;
-      const id = nextIdRef.current++;
-      const gen = genCounterRef.current++;
-      const cwd = workspaceRef.current ?? "";
-      const pid = profileId !== undefined ? profileId : (terminal?.defaultProfileId ?? null);
-      const resolved = resolveProfile(pid);
-      const entry: TermEntry = {
-        id, gen, title: `Terminal ${id}`, cwd, dead: false, err: "",
-        shell: resolved?.path, args: resolved?.args, shellName: resolved?.name ?? (pid ? undefined : "System default"),
-      };
-      createdId = id;
-      didAdd = true;
-      return [...prev, entry];
-    });
-    if (!didAdd) {
+    if (termsRef.current.length >= 8) {
       setMaxErr("max 8 terminals");
       window.setTimeout(() => setMaxErr(""), 2500);
       playSound("click");
       return;
     }
-    if (createdId !== null) setActiveId(createdId);
+    const id = nextIdRef.current++;
+    const gen = genCounterRef.current++;
+    const cwd = workspaceRef.current ?? "";
+    const pid = profileId !== undefined ? profileId : (terminal?.defaultProfileId ?? null);
+    const resolved = resolveProfile(pid);
+    const entry: TermEntry = {
+      id, gen, title: `Terminal ${id}`, cwd, dead: false, err: "",
+      shell: resolved?.path, args: resolved?.args, shellName: resolved?.name ?? (pid ? undefined : "System default"),
+    };
+    setTerms((prev) => [...prev, entry]);
+    setActiveId(id);
     playSound("click");
     setAddMenuOpen(false);
   }, [terminal?.defaultProfileId, resolveProfile]);
 
   const reloadTerm = useCallback(async (id: number) => {
-    const t = terms.find((x) => x.id === id);
+    const t = termsRef.current.find((x) => x.id === id);
     if (!t) return;
     playSound("click");
     // kill old gen before bumping — view will spawn with new gen
     await invoke("pty_kill", { id, gen: t.gen }).catch(() => {});
     const newGen = genCounterRef.current++;
     setTerms((prev) => prev.map((x) => (x.id === id ? { ...x, gen: newGen, dead: false, err: "" } : x)));
-  }, [terms]);
+  }, [resolveProfile]);
 
   const changeTermShell = useCallback(async (id: number, profileId: string | null) => {
-    const t = terms.find((x) => x.id === id);
+    const t = termsRef.current.find((x) => x.id === id);
     if (!t) return;
     playSound("click");
     await invoke("pty_kill", { id, gen: t.gen }).catch(() => {});
     const resolved = resolveProfile(profileId);
     const newGen = genCounterRef.current++;
     setTerms((prev) => prev.map((x) => (x.id === id ? { ...x, gen: newGen, dead: false, err: "", shell: resolved?.path, args: resolved?.args, shellName: resolved?.name ?? (profileId ? undefined : "System default") } : x)));
-  }, [terms, resolveProfile]);
+  }, [resolveProfile]);
 
   const killTerm = useCallback(async (id: number) => {
-    const t = terms.find((x) => x.id === id);
+    const t = termsRef.current.find((x) => x.id === id);
     if (t) {
       await invoke("pty_kill", { id, gen: t.gen }).catch(() => {});
     }
@@ -346,7 +347,7 @@ export default function TerminalPanel({
       }
       return next;
     });
-  }, [terms, activeId, onClose]);
+  }, [activeId, onClose]);
 
   // vertical resize handle (same as single-terminal version)
   const startResize = useCallback((e: React.MouseEvent) => {

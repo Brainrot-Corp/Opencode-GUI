@@ -8,14 +8,13 @@
 
 .titlebar {
   height: 42px;
-  /* flex child + z-index: paints above the main panels, so the theme
-     dropdown overflows past the glass stage instead of under it */
   z-index: 10;
   flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding-left: 18px;
+  /* macOS traffic lights inset — overridden via html.mac */
+  padding-left: var(--traffic-inset, 18px);
   /* identical soft tones to the session sidebar, running horizontally:
      left edge matches the sidebar's top so they blend at the corner */
   background: linear-gradient(90deg, rgba(var(--chrome-rgb), 0.14), rgba(var(--chrome-rgb), 0.22));
@@ -23,6 +22,9 @@
   -webkit-backdrop-filter: blur(14px);
   border-bottom: 1px solid var(--line);
   user-select: none;
+}
+html.mac .titlebar {
+  --traffic-inset: 76px;
 }
 .titlebar .brand {
   margin: 0;
@@ -299,18 +301,6 @@ button.debrief-indicator.idle .debrief-dot {
   /* zero margin — panels sit flush edge to edge */
   padding: 0;
   gap: 0;
-}
-
-.banner {
-  width: 100%;
-  margin: 0 0 6px;
-  padding: 9px 16px;
-  border-radius: 0;
-  background: rgba(224, 143, 143, 0.07);
-  border: 1px solid rgba(224, 143, 143, 0.25);
-  color: var(--danger);
-  font-size: 12.5px;
-  letter-spacing: 0.02em;
 }
 
 .empty {

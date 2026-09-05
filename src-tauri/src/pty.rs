@@ -24,7 +24,7 @@ pub struct PtyState(pub Mutex<HashMap<u32, Arc<PtySession>>>);
 const MAX_TERMS: usize = 8;
 
 fn default_shell() -> String {
-    std::env::var("SHELL").unwrap_or_else(|_| "powershell.exe".into())
+    crate::platform::default_shell()
 }
 
 fn parse_shell_args(raw: Option<String>) -> Vec<String> {
@@ -56,12 +56,7 @@ fn parse_shell_args(raw: Option<String>) -> Vec<String> {
 }
 
 fn workdir(cwd: &str) -> std::path::PathBuf {
-    let p = if cwd.is_empty() {
-        std::path::PathBuf::from(std::env::var("USERPROFILE").unwrap_or_default())
-    } else {
-        std::path::PathBuf::from(cwd)
-    };
-    if p.is_dir() { p } else { std::path::PathBuf::from(std::env::var("USERPROFILE").unwrap_or_default()) }
+    crate::platform::resolve_workdir(cwd)
 }
 
 impl PtySession {
@@ -153,6 +148,13 @@ pub fn pty_spawn(
         cmd.arg(a);
     }
     cmd.cwd(workdir(&cwd));
+    // The shell talks to xterm.js, not whatever terminal launched the app. GUI
+    // launches (Finder/Dock/Start Menu) inherit no TERM — without it zsh's ZLE
+    // loses terminfo keybindings (dead arrow keys, no erase, Ctrl+L won't
+    // clear). Force a TERM matching the front-end surface unconditionally, so
+    // an inherited screen/tmux TERM can't lie either.
+    cmd.env("TERM", "xterm-256color");
+    cmd.env("COLORTERM", "truecolor");
     let child = pair.slave.spawn_command(cmd).map_err(|e| format!("{}: {e}", shell_cmd))?;
     drop(pair.slave);
 
@@ -266,6 +268,8 @@ pub fn pty_spawn(
         if map.contains_key(&id) {
             kill_and_close(&mut map, id);
         } else if map.len() >= MAX_TERMS {
+            // RC-07: just-created PTY would leak (child + reader threads) if we return early
+            session.kill();
             return Err(format!("max terminals ({MAX_TERMS}) reached"));
         }
         map.insert(id, session);

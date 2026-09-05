@@ -22,8 +22,6 @@ export type ObCopy = {
   loadingModels: string;
   voiceTitle: string;
   voiceDesc: string;
-  handsFreeName: string;
-  handsFreeDesc: string;
   multiName: string;
   multiDesc: string;
   speakName: string;
@@ -64,12 +62,9 @@ const en: ObCopy = {
   voiceTitle: "Voice & speech",
   voiceDesc:
     "Everything runs locally on your machine — speech is recognized and spoken offline once the models are downloaded. All features start off; flip what you want.",
-  handsFreeName: "Hands-free dictation",
-  handsFreeDesc:
-    'Mic stays live and listens for commands — say "prompt …" to fill the composer, "send …" to fill and send at once',
   multiName: "Multilingual commands",
   multiDesc:
-    "No English match? Re-runs the utterance through whisper's translate task before giving up to dictation",
+    "Speech is translated to English before command matching — on a miss, the native-language transcription gets one retry",
   speakName: "Speak replies",
   speakDesc:
     "Read assistant answers aloud in a neural voice (code skipped) — needs the Secondary model and a downloaded voice",
@@ -113,12 +108,9 @@ const de: ObCopy = {
   voiceTitle: "Sprache & Stimme",
   voiceDesc:
     "Läuft komplett lokal auf deinem Rechner — Spracherkennung und Ausgabe funktionieren offline, sobald die Modelle geladen sind. Alles startet aus; schalte ein, was du willst.",
-  handsFreeName: "Freihändiges Diktieren",
-  handsFreeDesc:
-    'Das Mikrofon bleibt aktiv und lauscht auf Befehle — sag „Prompt …" zum Ausfüllen, „Senden …" zum Sofort-Absenden',
   multiName: "Mehrsprachige Befehle",
   multiDesc:
-    "Kein englischer Treffer? Die Äußerung wird zusätzlich durch whispers Übersetzung geschickt, bevor sie zum Diktat wird",
+    "Sprache wird vor dem Befehlsabgleich ins Englische übersetzt — bei keinem Treffer folgt ein zweiter Durchlauf in der Originalsprache",
   speakName: "Antworten vorlesen",
   speakDesc:
     "Liest Antworten mit einer neuronalen Stimme vor (Code ausgenommen) — benötigt das Sekundärmodell und eine heruntergeladene Stimme",
@@ -162,12 +154,9 @@ const fr: ObCopy = {
   voiceTitle: "Voix & parole",
   voiceDesc:
     "Tout tourne en local sur votre machine — reconnaissance et synthèse fonctionnent hors ligne une fois les modèles téléchargés. Tout est désactivé au départ ; activez ce que vous voulez.",
-  handsFreeName: "Dictée mains libres",
-  handsFreeDesc:
-    "Le micro reste actif et écoute les commandes — dites « prompte … » pour remplir le champ, « envoie … » pour envoyer aussitôt",
   multiName: "Commandes multilingues",
   multiDesc:
-    "Pas de correspondance en anglais ? L'énoncé repasse par la traduction de whisper avant de devenir dictée",
+    "La parole est traduite en anglais avant la recherche de commandes — en cas d'échec, nouvelle passe dans la langue d'origine",
   speakName: "Lire les réponses",
   speakDesc:
     "Lit les réponses à voix haute avec une voix neuronale (code exclu) — nécessite le modèle secondaire et une voix téléchargée",
@@ -211,12 +200,9 @@ const es: ObCopy = {
   voiceTitle: "Voz y habla",
   voiceDesc:
     "Todo funciona en local en tu equipo — el reconocimiento y la voz operan sin conexión tras descargar los modelos. Todo empieza apagado; activa lo que quieras.",
-  handsFreeName: "Dictado manos libres",
-  handsFreeDesc:
-    "El micrófono queda activo escuchando órdenes — di «prompt…» para rellenar el compositor, «enviar…» para enviar al instante",
   multiName: "Órdenes multilingües",
   multiDesc:
-    "¿Sin coincidencia en inglés? El audio vuelve a pasar por la traducción de whisper antes de dictarse",
+    "El habla se traduce al inglés antes de buscar órdenes; si no hay coincidencia, se reintenta en el idioma original",
   speakName: "Leer respuestas",
   speakDesc:
     "Lee las respuestas en voz alta con voz neuronal (sin código) — necesita el modelo secundario y una voz descargada",
@@ -259,11 +245,8 @@ const zh: ObCopy = {
   voiceTitle: "语音功能",
   voiceDesc:
     "一切都在本机运行 — 模型下载完成后语音识别与合成均可离线使用。所有功能默认关闭；按需开启即可。",
-  handsFreeName: "免提听写",
-  handsFreeDesc:
-    "麦克风保持监听命令状态 — 说“prompt …”填入输入框，“send …”填入并直接发送",
   multiName: "多语言指令",
-  multiDesc: "没有匹配到英语？会先经 whisper 翻译重试，再降级为听写",
+  multiDesc: "语音会先翻译成英语再匹配指令；未命中时用原语言再试一次",
   speakName: "朗读回复",
   speakDesc: "用神经网络语音读出回答（跳过代码）— 需要辅助模型和已下载的语音",
   needModel: "请先选择辅助模型",
@@ -291,5 +274,16 @@ export function resolveObCopy(tag: string | undefined): ObCopy {
 }
 
 export function obCopy(): ObCopy {
-  return resolveObCopy(typeof navigator === "undefined" ? "en" : navigator.language);
+  // prefer persisted app language (oc.settings) so onboarding respects the Settings drawer choice,
+  // fallback to navigator for first run / tests
+  let tag: string | undefined;
+  try {
+    const raw = typeof localStorage !== "undefined" ? localStorage.getItem("oc.settings") : null;
+    if (raw) {
+      const j = JSON.parse(raw);
+      if (typeof j.language === "string" && j.language) tag = j.language;
+    }
+    if (!tag) tag = typeof navigator !== "undefined" ? navigator.language : "en";
+  } catch { tag = typeof navigator !== "undefined" ? navigator.language : "en"; }
+  return resolveObCopy(tag);
 }

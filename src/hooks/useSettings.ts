@@ -14,7 +14,9 @@ import {
   type NormalizedTheme,
   type ThemeMeta,
 } from "../lib/themes";
-import { DEFAULT_HOTKEYS, normalizeBinding, type HotkeysMap } from "../lib/hotkeys";
+import { DEFAULT_HOTKEYS, normalizeBinding, type HotkeysMap, type PluginHotkeysMap } from "../lib/hotkeys";
+import { pushToast } from "./useToast";
+import { isWindows } from "../lib/platform";
 
 export type ThemeName = string;
 export type Mode = "dark" | "light";
@@ -81,9 +83,11 @@ const DEFAULT_COLOR_SETS: AppColors = {
 };
 
 export type CustomShell = { id: string; name: string; path: string; args: string };
+export type Lang = "en" | "fr" | "es";
 export type TerminalSettings = { defaultProfileId: string | null; customShells: CustomShell[] };
 
 export type AppSettings = {
+  language: Lang;
   theme: ThemeName;
   mode: Mode;
   alwaysOnTop: boolean;
@@ -100,13 +104,14 @@ export type AppSettings = {
   collapsed: boolean;
   voice: {
     model: string;
-    handsFree: boolean;
     sens: number;
     // debug transcript mode — show raw → router input → matched act
     debug: boolean;
     // no English match → re-run the utterance through whisper's
     // --translate task and retry routing
     multilingual: boolean;
+    // prefer the GPU (NVIDIA cublas) whisper engine when installed
+    gpu: boolean;
   };
   speakReplies: boolean;
   // piper voice file ("<id>.onnx") for spoken replies — "" = none yet
@@ -124,12 +129,24 @@ export type AppSettings = {
   // opaque per-plugin config blobs — each plugin validates its own shape
   plugins: Record<string, Record<string, unknown>>;
   hotkeys: HotkeysMap;
+  pluginHotkeys: PluginHotkeysMap;
 };
 
 const KEY = "oc.settings";
 const HEX = /^#[0-9a-f]{6}$/i;
 
+function detectLang(): Lang {
+  try {
+    const tag = (typeof navigator !== "undefined" ? navigator.language : "en").toLowerCase();
+    if (tag.startsWith("fr")) return "fr";
+    if (tag.startsWith("es")) return "es";
+    return "en";
+  } catch { return "en"; }
+}
+function isLang(v: unknown): v is Lang { return v === "en" || v === "fr" || v === "es"; }
+
 const DEFAULTS: AppSettings = {
+  language: detectLang(),
   theme: "cyan",
   mode: "dark",
   alwaysOnTop: false,
@@ -155,7 +172,7 @@ const DEFAULTS: AppSettings = {
   workspace: "",
   workspaces: [],
   collapsed: true,
-  voice: { model: "ggml-base.bin", handsFree: false, sens: 0.7, debug: false, multilingual: false },
+  voice: { model: "ggml-large-v3-turbo-q8_0.bin", sens: 0.7, debug: false, multilingual: false, gpu: false },
   speakReplies: false,
   ttsVoice: "",
   ttsVol: 1,
@@ -166,6 +183,7 @@ const DEFAULTS: AppSettings = {
   terminal: { defaultProfileId: null, customShells: [] },
   plugins: {},
   hotkeys: structuredClone(DEFAULT_HOTKEYS),
+  pluginHotkeys: {},
 };
 
 function num(v: unknown, def: number, min: number, max: number) {
@@ -247,6 +265,7 @@ export function useSettings() {
       const theme: ThemeName = typeof p.theme === "string" && !legacy ? p.theme : "cyan";
       const mode: Mode = legacy ? "light" : p.mode === "light" ? "light" : "dark";
       return {
+        language: isLang(p.language) ? p.language : detectLang(),
         theme,
         mode,
         alwaysOnTop: !!p.alwaysOnTop,
@@ -278,13 +297,14 @@ export function useSettings() {
           const out: string[] = [];
           const seen = new Set<string>();
           const primary = typeof p.workspace === "string" ? p.workspace.trim() : "";
+          const norm = (s: string) => isWindows() ? s.toLowerCase() : s;
           for (const v of arr) {
             if (typeof v !== "string") continue;
             const t = v.trim();
-            if (!t || t === primary) continue;
-            const low = t.toLowerCase();
-            if (seen.has(low)) continue;
-            seen.add(low);
+            if (!t || norm(t) === norm(primary)) continue;
+            const key = norm(t);
+            if (seen.has(key)) continue;
+            seen.add(key);
             out.push(t);
             if (out.length >= 5) break;
           }
@@ -294,14 +314,16 @@ export function useSettings() {
           model:
             typeof p.voice?.model === "string" && p.voice.model
               ? p.voice.model
-              : "ggml-base.bin",
-          handsFree: !!p.voice?.handsFree,
+              : "ggml-large-v3-turbo-q8_0.bin",
           sens: num(p.voice?.sens, DEFAULTS.voice.sens, 0, 1),
           debug: !!p.voice?.debug,
           multilingual: p.voice?.multilingual === undefined ? false : !!p.voice.multilingual,
+          gpu: !!p.voice?.gpu,
         },
         ttsVoice:
-          typeof p.ttsVoice === "string" && p.ttsVoice.endsWith(".onnx") ? p.ttsVoice : "",
+          typeof p.ttsVoice === "string" && p.ttsVoice && !p.ttsVoice.includes("/") && !p.ttsVoice.includes("\\") && !p.ttsVoice.includes("..") && p.ttsVoice.length < 64
+            ? p.ttsVoice
+            : "",
         ttsVol: num(p.ttsVol, DEFAULTS.ttsVol, 0, 1),
         ttsSpeed: num(p.ttsSpeed, DEFAULTS.ttsSpeed, 0.5, 2),
         secondaryModel: typeof p.secondaryModel === "string" ? p.secondaryModel : "",
@@ -345,7 +367,22 @@ export function useSettings() {
           }
           return out;
         })(),
-        speakReplies: !!p.speakReplies && typeof p.secondaryModel === "string" && !!p.secondaryModel && typeof p.ttsVoice === "string" && p.ttsVoice.endsWith(".onnx"),
+        pluginHotkeys: (() => {
+          const out: PluginHotkeysMap = {};
+          const src = (p as any).pluginHotkeys;
+          if (src && typeof src === "object" && !Array.isArray(src)) {
+            for (const [k, v] of Object.entries(src as Record<string, unknown>)) {
+              if (typeof k !== "string" || !k.includes(":")) continue;
+              if (v === null) out[k] = null;
+              else if (typeof v === "string") {
+                const n = normalizeBinding(v);
+                out[k] = n;
+              }
+            }
+          }
+          return out;
+        })(),
+        speakReplies: !!p.speakReplies && typeof p.secondaryModel === "string" && !!p.secondaryModel && typeof p.ttsVoice === "string" && !!p.ttsVoice,
         // legacy showThinking (true = thinking expanded) inverts into the new
         // collapsed flag so existing users keep their default; fresh installs
         // start fully collapsed
@@ -360,7 +397,6 @@ export function useSettings() {
 
   // available themes — seeded from config at boot, hot-reloaded on file change
   const [themes, setThemes] = useState<Record<string, NormalizedTheme>>({});
-  const [themeError, setThemeError] = useState("");
 
   useEffect(() => {
     let disposed = false;
@@ -369,9 +405,8 @@ export function useSettings() {
         if (disposed) return;
         if (parsed) {
           setThemes(parsed);
-          setThemeError("");
         } else {
-          setThemeError("themes.json is invalid — keeping the last good set");
+          pushToast("themes.json is invalid — keeping the last good set");
         }
       });
     reload();
@@ -400,7 +435,14 @@ export function useSettings() {
     : activeModes[0];
 
   useEffect(() => {
-    localStorage.setItem(KEY, JSON.stringify(settings));
+    try {
+      localStorage.setItem(KEY, JSON.stringify(settings));
+    } catch (e) {
+      try { pushToast(`Failed to save settings: ${e}`); } catch {}
+    }
+    // mirror language to standalone key + notify i18n hooks
+    try { localStorage.setItem("oc.language", settings.language); } catch {}
+    try { window.dispatchEvent(new CustomEvent("oc:language-changed", { detail: settings.language })); } catch {}
   }, [settings]);
 
   // keep Rust file + api directory in sync so local debug builds survive
@@ -411,6 +453,11 @@ export function useSettings() {
     invoke("workspace_set", { path: settings.workspace }).catch(() => {});
     if (getDirectory() !== settings.workspace) setDirectory(settings.workspace);
   }, [settings.workspace]);
+
+  // native close button (mac stoplight / taskbar close) honors this Rust-side
+  useEffect(() => {
+    invoke("set_close_on_x", { on: settings.closeOnX }).catch(() => {});
+  }, [settings.closeOnX]);
 
   useEffect(() => {
     setSoundPrefs(settings.sounds);
@@ -577,6 +624,21 @@ export function useSettings() {
     [appearanceOverrides],
   );
 
+  // overwrite themes.json on disk with the built-in defaults — file watcher
+  // will also emit themes://changed, but we apply immediately for instant feedback
+  const resetThemes = useCallback(async () => {
+    const text = defaultThemesJson();
+    try {
+      await invoke("theme_config_write", { content: text });
+      const parsed = parseThemesConfig(text);
+      if (parsed) {
+        setThemes(parsed);
+      }
+    } catch (e) {
+      pushToast(String(e));
+    }
+  }, []);
+
   return {
     settings,
     update,
@@ -584,8 +646,8 @@ export function useSettings() {
     updateSounds,
     updateColors,
     resetColors,
+    resetThemes,
     themes: themeList,
-    themeError,
     activeModes,
     effectiveMode,
     colorsFor: mergedColorsFor,

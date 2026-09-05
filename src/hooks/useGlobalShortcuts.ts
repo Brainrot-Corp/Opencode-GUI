@@ -36,6 +36,7 @@ export function useGlobalShortcuts({
   onOpenWorkspace,
   onNewInstance,
   onNewSession,
+  onToggleAgents,
 }: {
   settings: AppSettings;
   update: (patch: Partial<AppSettings>) => void;
@@ -65,6 +66,8 @@ export function useGlobalShortcuts({
   onNewInstance?: () => void;
   // Ctrl+N creates a new session — app-wide like Ctrl+B/O/W
   onNewSession?: () => void;
+  // Alt+A toggles the agents board
+  onToggleAgents?: () => void;
 }) {
   // double-Escape stop gesture — armed by the first free Escape (the stop
   // button surfaces the window as a draining countdown ring), landed by the
@@ -94,11 +97,9 @@ export function useGlobalShortcuts({
     return () => document.removeEventListener("click", click, true);
   }, [openBrowser]);
 
-  // Ctrl+wheel / Ctrl +/-/0 drive the uiScale setting through the shared
-  // zoom presets — preventDefault stays so WebView2's own zoom never kicks in
+  // Ctrl/Cmd+wheel / Ctrl +/-/0 drive the uiScale setting through the shared
+  // zoom presets — preventDefault stays so WebView zoom never kicks in
   useEffect(() => {
-    // one preset step per ~50px of accumulated wheel delta — trackpads emit
-    // many small deltas, mouse notches one big one
     let acc = 0;
     const stepZoom = (dir: 1 | -1) => {
       const i = UI_SCALES.indexOf(settings.uiScale);
@@ -107,7 +108,7 @@ export function useGlobalShortcuts({
       if (next !== settings.uiScale) update({ uiScale: next });
     };
     const wheel = (e: WheelEvent) => {
-      if (!e.ctrlKey) return;
+      if (!e.ctrlKey && !(e as any).metaKey) return;
       e.preventDefault();
       acc += e.deltaY;
       if (Math.abs(acc) >= 50) {
@@ -210,12 +211,11 @@ export function useGlobalShortcuts({
     return () => window.removeEventListener("keydown", onKey, true);
   }, []);
 
-  // Alt+Space: suppress Windows system menu and toggle window (tray) when focused.
-  // The Rust global-shortcut handles system-wide toggling, but when the window is
-  // focused Windows still shows the legacy Restore/Move/Size menu on Alt+Space
-  // before the global shortcut fires. Intercepting here restores the old
-  // "Alt+Space toggles app in focus / in the tray" behavior.
+  // Alt+Space: Windows only — suppress system menu and toggle window.
+  // On macOS Alt+Space is not a system menu (Cmd+Space is Spotlight).
   useEffect(() => {
+    const isMac = typeof navigator !== "undefined" && /Mac/i.test(navigator.platform || "");
+    if (isMac) return;
     const onKey = (e: KeyboardEvent) => {
       if (!e.altKey || e.ctrlKey || e.shiftKey || e.metaKey) return;
       const isSpace = e.code === "Space" || e.key === " " || e.key === "Spacebar";
@@ -367,6 +367,21 @@ export function useGlobalShortcuts({
     return () => window.removeEventListener("keydown", key);
   }, [onNewSession, settings.hotkeys.newSession]);
 
+  // Toggle agents board — rebindable (default Alt+A)
+  useEffect(() => {
+    if (!onToggleAgents) return;
+    const b = settings.hotkeys.toggleAgents;
+    if (!b) return;
+    const key = (e: KeyboardEvent) => {
+      if (!matchesEvent(e, b)) return;
+      e.preventDefault();
+      playSound("click");
+      onToggleAgents();
+    };
+    window.addEventListener("keydown", key);
+    return () => window.removeEventListener("keydown", key);
+  }, [onToggleAgents, settings.hotkeys.toggleAgents]);
+
   // Rust emits visibility://changed on tray click / Alt+Space / tray menu
   useEffect(() => {
     let un: (() => void) | undefined;
@@ -391,73 +406,96 @@ export function useGlobalShortcuts({
         // don't remember transient menu items that will be unmounted
         if (ae.closest(".ctx-menu, .cmd-menu, .model-menu")) return;
         savedRef.current = ae;
+        // marker for Rust eval fallback (runs when JS listener not yet mounted)
+        try { (window as any).__oc_lastWasTerm = !!ae.closest(".xterm, .term-dock, .term-body, .term-mount"); } catch {}
       }
     };
 
     const rescueFocus = () => {
-      // let the OS focus settle before poking the DOM (Alt+Tab posts focus async)
-      requestAnimationFrame(() => {
-        window.setTimeout(() => {
-          // visible dialog/drawer/menu owns focus — don't steal to composer
-          const overlay = document.querySelector(
-            ".dlg-scrim, .drawer-scrim.open, .ctx-menu, .cmd-menu, .model-menu",
-          ) as HTMLElement | null;
-          if (overlay) {
-            if (!overlay.contains(document.activeElement)) {
-              const focusable = overlay.querySelector(
-                "button, [href], input, select, textarea, [tabindex]:not([tabindex=\"-1\"])",
-              ) as HTMLElement | null;
-              // ensure DOM can receive keydowns even if overlay has no focusable
-              window.focus();
-              focusable?.focus({ preventScroll: true } as any);
-              if (document.hasFocus()) return;
-            } else {
-              // re-assert existing overlay focus so WebView2 re-routes keys
-              (document.activeElement as HTMLElement | null)?.focus?.({ preventScroll: true } as any);
-              window.focus();
-              return;
-            }
-          }
-
-          const ae = document.activeElement as HTMLElement | null;
-          const saved = savedRef.current;
-
-          // try saved element first (usually the composer textarea)
-          if (saved && document.contains(saved) && saved !== document.body) {
+      // shared core — called immediately and again after OS settle
+      const doRescue = () => {
+        // visible dialog/drawer/menu owns focus — don't steal to composer
+        const overlay = document.querySelector(
+          ".dlg-scrim, .drawer-scrim.open, .ctx-menu, .cmd-menu, .model-menu",
+        ) as HTMLElement | null;
+        if (overlay) {
+          if (!overlay.contains(document.activeElement)) {
+            const focusable = overlay.querySelector(
+              "button, [href], input, select, textarea, [tabindex]:not([tabindex=\"-1\"])",
+            ) as HTMLElement | null;
             window.focus();
-            try {
-              saved.focus({ preventScroll: true } as any);
-            } catch {}
-            if (document.hasFocus() && document.activeElement === saved) return;
-            // xterm / non-input saved targets may not take DOM focus — fall through
-          }
-
-          // current element still there but WebView2 lost its route — re-focus it
-          if (ae && ae !== document.body && document.contains(ae)) {
+            focusable?.focus({ preventScroll: true } as any);
+            if (document.hasFocus()) return true;
+          } else {
+            (document.activeElement as HTMLElement | null)?.focus?.({ preventScroll: true } as any);
             window.focus();
-            try {
-              ae.focus({ preventScroll: true } as any);
-            } catch {}
-            if (document.hasFocus()) return;
+            return true;
           }
+        }
 
-          // fallback: composer → file editor → body. Any focused element inside
-          // the document re-enables window `keydown` bubbling for global shortcuts.
-          const fallback =
-            (document.querySelector(".composer textarea") as HTMLElement | null) ||
-            (document.querySelector(".fe-ta") as HTMLElement | null) ||
-            (document.querySelector(".term-mount") as HTMLElement | null) ||
-            document.body;
+        const ae = document.activeElement as HTMLElement | null;
+        const saved = savedRef.current;
+
+        if (saved && document.contains(saved) && saved !== document.body) {
           window.focus();
           try {
-            fallback?.focus({ preventScroll: true } as any);
+            saved.focus({ preventScroll: true } as any);
           } catch {}
-          // last resort: ensure body is focusable so window keydowns fire
-          if (!document.hasFocus() && document.body) {
-            if (!document.body.hasAttribute("tabindex")) document.body.setAttribute("tabindex", "-1");
-            document.body.focus({ preventScroll: true } as any);
-            window.focus();
+          if (document.hasFocus() && document.activeElement === saved) return true;
+        }
+
+        if (ae && ae !== document.body && document.contains(ae)) {
+          window.focus();
+          try {
+            ae.focus({ preventScroll: true } as any);
+          } catch {}
+          if (document.hasFocus()) return true;
+        }
+
+        const termHelper = document.querySelector(
+          ".term-dock:not(.closed) .xterm-helper-textarea",
+        ) as HTMLElement | null;
+        const savedWasTerm =
+          !!(saved && (saved as HTMLElement).closest?.(".xterm, .term-dock, .term-body, .term-mount"));
+        const aeWasTerm =
+          !!(ae && (ae as HTMLElement).closest?.(".xterm, .term-dock, .term-body, .term-mount"));
+        // also respect the explicit marker set on blur (covers cases where savedRef stale)
+        const markerWasTerm = !!(window as any).__oc_lastWasTerm;
+        const wasTerm = savedWasTerm || aeWasTerm || markerWasTerm;
+        let fallback: HTMLElement | null = null;
+        if (wasTerm && termHelper) {
+          fallback = termHelper;
+        } else {
+          fallback =
+            (document.querySelector(".composer textarea") as HTMLElement | null) ||
+            (document.querySelector(".fe-ta") as HTMLElement | null) ||
+            termHelper ||
+            document.body;
+        }
+        window.focus();
+        try {
+          fallback?.focus({ preventScroll: true } as any);
+          if (fallback !== termHelper && termHelper && document.activeElement !== termHelper && wasTerm) {
+            termHelper.focus({ preventScroll: true } as any);
           }
+        } catch {}
+        if (document.hasFocus()) return true;
+        if (!document.hasFocus() && document.body) {
+          if (!document.body.hasAttribute("tabindex")) document.body.setAttribute("tabindex", "-1");
+          document.body.focus({ preventScroll: true } as any);
+          window.focus();
+        }
+        return document.hasFocus();
+      };
+
+      // immediate attempt — catches the first keystroke before the 20ms OS-settle delay
+      // (otherwise the first key hits body → Windows beep → second key works)
+      const ok = doRescue();
+      if (ok) return;
+      // let the OS focus settle before retrying (Alt+Tab posts focus async)
+      requestAnimationFrame(() => {
+        window.setTimeout(() => {
+          doRescue();
         }, 20);
       });
     };
@@ -503,9 +541,31 @@ export function useGlobalShortcuts({
       })
       .catch(() => {});
 
+    // cold-launch beep fix: Rust's show_main/unpoison_input focused the
+    // window before React mounted, so no blur/focus event fires and
+    // activeElement stays body. First printable key then hits body → Windows beep.
+    // Run one event-driven rescue after paint so composer gets focus before
+    // the first keystroke. No hard-coded timeout; transitionend retry
+    // handles the dock height animation (helper not focusable until open).
+    let coldRaf = 0;
+    let coldDock: Element | null = null;
+    let coldOnEnd: ((e: Event) => void) | null = null;
+    if (typeof document !== "undefined" && document.activeElement === document.body) {
+      coldRaf = requestAnimationFrame(() => rescueFocus()) as unknown as number;
+      coldDock = document.querySelector(".term-dock");
+      if (coldDock) {
+        coldOnEnd = (e: Event) => {
+          if ((e as TransitionEvent).propertyName === "height") rescueFocus();
+        };
+        coldDock.addEventListener("transitionend", coldOnEnd as EventListener, { once: true } as any);
+      }
+    }
+
     return () => {
       window.removeEventListener("blur", onBlur);
       window.removeEventListener("focus", onFocus);
+      if (coldRaf) cancelAnimationFrame(coldRaf);
+      if (coldDock && coldOnEnd) coldDock.removeEventListener("transitionend", coldOnEnd as EventListener);
       unWin?.();
       unVis?.();
       unRestore?.();

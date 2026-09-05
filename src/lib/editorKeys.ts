@@ -2,6 +2,7 @@
 // Used by FileEditor, Composer (subset) and Notepad plugin.
 // Pure string ops + a textarea handler that preserves undo as far as
 // a controlled React textarea allows (setState + rAF caret restore).
+import { matchesEvent } from "./hotkeys";
 
 export type CommentStyle =
   | { kind: "line"; prefix: string }
@@ -28,10 +29,13 @@ export function lineCommentForPath(path?: string): CommentStyle {
 }
 
 function getLineAt(text: string, pos: number) {
+  // handle \r\n: treat \n as delimiter, strip \r from line end
   const p = Math.max(0, Math.min(pos, text.length));
-  const start = text.lastIndexOf("\n", p - 1) + 1; // -1 -> 0
+  const start = text.lastIndexOf("\n", p - 1) + 1;
   const nl = text.indexOf("\n", p);
-  const end = nl === -1 ? text.length : nl;
+  let end = nl === -1 ? text.length : nl;
+  // strip \r before \n
+  if (end > start && text[end - 1] === "\r") end -= 1;
   const endWithNl = nl === -1 ? text.length : nl + 1;
   return { start, end, endWithNl };
 }
@@ -119,11 +123,13 @@ export function opDuplicate(text: string, selStart: number, selEnd: number, dir:
 }
 
 export function opMoveLine(text: string, selStart: number, selEnd: number, dir: "up" | "down"): { text: string; caret: number } | null {
-  const { start, end } = getBlockRange(text, selStart, selEnd);
-  // compute line indices via newline count (robust for trailing newline)
-  const startLine = (text.slice(0, start).match(/\n/g) ?? []).length;
-  const endLine = (text.slice(0, end).match(/\n/g) ?? []).length;
-  const lines = text.split("\n");
+  // normalize CRLF to LF for line ops (save normalizes to LF)
+  const hadCRLF = text.includes("\r\n");
+  const normText = hadCRLF ? text.replace(/\r\n/g, "\n") : text;
+  const { start, end } = getBlockRange(normText, selStart > text.length ? normText.length : selStart, selEnd > text.length ? normText.length : selEnd);
+  const startLine = (normText.slice(0, start).match(/\n/g) ?? []).length;
+  const endLine = (normText.slice(0, end).match(/\n/g) ?? []).length;
+  const lines = normText.split("\n");
   const count = endLine - startLine + 1;
   if (dir === "down") {
     if (endLine >= lines.length - 1) return null;
@@ -171,8 +177,9 @@ export function opInsertLine(text: string, pos: number, dir: "above" | "below"):
 }
 
 export function opToggleComment(text: string, selStart: number, selEnd: number, style: CommentStyle): { text: string; caret: number; selEnd: number } {
-  const { start, endWithNl } = getBlockRange(text, selStart, selEnd);
-  const block = text.slice(start, endWithNl);
+  const norm = text.includes("\r\n") ? text.replace(/\r\n/g, "\n") : text;
+  const { start, endWithNl } = getBlockRange(norm, selStart, selEnd);
+  const block = norm.slice(start, endWithNl);
   const lines = block.split("\n");
   const hasTrailingNl = block.endsWith("\n");
   const rawLines = hasTrailingNl ? lines.slice(0, -1) : lines;
@@ -224,7 +231,7 @@ export function opToggleComment(text: string, selStart: number, selEnd: number, 
 
   let newBlock = outLines.join("\n");
   if (hasTrailingNl) newBlock += "\n";
-  const nt = text.slice(0, start) + newBlock + text.slice(endWithNl);
+  const nt = norm.slice(0, start) + newBlock + norm.slice(endWithNl);
   // keep caret roughly at same offset (biased to start)
   const caret = Math.min(start, nt.length);
   const newSelEnd = caret + newBlock.length - (hasTrailingNl ? 1 : 0);
@@ -233,33 +240,54 @@ export function opToggleComment(text: string, selStart: number, selEnd: number, 
 
 // central key handler — call from textarea onKeyDown
 // returns true if handled (caller should not proceed)
+// When opts.hotkeys is provided the bindings are rebindable via the
+// central hotkeys map (app-wide). Without it falls back to the legacy
+// hard-coded VS Code defaults so older callers keep working.
 export function handleEditorKeys(
   e: React.KeyboardEvent<HTMLTextAreaElement> | KeyboardEvent,
   textarea: HTMLTextAreaElement,
   text: string,
   setText: (s: string) => void,
-  opts: { path?: string; allowInsert?: boolean } = {},
+  opts: { path?: string; allowInsert?: boolean; hotkeys?: Record<string, string | null> } = {},
 ): boolean {
   const ta = textarea;
-  const ctrl = (e as any).ctrlKey || (e as any).metaKey; // either for cross-plat
-  const key = (e as any).key as string;
-  const code = (e as any).code as string;
+  const hk = opts.hotkeys as Record<string, string | null> | undefined;
   // let native undo/redo through — controlled textarea still relies on browser history
-  if (ctrl && !e.altKey && (key.toLowerCase() === "z" || key.toLowerCase() === "y")) return false;
+  const ctrlAny = !!(e as any).ctrlKey || !!(e as any).metaKey;
+  const keyRaw = (e as any).key as string;
+  if (ctrlAny && !e.altKey && (keyRaw.toLowerCase() === "z" || keyRaw.toLowerCase() === "y")) return false;
+
+  // helper: if centralized map supplied, test via matchesEvent; otherwise false (caller will fallback)
+  const usesCentral = !!hk;
+  const centralMatches = (id: string): boolean => {
+    if (!hk) return false;
+    const binding = (hk as any)[id] as string | null | undefined;
+    if (!binding) return false;
+    return matchesEvent(e as unknown as KeyboardEvent, binding);
+  };
+
   const hasSel = ta.selectionStart !== ta.selectionEnd;
   const pos = ta.selectionStart ?? 0;
 
-  // --- Ctrl/Cmd+C copy line when no selection ---
-  if (ctrl && !e.altKey && !e.shiftKey && key.toLowerCase() === "c" && !hasSel) {
-    const line = opCopyLine(text, pos);
-    if (line != null) {
-      e.preventDefault();
-      copyToClipboard(line);
-      return true;
+  // --- copy line when no selection ---
+  const copyWant = usesCentral ? centralMatches("editorCopyLine") : false;
+  const copyFallback = !usesCentral && ctrlAny && !e.altKey && !(e as any).shiftKey && keyRaw.toLowerCase() === "c" && !hasSel;
+  if ((copyWant || copyFallback) && !hasSel) {
+    // for rebindable case matchesEvent already checked mods; for fallback we already did
+    // extra guard for rebindable copy: still require no selection
+    if (!hasSel) {
+      const line = opCopyLine(text, pos);
+      if (line != null) {
+        e.preventDefault();
+        copyToClipboard(line);
+        return true;
+      }
     }
   }
-  // --- Ctrl/Cmd+X cut line when no selection ---
-  if (ctrl && !e.altKey && !e.shiftKey && key.toLowerCase() === "x" && !hasSel) {
+  // --- cut line when no selection ---
+  const cutWant = usesCentral ? centralMatches("editorCutLine") : false;
+  const cutFallback = !usesCentral && ctrlAny && !e.altKey && !(e as any).shiftKey && keyRaw.toLowerCase() === "x" && !hasSel;
+  if ((cutWant || cutFallback) && !hasSel) {
     const line = opCopyLine(text, pos);
     const cut = opCutLine(text, pos);
     e.preventDefault();
@@ -271,8 +299,10 @@ export function handleEditorKeys(
     return true;
   }
 
-  // --- Ctrl/Cmd+Shift+K delete line ---
-  if (ctrl && (e as any).shiftKey && !e.altKey && key.toLowerCase() === "k") {
+  // --- delete line ---
+  const delWant = usesCentral ? centralMatches("editorDeleteLine") : false;
+  const delFallback = !usesCentral && ctrlAny && (e as any).shiftKey && !e.altKey && keyRaw.toLowerCase() === "k";
+  if (delWant || delFallback) {
     e.preventDefault();
     const r = opDeleteLine(text, ta.selectionStart ?? 0, ta.selectionEnd ?? 0);
     setText(r.text);
@@ -282,8 +312,10 @@ export function handleEditorKeys(
     return true;
   }
 
-  // --- Ctrl/Cmd+L select line ---
-  if (ctrl && !e.altKey && !e.shiftKey && key.toLowerCase() === "l") {
+  // --- select line ---
+  const selWant = usesCentral ? centralMatches("editorSelectLine") : false;
+  const selFallback = !usesCentral && ctrlAny && !e.altKey && !(e as any).shiftKey && keyRaw.toLowerCase() === "l";
+  if (selWant || selFallback) {
     e.preventDefault();
     const { start, end } = opSelectLine(text, pos);
     requestAnimationFrame(() => {
@@ -292,10 +324,11 @@ export function handleEditorKeys(
     return true;
   }
 
-  // --- Ctrl/Cmd+/ toggle comment ---
-  // e.key is "/" on US, e.code is "Slash". Handle both and NumpadDivide.
-  const isSlash = key === "/" || code === "Slash" || code === "NumpadDivide";
-  if (ctrl && !e.altKey && !e.shiftKey && isSlash) {
+  // --- toggle comment ---
+  const commWant = usesCentral ? centralMatches("editorToggleComment") : false;
+  const isSlash = keyRaw === "/" || (e as any).code === "Slash" || (e as any).code === "NumpadDivide";
+  const commFallback = !usesCentral && ctrlAny && !e.altKey && !(e as any).shiftKey && isSlash;
+  if (commWant || commFallback) {
     e.preventDefault();
     const style = lineCommentForPath(opts.path);
     const r = opToggleComment(text, ta.selectionStart ?? 0, ta.selectionEnd ?? 0, style);
@@ -306,20 +339,45 @@ export function handleEditorKeys(
     return true;
   }
 
-  // --- Alt+Up/Down move line, Shift+Alt+Up/Down duplicate ---
-  // must check altKey without ctrl
-  if (e.altKey && !ctrl && (key === "ArrowUp" || key === "ArrowDown")) {
+  // --- move / duplicate line ---
+  // centralized bindings are app-wide and distinguish Shift+Alt vs Alt
+  const moveUpWant = usesCentral ? centralMatches("editorMoveUp") : false;
+  const moveDownWant = usesCentral ? centralMatches("editorMoveDown") : false;
+  const dupUpWant = usesCentral ? centralMatches("editorDuplicateUp") : false;
+  const dupDownWant = usesCentral ? centralMatches("editorDuplicateDown") : false;
+  if (moveUpWant || moveDownWant || dupUpWant || dupDownWant) {
     e.preventDefault();
-    const isDup = (e as any).shiftKey;
-    if (isDup) {
-      const dir = key === "ArrowUp" ? "up" : "down";
+    if (dupUpWant || dupDownWant) {
+      const dir = dupUpWant ? "up" : "down";
       const r = opDuplicate(text, ta.selectionStart ?? 0, ta.selectionEnd ?? 0, dir);
       setText(r.text);
       requestAnimationFrame(() => {
         try { ta.setSelectionRange(r.caret, r.caret); } catch {}
       });
     } else {
-      const dir = key === "ArrowUp" ? "up" : "down";
+      const dir = moveUpWant ? "up" : "down";
+      const r = opMoveLine(text, ta.selectionStart ?? 0, ta.selectionEnd ?? 0, dir);
+      if (!r) return true;
+      setText(r.text);
+      requestAnimationFrame(() => {
+        try { ta.setSelectionRange(r.caret, r.caret); } catch {}
+      });
+    }
+    return true;
+  }
+  // fallback for non-central callers (legacy Alt+Arrow handling)
+  if (!usesCentral && (e as any).altKey && !ctrlAny && (keyRaw === "ArrowUp" || keyRaw === "ArrowDown")) {
+    e.preventDefault();
+    const isDup = (e as any).shiftKey;
+    if (isDup) {
+      const dir = keyRaw === "ArrowUp" ? "up" : "down";
+      const r = opDuplicate(text, ta.selectionStart ?? 0, ta.selectionEnd ?? 0, dir);
+      setText(r.text);
+      requestAnimationFrame(() => {
+        try { ta.setSelectionRange(r.caret, r.caret); } catch {}
+      });
+    } else {
+      const dir = keyRaw === "ArrowUp" ? "up" : "down";
       const r = opMoveLine(text, ta.selectionStart ?? 0, ta.selectionEnd ?? 0, dir);
       if (!r) return true;
       setText(r.text);
@@ -330,8 +388,20 @@ export function handleEditorKeys(
     return true;
   }
 
-  // --- Ctrl/Cmd+Enter insert line below, Ctrl/Cmd+Shift+Enter above ---
-  if (opts.allowInsert && ctrl && key === "Enter") {
+  // --- insert line below / above ---
+  const insBelowWant = usesCentral ? centralMatches("editorInsertBelow") : false;
+  const insAboveWant = usesCentral ? centralMatches("editorInsertAbove") : false;
+  if (opts.allowInsert && (insBelowWant || insAboveWant)) {
+    e.preventDefault();
+    const dir = insAboveWant ? "above" : "below";
+    const r = opInsertLine(text, pos, dir);
+    setText(r.text);
+    requestAnimationFrame(() => {
+      try { ta.setSelectionRange(r.caret, r.caret); } catch {}
+    });
+    return true;
+  }
+  if (opts.allowInsert && !usesCentral && ctrlAny && keyRaw === "Enter") {
     e.preventDefault();
     const dir = (e as any).shiftKey ? "above" : "below";
     const r = opInsertLine(text, pos, dir);
@@ -345,19 +415,30 @@ export function handleEditorKeys(
   return false;
 }
 
-// minimal subset for Composer — only C/X line copy/cut
+// minimal subset for Composer — only C/X line copy/cut (now rebindable)
 export function handleComposerKeys(
   e: React.KeyboardEvent<HTMLTextAreaElement> | KeyboardEvent,
   textarea: HTMLTextAreaElement,
   text: string,
   setText: (s: string) => void,
+  hotkeys?: Record<string, string | null>,
 ): boolean {
+  const hk = hotkeys as Record<string, string | null> | undefined;
+  const usesCentral = !!hk;
+  const cm = (id: string): boolean => {
+    if (!hk) return false;
+    const b = (hk as any)[id] as string | null | undefined;
+    if (!b) return false;
+    return matchesEvent(e as unknown as KeyboardEvent, b);
+  };
   const ctrl = (e as any).ctrlKey || (e as any).metaKey;
   const key = (e as any).key as string;
   if (ctrl && !e.altKey && (key.toLowerCase() === "z" || key.toLowerCase() === "y")) return false;
   const hasSel = textarea.selectionStart !== textarea.selectionEnd;
   const pos = textarea.selectionStart ?? 0;
-  if (ctrl && !e.altKey && !e.shiftKey && key.toLowerCase() === "c" && !hasSel) {
+  const copyWant = usesCentral ? cm("editorCopyLine") : false;
+  const copyFallback = !usesCentral && ctrl && !e.altKey && !(e as any).shiftKey && key.toLowerCase() === "c" && !hasSel;
+  if ((copyWant || copyFallback) && !hasSel) {
     const line = opCopyLine(text, pos);
     if (line != null) {
       e.preventDefault();
@@ -365,7 +446,9 @@ export function handleComposerKeys(
       return true;
     }
   }
-  if (ctrl && !e.altKey && !e.shiftKey && key.toLowerCase() === "x" && !hasSel) {
+  const cutWant = usesCentral ? cm("editorCutLine") : false;
+  const cutFallback = !usesCentral && ctrl && !e.altKey && !(e as any).shiftKey && key.toLowerCase() === "x" && !hasSel;
+  if ((cutWant || cutFallback) && !hasSel) {
     const line = opCopyLine(text, pos);
     const cut = opCutLine(text, pos);
     e.preventDefault();

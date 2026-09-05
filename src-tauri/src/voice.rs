@@ -1,11 +1,37 @@
-use std::path::PathBuf;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-// everything lives under ~/.config/.opencode-gui/whisper/ Ã¢â‚¬â€ same root as themes.json
+static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
+
+// download size cap for voice engine/model fetches — enforced by curl
+// --max-filesize and re-checked after download
+const DOWNLOAD_CAP: u64 = 2 * 1024 * 1024 * 1024;
+
+fn unique_temp_path(prefix: &str, ext: &str) -> PathBuf {
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let seq = TMP_SEQ.fetch_add(1, Ordering::Relaxed);
+    let pid = std::process::id();
+    let tid = format!("{:?}", std::thread::current().id());
+    let mut hasher = DefaultHasher::new();
+    ts.hash(&mut hasher);
+    seq.hash(&mut hasher);
+    pid.hash(&mut hasher);
+    tid.hash(&mut hasher);
+    let rnd = hasher.finish() & 0xffff;
+    std::env::temp_dir().join(format!("{prefix}-{pid}-{ts}-{seq:04}-{rnd:04x}.{ext}"))
+}
+
+// everything lives under config_root/whisper — same root as themes/plugins
 fn whisper_dir() -> PathBuf {
-    let home = std::env::var("USERPROFILE").unwrap_or_default();
-    PathBuf::from(home)
+    crate::platform::home_dir()
         .join(".config")
         .join(".opencode-gui")
         .join("whisper")
@@ -13,6 +39,12 @@ fn whisper_dir() -> PathBuf {
 
 fn bin_dir() -> PathBuf {
     whisper_dir().join("bin")
+}
+
+// separate GPU engine dir (cublas build) so CPU/GPU installs can coexist —
+// transcribe picks per call and falls back to the CPU one on failure
+fn bin_gpu_dir() -> PathBuf {
+    whisper_dir().join("bin-gpu")
 }
 
 fn models_dir() -> PathBuf {
@@ -23,19 +55,40 @@ fn downloads_dir() -> PathBuf {
     whisper_dir().join("downloads")
 }
 
-fn find_cli() -> Option<PathBuf> {
-    for name in ["whisper-cli.exe", "main.exe"] {
-        let p = bin_dir().join(name);
-        if p.exists() {
-            return Some(p);
+fn find_cli_in(dir: &Path) -> Option<PathBuf> {
+    #[cfg(windows)]
+    {
+        for name in ["whisper-cli.exe", "main.exe"] {
+            let p = dir.join(name);
+            if p.exists() {
+                return Some(p);
+            }
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        for name in ["whisper-cli", "whisper-cli.exe", "main", "main.exe"] {
+            let p = dir.join(name);
+            if p.exists() {
+                return Some(p);
+            }
         }
     }
     None
 }
 
+fn find_cli() -> Option<PathBuf> {
+    find_cli_in(&bin_dir())
+}
+
+fn find_gpu_cli() -> Option<PathBuf> {
+    find_cli_in(&bin_gpu_dir())
+}
+
 #[derive(serde::Serialize)]
 pub struct VoiceStatus {
     bin: bool,
+    gpu_bin: bool,
     models: Vec<String>,
 }
 
@@ -53,15 +106,101 @@ pub fn voice_status() -> VoiceStatus {
     models.sort();
     VoiceStatus {
         bin: find_cli().is_some(),
+        gpu_bin: find_gpu_cli().is_some(),
         models,
     }
 }
 
-// wipes the entire voice store — whisper engine + models, downloads, piper
-// engine + voices. Used by the settings "Clean state" reset
+// NVIDIA GPU detection for the cublas whisper build — NVIDIA is the only
+// vendor with a prebuilt GPU engine (no modern release ships a Vulkan
+// build). Enumerates Win32_VideoController through the OS CIM cmdlet,
+// zero extra deps.
+#[derive(serde::Serialize)]
+pub struct GpuStatus {
+    nvidia: bool,
+    name: String,
+    /// e.g. "12.0" for Blackwell sm_120, "8.9" for Ada — empty if unknown
+    compute_cap: String,
+}
+
+#[tauri::command]
+pub async fn voice_gpu() -> GpuStatus {
+    #[cfg(not(windows))]
+    {
+        // CPU-only outside Windows for now; CoreML/MPS deferred
+        return GpuStatus { nvidia: false, name: String::new(), compute_cap: String::new() };
+    }
+    #[cfg(windows)]
+    {
+        let (nvidia, compute_cap) = tauri::async_runtime::spawn_blocking(|| -> (Option<String>, String) {
+            let name = (|| {
+                let mut cmd = Command::new("powershell");
+                cmd.args([
+                    "-NoProfile",
+                    "-Command",
+                    "Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty Name",
+                ]);
+                #[cfg(all(windows, not(debug_assertions)))]
+                {
+                    use std::os::windows::process::CommandExt;
+                    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+                    cmd.creation_flags(CREATE_NO_WINDOW);
+                }
+                cmd.stdout(Stdio::piped()).stderr(Stdio::null());
+                let out = cmd.output().ok()?;
+                if !out.status.success() {
+                    return None;
+                }
+                String::from_utf8_lossy(&out.stdout)
+                    .lines()
+                    .map(str::trim)
+                    .find(|l| l.to_lowercase().contains("nvidia"))
+                    .map(str::to_string)
+            })();
+            let cap = if name.is_some() {
+                let mut cmd = Command::new("nvidia-smi");
+                cmd.args(["--query-gpu=compute_cap", "--format=csv,noheader,nounits"]);
+                #[cfg(all(windows, not(debug_assertions)))]
+                {
+                    use std::os::windows::process::CommandExt;
+                    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+                    cmd.creation_flags(CREATE_NO_WINDOW);
+                }
+                cmd.stdout(Stdio::piped()).stderr(Stdio::null());
+                cmd.output()
+                    .ok()
+                    .filter(|o| o.status.success())
+                    .and_then(|o| {
+                        String::from_utf8_lossy(&o.stdout)
+                            .lines()
+                            .next()
+                            .map(|s| s.trim().to_string())
+                    })
+                    .unwrap_or_default()
+            } else {
+                String::new()
+            };
+            (name, cap)
+        })
+        .await
+        .ok()
+        .unwrap_or((None, String::new()));
+        match nvidia {
+            Some(name) => GpuStatus { nvidia: true, name, compute_cap },
+            None => GpuStatus { nvidia: false, name: String::new(), compute_cap: String::new() },
+        }
+    }
+}
+
+// wipes the entire voice store — whisper engine + models, downloads, kokoro
+// model + voices and legacy piper. Used by the settings "Clean state" reset
 #[tauri::command]
 pub async fn voice_remove_all() -> Result<(), String> {
-    std::fs::remove_dir_all(whisper_dir()).map_err(|e| e.to_string())
+    let _ = std::fs::remove_dir_all(whisper_dir());
+    let _ = std::fs::remove_dir_all(kokoro_dir());
+    let _ = std::fs::remove_dir_all(piper_dir());
+    // whisper_dir removal already covers downloads, but ensure kokoro/piper are gone
+    Ok(())
 }
 
 // downloads url to <downloads>/<key>.part using the OS curl.exe — the
@@ -74,9 +213,18 @@ pub async fn voice_download(key: String, url: String) -> Result<(), String> {
     }
     let part = part_path(&key)?;
     std::fs::create_dir_all(downloads_dir()).map_err(|e| e.to_string())?;
-    let mut cmd = Command::new("curl.exe");
-    cmd.args(["-L", "--fail", "--silent", "--show-error", "--max-time", "1800", "-o"]);
-    cmd.arg(&part).arg(&url);
+    let mut cmd = Command::new(crate::platform::curl_bin());
+    cmd.args([
+        "-L",
+        "--fail",
+        "--silent",
+        "--show-error",
+        "--max-time",
+        "1800",
+        "--max-filesize",
+    ]);
+    cmd.arg(DOWNLOAD_CAP.to_string());
+    cmd.arg("-o").arg(&part).arg(&url);
     // release: no console flash next to the frameless window
     #[cfg(all(windows, not(debug_assertions)))]
     {
@@ -103,12 +251,26 @@ fn part_path(key: &str) -> Result<PathBuf, String> {
 }
 
 #[tauri::command]
-pub async fn install_bin_finalize(key: String) -> Result<(), String> {
+pub async fn install_bin_finalize(key: String, gpu: Option<bool>) -> Result<(), String> {
     let part = part_path(&key)?;
-    let data = std::fs::read(&part).map_err(|e| format!("download incomplete: {e}"))?;
-    let _ = std::fs::remove_file(&part);
-    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(data)).map_err(|e| e.to_string())?;
-    std::fs::create_dir_all(bin_dir()).map_err(|e| e.to_string())?;
+    // EH-12: cap size and stream via File+BufReader instead of read whole file (OOM on 400MB)
+    let meta = std::fs::metadata(&part).map_err(|e| format!("download incomplete: {e}"))?;
+    if meta.len() > DOWNLOAD_CAP {
+        let _ = std::fs::remove_file(&part);
+        return Err("download too large (cap 2G)".into());
+    }
+    if meta.len() == 0 {
+        return Err("empty download".into());
+    }
+    let dest = if gpu.unwrap_or(false) {
+        bin_gpu_dir()
+    } else {
+        bin_dir()
+    };
+    let file = std::fs::File::open(&part).map_err(|e| format!("download incomplete: {e}"))?;
+    let reader = std::io::BufReader::new(file);
+    let mut archive = zip::ZipArchive::new(reader).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&dest).map_err(|e| e.to_string())?;
     // flatten: release zips wrap everything in one folder ("Release/")
     for i in 0..archive.len() {
         let mut f = archive.by_index(i).map_err(|e| e.to_string())?;
@@ -120,11 +282,12 @@ pub async fn install_bin_finalize(key: String) -> Result<(), String> {
         if fname.is_empty() || fname.starts_with('.') {
             continue;
         }
-        let out = bin_dir().join(fname);
+        let out = dest.join(fname);
         let mut w = std::fs::File::create(&out).map_err(|e| e.to_string())?;
         std::io::copy(&mut f, &mut w).map_err(|e| e.to_string())?;
     }
-    find_cli().ok_or_else(|| "zip extracted but no whisper-cli/main exe found".to_string())?;
+    let _ = std::fs::remove_file(&part);
+    find_cli_in(&dest).ok_or_else(|| "zip extracted but no whisper-cli/main exe found".to_string())?;
     Ok(())
 }
 
@@ -158,281 +321,1292 @@ pub fn voice_remove_model(name: String) -> Result<(), String> {
     }
 }
 
+// deletes the GPU (cublas) engine directory; transcribe then falls back to
+// the CPU engine on the next call
+#[tauri::command]
+pub async fn voice_remove_gpu() -> Result<(), String> {
+    match std::fs::remove_dir_all(bin_gpu_dir()) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
 // runs whisper-cli over a 16 kHz mono s16 WAV produced by the webview;
 // returns the plain-text transcription (-nt strips timestamps). With
 // translate=true, whisper decodes any detected language straight into
-// English (used as the voice router's multilingual fallback pass)
+// English (used as the voice router's multilingual fallback pass).
+// gpu=true prefers the cublas engine in bin-gpu/ (NVIDIA); the result names
+// the engine that actually did the work ("gpu" | "cpu") and why it fell
+// back, since a cuda-less cublas build still succeeds while computing on cpu
 #[tauri::command]
 pub async fn voice_transcribe(
     audio: Vec<u8>,
     model: String,
     translate: Option<bool>,
-) -> Result<String, String> {
-    let cli = find_cli()
-        .ok_or_else(|| "voice engine not installed Ã¢â‚¬â€ set it up in Settings > Voice".to_string())?;
+    gpu: Option<bool>,
+) -> Result<TranscribeOut, String> {
+    eprintln!("[STT] voice_transcribe start model={} audio={} gpu={:?} translate={:?}", model, audio.len(), gpu, translate);
     if !model.ends_with(".bin") || model.contains("..") {
         return Err("bad model name".into());
     }
-    let mp = models_dir().join(model);
+    let mp = models_dir().join(&model);
     if !mp.exists() {
+        eprintln!("[STT] voice_transcribe model missing {}", mp.display());
         return Err(format!("model {} is not downloaded", mp.display()));
     }
 
-    let ts = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis())
-        .unwrap_or(0);
-    let tmp = std::env::temp_dir().join(format!("oc-voice-{}-{}.wav", std::process::id(), ts));
-    std::fs::write(&tmp, &audio).map_err(|e| e.to_string())?;
-
-    let mut cmd = Command::new(&cli);
-    cmd.arg("-m").arg(&mp).arg("-f").arg(&tmp);
-    cmd.args(["-nt", "-np"]);
-    if translate.unwrap_or(false) {
-        // source language is auto-detected; the decode task becomes translate
-        cmd.arg("--translate");
+    let tmp = unique_temp_path("oc-voice", "wav");
+    // EH-11: create_new + unique suffix avoids same-ms collision
+    {
+        use std::fs::OpenOptions;
+        use std::io::Write;
+        let mut f = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp)
+            .or_else(|_| std::fs::File::create(&tmp))
+            .map_err(|e| e.to_string())?;
+        f.write_all(&audio).map_err(|e| e.to_string())?;
     }
-    // release: CREATE_NO_WINDOW keeps a console from flashing next to the GUI;
-    // dev builds inherit stderr so whisper errors show in the terminal
+    eprintln!("[STT] voice_transcribe tmp={} len={}", tmp.display(), audio.len());
+
+    let tr = translate.unwrap_or(false);
+    let gpu_cli = find_gpu_cli();
+    let cpu_cli = find_cli();
+    // GPU requested but no GPU engine installed → use the CPU one; a GPU
+    // engine that spawns but fails at runtime falls back below
+    let primary = if gpu.unwrap_or(false) {
+        gpu_cli.clone().or_else(|| cpu_cli.clone())
+    } else {
+        cpu_cli.clone()
+    }
+    .ok_or_else(|| "voice engine not installed — set it up in Settings > Voice".to_string())?;
+    let want_gpu = Some(&primary) == gpu_cli.as_ref();
+    let cpu_fallback = if want_gpu { cpu_cli.clone() } else { None };
+
+    // EH-10+TF-02: offload blocking wait to dedicated pool; single wait without double-reap
+    let tmp2 = tmp.clone();
+    let blocking = tauri::async_runtime::spawn_blocking(move || -> Result<TranscribeOut, String> {
+        eprintln!("[STT] voice_transcribe blocking start engine={} fallback={:?}", if want_gpu { "gpu" } else { "cpu" }, cpu_fallback.is_some());
+        let mut engine = if want_gpu { "gpu" } else { "cpu" };
+        let mut note = String::new();
+        let (text, stderr) = match run_whisper(&primary, &mp, &tmp2, tr) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("[STT] voice_transcribe primary failed: {}", e);
+                match cpu_fallback {
+                    // engine crashed (old driver, missing CUDA dlls) → retry on CPU
+                    Some(cpu) => {
+                        engine = "cpu";
+                        note = format!("engine failed: {e}");
+                        eprintln!("[STT] voice_transcribe CPU fallback");
+                        run_whisper(&cpu, &mp, &tmp2, tr)?
+                    }
+                    None => return Err(e),
+                }
+            },
+        };
+        if engine == "gpu" {
+            let low = stderr.to_ascii_lowercase();
+            let cuda_failed = low.contains("failed to initialize cuda") || low.contains("cuda_init: failed");
+            if !low.contains("cuda") || cuda_failed {
+                engine = "cpu";
+                let tail = stderr
+                    .lines()
+                    .rev()
+                    .take(2)
+                    .collect::<Vec<_>>()
+                    .join(" | ");
+                let tail: String = tail.chars().rev().take(160).collect::<Vec<_>>().into_iter().rev().collect();
+                note = format!("gpu build ran without cuda: {tail}");
+                eprintln!("[STT] voice_transcribe gpu fallback no cuda tail={}", tail);
+            }
+        }
+        eprintln!("[STT] voice_transcribe blocking done engine={} text_len={} note={}", engine, text.len(), note);
+        Ok(TranscribeOut {
+            text,
+            engine: engine.into(),
+            note,
+        })
+    })
+    .await
+    .map_err(|e| format!("task join failed: {e}"))?;
+
+    let _ = std::fs::remove_file(&tmp);
+    eprintln!("[STT] voice_transcribe done text_len={} engine={}", blocking.as_ref().map(|o| o.text.len()).unwrap_or(0), blocking.as_ref().map(|o| o.engine.clone()).unwrap_or_default());
+    blocking
+}
+
+// what voice_transcribe hands back — text plus which engine actually did the
+// work ("gpu" | "cpu") and why it fell back, so the UI can show the truth
+#[derive(serde::Serialize)]
+pub struct TranscribeOut {
+    text: String,
+    engine: String,
+    note: String,
+}
+
+// ---------- Streaming STT helpers — PCM path + persistent backend ----------
+// PCM → WAV bytes (16-bit LE, 16 kHz mono). Used for the persistent
+// whisper-server multipart POST and for the CLI fallback temp file.
+// Keeps audio as f32 internally until the last moment, no double WAV decode.
+fn pcm_f32_to_wav_bytes(samples: &[f32], sample_rate: u32) -> Vec<u8> {
+    let mut out = Vec::with_capacity(44 + samples.len() * 2);
+    let len = samples.len() as u32;
+    out.extend_from_slice(b"RIFF");
+    out.extend_from_slice(&(36 + len * 2).to_le_bytes());
+    out.extend_from_slice(b"WAVE");
+    out.extend_from_slice(b"fmt ");
+    out.extend_from_slice(&16u32.to_le_bytes());
+    out.extend_from_slice(&1u16.to_le_bytes()); // PCM
+    out.extend_from_slice(&1u16.to_le_bytes()); // mono
+    out.extend_from_slice(&sample_rate.to_le_bytes());
+    out.extend_from_slice(&(sample_rate * 2).to_le_bytes());
+    out.extend_from_slice(&2u16.to_le_bytes());
+    out.extend_from_slice(&16u16.to_le_bytes());
+    out.extend_from_slice(b"data");
+    out.extend_from_slice(&(len * 2).to_le_bytes());
+    for s in samples {
+        let v = (s.clamp(-1.0, 1.0) * 32767.0) as i16;
+        out.extend_from_slice(&v.to_le_bytes());
+    }
+    out
+}
+
+fn find_server_in(dir: &Path) -> Option<PathBuf> {
+    let names: &[&str] = if cfg!(windows) {
+        &["whisper-server.exe", "server.exe", "whisper-server"]
+    } else {
+        &["whisper-server", "whisper-server.exe", "server", "server.exe"]
+    };
+    for name in names {
+        let p = dir.join(name);
+        if p.exists() { return Some(p); }
+        let p2 = dir.join("Release").join(name);
+        if p2.exists() { return Some(p2); }
+    }
+    None
+}
+fn find_server() -> Option<PathBuf> { find_server_in(&bin_dir()) }
+fn find_gpu_server() -> Option<PathBuf> { find_server_in(&bin_gpu_dir()) }
+
+struct WhisperServer {
+    port: u16,
+    child: std::process::Child,
+    model: String,
+    gpu: bool,
+}
+static WHISPER_SERVER: std::sync::OnceLock<Mutex<Option<WhisperServer>>> = std::sync::OnceLock::new();
+fn whisper_server_lock() -> &'static Mutex<Option<WhisperServer>> {
+    WHISPER_SERVER.get_or_init(|| Mutex::new(None))
+}
+fn is_server_alive(s: &mut WhisperServer) -> bool {
+    matches!(s.child.try_wait(), Ok(None))
+}
+fn kill_server(s: &mut WhisperServer) {
+    let pid = s.child.id();
+    eprintln!("[STT] kill_server pid={} port={} model={}", pid, s.port, s.model);
+    let _ = s.child.kill();
+    let _ = s.child.wait();
+    eprintln!("[STT] kill_server done pid={}", pid);
+}
+fn free_port() -> Option<u16> {
+    std::net::TcpListener::bind("127.0.0.1:0").ok()?.local_addr().ok().map(|a| a.port())
+}
+fn wait_for_server(port: u16, timeout: Duration) -> bool {
+    use std::io::{Read, Write};
+    use std::net::TcpStream;
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        if let Ok(mut c) = TcpStream::connect(format!("127.0.0.1:{port}")) {
+            let _ = c.set_read_timeout(Some(Duration::from_millis(300)));
+            let _ = c.set_write_timeout(Some(Duration::from_millis(300)));
+            let req = format!("GET / HTTP/1.0\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n");
+            if c.write_all(req.as_bytes()).is_ok() {
+                let mut buf = [0u8; 1024];
+                if let Ok(n) = c.read(&mut buf) { if n > 0 { return true; } }
+            }
+        }
+        std::thread::sleep(Duration::from_millis(80));
+    }
+    false
+}
+fn ensure_whisper_server(model_path: &Path, use_gpu: bool) -> Result<u16, String> {
+    let model_str = model_path.to_string_lossy().to_string();
+    eprintln!("[STT] ensure_whisper_server start model={} gpu={}", model_str, use_gpu);
+    // fast path / teardown under lock, then drop guard before the 10s wait so other transcribes don't block on the mutex
+    {
+        let mut guard = whisper_server_lock().lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(s) = guard.as_mut() {
+            if s.model == model_str && s.gpu == use_gpu && is_server_alive(s) {
+                eprintln!("[STT] ensure_whisper_server reuse port={} gpu={}", s.port, use_gpu);
+                return Ok(s.port);
+            }
+            if guard.is_some() {
+                eprintln!("[STT] ensure_whisper_server teardown old model={} gpu={} alive={}", guard.as_ref().map(|x| x.model.clone()).unwrap_or_default(), guard.as_ref().map(|x| x.gpu).unwrap_or(false), guard.as_mut().map(|x| is_server_alive(x)).unwrap_or(false));
+                let mut old = guard.take().unwrap();
+                kill_server(&mut old);
+            }
+        }
+    }
+    let bin = if use_gpu { find_gpu_server().or_else(find_server) } else { find_server().or_else(find_gpu_server) };
+    let server_bin = match bin {
+        Some(p) => p,
+        None => {
+            eprintln!("[STT] ensure_whisper_server no server binary — CLI fallback");
+            return Err("whisper-server not found — falling back to CLI".into());
+        }
+    };
+    let port = free_port().ok_or("no free port for whisper-server")?;
+    eprintln!("[STT] ensure_whisper_server spawn bin={} port={} model={}", server_bin.display(), port, model_str);
+    let mut cmd = Command::new(&server_bin);
+    cmd.args(["-m", &model_str, "--host", "127.0.0.1", "--port", &port.to_string()]);
+    cmd.stdout(Stdio::null()).stderr(Stdio::piped());
     #[cfg(all(windows, not(debug_assertions)))]
     {
         use std::os::windows::process::CommandExt;
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        cmd.creation_flags(CREATE_NO_WINDOW).stderr(Stdio::null());
+        cmd.creation_flags(CREATE_NO_WINDOW);
     }
-    cmd.stdout(Stdio::piped());
+    let child = cmd.spawn().map_err(|e| format!("failed to spawn whisper-server: {e}"))?;
+    #[cfg(windows)]
+    {
+        crate::job::assign(&child);
+    }
+    let mut handle = WhisperServer { port, child, model: model_str.clone(), gpu: use_gpu };
+    let alive = wait_for_server(port, Duration::from_secs(10));
+    match handle.child.try_wait() {
+        Ok(Some(st)) => {
+            eprintln!("[STT] ensure_whisper_server exited early status={} port={}", st, port);
+            return Err(format!("whisper-server exited early: {st}"));
+        }
+        Ok(None) if !alive => {
+            eprintln!("[STT] ensure_whisper_server not listening port={}", port);
+            kill_server(&mut handle);
+            return Err("whisper-server not listening".into());
+        }
+        _ => {}
+    }
+    // re-lock to insert — handle race where another thread already started the same server while we were waiting
+    {
+        let mut guard = whisper_server_lock().lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(s) = guard.as_mut() {
+            if s.model == model_str && s.gpu == use_gpu && is_server_alive(s) {
+                eprintln!("[STT] ensure_whisper_server race win existing port={} — killing duplicate port={}", s.port, handle.port);
+                kill_server(&mut handle);
+                return Ok(s.port);
+            }
+            if let Some(mut old) = guard.take() {
+                eprintln!("[STT] ensure_whisper_server replacing old port={}", old.port);
+                kill_server(&mut old);
+            }
+        }
+        let p = handle.port;
+        eprintln!("[STT] ensure_whisper_server ready port={} gpu={} model={}", p, use_gpu, model_str);
+        *guard = Some(handle);
+        Ok(p)
+    }
+}
+pub fn shutdown_whisper_server() {
+    eprintln!("[STT] shutdown_whisper_server");
+    if let Some(lock) = WHISPER_SERVER.get() {
+        // poisoned lock still contains the server — recover instead of leaking it forever
+        if let Ok(mut g) = lock.lock().or_else(|e| Ok::<_, String>(e.into_inner())) {
+            if let Some(mut s) = g.take() { kill_server(&mut s); }
+        }
+    }
+}
 
-    let result = (|| -> Result<String, String> {
-        let mut child = cmd.spawn().map_err(|e| format!("failed to run whisper-cli: {e}"))?;
-        // hard cap so a wedged process can't pin the UI mic state forever
-        let deadline = Instant::now() + Duration::from_secs(180);
-        loop {
-            match child.try_wait().map_err(|e| e.to_string())? {
-                Some(_) => break,
-                None => {
-                    if Instant::now() > deadline {
-                        let _ = child.kill();
-                        return Err("transcription timed out".into());
+// Cache for whisper-rs contexts (CPU path) — model path → Arc<Mutex<WhisperContextState>>
+// lock poison is recovered so one failed load doesn't permanently block STT
+#[cfg(feature = "whisper")]
+mod whisper_cache {
+    use super::*;
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex, OnceLock};
+    use whisper_rs::{WhisperContext, WhisperContextParameters};
+    static CACHE: OnceLock<Mutex<HashMap<String, Arc<WhisperContext>>>> = OnceLock::new();
+    fn cache() -> &'static Mutex<HashMap<String, Arc<WhisperContext>>> {
+        CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+    }
+    pub fn get_or_load(model: &Path) -> Result<Arc<WhisperContext>, String> {
+        let key = model.to_string_lossy().to_string();
+        {
+            let g = cache().lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(ctx) = g.get(&key) { return Ok(ctx.clone()); }
+        }
+        eprintln!("[STT] whisper_rs load model={}", key);
+        let ctx = WhisperContext::new_with_params(&key, WhisperContextParameters::default())
+            .map_err(|e| format!("whisper init failed: {e}"))?;
+        let arc = Arc::new(ctx);
+        cache().lock().unwrap_or_else(|e| e.into_inner()).insert(key, arc.clone());
+        Ok(arc)
+    }
+}
+
+// PCM streaming transcription — persistent backend (whisper-rs or whisper-server),
+// PCM internal, no WAV temp file unless CLI fallback. Off UI thread via spawn_blocking.
+// Uses RTX 5080/CUDA when `gpu` true and cublas server is available.
+#[tauri::command]
+pub async fn voice_transcribe_pcm(
+    pcm: Vec<f32>,
+    model: String,
+    translate: Option<bool>,
+    gpu: Option<bool>,
+) -> Result<TranscribeOut, String> {
+    eprintln!("[STT] voice_transcribe_pcm start model={} pcm={} gpu={:?} translate={:?}", model, pcm.len(), gpu, translate);
+    if !model.ends_with(".bin") || model.contains("..") {
+        return Err("bad model name".into());
+    }
+    let mp = models_dir().join(&model);
+    if !mp.exists() {
+        eprintln!("[STT] voice_transcribe_pcm model missing {}", mp.display());
+        return Err(format!("model {} is not downloaded", mp.display()));
+    }
+    if pcm.len() < (16000 * 20 / 100) { // <20ms
+        eprintln!("[STT] voice_transcribe_pcm too short {} <20ms", pcm.len());
+        return Ok(TranscribeOut { text: String::new(), engine: "cpu".into(), note: String::new() });
+    }
+    // clamp to 30s (whisper max) — rolling buffer is bounded frontend-side, but guard here
+    let pcm = if pcm.len() > 16000 * 30 { pcm[pcm.len() - 16000*30 ..].to_vec() } else { pcm };
+    let tr = translate.unwrap_or(false);
+    let want_gpu = gpu.unwrap_or(false);
+    let mp_clone = mp.clone();
+    let pcm_clone = pcm.clone();
+    let pcm_len = pcm_clone.len();
+    // spawn_blocking keeps inference off Tauri's async pool
+    let res = tauri::async_runtime::spawn_blocking(move || -> Result<TranscribeOut, String> {
+        eprintln!("[STT] voice_transcribe_pcm blocking start pcm={} want_gpu={} translate={}", pcm_len, want_gpu, tr);
+        // 1) try whisper-rs in-process (CPU, zero-copy PCM) if compiled with feature
+        #[cfg(feature = "whisper")]
+        {
+            if !want_gpu {
+                if let Ok(ctx) = whisper_cache::get_or_load(&mp_clone) {
+                    if let Ok(mut state) = ctx.create_state() {
+                        let mut params = whisper_rs::FullParams::new(whisper_rs::SamplingStrategy::Greedy { best_of: 1 });
+                        params.set_translate(tr);
+                        params.set_language(None); // auto-detect
+                        params.set_print_special(false);
+                        params.set_print_progress(false);
+                        params.set_print_realtime(false);
+                        params.set_print_timestamps(false);
+                        params.set_no_context(true);
+                        params.set_single_segment(true);
+                        // threads = physical cores
+                        let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4).min(8) as i32;
+                        params.set_n_threads(threads);
+                        if state.full(params, &pcm_clone).is_ok() {
+                            let n = state.full_n_segments().unwrap_or(0);
+                            let mut out = String::new();
+                            for i in 0..n {
+                                if let Ok(seg) = state.full_get_segment_text(i) {
+                                    if !out.is_empty() { out.push(' '); }
+                                    out.push_str(seg.trim());
+                                }
+                            }
+                            let clean = out.lines().map(str::trim).filter(|l| !l.is_empty()).collect::<Vec<_>>().join(" ");
+                            return Ok(TranscribeOut { text: clean, engine: "cpu".into(), note: String::new() });
+                        }
                     }
-                    std::thread::sleep(Duration::from_millis(40));
                 }
             }
         }
-        let out = child.wait_with_output().map_err(|e| e.to_string())?;
-        if !out.status.success() && out.stdout.is_empty() {
-            return Err(format!("whisper-cli failed ({})", out.status));
+        // 2) try persistent whisper-server (GPU path or CPU if server found)
+        match ensure_whisper_server(&mp_clone, want_gpu) {
+            Ok(port) => {
+                eprintln!("[STT] voice_transcribe_pcm server hit port={} gpu={}", port, want_gpu);
+                let wav = pcm_f32_to_wav_bytes(&pcm_clone, 16000);
+                let client = reqwest::blocking::Client::builder()
+                    .timeout(Duration::from_secs(30))
+                    .build().map_err(|e| e.to_string())?;
+                let form = reqwest::blocking::multipart::Form::new()
+                    .part("file", reqwest::blocking::multipart::Part::bytes(wav).file_name("audio.wav").mime_str("audio/wav").unwrap())
+                    .text("temperature", "0.0")
+                    .text("response_format", "json");
+                let url = format!("http://127.0.0.1:{port}/inference");
+                eprintln!("[STT] voice_transcribe_pcm server POST {}", url);
+                let resp = match client.post(&url).multipart(form).send() {
+                    Ok(r) => r,
+                    Err(e) => {
+                        eprintln!("[STT] voice_transcribe_pcm server request failed: {} — killing server for self-recovery", e);
+                        // self-recovering: server became unresponsive — kill so next utterance restarts it
+                        if let Some(lock) = WHISPER_SERVER.get() {
+                            if let Ok(mut g) = lock.lock().or_else(|f| Ok::<_, String>(f.into_inner())) {
+                                if let Some(mut s) = g.take() { kill_server(&mut s); }
+                            }
+                        }
+                        return Err(format!("whisper-server request failed: {e}"));
+                    }
+                };
+                if !resp.status().is_success() {
+                    let txt = resp.text().unwrap_or_default();
+                    eprintln!("[STT] voice_transcribe_pcm server inference failed: {}", txt);
+                    // treat http error as server poison — kill so CLI fallback/restart succeeds next time
+                    if let Some(lock) = WHISPER_SERVER.get() {
+                        if let Ok(mut g) = lock.lock().or_else(|f| Ok::<_, String>(f.into_inner())) {
+                            if let Some(s) = g.as_mut() {
+                                if s.port == port { let mut old = g.take().unwrap(); kill_server(&mut old); }
+                            }
+                        }
+                    }
+                    return Err(format!("whisper-server inference failed: {txt}"));
+                }
+                let body: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
+                let text = body.get("text").and_then(|v| v.as_str()).unwrap_or("")
+                    .lines().map(str::trim).filter(|l| !l.is_empty()).collect::<Vec<_>>().join(" ");
+                let engine = if want_gpu { "gpu" } else { "cpu" };
+                eprintln!("[STT] voice_transcribe_pcm server done engine={} text_len={}", engine, text.len());
+                return Ok(TranscribeOut { text, engine: engine.into(), note: String::new() });
+            }
+            Err(e) => {
+                eprintln!("[STT] voice_transcribe_pcm server miss: {} — CLI fallback", e);
+            }
         }
-        let text = String::from_utf8_lossy(&out.stdout);
-        let clean = text
-            .lines()
-            .map(str::trim)
-            .filter(|l| !l.is_empty())
-            .collect::<Vec<_>>()
-            .join(" ");
-        Ok(clean)
-    })();
-
-    let _ = std::fs::remove_file(&tmp);
-    result
+        // 3) fallback: CLI per-inference via temp WAV (still PCM→WAV once, no frontend WAV)
+        let wav = pcm_f32_to_wav_bytes(&pcm_clone, 16000);
+        let tmp = unique_temp_path("oc-voice-pcm", "wav");
+        {
+            use std::fs::OpenOptions;
+            use std::io::Write;
+            let mut f = OpenOptions::new().write(true).create_new(true).open(&tmp)
+                .or_else(|_| std::fs::File::create(&tmp)).map_err(|e| e.to_string())?;
+            f.write_all(&wav).map_err(|e| e.to_string())?;
+        }
+        let gpu_cli = find_gpu_cli();
+        let cpu_cli = find_cli();
+        let primary = if want_gpu { gpu_cli.clone().or_else(|| cpu_cli.clone()) } else { cpu_cli.clone() }
+            .ok_or_else(|| "voice engine not installed — set it up in Settings > Voice".to_string())?;
+        let want_gpu_actual = Some(&primary) == gpu_cli.as_ref();
+        let cpu_fallback = if want_gpu_actual { cpu_cli.clone() } else { None };
+        let mut engine = if want_gpu_actual { "gpu" } else { "cpu" };
+        let mut note = String::new();
+        let tmp2 = tmp.clone();
+        eprintln!("[STT] voice_transcribe_pcm CLI fallback engine={} tmp={}", if want_gpu_actual { "gpu" } else { "cpu" }, tmp.display());
+        let (text, stderr) = match run_whisper(&primary, &mp_clone, &tmp2, tr) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("[STT] voice_transcribe_pcm primary CLI failed: {}", e);
+                match cpu_fallback {
+                    Some(cpu) => {
+                        engine = "cpu";
+                        note = format!("engine failed: {e}");
+                        eprintln!("[STT] voice_transcribe_pcm CPU CLI retry");
+                        run_whisper(&cpu, &mp_clone, &tmp2, tr)?
+                    }
+                    None => { let _ = std::fs::remove_file(&tmp); eprintln!("[STT] voice_transcribe_pcm CLI failed no fallback"); return Err(e); }
+                }
+            },
+        };
+        let _ = std::fs::remove_file(&tmp);
+        if engine == "gpu" {
+            let low = stderr.to_ascii_lowercase();
+            let cuda_failed = low.contains("failed to initialize cuda") || low.contains("cuda_init: failed");
+            if !low.contains("cuda") || cuda_failed {
+                engine = "cpu";
+                let tail = stderr.lines().rev().take(2).collect::<Vec<_>>().join(" | ");
+                let tail: String = tail.chars().rev().take(160).collect::<Vec<_>>().into_iter().rev().collect();
+                note = format!("gpu build ran without cuda: {tail}");
+                eprintln!("[STT] voice_transcribe_pcm gpu no cuda tail={}", tail);
+            }
+        }
+        eprintln!("[STT] voice_transcribe_pcm CLI done engine={} text_len={}", engine, text.len());
+        Ok(TranscribeOut { text, engine: engine.into(), note })
+    }).await.map_err(|e| format!("task join failed: {e}"))??;
+    eprintln!("[STT] voice_transcribe_pcm done pcm={} engine={} text_len={}", pcm.len(), res.engine, res.text.len());
+    Ok(res)
 }
 
-// ---------- piper neural TTS (offline, better than system voices) ----------
+// one whisper-cli invocation over the temp wav — blocking, only call from
+// spawn_blocking. Hard cap so a wedged process can't pin the UI mic state.
+// Returns (transcription, stderr log) — stderr carries the backend/device
+// lines used to verify the gpu build engaged cuda.
+// All error paths log [STT] so frontend lifecycle logs can pinpoint die reason.
+fn run_whisper(cli: &Path, mp: &Path, tmp: &Path, translate: bool) -> Result<(String, String), String> {
+    use std::io::Read;
+    eprintln!("[STT] run_whisper start cli={} tmp={} translate={}", cli.display(), tmp.display(), translate);
+    let mut cmd = Command::new(cli);
+    cmd.arg("-m").arg(mp).arg("-f").arg(tmp);
+    cmd.args(["-nt", "-np"]);
+    if translate {
+        cmd.arg("--translate");
+    }
+    #[cfg(all(windows, not(debug_assertions)))]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+
+    let mut child = cmd.spawn().map_err(|e| { eprintln!("[STT] run_whisper spawn failed: {}", e); format!("failed to run whisper-cli: {e}") })?;
+    eprintln!("[STT] run_whisper spawned pid={:?} cli={}", child.id(), cli.display());
+    // drain both pipes on threads so a chatty child can't deadlock on a full
+    // pipe while the poll loop waits (TF-02: child reaped via try_wait only)
+    let mut out_pipe = child.stdout.take();
+    let mut err_pipe = child.stderr.take();
+    let out_t = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        if let Some(p) = out_pipe.as_mut() {
+            let _ = p.read_to_end(&mut buf);
+        }
+        buf
+    });
+    let err_t = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        if let Some(p) = err_pipe.as_mut() {
+            let _ = p.read_to_end(&mut buf);
+        }
+        buf
+    });
+    let deadline = Instant::now() + Duration::from_secs(180);
+    let status;
+    loop {
+        match child.try_wait().map_err(|e| { eprintln!("[STT] run_whisper try_wait failed: {}", e); e.to_string() })? {
+            Some(s) => {
+                status = s;
+                eprintln!("[STT] run_whisper child exit status={} ", s);
+                break;
+            }
+            None => {
+                if Instant::now() > deadline {
+                    eprintln!("[STT] run_whisper timeout 180s — killing pid={:?}", child.id());
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    let _ = out_t.join();
+                    let _ = err_t.join();
+                    return Err("transcription timed out".into());
+                }
+                std::thread::sleep(Duration::from_millis(40));
+            }
+        }
+    }
+    let stdout = out_t.join().unwrap_or_default();
+    let stderr = err_t.join().unwrap_or_default();
+    eprintln!("[STT] run_whisper done status={} stdout={} stderr_tail={}", status, stdout.len(), String::from_utf8_lossy(&stderr).lines().rev().take(1).next().unwrap_or("").chars().take(120).collect::<String>());
+    if !status.success() && stdout.is_empty() {
+        let tail = String::from_utf8_lossy(&stderr)
+            .lines()
+            .rev()
+            .take(2)
+            .collect::<Vec<_>>()
+            .join(" | ");
+        eprintln!("[STT] run_whisper failed status={} tail={}", status, tail);
+        return Err(format!("whisper-cli failed ({}): {}", status, tail));
+    }
+    let text = String::from_utf8_lossy(&stdout);
+    let clean = text
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+    eprintln!("[STT] run_whisper clean text_len={}", clean.len());
+    Ok((clean, String::from_utf8_lossy(&stderr).to_string()))
+}
+
+// ---------- Kokoro neural TTS (offline, GPU-accelerated, streaming) ----------
+// Replaces Piper — same Tauri command names for frontend compat, but
+// backed by Kokoro-82M via ONNX Runtime. Auto-selects CUDA → DirectML → CPU.
+fn kokoro_dir() -> PathBuf {
+    crate::platform::home_dir()
+        .join(".config")
+        .join(".opencode-gui")
+        .join("kokoro")
+}
+fn kokoro_model_path() -> PathBuf {
+    kokoro_dir().join("model.onnx")
+}
+fn kokoro_voices_dir() -> PathBuf {
+    kokoro_dir().join("voices")
+}
+fn kokoro_voices_path() -> PathBuf {
+    // legacy single-file path — kept for migration check
+    kokoro_dir().join("voices.bin")
+}
+fn kokoro_voice_path(voice: &str) -> PathBuf {
+    kokoro_voices_dir().join(format!("{}.bin", voice))
+}
+// optional CUDA pack — four zips (ort provider dlls + NVIDIA cudart/cuBLAS/cuDNN
+// 13) extracted here; when complete, the CUDA EP loads them from this dir
+fn kokoro_gpu_dir() -> PathBuf {
+    kokoro_dir().join("gpu-dlls")
+}
+const KOKORO_GPU_DLLS: &[&str] = &[
+    "onnxruntime_providers_shared.dll",
+    "onnxruntime_providers_cuda.dll",
+    "cudart64_13.dll",
+    "cublas64_13.dll",
+    "cublasLt64_13.dll",
+    "cudnn64_9.dll",
+];
+fn kokoro_gpu_ready() -> bool {
+    KOKORO_GPU_DLLS
+        .iter()
+        .all(|d| kokoro_gpu_dir().join(d).exists())
+}
+// debug log ring for TTS GPU fallback diagnostics — surfaced in the TTS menu
+static TTS_DEBUG_LOG: std::sync::OnceLock<Mutex<Vec<String>>> = std::sync::OnceLock::new();
+fn tts_debug_store() -> &'static Mutex<Vec<String>> {
+    TTS_DEBUG_LOG.get_or_init(|| Mutex::new(Vec::new()))
+}
+fn push_tts_log(msg: String) {
+    let line = format!("[{}] {}", chrono_like_now(), msg);
+    eprintln!("{line}");
+    if let Ok(mut g) = tts_debug_store().lock() {
+        g.push(line);
+        if g.len() > 40 {
+            g.remove(0);
+        }
+    }
+}
+fn chrono_like_now() -> String {
+    // HH:MM:SS without extra crates
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() % 86400)
+        .unwrap_or(0);
+    format!("{:02}:{:02}:{:02}", secs / 3600, (secs % 3600) / 60, secs % 60)
+}
+
+// ORT loads its CUDA provider from the exe dir / legacy search, which ignores
+// AddDllDirectory — SetDllDirectory slots the pack dir into the legacy order
+// (exe dir → system32 → this dir → PATH) so the provider and its cublas/cudnn
+// deps all resolve from the pack
+fn enable_kokoro_gpu_search() {
+    static DONE: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+    if kokoro_gpu_ready() {
+        DONE.get_or_init(|| {
+            #[cfg(windows)]
+            unsafe {
+                use windows::core::HSTRING;
+                use windows::Win32::System::LibraryLoader::SetDllDirectoryW;
+                let dir = kokoro_gpu_dir();
+                let ok = SetDllDirectoryW(&HSTRING::from(dir.as_os_str())).is_ok();
+                if ok {
+                    push_tts_log(format!("GPU pack: SetDllDirectoryW({}) ok", dir.display()));
+                } else {
+                    push_tts_log(format!("GPU pack: SetDllDirectoryW({}) FAILED", dir.display()));
+                }
+            }
+            #[cfg(not(windows))]
+            push_tts_log("GPU pack: found, enabled".to_string());
+        });
+    } else {
+        // log once per status check if pack is incomplete
+        let missing: Vec<_> = KOKORO_GPU_DLLS
+            .iter()
+            .filter(|d| !kokoro_gpu_dir().join(d).exists())
+            .copied()
+            .collect();
+        if !missing.is_empty() && kokoro_gpu_dir().exists() {
+            push_tts_log(format!("GPU pack incomplete, missing: {}", missing.join(", ")));
+        }
+    }
+}
+// legacy piper paths — kept for migration/cleanup, not used for new installs
 fn piper_dir() -> PathBuf {
     whisper_dir().join("piper")
 }
 
-fn piper_exe() -> PathBuf {
-    piper_dir().join("piper.exe")
+// Kokoro voices — curated subset from hexgrad/Kokoro-82M covering 9 languages.
+// Voice IDs are the file-stem names in voices.bin (e.g. "af_heart").
+const KOKORO_VOICES: &[&str] = &[
+    "af_heart", "af_bella", "af_sarah", "af_nicole", "af_sky",
+    "am_adam", "am_michael",
+    "bf_emma", "bf_isabella", "bm_george", "bm_lewis",
+    "ef_dora", "em_alex",
+    "ff_siwis",
+    "if_sara", "im_nicola",
+    "jf_alpha", "jf_gongitsune", "jf_nezumi", "jm_kumo",
+    "pf_dora", "pm_alex",
+    "zf_xiaobei", "zf_xiaoni", "zm_yunxi", "zm_yunyang",
+];
+#[allow(dead_code)]
+fn kokoro_voice_label(id: &str) -> String {
+    let lang = match id.split('_').next().unwrap_or("") {
+        "af" | "am" => "US English",
+        "bf" | "bm" => "British English",
+        "ef" | "em" => "Spanish",
+        "ff" => "French",
+        "if" | "im" => "Italian",
+        "jf" | "jm" => "Japanese",
+        "pf" | "pm" => "Portuguese",
+        "zf" | "zm" => "Chinese",
+        "hf" | "hm" => "Hindi",
+        _ => "Unknown",
+    };
+    let name = id.split('_').nth(1).unwrap_or(id);
+    format!("{name} · {lang}")
+}
+fn map_piper_to_kokoro(voice: &str) -> String {
+    // Piper → Kokoro migration: map old Piper voice IDs to closest Kokoro.
+    // Piper voices were like "en_US-amy-medium" or "fr_FR-siwis-medium" with .onnx suffix.
+    let v = voice.trim().trim_end_matches(".onnx").to_lowercase();
+    if v.contains("siwis") || v.contains("ff_") { return "ff_siwis".into(); }
+    if v.contains("thorsten") || v.contains("de_") { return "af_heart".into(); }
+    if v.contains("sharvard") || v.contains("es_") { return "ef_dora".into(); }
+    if v.contains("huayan") || v.contains("zh_") { return "zf_xiaobei".into(); }
+    if v.contains("amy") || v.contains("heart") { return "af_heart".into(); }
+    if v.contains("lessac") || v.contains("bella") { return "af_bella".into(); }
+    if v.contains("ryan") || v.contains("adam") { return "am_adam".into(); }
+    if v.contains("alba") || v.contains("emma") { return "bf_emma".into(); }
+    if v.contains("southern") || v.contains("isabella") { return "bf_isabella".into(); }
+    if v.contains("faber") || v.contains("dora") { return "pf_dora".into(); }
+    // Already a Kokoro ID?
+    if KOKORO_VOICES.contains(&v.as_str()) { return v; }
+    if KOKORO_VOICES.contains(&voice) { return voice.to_string(); }
+    // Fallback to default heart voice
+    "af_heart".into()
+}
+fn is_kokoro_voice(name: &str) -> bool {
+    let n = name.trim().trim_end_matches(".onnx");
+    KOKORO_VOICES.contains(&n) || KOKORO_VOICES.contains(&name)
 }
 
-fn tts_voices_dir() -> PathBuf {
-    piper_dir().join("voices")
+// model_q8f16.onnx (86,033,585 bytes) hard-crashes onnxruntime with
+// STATUS_ACCESS_VIOLATION (0xC0000005) during session load — kills the whole
+// process, unrecoverable at any provider setting. The int8 model_quantized.onnx
+// (92,361,116 bytes) works on every provider path, so treat the broken download
+// as not installed and re-download.
+const BROKEN_Q8F16_MODEL_LEN: u64 = 86_033_585;
+fn kokoro_model_broken() -> bool {
+    std::fs::metadata(kokoro_model_path())
+        .map(|m| m.len() == BROKEN_Q8F16_MODEL_LEN)
+        .unwrap_or(false)
 }
 
 #[derive(serde::Serialize)]
 pub struct TtsStatus {
     bin: bool,
+    gpu: bool,
     voices: Vec<String>,
+    gpu_log: String,
+}
+
+fn tts_last_log() -> String {
+    tts_debug_store()
+        .lock()
+        .ok()
+        .and_then(|g| g.last().cloned())
+        .unwrap_or_default()
 }
 
 #[tauri::command]
 pub fn tts_status() -> TtsStatus {
+    // ensure GPU search is primed so logs reflect current pack state
+    enable_kokoro_gpu_search();
+    let has_model = kokoro_model_path().exists() && !kokoro_model_broken();
+    if !has_model {
+        return TtsStatus { bin: false, gpu: kokoro_gpu_ready(), voices: Vec::new(), gpu_log: tts_last_log() };
+    }
     let mut voices = Vec::new();
-    if let Ok(rd) = std::fs::read_dir(tts_voices_dir()) {
+    if let Ok(rd) = std::fs::read_dir(kokoro_voices_dir()) {
         for e in rd.flatten() {
             let name = e.file_name().to_string_lossy().to_string();
-            // frontend treats voices as bare ids ("<id>", no extension) —
-            // strip here so delete/preview/labels all address the same file
-            if let Some(id) = name.strip_suffix(".onnx") {
-                voices.push(id.to_string());
+            if let Some(id) = name.strip_suffix(".bin") {
+                if KOKORO_VOICES.contains(&id) {
+                    voices.push(id.to_string());
+                }
             }
         }
     }
-    voices.sort();
-    TtsStatus {
-        bin: piper_exe().exists(),
-        voices,
+    if voices.is_empty() && kokoro_voices_path().exists() {
+        // legacy single-file voices.bin contains all voices
+        voices = KOKORO_VOICES.iter().map(|s| s.to_string()).collect();
     }
+    voices.sort();
+    TtsStatus { bin: true, gpu: kokoro_gpu_ready(), voices, gpu_log: tts_last_log() }
 }
 
-// unzip preserving directory layout - piper ships espeak-ng-data/ + dlls
-// next to the exe, so the whisper-style flatten would break it
+#[tauri::command]
+pub fn tts_debug_log() -> Vec<String> {
+    tts_debug_store()
+        .lock()
+        .map(|g| g.clone())
+        .unwrap_or_default()
+}
+
+#[tauri::command]
+pub fn tts_clear_debug() -> Result<(), String> {
+    if let Ok(mut g) = tts_debug_store().lock() {
+        g.clear();
+    }
+    Ok(())
+}
+
+// Kokoro TTS instance — lazily initialized, GPU auto-selected (CUDA → DirectML → CPU).
+// Uses tokio::sync::OnceCell because KokoroTts::new is async.
+static KOKORO: std::sync::OnceLock<tokio::sync::Mutex<Option<Arc<kokoro_en::KokoroTts>>>> = std::sync::OnceLock::new();
+fn kokoro_lock() -> &'static tokio::sync::Mutex<Option<Arc<kokoro_en::KokoroTts>>> {
+    KOKORO.get_or_init(|| tokio::sync::Mutex::new(None))
+}
+async fn get_kokoro() -> Result<Arc<kokoro_en::KokoroTts>, String> {
+    let mut guard = kokoro_lock().lock().await;
+    if let Some(tts) = guard.clone() {
+        return Ok(tts);
+    }
+    let model = kokoro_model_path();
+    if !model.exists() {
+        return Err("kokoro model not installed — set it up in Settings > Voice".into());
+    }
+    if kokoro_model_broken() {
+        return Err("kokoro model is a broken q8f16 build — reinstall it in Settings > Voice".into());
+    }
+    // GPU pack installed → make its DLLs resolvable before the session build
+    enable_kokoro_gpu_search();
+    // voices may be per-voice dir or legacy single file
+    let voices_path = if kokoro_voices_dir().exists() {
+        let has_any = std::fs::read_dir(kokoro_voices_dir()).map(|mut rd| rd.next().is_some()).unwrap_or(false);
+        if has_any {
+            kokoro_voices_dir()
+        } else if kokoro_voices_path().exists() {
+            kokoro_voices_path()
+        } else {
+            return Err("kokoro voices not installed — set it up in Settings > Voice".into());
+        }
+    } else if kokoro_voices_path().exists() {
+        kokoro_voices_path()
+    } else {
+        return Err("kokoro voices not installed — set it up in Settings > Voice".into());
+    };
+    // GPU auto-select: when gpu_pack is present and provider=auto, try CUDA
+    // explicitly first so the fallback is visible in the TTS debug log. The
+    // crate's internal auto also falls back (e.g. Blackwell sm_120
+    // NoKernelImageForDevice → rebuild on CPU) but that fallback is silent
+    // from the caller's PoV (still Ok) — explicit try makes it explicit.
+    let provider = std::env::var("KOKORO_ORT_PROVIDER").unwrap_or_else(|_| "auto".into());
+    let gpu_ready = kokoro_gpu_ready();
+    let model_len = std::fs::metadata(&model).map(|m| m.len()).unwrap_or(0);
+    // INT8 quantized model (92_361_116 bytes) lacks Blackwell sm_120 CUDA kernels — will silently run Conv on CPU even with GPU pack
+    if gpu_ready && model_len == 92_361_116 {
+        push_tts_log("WARN: quantized model on GPU — INT8 has no sm_120 kernels, Conv ops will fallback to CPU and appear slow. For Blackwell, use FP32 model.onnx (325 MB) for full GPU.".to_string());
+    }
+    push_tts_log(format!(
+        "Kokoro init: provider={}, gpu_pack={}, model={} ({} bytes), voices={}",
+        provider, gpu_ready, model.display(), model_len, voices_path.display()
+    ));
+    // explicit CUDA probe when pack is present and user left provider on auto
+    if provider.eq_ignore_ascii_case("auto") && gpu_ready {
+        let prev = std::env::var("KOKORO_ORT_PROVIDER").ok();
+        std::env::set_var("KOKORO_ORT_PROVIDER", "cuda");
+        let cuda_res = kokoro_en::KokoroTts::new(&model, &voices_path).await;
+        if let Some(v) = prev.clone() { std::env::set_var("KOKORO_ORT_PROVIDER", v); } else { std::env::remove_var("KOKORO_ORT_PROVIDER"); }
+        match cuda_res {
+            Ok(t) => {
+                push_tts_log("Kokoro init ok (cuda) — GPU active".to_string());
+                let arc = Arc::new(t);
+                *guard = Some(arc.clone());
+                return Ok(arc);
+            }
+            Err(e) => {
+                let msg = e.to_string();
+                push_tts_log(format!("Kokoro CUDA init failed ({}), falling back to CPU", msg));
+                eprintln!("kokoro CUDA init failed ({}), falling back to CPU", msg);
+                // fall through to CPU retry below
+            }
+        }
+    }
+    let tts = match kokoro_en::KokoroTts::new(&model, &voices_path).await {
+        Ok(t) => {
+            let hint = if provider.eq_ignore_ascii_case("cpu") {
+                "cpu-forced"
+            } else if gpu_ready {
+                "auto (explicit CUDA already tried) — CPU fallback active"
+            } else {
+                "auto, gpu_pack=false — CPU"
+            };
+            push_tts_log(format!("Kokoro init ok ({})", hint));
+            t
+        },
+        Err(e) => {
+            let msg = e.to_string();
+            // If auto/CUDA/DML failed, retry once with CPU forced (covers the
+            // DML 80070057 case and missing CUDA toolkit)
+            if msg.contains("80070057") || msg.contains("Dml") || msg.contains("DirectML") || msg.contains("CUDA") {
+                let line = format!("kokoro init with {} failed ({}), retrying with CPU", provider, msg);
+                push_tts_log(line.clone());
+                eprintln!("{line}");
+                let prev2 = std::env::var("KOKORO_ORT_PROVIDER").ok();
+                std::env::set_var("KOKORO_ORT_PROVIDER", "cpu");
+                let res = kokoro_en::KokoroTts::new(&model, &voices_path).await;
+                if let Some(v) = prev2 { std::env::set_var("KOKORO_ORT_PROVIDER", v); } else { std::env::remove_var("KOKORO_ORT_PROVIDER"); }
+                match res {
+                    Ok(t) => {
+                        push_tts_log("Kokoro init ok after CPU fallback — GPU was unavailable/faulty, now on CPU".to_string());
+                        t
+                    }
+                    Err(e2) => {
+                        let line2 = format!("kokoro init failed (cpu fallback also failed): {e} | {e2}");
+                        push_tts_log(line2.clone());
+                        return Err(line2);
+                    }
+                }
+            } else {
+                let line = format!("kokoro init failed: {msg}");
+                push_tts_log(line.clone());
+                return Err(line);
+            }
+        }
+    };
+    let arc = Arc::new(tts);
+    *guard = Some(arc.clone());
+    Ok(arc)
+}
+fn clear_kokoro_cache() {
+    if let Some(m) = KOKORO.get() {
+        // best-effort: clear cached instance so next tts_speak re-loads new model
+        if let Ok(mut g) = m.try_lock() {
+            *g = None;
+        }
+    }
+}
+fn f32_to_wav(samples: &[f32], sample_rate: u32) -> Vec<u8> {
+    let mut out = Vec::with_capacity(44 + samples.len() * 2);
+    let len = samples.len() as u32;
+    // RIFF header
+    out.extend_from_slice(b"RIFF");
+    out.extend_from_slice(&(36 + len * 2).to_le_bytes());
+    out.extend_from_slice(b"WAVE");
+    out.extend_from_slice(b"fmt ");
+    out.extend_from_slice(&16u32.to_le_bytes());
+    out.extend_from_slice(&1u16.to_le_bytes()); // PCM
+    out.extend_from_slice(&1u16.to_le_bytes()); // mono
+    out.extend_from_slice(&sample_rate.to_le_bytes());
+    out.extend_from_slice(&(sample_rate * 2).to_le_bytes()); // byte rate
+    out.extend_from_slice(&2u16.to_le_bytes()); // block align
+    out.extend_from_slice(&16u16.to_le_bytes()); // bits per sample
+    out.extend_from_slice(b"data");
+    out.extend_from_slice(&(len * 2).to_le_bytes());
+    for s in samples {
+        let v = (s.clamp(-1.0, 1.0) * 32767.0) as i16;
+        out.extend_from_slice(&v.to_le_bytes());
+    }
+    out
+}
+
+// install Kokoro model — raw .onnx file
 #[tauri::command]
 pub async fn install_piper_bin(key: String) -> Result<(), String> {
     let part = part_path(&key)?;
-    let data = std::fs::read(&part).map_err(|e| format!("download incomplete: {e}"))?;
-    let _ = std::fs::remove_file(&part);
-    let mut archive =
-        zip::ZipArchive::new(std::io::Cursor::new(data)).map_err(|e| e.to_string())?;
-    let dest = piper_dir();
-    std::fs::create_dir_all(&dest).map_err(|e| e.to_string())?;
-    for i in 0..archive.len() {
-        let mut f = archive.by_index(i).map_err(|e| e.to_string())?;
-        let name = f.name().replace('\\', "/");
-        if name.contains("..") || name.starts_with('/') {
-            continue; // zip-slip guard
-        }
-        let out = dest.join(&name);
-        if f.is_dir() {
-            let _ = std::fs::create_dir_all(&out);
-            continue;
-        }
-        if let Some(p) = out.parent() {
-            let _ = std::fs::create_dir_all(p);
-        }
-        let mut w = std::fs::File::create(&out).map_err(|e| e.to_string())?;
-        std::io::copy(&mut f, &mut w).map_err(|e| e.to_string())?;
+    let meta = std::fs::metadata(&part).map_err(|e| format!("download incomplete: {e}"))?;
+    if meta.len() > DOWNLOAD_CAP {
+        let _ = std::fs::remove_file(&part);
+        return Err("download too large (cap 2G)".into());
     }
-    // some releases wrap everything in a folder - hoist one level if needed
-    if !dest.join("piper.exe").exists() {
-        let inner = std::fs::read_dir(&dest)
-            .ok()
-            .and_then(|rd| rd.flatten().find(|e| e.path().join("piper.exe").exists()));
-        if let Some(inner) = inner {
-            for e in std::fs::read_dir(inner.path())
-                .map_err(|e| e.to_string())?
-                .flatten()
-            {
-                let _ = std::fs::rename(e.path(), dest.join(e.file_name()));
-            }
-        }
+    if meta.len() == 0 {
+        return Err("empty download".into());
     }
-    if !dest.join("piper.exe").exists() {
-        return Err("zip extracted but piper.exe not found".into());
-    }
+    std::fs::create_dir_all(kokoro_dir()).map_err(|e| e.to_string())?;
+    std::fs::rename(&part, kokoro_model_path()).or_else(|_| -> Result<(), String> {
+        std::fs::copy(&part, kokoro_model_path()).map(|_| ()).map_err(|e| e.to_string())?;
+        let _ = std::fs::remove_file(&part);
+        Ok(())
+    })?;
+    clear_kokoro_cache();
     Ok(())
 }
 
-// moves a downloaded .part into the voice store as <name>
-// (.onnx model or its .onnx.json sidecar)
+// Kokoro voices — per-voice `*.bin` in voices/ dir (single `voices.bin` legacy also handled)
 #[tauri::command]
 pub async fn install_tts_voice_part(key: String, name: String) -> Result<(), String> {
-    let ok = name.ends_with(".onnx") || name.ends_with(".onnx.json");
-    if !ok || name.contains('/') || name.contains('\\') || name.contains("..") {
+    if !name.ends_with(".bin") {
+        return Err("bad voice file name".into());
+    }
+    if name.contains('/') || name.contains('\\') || name.contains("..") {
         return Err("bad voice file name".into());
     }
     let part = part_path(&key)?;
-    std::fs::create_dir_all(tts_voices_dir()).map_err(|e| e.to_string())?;
-    std::fs::rename(&part, tts_voices_dir().join(&name)).or_else(|_| {
-        // rename across volumes fails - fall back to copy
-        std::fs::copy(&part, tts_voices_dir().join(&name))
-            .map(|_| ())
-            .map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(kokoro_dir()).map_err(|e| e.to_string())?;
+    let is_zip = {
+        if let Ok(f) = std::fs::File::open(&part) {
+            zip::ZipArchive::new(std::io::BufReader::new(f)).is_ok()
+        } else { false }
+    };
+    let dest = if name == "voices.bin" {
+        kokoro_voices_path()
+    } else {
+        std::fs::create_dir_all(kokoro_voices_dir()).map_err(|e| e.to_string())?;
+        kokoro_voice_path(name.trim_end_matches(".bin"))
+    };
+    if is_zip {
+        let file = std::fs::File::open(&part).map_err(|e| e.to_string())?;
+        let mut archive = zip::ZipArchive::new(std::io::BufReader::new(file)).map_err(|e| e.to_string())?;
+        for i in 0..archive.len() {
+            let mut f = archive.by_index(i).map_err(|e| e.to_string())?;
+            if f.is_dir() { continue; }
+            let fname = f.name().rsplit(['/', '\\']).next().unwrap_or(f.name());
+            if fname == name || fname == format!("{}.bin", name.trim_end_matches(".bin")) || fname == "voices.bin" {
+                let mut w = std::fs::File::create(&dest).map_err(|e| e.to_string())?;
+                std::io::copy(&mut f, &mut w).map_err(|e| e.to_string())?;
+                break;
+            }
+        }
         let _ = std::fs::remove_file(&part);
-        Ok(())
-    })
-}
-
-// removes a voice and its .json sidecar
-#[tauri::command]
-pub fn tts_remove_voice(name: String) -> Result<(), String> {
-    if !name.ends_with(".onnx")
-        || name.contains('/')
-        || name.contains('\\')
-        || name.contains("..")
-    {
-        return Err("bad voice name".into());
+    } else {
+        std::fs::rename(&part, &dest).or_else(|_| -> Result<(), String> {
+            std::fs::copy(&part, &dest).map(|_| ()).map_err(|e| e.to_string())?;
+            let _ = std::fs::remove_file(&part);
+            Ok(())
+        })?;
     }
-    let dir = tts_voices_dir();
-    match std::fs::remove_file(dir.join(&name)) {
-        Ok(()) => {}
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-        Err(e) => return Err(e.to_string()),
-    }
-    let _ = std::fs::remove_file(dir.join(format!("{name}.json")));
+    clear_kokoro_cache();
     Ok(())
 }
 
-// synthesizes text with piper, returns WAV bytes for the webview to play
+// removes the entire Kokoro engine (model + all voices) — used by the
+// Options tab's engine row
+#[tauri::command]
+pub async fn kokoro_remove_engine() -> Result<(), String> {
+    let _ = std::fs::remove_file(kokoro_model_path());
+    let _ = std::fs::remove_dir_all(kokoro_voices_dir());
+    let _ = std::fs::remove_file(kokoro_voices_path());
+    clear_kokoro_cache();
+    Ok(())
+}
+
+// one downloaded CUDA pack zip (ort provider dlls, cudart, cuBLAS or cuDNN) —
+// extracts every *.dll into kokoro/gpu-dlls; the pack is complete when all
+// KOKORO_GPU_DLLS are present (tts_status.gpu)
+#[tauri::command]
+pub async fn install_kokoro_gpu_part(key: String) -> Result<(), String> {
+    let part = part_path(&key)?;
+    let file = std::fs::File::open(&part).map_err(|e| format!("download incomplete: {e}"))?;
+    let mut archive = zip::ZipArchive::new(std::io::BufReader::new(file)).map_err(|e| e.to_string())?;
+    let dest = kokoro_gpu_dir();
+    std::fs::create_dir_all(&dest).map_err(|e| e.to_string())?;
+    let mut extracted = 0;
+    for i in 0..archive.len() {
+        let mut f = archive.by_index(i).map_err(|e| e.to_string())?;
+        let name = f.name().rsplit(['/', '\\']).next().unwrap_or(f.name()).to_string();
+        if f.is_dir() || !name.ends_with(".dll") {
+            continue;
+        }
+        let mut w = std::fs::File::create(dest.join(&name)).map_err(|e| e.to_string())?;
+        std::io::copy(&mut f, &mut w).map_err(|e| e.to_string())?;
+        extracted += 1;
+    }
+    let _ = std::fs::remove_file(&part);
+    if extracted == 0 {
+        return Err("no dlls found in pack zip".into());
+    }
+    Ok(())
+}
+
+// deletes the optional CUDA pack — the next synth falls back to CPU/DML
+#[tauri::command]
+pub async fn tts_gpu_remove() -> Result<(), String> {
+    match std::fs::remove_dir_all(kokoro_gpu_dir()) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+// Kokoro per-voice .bin files in voices/
+#[tauri::command]
+pub fn tts_remove_voice(name: String) -> Result<(), String> {
+    if name.contains('/') || name.contains('\\') || name.contains("..") {
+        return Err("bad voice name".into());
+    }
+    let id = name.trim_end_matches(".bin");
+    if is_kokoro_voice(id) || name == "voices.bin" || is_kokoro_voice(&name) {
+        let path = if name == "voices.bin" {
+            kokoro_voices_path()
+        } else {
+            kokoro_voice_path(id)
+        };
+        // try per-voice file, then legacy single file
+        match std::fs::remove_file(&path) {
+            Ok(()) => { clear_kokoro_cache(); return Ok(()); }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                // also try single file for single-voice installs
+                if path != kokoro_voices_path() {
+                    if let Ok(()) = std::fs::remove_file(kokoro_voices_path()) {
+                        clear_kokoro_cache(); return Ok(());
+                    }
+                }
+                return Ok(());
+            }
+            Err(e) => return Err(e.to_string()),
+        }
+    }
+    Err("bad voice name".into())
+}
+
+// synthesizes text with Kokoro (GPU → DirectML → CPU auto), returns WAV bytes.
 #[tauri::command]
 pub async fn tts_speak(text: String, voice: String, speed: Option<f64>) -> Result<Vec<u8>, String> {
     if text.trim().is_empty() || text.len() > 20_000 {
         return Err("bad speak text".into());
     }
-    if !voice.ends_with(".onnx")
-        || voice.contains('/')
-        || voice.contains('\\')
-        || voice.contains("..")
-    {
-        return Err("bad voice name".into());
+    if !kokoro_model_path().exists() {
+        return Err(format!("kokoro not installed — set it up in Settings > Voice (missing {})", kokoro_model_path().display()));
     }
-    let exe = piper_exe();
-    if !exe.exists() {
-        return Err("piper is not installed - set it up in Settings > Voice".into());
+    let kvoice = map_piper_to_kokoro(&voice);
+    // voices may be per-voice dir (voices/af_heart.bin) or legacy single file (voices.bin)
+    let has_voice = kokoro_voice_path(&kvoice).exists() || kokoro_voices_path().exists() || kokoro_voices_dir().exists() && std::fs::read_dir(kokoro_voices_dir()).map(|mut rd| rd.next().is_some()).unwrap_or(false);
+    if !has_voice {
+        return Err(format!("kokoro voice {} not installed — download it in Settings > Voice › Voices (missing {})", kvoice, kokoro_voice_path(&kvoice).display()));
     }
-    let model = tts_voices_dir().join(&voice);
-    if !model.exists() {
-        return Err(format!("voice {voice} is not downloaded"));
-    }
+    let sp = speed.unwrap_or(1.0).clamp(0.5, 2.0) as f32;
+    let gpu_active = kokoro_gpu_ready();
+    let tts = get_kokoro().await?;
+    let v = kokoro_en::Voice::new(kvoice.clone()).with_speed(sp);
+    // offload blocking ONNX inference to blocking pool
+    let txt_len = text.len();
+    let wav = tauri::async_runtime::spawn_blocking(move || -> Result<Vec<u8>, String> {
+        let start = Instant::now();
+        let rt = tokio::runtime::Handle::try_current();
+        let fut = async {
+            let (samples, _) = tts.synth(text.clone(), v).await.map_err(|e| e.to_string())?;
+            Ok::<Vec<f32>, String>(samples)
+        };
+        let samples = if let Ok(h) = rt {
+            h.block_on(fut)?
+        } else {
+            tokio::runtime::Builder::new_current_thread().enable_all().build().map_err(|e| e.to_string())?.block_on(fut)?
+        };
+        let elapsed = start.elapsed();
+        let ms = elapsed.as_millis();
+        let secs = samples.len() as f32 / 24000.0;
+        push_tts_log(format!(
+            "synth ok: {} chars → {:.1}s audio in {}ms ({:.1}x realtime, {})",
+            txt_len,
+            secs,
+            ms,
+            if secs > 0.0 { secs * 1000.0 / ms as f32 } else { 0.0 },
+            if gpu_active { "gpu-pack present" } else { "cpu" }
+        ));
+        Ok::<Vec<u8>, String>(f32_to_wav(&samples, 24000))
+    })
+    .await
+    .map_err(|e| format!("task join failed: {e}"))??;
+    Ok(wav)
+}
 
-    let ts = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis())
-        .unwrap_or(0);
-    let wav = std::env::temp_dir().join(format!("oc-tts-{}-{}.wav", std::process::id(), ts));
+// warm Kokoro and keep it on GPU — call once at startup / voice change so
+// the first utterance doesn't pay model load. Stays in KOKORO OnceLock.
+#[tauri::command]
+pub async fn tts_warm() -> Result<String, String> {
+    let tts = get_kokoro().await?;
+    // dummy synth to force CUDA kernels to JIT-load (first synth is slower)
+    let v = kokoro_en::Voice::new("af_heart".to_string()).with_speed(1.0);
+    let _ = tts.synth("warmup.".to_string(), v).await;
+    Ok("warm".into())
+}
 
-    let result = (|| -> Result<Vec<u8>, String> {
-        let mut cmd = Command::new(&exe);
-        cmd.arg("-m").arg(&model).arg("-f").arg(&wav);
-        // piper's length-scale is inverse speed; clamp to sane bounds
-        let sp = speed.unwrap_or(1.0).clamp(0.5, 2.0);
-        if (sp - 1.0).abs() > f64::EPSILON {
-            cmd.arg("--length-scale").arg(format!("{}", 1.0 / sp));
-        }
-        // piper logs to stderr; nothing reads it here, so send it to null
-        // rather than risk a full pipe blocking the child
-        cmd.stdin(Stdio::piped())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
-        #[cfg(all(windows, not(debug_assertions)))]
-        {
-            use std::os::windows::process::CommandExt;
-            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-            cmd.creation_flags(CREATE_NO_WINDOW);
-        }
-        let mut child = cmd.spawn().map_err(|e| format!("failed to run piper: {e}"))?;
-        // feed the text, then close stdin so piper starts synthesis
-        if let Some(mut stdin) = child.stdin.take() {
-            use std::io::Write as _;
-            let _ = stdin.write_all(text.as_bytes());
-        }
-        // hard cap so a wedged process can't hang the UI forever
-        let deadline = Instant::now() + Duration::from_secs(60);
-        loop {
-            match child.try_wait().map_err(|e| e.to_string())? {
-                Some(_) => break,
-                None => {
-                    if Instant::now() > deadline {
-                        let _ = child.kill();
-                        return Err("speech synthesis timed out".into());
+// PCM path — returns raw i16 LE mono at 24000 Hz via Channel, no WAV header.
+// Frontend builds AudioBuffer directly (zero WAV encode/decode, smaller IPC than WAV).
+#[tauri::command]
+pub async fn tts_speak_pcm(
+    text: String,
+    voice: String,
+    speed: Option<f64>,
+) -> Result<Vec<u8>, String> {
+    if text.trim().is_empty() || text.len() > 20_000 {
+        return Err("bad speak text".into());
+    }
+    if !kokoro_model_path().exists() {
+        return Err(format!("kokoro not installed — set it up in Settings > Voice (missing {})", kokoro_model_path().display()));
+    }
+    let kvoice = map_piper_to_kokoro(&voice);
+    let has_voice = kokoro_voice_path(&kvoice).exists() || kokoro_voices_path().exists() || kokoro_voices_dir().exists() && std::fs::read_dir(kokoro_voices_dir()).map(|mut rd| rd.next().is_some()).unwrap_or(false);
+    if !has_voice {
+        return Err(format!("kokoro voice {} not installed — download it in Settings > Voice › Voices (missing {})", kvoice, kokoro_voice_path(&kvoice).display()));
+    }
+    let sp = speed.unwrap_or(1.0).clamp(0.5, 2.0) as f32;
+    let tts = get_kokoro().await?;
+    let v = kokoro_en::Voice::new(kvoice.clone()).with_speed(sp);
+    let txt_len = text.len();
+    let pcm_bytes = tauri::async_runtime::spawn_blocking(move || -> Result<Vec<u8>, String> {
+        let start = Instant::now();
+        let rt = tokio::runtime::Handle::try_current();
+        let fut = async {
+            let (samples, _) = tts.synth(text.clone(), v).await.map_err(|e| e.to_string())?;
+            Ok::<Vec<f32>, String>(samples)
+        };
+        let samples = if let Ok(h) = rt { h.block_on(fut)? } else {
+            tokio::runtime::Builder::new_current_thread().enable_all().build().map_err(|e| e.to_string())?.block_on(fut)?
+        };
+        let elapsed = start.elapsed().as_millis();
+        let secs = samples.len() as f32 / 24000.0;
+        push_tts_log(format!("synth pcm ok: {} chars → {:.1}s audio in {}ms", txt_len, secs, elapsed));
+        // f32 → i16 LE raw
+        let mut out = Vec::with_capacity(samples.len() * 2);
+        for s in samples { let v = (s.clamp(-1.0, 1.0) * 32767.0) as i16; out.extend_from_slice(&v.to_le_bytes()); }
+        Ok::<Vec<u8>, String>(out)
+    }).await.map_err(|e| format!("task join failed: {e}"))??;
+    Ok(pcm_bytes)
+}
+
+// streaming TTS — emits WAV chunks via Channel as each sentence is synthesized.
+// Frontend creates a Channel<Vec<u8>> and plays chunks as they arrive.
+#[tauri::command]
+pub async fn tts_stream(
+    text: String,
+    voice: String,
+    speed: Option<f64>,
+    on_chunk: tauri::ipc::Channel<Vec<u8>>,
+) -> Result<(), String> {
+    if text.trim().is_empty() || text.len() > 20_000 {
+        return Err("bad speak text".into());
+    }
+    if !kokoro_model_path().exists() {
+        return Err(format!("kokoro not installed — set it up in Settings > Voice (missing {})", kokoro_model_path().display()));
+    }
+    let kvoice_chk = map_piper_to_kokoro(&voice);
+    let has_voice_chk = kokoro_voice_path(&kvoice_chk).exists() || kokoro_voices_path().exists() || kokoro_voices_dir().exists() && std::fs::read_dir(kokoro_voices_dir()).map(|mut rd| rd.next().is_some()).unwrap_or(false);
+    if !has_voice_chk {
+        // fallback to non-streaming for one chunk (will surface the same voice error)
+        let wav = tts_speak(text, voice, speed).await?;
+        let _ = on_chunk.send(wav);
+        return Ok(());
+    }
+    let kvoice = map_piper_to_kokoro(&voice);
+    let sp = speed.unwrap_or(1.0).clamp(0.5, 2.0) as f32;
+    let tts = get_kokoro().await?;
+    // Split into sentences for low-latency streaming — Kokoro's own splitter
+    // is used when available, else simple regex.
+    let sentences: Vec<String> = {
+        // try kokoro's splitter first (handles abbreviations, etc.)
+        // fallback to simple split
+        let raw = text.clone();
+        let parts: Vec<String> = raw
+            .split(|c| c == '.' || c == '!' || c == '?' || c == '\n')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        if parts.is_empty() { vec![text.clone()] } else {
+            // re-add sentence terminators for natural prosody
+            let mut out = Vec::new();
+            let mut rest = text.as_str();
+            for p in &parts {
+                if let Some(idx) = rest.find(p.as_str()) {
+                    let end = idx + p.len();
+                    let mut sent = rest[idx..end].to_string();
+                    // capture following punctuation
+                    let after = &rest[end..];
+                    if let Some(c) = after.chars().next() {
+                        if matches!(c, '.' | '!' | '?' ) { sent.push(c); }
                     }
-                    std::thread::sleep(Duration::from_millis(40));
+                    out.push(sent);
+                    rest = &rest[end..];
+                } else {
+                    out.push(p.clone());
                 }
             }
+            if out.is_empty() { vec![text.clone()] } else { out }
         }
-        std::fs::read(&wav).map_err(|e| format!("synthesis failed: {e}"))
-    })();
-
-    let _ = std::fs::remove_file(&wav);
-    result
+    };
+    for sent in sentences {
+        let s = sent.trim().to_string();
+        if s.is_empty() { continue; }
+        let v = kokoro_en::Voice::new(kvoice.clone()).with_speed(sp);
+        let tts_clone = tts.clone();
+        let (samples, _) = tts_clone.synth(s, v).await.map_err(|e| e.to_string())?;
+        let wav = f32_to_wav(&samples, 24000);
+        let _ = on_chunk.send(wav);
+    }
+    Ok(())
 }

@@ -34,6 +34,7 @@ export function createSessionStore(onChange: (sid: string) => void) {
     // update must swap its own object or the row never re-renders
     store[mi] = {
       ...m,
+      info: { ...m.info },
       parts:
         pi < 0 ? [...m.parts, part] : m.parts.map((x) => (x.id === part.id ? part : x)),
     };
@@ -58,6 +59,7 @@ export function createSessionStore(onChange: (sid: string) => void) {
         // fresh identities — see upsertPart
         store![mi] = {
           ...m,
+          info: { ...m.info },
           parts: m.parts.map((x) =>
             x.id === pid
               ? ({ ...x, text: (((x as any).text ?? "") + entry.text) as string } as Part)
@@ -109,28 +111,31 @@ export function createSessionStore(onChange: (sid: string) => void) {
   function applyDelta(p: { sessionID: string; messageID: string; partID: string; delta: string }) {
     const sid = p.sessionID;
     const key = `${p.messageID}:${p.partID}`;
-    const store = storeFor(sid);
-    const mi = store.findIndex((x) => x.info.id === p.messageID);
-    const m = mi >= 0 ? store[mi] : undefined;
-    const pt = m?.parts.find(
-      (x) => x.id === p.partID,
-    ) as { type?: string; text?: string } | undefined;
-    if (m && pt && (pt.type === "text" || pt.type === "reasoning")) {
-      // fresh identities for just this message — see upsertPart
-      store[mi] = {
-        ...m,
-        parts: m.parts.map((x) =>
-          x.id === p.partID ? { ...x, text: ((x as any).text ?? "") + p.delta } : x,
-        ),
-      };
-      pendingDeltas.delete(key);
-      onChange(sid);
-    } else {
-      // part not announced yet — stash until it exists
-      const cur = pendingDeltas.get(key);
-      if (cur) cur.text += p.delta;
-      else pendingDeltas.set(key, { sid, text: p.delta });
+    const store = stores.get(sid);
+    if (store) {
+      const mi = store.findIndex((x) => x.info.id === p.messageID);
+      const m = mi >= 0 ? store[mi] : undefined;
+      const pt = m?.parts.find(
+        (x) => x.id === p.partID,
+      ) as { type?: string; text?: string } | undefined;
+      if (m && pt && (pt.type === "text" || pt.type === "reasoning")) {
+        // fresh identities for just this message — see upsertPart
+        store[mi] = {
+          ...m,
+          info: { ...m.info },
+          parts: m.parts.map((x) =>
+            x.id === p.partID ? { ...x, text: ((x as any).text ?? "") + p.delta } : x,
+          ),
+        };
+        pendingDeltas.delete(key);
+        onChange(sid);
+        return;
+      }
     }
+    // part not announced yet — stash until it exists (no eager store creation)
+    const cur = pendingDeltas.get(key);
+    if (cur) cur.text += p.delta;
+    else pendingDeltas.set(key, { sid, text: p.delta });
   }
 
   // fetch bookkeeping: bump the sequence, report staleness, install results
@@ -160,6 +165,7 @@ export function createSessionStore(onChange: (sid: string) => void) {
   }
 
   function remove(sid: string) {
+    dropStashes(sid);
     stores.delete(sid);
     fetchSeq.delete(sid);
   }

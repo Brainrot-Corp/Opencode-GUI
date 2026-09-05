@@ -1,6 +1,6 @@
 [package]
 name = "opencode-gui"
-version = "2.0.0"
+version = "2.1.5"
 description = "Lightweight GUI client for opencode serve"
 authors = ["you"]
 edition = "2021"
@@ -10,6 +10,7 @@ edition = "2021"
 #   cargo tauri build --features noglass
 [features]
 noglass = []
+whisper = ["dep:whisper-rs"]
 
 # faster rebuilds when switching build variants (win10/win11) and small edits
 [profile.release]
@@ -28,7 +29,9 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["tray-icon", "unstable"] }
+# macos-private-api: WKWebView drawsBackground=false — required for
+# transparent webview so the macOS vibrancy layer shows through
+tauri = { version = "2", features = ["tray-icon", "unstable", "macos-private-api"] }
 tauri-plugin-global-shortcut = "2"
 tauri-plugin-window-state = "2"
 tauri-plugin-autostart = "2"
@@ -38,18 +41,28 @@ serde_json = "1"
 tauri-plugin-dialog = "2.7.2"
 notify = "7"
 zip = { version = "4", default-features = false, features = ["deflate"] }
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "multipart", "stream", "blocking"] }
 portable-pty = "0.9.0"
+whisper-rs = { version = "0.14", optional = true }
 base64 = "0.23.1"
 discord-rich-presence = "0.2"
 sha2 = "0.10"
 tauri-plugin-clipboard-manager = "2.3.2"
+kokoro-en = { git = "https://github.com/pguso/kokoro", package = "kokoro-en", default-features = false, features = ["misaki-lean"] }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "sync", "time", "fs", "macros"] }
+futures = "0.3"
+
+[target.'cfg(any(windows, target_os = "macos"))'.dependencies]
+window-vibrancy = "0.6"
+
+# mac traffic-light alignment — NSWindow standardWindowButton access
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-app-kit = "0.3"
 
 [target."cfg(windows)".dependencies]
-window-vibrancy = "0.6"
 jumplist_win = "0.0.4"
 winreg = "0.52"
 # version-matched to wry's — gives access to ICoreWebView2Controller
 webview2-com = "0.38"
-windows = { version = "0.58", features = ["Win32_System_Com", "Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_System_DataExchange", "Win32_Graphics_Gdi"] }
+windows = { version = "0.58", features = ["Win32_System_Com", "Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_System_DataExchange", "Win32_Graphics_Gdi", "Win32_System_JobObjects", "Win32_System_Threading", "Win32_System_WindowsProgramming", "Win32_System_LibraryLoader"] }
 

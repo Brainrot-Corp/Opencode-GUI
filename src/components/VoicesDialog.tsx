@@ -1,13 +1,14 @@
 ﻿import { useEffect, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import type { AppSettings } from "../hooks/useSettings";
 import { useVoiceInstall } from "../hooks/useVoiceInstall";
 import PickerMenu from "./PickerMenu";
 import Dialog from "./Dialog";
 import InlineNumberInput from "./InlineNumberInput";
-import { PIPER_LANGS, piperLabel, loadPiperCatalog, loadWhisperCatalog, wmGroup, type WhisperModel } from "../lib/piper";
+import { kokoroLabel, loadKokoroCatalog, loadWhisperCatalog, wmGroup, type WhisperModel, kokoroGpuMbFor } from "../lib/kokoro";
 
 // centered glass dialog hosting everything speech-related: tab "Options"
-// carries the whole former Settings Voice box (whisper engine, hands-free,
+// carries the whole former Settings Voice box (whisper engine, sensitivity,
 // spoken replies); tab "Voices" browses the full Piper catalog with search,
 // one-click download-and-activate and inline previews
 export default function VoicesDialog({
@@ -21,7 +22,7 @@ export default function VoicesDialog({
   settings: AppSettings;
   update: (patch: Partial<AppSettings>) => void;
 }) {
-  const [tab, setTab] = useState<"options" | "voices" | "models">("options");
+  const [tab, setTab] = useState<"stt" | "tts" | "voices" | "models">("stt");
   // download/install pipeline lives in the shared hook (also feeds the
   // onboarding wizard)
   const inst = useVoiceInstall(settings, update);
@@ -34,17 +35,38 @@ export default function VoicesDialog({
   const [catLoading, setCatLoading] = useState(false);
   const [query, setQuery] = useState("");
 
+  // GPU detection (NVIDIA for cublas whisper + Kokoro CUDA)
+  const [gpu, setGpu] = useState<{ nvidia: boolean; name: string; compute_cap: string } | null>(null);
+  const [ttsLog, setTtsLog] = useState<string[]>([]);
+  const [ttsLast, setTtsLast] = useState("");
+
+  const refreshTtsLog = () => {
+    invoke<string[]>("tts_debug_log").then(setTtsLog).catch(() => {});
+    // tts_status also carries last log for the one-line badge
+    invoke<{ gpu_log?: string }>("tts_status").then((s) => setTtsLast(s.gpu_log ?? "")).catch(() => {});
+  };
+
   useEffect(() => {
     if (!open) return;
     inst.refresh();
+    refreshTtsLog();
+    invoke<{ nvidia: boolean; name: string; compute_cap: string }>("voice_gpu")
+      .then(setGpu)
+      .catch(() => setGpu(null));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
-  // catalog loads once per dialog session, lazily on first browse
+  // refresh log after GPU pack changes
+  useEffect(() => {
+    if (!open) return;
+    refreshTtsLog();
+  }, [piper?.gpuBin, open]);
+
+  // Kokoro voices are a static list (single voices.bin), no HF walk needed
   useEffect(() => {
     if (!open || tab !== "voices" || catLoading || catalog.length) return;
     setCatLoading(true);
-    loadPiperCatalog()
+    loadKokoroCatalog()
       .then(setCatalog)
       .finally(() => setCatLoading(false));
   }, [open, tab, catLoading, catalog.length]);
@@ -81,12 +103,10 @@ export default function VoicesDialog({
 
   // --- voices browser --------------------------------------------------------
   const q = query.trim().toLowerCase();
-  const filtered = catalog.filter(
-    (id) =>
-      !q ||
-      id.toLowerCase().includes(q) ||
-      piperLabel(id).toLowerCase().includes(q),
-  );
+  const filtered = catalog.filter((id) => {
+    const label = kokoroLabel(id);
+    return !q || id.toLowerCase().includes(q) || label.toLowerCase().includes(q);
+  });
   const wFiltered = wModels.filter(
     (m) => !q || m.id.toLowerCase().includes(q) || m.label.toLowerCase().includes(q),
   );
@@ -98,7 +118,8 @@ export default function VoicesDialog({
       <div className="dlg-tabs">
         {(
           [
-            ["options", "Options"],
+            ["stt", "STT"],
+            ["tts", "TTS"],
             ["models", "Models"],
             ["voices", "Voices"],
           ] as const
@@ -144,10 +165,10 @@ export default function VoicesDialog({
               <div className="model-empty">{catLoading ? "Loading catalog..." : "No voices match"}</div>
             )}
             {filtered.map((id, i) => {
-              const family = id.split("-")[0];
-              const showGroup = i === 0 || filtered[i - 1].split("-")[0] !== family;
+              const family = id.split("_")[0];
+              const showGroup = i === 0 || filtered[i - 1].split("_")[0] !== family;
               const downloaded = (piper?.items ?? []).includes(id);
-              const active = settings.ttsVoice === `${id}.onnx`;
+              const active = settings.ttsVoice === id || settings.ttsVoice === `${id}.onnx`;
               const downloading = dlVoiceId === id;
               const suffix = active
                 ? ""
@@ -156,11 +177,14 @@ export default function VoicesDialog({
                   : downloaded
                     ? ""
                     : " — not downloaded";
+              const label = kokoroLabel(id);
+              const groupLabel = family.toUpperCase();
+              const voiceRef = id;
               return (
                 <div key={id}>
                   {showGroup && (
                     <div className="model-group-label">
-                      {PIPER_LANGS[family] ?? family}
+                      {groupLabel}
                     </div>
                   )}
                   <div className={`browse-row${active ? " selected" : ""}`}>
@@ -171,15 +195,15 @@ export default function VoicesDialog({
                       className={`model-opt${active ? " selected" : ""}`}
                       onClick={() => {
                         if (downloaded) {
-                          update({ ttsVoice: `${id}.onnx` });
-                          inst.previewVoice(`${id}.onnx`);
+                          update({ ttsVoice: voiceRef });
+                          inst.previewVoice(voiceRef);
                         } else {
                           void inst.ensurePiper(id);
                         }
                       }}
                     >
                       <span>
-                        {piperLabel(id)}
+                        {label}
                         {suffix}
                       </span>
                       {active && <i className="fa-solid fa-check" />}
@@ -191,7 +215,7 @@ export default function VoicesDialog({
                         data-tip="Preview"
                         aria-label={`Preview ${id}`}
                         disabled={!!dl}
-                        onClick={() => inst.previewVoice(`${id}.onnx`)}
+                        onClick={() => inst.previewVoice(voiceRef)}
                       >
                         <i className="fa-solid fa-play" />
                       </button>
@@ -263,6 +287,330 @@ export default function VoicesDialog({
               );
             })}
           </div>
+        </>
+      ) : tab === "tts" ? (
+        <>
+          <div className="setting-row drop">
+            <div className="setting-info">
+              <i className="fa-solid fa-wand-magic-sparkles setting-icon" />
+              <div>
+                <div className="setting-name">Kokoro TTS engine</div>
+                <div className="setting-desc">
+                  {piper?.bin ? (
+                    <>
+                      {`Kokoro ready · ${piper.items.length} voice${piper.items.length === 1 ? "" : "s"} — `}
+                      <button type="button" className="linklike" onClick={() => setTab("voices")}>
+                        browse voices
+                      </button>
+                    </>
+                  ) : (
+                    "Local Kokoro — 92 MB int8 model, GPU (CUDA) → CPU, streams sentences"
+                  )}
+                </div>
+              </div>
+            </div>
+            <div className="color-controls">
+              {!piper?.bin ? (
+                <button type="button" className="reset-btn" disabled={!!dl} onClick={() => void inst.installKokoro()}>
+                  <i className="fa-solid fa-download" />
+                  Install Kokoro
+                </button>
+              ) : (
+                <>
+                  <button type="button" className="reset-btn" disabled={!!dl} onClick={() => void inst.reinstallKokoro()}>
+                    <i className="fa-solid fa-rotate" />
+                    Reinstall
+                  </button>
+                  <button type="button" className="reset-btn" disabled={!!dl} onClick={() => void inst.removeKokoro()}>
+                    <i className="fa-solid fa-trash-can" />
+                    Uninstall
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+
+          <div className="setting-row">
+            <div className="setting-info">
+              <i className="fa-solid fa-bolt setting-icon" />
+              <div>
+                <div className="setting-name">Kokoro GPU (CUDA)</div>
+                <div className="setting-desc">
+                  {!gpu
+                    ? "Checking for an NVIDIA GPU…"
+                    : gpu.nvidia
+                      ? piper?.gpuBin
+                        ? `${gpu.name} — CUDA 13 pack installed; unsupported GPUs fall back to CPU automatically`
+                        : parseFloat(gpu.compute_cap) >= 12.0
+                          ? `${gpu.name} detected (Blackwell sm_120) — downloads Blackwell CUDA pack + runtime + cuDNN`
+                          : `${gpu.name} detected — downloads onnxruntime provider + CUDA 13 runtime + cuDNN`
+                      : "No NVIDIA GPU detected — the CUDA pack needs one"}
+                </div>
+              </div>
+            </div>
+            <div className="color-controls">
+              {!piper?.gpuBin ? (
+                <button
+                  type="button"
+                  className="reset-btn"
+                  disabled={!!dl || !gpu?.nvidia}
+                  onClick={() => void inst.installKokoroGpu(false, gpu?.compute_cap ?? "")}
+                >
+                  <i className="fa-solid fa-download" />
+                  Install (~{kokoroGpuMbFor(gpu?.compute_cap ?? "")} MB)
+                </button>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    className="reset-btn"
+                    disabled={!!dl}
+                    aria-label="Reinstall CUDA pack"
+                    onClick={() => void inst.installKokoroGpu(true, gpu?.compute_cap ?? "")}
+                  >
+                    <i className="fa-solid fa-rotate" />
+                    Reinstall
+                  </button>
+                  <button
+                    type="button"
+                    className="reset-btn"
+                    disabled={!!dl}
+                    aria-label="Delete CUDA pack"
+                    onClick={() => void inst.removeKokoroGpu()}
+                  >
+                    <i className="fa-solid fa-trash-can" />
+                    Delete
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+
+          {/* GPU fallback debug — visible when CUDA pack is installed */}
+          {piper?.gpuBin && (ttsLast || ttsLog.length > 0) && (
+            <div className="setting-row wrap tts-debug-row">
+              <div className="setting-info">
+                <i className="fa-solid fa-bug setting-icon" />
+                <div style={{ minWidth: 0 }}>
+                  <div className="setting-name">
+                    TTS debug log
+                    {(ttsLast.includes("CPU fallback") || ttsLast.includes("failed")) && (
+                      <span className="model-chip" style={{ marginLeft: 6, background: "var(--danger)", color: "#fff", fontSize: "0.7em" }}>fallback to CPU</span>
+                    )}
+                  </div>
+                  <div className="setting-desc mono-hint" style={{ wordBreak: "break-all", whiteSpace: "pre-wrap" }}>
+                    {ttsLast || ttsLog[ttsLog.length - 1] || "no log yet — trigger a TTS preview to test"}
+                  </div>
+                </div>
+              </div>
+              <div className="color-controls">
+                <button
+                  type="button"
+                  className="reset-btn"
+                  data-tip="Copy log for bug report"
+                  onClick={async () => {
+                    const txt = ttsLog.join("\n") || ttsLast;
+                    try {
+                      await navigator.clipboard.writeText(txt);
+                    } catch {
+                      // fallback: write via tauri if clipboard blocked
+                    }
+                  }}
+                >
+                  <i className="fa-solid fa-copy" /> Copy
+                </button>
+                <button type="button" className="reset-btn" data-tip="Refresh log" onClick={refreshTtsLog}>
+                  <i className="fa-solid fa-rotate" /> Refresh
+                </button>
+                <button
+                  type="button"
+                  className="reset-btn"
+                  data-tip="Clear log"
+                  onClick={() => invoke("tts_clear_debug").then(refreshTtsLog).catch(() => {})}
+                >
+                  <i className="fa-solid fa-trash-can" /> Clear
+                </button>
+              </div>
+            </div>
+          )}
+
+          <div className="setting-row drop">
+            <div className="setting-info">
+              <i className="fa-solid fa-volume-high setting-icon" />
+              <div>
+                <div className="setting-name">Speak replies</div>
+                <div className="setting-desc">
+                  Read assistant answers aloud (code skipped) — streams sentences as they arrive
+                </div>
+              </div>
+            </div>
+            <div className="color-controls">
+              <PickerMenu
+                value={settings.ttsVoice}
+                disabled={!!dl}
+                empty="No voices downloaded"
+                label={
+                  settings.ttsVoice
+                    ? kokoroLabel(settings.ttsVoice.replace(/\.onnx$/, ""))
+                    : "Pick a voice…"
+                }
+                entries={(piper?.items ?? []).map((id) => ({
+                  value: id,
+                  label: kokoroLabel(id),
+                }))}
+                onPick={(file) => {
+                  update({ ttsVoice: file });
+                  inst.previewVoice(file);
+                }}
+              />
+              <button
+                type="button"
+                className="reset-btn"
+                data-tip="Preview voice"
+                aria-label="Preview voice"
+                disabled={!(settings.ttsVoice || piper?.items.length)}
+                onClick={() => inst.previewVoice(settings.ttsVoice)}
+              >
+                <i className="fa-solid fa-play" />
+              </button>
+              <button
+                type="button"
+                className={`toggle${settings.speakReplies ? " on" : ""}`}
+                aria-pressed={settings.speakReplies}
+                disabled={!settings.secondaryModel || !settings.ttsVoice}
+                data-tip={!settings.secondaryModel ? "Pick a Secondary model first" : !settings.ttsVoice ? "Pick a voice first" : settings.speakReplies ? "Turn off spoken replies" : "Turn on spoken replies"}
+                onClick={() => {
+                  if (!settings.secondaryModel || !settings.ttsVoice) return;
+                  update({ speakReplies: !settings.speakReplies });
+                }}
+              >
+                <span className="knob" />
+              </button>
+            </div>
+          </div>
+
+          <div className="setting-row">
+            <div className="setting-info">
+              <i className="fa-solid fa-volume-low setting-icon" />
+              <div>
+                <div className="setting-name">Speech volume</div>
+                <div className="setting-desc">Loudness of spoken replies and previews</div>
+              </div>
+            </div>
+            <div className="color-controls">
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.05}
+                value={settings.ttsVol}
+                aria-label="Speech volume"
+                onChange={(e) => {
+                  const v = Number(e.target.value);
+                  update({ ttsVol: v });
+                  window.dispatchEvent(new CustomEvent("oc:tts-vol", { detail: v }));
+                }}
+              />
+              <InlineNumberInput
+                value={settings.ttsVol}
+                min={0}
+                max={1}
+                step={0.05}
+                suffix="%"
+                ariaLabel="Speech volume percent"
+                onChange={(v) => {
+                  update({ ttsVol: v });
+                  window.dispatchEvent(new CustomEvent("oc:tts-vol", { detail: v }));
+                }}
+              />
+            </div>
+          </div>
+
+          <div className="setting-row">
+            <div className="setting-info">
+              <i className="fa-solid fa-gauge-high setting-icon" />
+              <div>
+                <div className="setting-name">Speech speed</div>
+                <div className="setting-desc">Rate of spoken replies — applies to the next phrase</div>
+              </div>
+            </div>
+            <div className="color-controls">
+              <input
+                type="range"
+                min={0.5}
+                max={2}
+                step={0.05}
+                value={settings.ttsSpeed}
+                aria-label="Speech speed"
+                onChange={(e) => update({ ttsSpeed: Number(e.target.value) })}
+              />
+              <InlineNumberInput
+                value={settings.ttsSpeed}
+                min={0.5}
+                max={2}
+                step={0.05}
+                suffix="×"
+                ariaLabel="Speech speed multiplier"
+                onChange={(v) => update({ ttsSpeed: v })}
+              />
+            </div>
+          </div>
+
+          {!!piper?.items.length && (
+            <div className="setting-row">
+              <div className="setting-info">
+                <i className="fa-solid fa-wand-magic-sparkles setting-icon" />
+                <div>
+                  <div className="setting-name">Neural voices</div>
+                  <div className="setting-desc">
+                    Kokoro ready ·{" "}
+                    <button type="button" className="linklike" onClick={() => setTab("voices")}>
+                      manage in the Voices tab
+                    </button>
+                  </div>
+                </div>
+              </div>
+              <div className="color-controls">
+                <button type="button" className="reset-btn" onClick={() => setTab("voices")}>
+                  <i className="fa-solid fa-globe" />
+                  Browse…
+                </button>
+              </div>
+            </div>
+          )}
+
+          {!!piper?.items.length && (
+            <div className="setting-row wrap">
+              <div className="setting-info">
+                <i className="fa-solid fa-database setting-icon" />
+                <div>
+                  <div className="setting-name">Downloaded neural voices</div>
+                  <div className="setting-desc">Click × to free the disk space</div>
+                </div>
+              </div>
+              <div className="model-chips">
+                {piper.items.map((id) => {
+                  const active = settings.ttsVoice === id || settings.ttsVoice === `${id}.onnx`;
+                  return (
+                  <span
+                    key={id}
+                    className={`model-chip${active ? " active" : ""}`}
+                  >
+                    {kokoroLabel(id)}
+                    <button
+                      type="button"
+                      aria-label={`Remove ${id}`}
+                      disabled={!!dl}
+                      onClick={() => void inst.removePiperVoice(id)}
+                    >
+                      <i className="fa-solid fa-xmark" />
+                    </button>
+                  </span>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </>
       ) : (
         <>
@@ -344,62 +692,37 @@ export default function VoicesDialog({
 
           <div className="setting-row">
             <div className="setting-info">
-              <i className="fa-solid fa-headset setting-icon" />
+              <i className="fa-solid fa-wave-square setting-icon" />
               <div>
-                <div className="setting-name">Hands-free dictation</div>
+                <div className="setting-name">Mic sensitivity</div>
                 <div className="setting-desc">
-                  Mic stays live and listens for commands — say "prompt …" to fill
-                  the composer, "send …" to fill and send at once
+                  Higher picks up quieter voices (and more background noise)
                 </div>
               </div>
             </div>
-            <button
-              type="button"
-              className={`toggle${settings.voice.handsFree ? " on" : ""}`}
-              aria-pressed={settings.voice.handsFree}
-              onClick={() =>
-                update({ voice: { ...settings.voice, handsFree: !settings.voice.handsFree } })
-              }
-            >
-              <span className="knob" />
-            </button>
+            <div className="color-controls">
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.05}
+                value={settings.voice.sens}
+                aria-label="Microphone sensitivity"
+                onChange={(e) =>
+                  update({ voice: { ...settings.voice, sens: Number(e.target.value) } })
+                }
+              />
+              <InlineNumberInput
+                value={settings.voice.sens}
+                min={0}
+                max={1}
+                step={0.05}
+                suffix="%"
+                ariaLabel="Microphone sensitivity percent"
+                onChange={(v) => update({ voice: { ...settings.voice, sens: v } })}
+              />
+            </div>
           </div>
-
-          {settings.voice.handsFree && (
-            <div className="setting-row">
-              <div className="setting-info">
-                <i className="fa-solid fa-wave-square setting-icon" />
-                <div>
-                  <div className="setting-name">Mic sensitivity</div>
-                  <div className="setting-desc">
-                    Higher picks up quieter voices (and more background noise)
-                  </div>
-                </div>
-              </div>
-              <div className="color-controls">
-                <input
-                  type="range"
-                  min={0}
-                  max={1}
-                  step={0.05}
-                  value={settings.voice.sens}
-                  aria-label="Microphone sensitivity"
-                  onChange={(e) =>
-                    update({ voice: { ...settings.voice, sens: Number(e.target.value) } })
-                  }
-                />
-                <InlineNumberInput
-                  value={settings.voice.sens}
-                  min={0}
-                  max={1}
-                  step={0.05}
-                  suffix="%"
-                  ariaLabel="Microphone sensitivity percent"
-                  onChange={(v) => update({ voice: { ...settings.voice, sens: v } })}
-                />
-              </div>
-            </div>
-          )}
 
           <div className="setting-row">
             <div className="setting-info">
@@ -407,8 +730,8 @@ export default function VoicesDialog({
               <div>
                 <div className="setting-name">Multilingual commands</div>
                 <div className="setting-desc">
-                  No English match? Re-runs the utterance through whisper's
-                  translate task before giving up to dictation
+                  Translates speech to English before matching — on a miss, the
+                  native-language transcription gets one retry
                 </div>
               </div>
             </div>
@@ -422,6 +745,70 @@ export default function VoicesDialog({
             >
               <span className="knob" />
             </button>
+          </div>
+
+          <div className="setting-row">
+            <div className="setting-info">
+              <i className="fa-solid fa-bolt setting-icon" />
+              <div>
+                <div className="setting-name">GPU transcription</div>
+                <div className="setting-desc">
+                  {!gpu
+                    ? "Checking for an NVIDIA GPU…"
+                    : gpu.nvidia
+                      ? voice?.gpuBin
+                        ? `${gpu.name} — CUDA 12.4 decode, automatic CPU fallback (needs driver ≥ 552)`
+                        : `${gpu.name} detected — installs a CUDA engine next to the CPU one`
+                      : "No NVIDIA GPU detected — the GPU engine needs one"}
+                </div>
+              </div>
+            </div>
+            <div className="color-controls">
+              {!voice?.gpuBin ? (
+                <button
+                  type="button"
+                  className="reset-btn"
+                  disabled={!!dl || !gpu?.nvidia}
+                  onClick={() => void inst.installWhisperGpu()}
+                >
+                  <i className="fa-solid fa-download" />
+                  Install GPU engine (671 MB)
+                </button>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    className="reset-btn"
+                    disabled={!!dl}
+                    aria-label="Reinstall GPU engine"
+                    onClick={() => void inst.installWhisperGpu(true)}
+                  >
+                    <i className="fa-solid fa-rotate" />
+                    Reinstall
+                  </button>
+                  <button
+                    type="button"
+                    className="reset-btn"
+                    disabled={!!dl}
+                    aria-label="Delete GPU engine"
+                    onClick={() => void inst.removeGpuEngine()}
+                  >
+                    <i className="fa-solid fa-trash-can" />
+                    Delete
+                  </button>
+                  <button
+                    type="button"
+                    className={`toggle${settings.voice.gpu ? " on" : ""}`}
+                    aria-pressed={settings.voice.gpu}
+                    onClick={() =>
+                      update({ voice: { ...settings.voice, gpu: !settings.voice.gpu } })
+                    }
+                  >
+                    <span className="knob" />
+                  </button>
+                </>
+              )}
+            </div>
           </div>
 
           <div className="setting-row">
@@ -444,185 +831,6 @@ export default function VoicesDialog({
               <span className="knob" />
             </button>
           </div>
-
-          <div className="setting-row drop">
-            <div className="setting-info">
-              <i className="fa-solid fa-volume-high setting-icon" />
-              <div>
-                <div className="setting-name">Speak replies</div>
-                <div className="setting-desc">
-                  Read assistant answers aloud (code skipped) — hands-free
-                  listening pauses during playback. More voices live in the
-                  Voices tab.
-                </div>
-              </div>
-            </div>
-            <div className="color-controls">
-              <PickerMenu
-                value={settings.ttsVoice}
-                disabled={!!dl}
-                empty="No voices downloaded"
-                label={
-                  settings.ttsVoice
-                    ? piperLabel(settings.ttsVoice.replace(/\.onnx$/, ""))
-                    : "Pick a voice…"
-                }
-                entries={(piper?.items ?? []).map((id) => ({
-                  value: `${id}.onnx`,
-                  label: piperLabel(id),
-                }))}
-                onPick={(file) => {
-                  update({ ttsVoice: file });
-                  inst.previewVoice(file);
-                }}
-              />
-              <button
-                type="button"
-                className="reset-btn"
-                data-tip="Preview voice"
-                aria-label="Preview voice"
-                disabled={!(settings.ttsVoice || piper?.items.length)}
-                onClick={() => inst.previewVoice(settings.ttsVoice)}
-              >
-                <i className="fa-solid fa-play" />
-              </button>
-              <button
-                type="button"
-                className={`toggle${settings.speakReplies ? " on" : ""}`}
-                aria-pressed={settings.speakReplies}
-                disabled={!settings.secondaryModel || !settings.ttsVoice}
-                data-tip={!settings.secondaryModel ? "Pick a Secondary model first" : !settings.ttsVoice ? "Pick a voice first" : settings.speakReplies ? "Turn off spoken replies" : "Turn on spoken replies"}
-                onClick={() => {
-                  if (!settings.secondaryModel || !settings.ttsVoice) return;
-                  update({ speakReplies: !settings.speakReplies });
-                }}
-              >
-                <span className="knob" />
-              </button>
-            </div>
-          </div>
-
-          <div className="setting-row">
-            <div className="setting-info">
-              <i className="fa-solid fa-volume-low setting-icon" />
-              <div>
-                <div className="setting-name">Speech volume</div>
-                <div className="setting-desc">Loudness of spoken replies and previews</div>
-              </div>
-            </div>
-            <div className="color-controls">
-              <input
-                type="range"
-                min={0}
-                max={1}
-                step={0.05}
-                value={settings.ttsVol}
-                aria-label="Speech volume"
-                onChange={(e) => {
-                  const v = Number(e.target.value);
-                  update({ ttsVol: v });
-                  // retune any speech playing right now
-                  window.dispatchEvent(new CustomEvent("oc:tts-vol", { detail: v }));
-                }}
-              />
-              <InlineNumberInput
-                value={settings.ttsVol}
-                min={0}
-                max={1}
-                step={0.05}
-                suffix="%"
-                ariaLabel="Speech volume percent"
-                onChange={(v) => {
-                  update({ ttsVol: v });
-                  window.dispatchEvent(new CustomEvent("oc:tts-vol", { detail: v }));
-                }}
-              />
-            </div>
-          </div>
-
-          <div className="setting-row">
-            <div className="setting-info">
-              <i className="fa-solid fa-gauge-high setting-icon" />
-              <div>
-                <div className="setting-name">Speech speed</div>
-                <div className="setting-desc">Rate of spoken replies — applies to the next phrase</div>
-              </div>
-            </div>
-            <div className="color-controls">
-              <input
-                type="range"
-                min={0.5}
-                max={2}
-                step={0.05}
-                value={settings.ttsSpeed}
-                aria-label="Speech speed"
-                onChange={(e) => update({ ttsSpeed: Number(e.target.value) })}
-              />
-              <InlineNumberInput
-                value={settings.ttsSpeed}
-                min={0.5}
-                max={2}
-                step={0.05}
-                suffix="×"
-                ariaLabel="Speech speed multiplier"
-                onChange={(v) => update({ ttsSpeed: v })}
-              />
-            </div>
-          </div>
-
-          {/* piper engine management — installs itself on demand */}
-          {!!piper?.items.length && (
-            <div className="setting-row">
-              <div className="setting-info">
-                <i className="fa-solid fa-wand-magic-sparkles setting-icon" />
-                <div>
-                  <div className="setting-name">Neural voices</div>
-                  <div className="setting-desc">
-                    Piper ready ·{" "}
-                    <button type="button" className="linklike" onClick={() => setTab("voices")}>
-                      manage in the Voices tab
-                    </button>
-                  </div>
-                </div>
-              </div>
-              <div className="color-controls">
-                <button type="button" className="reset-btn" onClick={() => setTab("voices")}>
-                  <i className="fa-solid fa-globe" />
-                  Browse…
-                </button>
-              </div>
-            </div>
-          )}
-
-          {!!piper?.items.length && (
-            <div className="setting-row wrap">
-              <div className="setting-info">
-                <i className="fa-solid fa-database setting-icon" />
-                <div>
-                  <div className="setting-name">Downloaded neural voices</div>
-                  <div className="setting-desc">Click × to free the disk space</div>
-                </div>
-              </div>
-              <div className="model-chips">
-                {piper.items.map((id) => (
-                  <span
-                    key={id}
-                    className={`model-chip${settings.ttsVoice === `${id}.onnx` ? " active" : ""}`}
-                  >
-                    {piperLabel(id)}
-                    <button
-                      type="button"
-                      aria-label={`Remove ${id}`}
-                      disabled={!!dl}
-                      onClick={() => void inst.removePiperVoice(id)}
-                    >
-                      <i className="fa-solid fa-xmark" />
-                    </button>
-                  </span>
-                ))}
-              </div>
-            </div>
-          )}
         </>
       )}
     </Dialog>

@@ -54,12 +54,30 @@ body.gp-resizing * {
   border-color: var(--line);
 }
 
-/* ahead/behind arrows */
-.gp-ab {
+/* right cluster: badge + ahead/behind + branch — hugs far right */
+.gp-right {
   margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 62%;
+  flex-shrink: 1;
+}
+.gp-right .gp-branch-name {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 0 1 auto;
+}
+/* ahead/behind arrows — sits immediately left of branch name */
+.gp-ab {
   display: flex;
   gap: 5px;
   font-size: 10px;
+  flex-shrink: 0;
 }
 .gp-ab em {
   font-style: normal;
@@ -79,15 +97,7 @@ body.gp-resizing * {
   font-family: var(--mono);
   font-size: 10px;
   text-align: center;
-}
-.gp-head .mono {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-/* when no arrows, push the badge right */
-.gp-head > .gp-badge:last-child {
-  margin-left: auto;
+  flex-shrink: 0;
 }
 
 /* drag handle — horizontal twin of .sb-resize / .term-resize */
@@ -155,13 +165,16 @@ body.gp-resizing * {
   box-shadow: 0 0 14px -6px var(--accent-glow);
 }
 
-/* AI generate — sits inside the input's right edge */
+/* AI generate — sits inside the input's right edge, vertically centered */
 .gp-gen {
   position: absolute;
   right: 4px;
-  top: 8px;
+  top: 50%;
+  transform: translateY(-50%);
   width: 24px;
   height: 24px;
+  display: grid;
+  place-items: center;
   border: none;
   border-radius: 4px;
   background: none;
@@ -455,4 +468,217 @@ body.gp-resizing * {
 .gp-act.danger:hover {
   color: var(--danger);
   background: rgba(224, 143, 143, 0.12);
+}
+
+/* VS split-button: primary + dropdown arrow share one glass unit */
+.gp-split {
+  flex: 1 0 auto;
+  display: flex;
+  min-width: 0;
+  border-radius: 4px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--accent) calc(0.09 * 100%), transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) calc(0.18 * 100%), transparent);
+}
+.gp-commit-main {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 7px 8px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-family: var(--sans);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent-bright);
+  white-space: nowrap;
+  transition: background 0.15s, color 0.15s;
+}
+.gp-commit-main:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) calc(0.12 * 100%), transparent);
+}
+.gp-commit-main:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.gp-commit-drop {
+  flex: 0 0 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-left: 1px solid color-mix(in srgb, var(--accent) calc(0.18 * 100%), transparent);
+  background: transparent;
+  cursor: pointer;
+  color: var(--accent-bright);
+  font-size: 9px;
+  transition: background 0.15s;
+}
+.gp-commit-drop:hover {
+  background: color-mix(in srgb, var(--accent) calc(0.12 * 100%), transparent);
+}
+.gp-more {
+  flex: 0 0 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 7px 6px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: transparent;
+  cursor: pointer;
+  color: var(--text-faint);
+  font-size: 12px;
+  transition: background 0.2s, color 0.2s, border-color 0.2s;
+}
+.gp-more:hover {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) calc(0.28 * 100%), transparent);
+  background: color-mix(in srgb, var(--accent) calc(0.08 * 100%), transparent);
+}
+
+/* dropdown menu (via DropdownPortal) */
+.gp-menu {
+  min-width: 240px;
+  max-width: 300px;
+  height: auto;
+  min-height: 0;
+  max-height: min(360px, 60vh);
+  overflow-y: auto;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border: 1px solid color-mix(in srgb, var(--accent) calc(0.18 * 100%), transparent);
+  border-radius: 8px;
+  background: rgba(var(--chrome-rgb), 0.96);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  box-shadow: 0 8px 28px rgba(0,0,0,0.35), 0 0 16px -6px var(--accent-glow);
+}
+.gp-menu-check {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: var(--sans);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-dim);
+  user-select: none;
+}
+.gp-menu-check:hover {
+  background: color-mix(in srgb, var(--accent) calc(0.07 * 100%), transparent);
+  color: var(--text);
+}
+.gp-menu-check input[type="checkbox"] {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  margin: 0;
+  background: linear-gradient(180deg, rgba(20, 28, 35, 0.14), rgba(12, 17, 22, 0.22)),
+    rgba(21, 29, 36, 0.45);
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  cursor: pointer;
+  transition: border-color 0.2s var(--ease), background 0.2s var(--ease),
+    box-shadow 0.2s var(--ease);
+  position: relative;
+}
+.gp-menu-check input[type="checkbox"]:hover {
+  border-color: color-mix(in srgb, var(--accent) calc(0.35 * 100%), transparent);
+  box-shadow: 0 0 10px -4px var(--accent-glow);
+}
+.gp-menu-check input[type="checkbox"]:focus-visible {
+  outline: 1px solid color-mix(in srgb, var(--accent) calc(0.55 * 100%), transparent);
+  outline-offset: 2px;
+}
+.gp-menu-check input[type="checkbox"]::after {
+  content: "\f00c";
+  font-family: "Font Awesome 6 Free";
+  font-weight: 900;
+  font-size: 9px;
+  color: var(--accent-bright);
+  opacity: 0;
+  transform: scale(0.7);
+  transition: opacity 0.15s var(--ease), transform 0.15s var(--ease);
+  line-height: 1;
+}
+.gp-menu-check input[type="checkbox"]:checked {
+  background: color-mix(in srgb, var(--accent) calc(0.13 * 100%), transparent);
+  border-color: color-mix(in srgb, var(--accent) calc(0.45 * 100%), transparent);
+  box-shadow: 0 0 12px -6px var(--accent-glow), inset 0 0 8px -2px var(--accent-glow);
+}
+.gp-menu-check input[type="checkbox"]:checked::after {
+  opacity: 1;
+  transform: scale(1);
+}
+.gp-menu-sep {
+  height: 1px;
+  margin: 4px 0;
+  background: var(--line);
+}
+.gp-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  padding: 7px 8px;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  cursor: pointer;
+  font-family: var(--sans);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-dim);
+  text-align: left;
+  transition: background 0.15s, color 0.15s;
+}
+.gp-menu-item:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) calc(0.08 * 100%), transparent);
+  color: var(--accent);
+}
+.gp-menu-item:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.gp-menu-item i { width: 14px; text-align: center; font-size: 10px; opacity: 0.9; }
+.gp-menu-hint {
+  margin-left: auto;
+  font-size: 9px;
+  font-weight: 400;
+  letter-spacing: 0.03em;
+  color: var(--text-faint);
+  opacity: 0.9;
+}
+.gp-menu-hintline {
+  margin-top: 4px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--accent) calc(0.07 * 100%), transparent);
+  color: var(--text-faint);
+  font-size: 10px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+}
+.gp-hint {
+  padding: 6px 8px;
+  border-left: 2px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) calc(0.07 * 100%), transparent);
+  color: var(--text-dim);
+  font-size: 11px;
+  white-space: pre-wrap;
+  word-break: break-word;
 }

@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Session } from "@opencode-ai/sdk/client";
-import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { playSound } from "../lib/sounds";
 import { useContextMenu } from "../hooks/useContextMenu";
 import { clipboardWrite } from "../lib/clipboard";
 import { opencode, getDirectory } from "../api";
 import { addWorkspace, removeWorkspace, reorderWorkspaces, touchWorkspace } from "../lib/workspace";
+import { useTranslation } from "../lib/i18n";
 import FileTree from "./FileTree";
 import GitPanel from "./GitPanel";
 import "../styles/sidebar.css";
@@ -81,6 +81,7 @@ export default function Sidebar({
   const [tab, setTab] = useState(() =>
     localStorage.getItem("oc.sb.tab") === "files" ? "files" : "chats",
   );
+  const { t: tr } = useTranslation();
   const [clearConfirm, setClearConfirm] = useState<string | null>(null);
   const clearTimer = useRef(0);
   const [renaming, setRenaming] = useState<string | null>(null);
@@ -313,15 +314,15 @@ export default function Sidebar({
         onContextMenu={(e) => {
           e.preventDefault(); if (!ctx) return;
           ctx.show(e.clientX, e.clientY, [
-            { label: "Rename", icon: "fa-pen", action: () => startRename(s) },
-            { label: "Duplicate", icon: "fa-copy", action: () => onDuplicate?.(s.id), disabled: busy },
-            { label: pinned ? "Unpin" : "Pin", icon: "fa-thumbtack", action: () => onTogglePin?.(s.id) },
+            { label: tr("sidebar.session.rename"), icon: "fa-pen", action: () => startRename(s) },
+            { label: tr("sidebar.session.duplicate"), icon: "fa-copy", action: () => onDuplicate?.(s.id), disabled: busy },
+            { label: pinned ? tr("sidebar.session.unpin") : tr("sidebar.session.pin"), icon: "fa-thumbtack", action: () => onTogglePin?.(s.id) },
             { separator: true },
-            { label: "Copy ID", icon: "fa-id-badge", action: () => void clipboardWrite(s.id) },
-            { label: "Copy Title", icon: "fa-heading", action: () => void clipboardWrite(s.title || s.id) },
-            { label: "Share (copy link)", icon: "fa-share", action: async () => { try { const { client } = await opencode(); const r: any = await (client as any).session.share?.({ path: { id: s.id } }); const url = r?.data?.url || r?.data?.shareUrl || window.location.href + "#session-" + s.id; await clipboardWrite(String(url)); } catch { await clipboardWrite(s.id); } } },
+            { label: tr("sidebar.session.copyId"), icon: "fa-id-badge", action: () => void clipboardWrite(s.id) },
+            { label: tr("sidebar.session.copyTitle"), icon: "fa-heading", action: () => void clipboardWrite(s.title || s.id) },
+            { label: tr("sidebar.session.share"), icon: "fa-share", action: async () => { try { const { client } = await opencode(); const r: any = await (client as any).session.share?.({ path: { id: s.id } }); const url = r?.data?.url || r?.data?.shareUrl || window.location.href + "#session-" + s.id; await clipboardWrite(String(url)); } catch { await clipboardWrite(s.id); } } },
             { separator: true },
-            { label: "Close", icon: "fa-xmark", danger: true, action: () => onDelete(s.id) },
+            { label: tr("sidebar.session.close"), icon: "fa-xmark", danger: true, action: () => onDelete(s.id) },
           ]);
         }}
       >
@@ -364,7 +365,7 @@ export default function Sidebar({
     <>
       <aside
         className={`sidebar${collapsed ? " collapsed" : ""}${resizing ? " resizing" : ""}${dragOver ? " drag-over" : ""}`}
-        {...(collapsed ? ({ "data-tip": "Show session history (Ctrl+B)", "data-tip-cursor": "" } as any) : {})}
+        {...(collapsed ? ({ "data-tip": tr("sidebar.tip.show"), "data-tip-cursor": "" } as any) : {})}
         onClick={collapsed ? () => { playSound("expand"); onToggle(); } : undefined}
         onDragOver={collapsed ? undefined : onDragOver}
         onDragLeave={collapsed ? undefined : onDragLeave}
@@ -373,7 +374,7 @@ export default function Sidebar({
         {collapsed ? (
           <>
             <button className="icon-btn sb-expand"><i className="fa-solid fa-angles-right" /></button>
-            {!!attentionIds?.size && <span className="sb-attention-badge" data-tip={`${attentionIds.size} session${attentionIds.size > 1 ? "s" : ""} need${attentionIds.size === 1 ? "s" : ""} your attention — click to show`} aria-label="Attention needed">{attentionIds.size > 1 ? attentionIds.size : <i className="fa-solid fa-bell" />}</span>}
+            {!!attentionIds?.size && <span className="sb-attention-badge" data-tip={tr("sidebar.attention.badge", { count: attentionIds.size, plural: attentionIds.size > 1 ? "s" : "", plural2: attentionIds.size === 1 ? "s" : "" } as any)} aria-label="Attention needed">{attentionIds.size > 1 ? attentionIds.size : <i className="fa-solid fa-bell" />}</span>}
             <div style={{ display: "none" }}><GitPanel /><>{sidebarExtras}</></div>
           </>
         ) : (
@@ -381,10 +382,10 @@ export default function Sidebar({
             <div className="sb-scroll" ref={scrollRef}>
               <div className="sb-head">
                 <div className="sb-tabs" role="tablist">
-                  <button role="tab" aria-selected={tab === "chats"} className={tab === "chats" ? "active" : ""} onClick={() => switchTab("chats")}><i className="fa-solid fa-comments" />Chats</button>
-                  <button role="tab" aria-selected={tab === "files"} className={tab === "files" ? "active" : ""} onClick={() => switchTab("files")}><i className="fa-solid fa-folder-tree" />Files</button>
+                  <button role="tab" aria-selected={tab === "chats"} className={tab === "chats" ? "active" : ""} onClick={() => switchTab("chats")}><i className="fa-solid fa-comments" />{tr("sidebar.tabs.chats")}</button>
+                  <button role="tab" aria-selected={tab === "files"} className={tab === "files" ? "active" : ""} onClick={() => switchTab("files")}><i className="fa-solid fa-folder-tree" />{tr("sidebar.tabs.files")}</button>
                 </div>
-                <button className="icon-btn sb-toggle" data-tip="Hide panel (Ctrl+B)" onClick={() => { playSound("collapse"); onToggle(); }}><i className="fa-solid fa-angles-left" /></button>
+                <button className="icon-btn sb-toggle" data-tip={tr("sidebar.tip.hide")} onClick={() => { playSound("collapse"); onToggle(); }}><i className="fa-solid fa-angles-left" /></button>
               </div>
 
               {loading && sessions.length === 0 && (
@@ -406,7 +407,6 @@ export default function Sidebar({
                       <div className="gp-sect ws-head ws-head--large" role="button" tabIndex={0} draggable={!isPrimary} onDragStart={() => { if (!isPrimary) setDragReorder(extraIdx); }} onDragEnd={() => { setDragReorder(null); setDropIndex(null); }} onClick={() => toggleWs(dir)} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggleWs(dir); } }} data-tip={dir || "Server cwd"} style={!isPrimary ? { cursor: "grab" } : undefined}>
                         <span className="gp-sect-toggle ws-toggle--large"><i className={`fa-solid fa-chevron-${isCollapsed ? "right" : "down"} gp-sect-chev`} /><i className="fa-solid fa-folder" style={{ fontSize: 13, color: "var(--accent)", opacity: 0.9 }} /><span className="ws-title mono" style={{ maxWidth: 140, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{baseName(dir)}</span><span className="gp-sect-count">{dir ? "" : ""}</span></span>
                         <span className="gp-sect-acts ws-acts--large" onClick={(e) => e.stopPropagation()}>
-                          <button className="gp-sact ws-action--large" data-tip="Reveal in Explorer" onClick={() => { const p = dir || primaryDir; if (p) void invoke("file_reveal", { path: p }).catch(()=>{}); }}><i className="fa-solid fa-folder-open" /></button>
                           <button className="gp-sact ws-action--large" data-tip="Copy path" onClick={() => void clipboardWrite(dir)}><i className="fa-solid fa-link" /></button>
                           {!isPrimary && (
                             confirming ? (
