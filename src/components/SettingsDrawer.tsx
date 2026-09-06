@@ -183,7 +183,7 @@ export default function SettingsDrawer({
               <i className="fa-solid fa-wand-magic-sparkles" />
             </button>
             <button className="icon-btn" data-tip={t("settings.tip.info")} onClick={() => setInfoOpen(true)}>
-              <i className="fa-solid fa-circle-info" />
+              <i className="fa-solid fa-screwdriver-wrench" />
             </button>
             <button className="icon-btn" data-tip={t("settings.tip.close")} onClick={onClose}>
               <i className="fa-solid fa-xmark" />
