@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import DropdownPortal from "./DropdownPortal";
+import { formatBinding } from "../lib/hotkeys";
 
 export default function AgentMenu({
   agents,
   agentSel,
   disabled,
+  cycleHotkey,
   onSelect,
   onToggleDisabled,
   onRefresh,
@@ -12,6 +14,7 @@ export default function AgentMenu({
   agents: { name: string; mode: string }[];
   agentSel?: string;
   disabled: Set<string>;
+  cycleHotkey?: string | null;
   onSelect: (name: string) => void;
   onToggleDisabled: (name: string) => void;
   onRefresh?: () => void;
@@ -99,7 +102,7 @@ export default function AgentMenu({
         className="agent-chip"
         data-tip={
           agents.length
-            ? `Agent — ${cur} — click to pick, Tab to cycle (${enabledCount}/${agents.length} enabled) · right-click a row to disable from Tab`
+            ? `Agent — ${cur} — click to pick, ${formatBinding(cycleHotkey ?? "Tab")} to cycle (${enabledCount}/${agents.length} enabled) · right-click a row to disable from Tab`
             : "No agents"
         }
         aria-haspopup="listbox"
@@ -123,7 +126,7 @@ export default function AgentMenu({
                 aria-selected={isSel}
                 data-hi={hi === i || undefined}
                 className={`model-opt agent-opt${isSel ? " selected" : ""}${hi === i ? " hl" : ""}${isDisabled ? " disabled" : ""}`}
-                data-tip={isDisabled ? "Right-click to enable for Tab cycle" : "Right-click to disable from Tab cycle"}
+                data-tip={isDisabled ? `Right-click to enable for ${formatBinding(cycleHotkey ?? "Tab")} cycle` : `Right-click to disable from ${formatBinding(cycleHotkey ?? "Tab")} cycle`}
                 onClick={() => { onSelect(a.name); setOpen(false); }}
                 onContextMenu={(e) => { e.preventDefault(); onToggleDisabled(a.name); }}
                 onMouseEnter={() => setHi(i)}
@@ -140,7 +143,7 @@ export default function AgentMenu({
           })}
           {enabledCount === 0 && agents.length > 0 && (
             <div className="model-empty" style={{ borderTop: "1px solid var(--line)", marginTop: 4 }}>
-              All disabled — Tab does nothing · right-click to re-enable
+              All disabled — {formatBinding(cycleHotkey ?? "Tab")} does nothing · right-click to re-enable
             </div>
           )}
         </div>

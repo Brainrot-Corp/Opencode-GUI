@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { invoke } from "@tauri-apps/api/core";
 import { isMac } from "../lib/platform";
+import { formatBinding } from "../lib/hotkeys";
 import { playSound } from "../lib/sounds";
 import { useTranslation } from "../lib/i18n";
 
@@ -98,7 +99,7 @@ export default function Titlebar({
         {titlebarExtras}
         <button
           className={`icon-btn${agentsOpen ? " on" : ""}`}
-          data-tip={agentsHotkey ? t("titlebar.agentsTip", { hotkey: agentsHotkey }) : t("titlebar.agents")}
+          data-tip={agentsHotkey ? t("titlebar.agentsTip", { hotkey: formatBinding(agentsHotkey) }) : t("titlebar.agents")}
           aria-pressed={!!agentsOpen}
           onClick={() => onToggleAgents?.()}
         >

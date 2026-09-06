@@ -1196,6 +1196,7 @@ export default function ChatPage() {
             isPinned={(id) => oc.isPinned(id)}
             getDirForSession={(id) => (oc as any).getDirForSession?.(id) ?? ""}
             refreshSessions={() => void (oc as any).refreshSessions?.()}
+            toggleSidebarHotkey={settings.hotkeys.toggleSidebar}
             sidebarExtras={
               sidebarWidgets.length ? (
                 <>
@@ -1384,6 +1385,7 @@ export default function ChatPage() {
           msgs={oc.msgs as any}
           activeChildren={oc.activeChildren as any}
           childTaskCosts={oc.childTaskCosts as any}
+          toggleAgentsHotkey={settings.hotkeys.toggleAgents}
         />
         <Suspense fallback={null}>
           <FileEditorHost hotkeys={settings.hotkeys} />

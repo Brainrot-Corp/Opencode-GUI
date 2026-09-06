@@ -741,9 +741,6 @@ export default function SettingsDrawer({
 
         </div>
 
-        <div className="settings-foot">
-          <span className="mono-hint">{t("settings.footHint")}</span>
-        </div>
       </aside>
         {infoOpen && (
           <InfoDialog commands={commands ?? []} pluginDocs={pluginDocs} plugins={plugins} settings={settings} update={update} onClose={() => setInfoOpen(false)} />

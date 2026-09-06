@@ -11,6 +11,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { opencode } from "../api";
 import { extLang, hlHtml } from "../lib/syntax";
 import { handleEditorKeys } from "../lib/editorKeys";
+import { fmtKey } from "../lib/tip";
 import { findMatches, highlightFindInHtml } from "../lib/find";
 import Dialog from "./Dialog";
 import "../styles/file-editor.css";
@@ -455,7 +456,7 @@ export default function FileEditor({
           </button>
           <button
             className="icon-btn"
-            data-tip="Find and replace (Ctrl+F)"
+            data-tip={`Find and replace (${fmtKey("Ctrl+F")})`}
             disabled={!editable}
             onClick={() => (findOpen ? (setFindOpen(false), taRef.current?.focus()) : openFind())}
           >
@@ -463,7 +464,7 @@ export default function FileEditor({
           </button>
           <button
             className="icon-btn"
-            data-tip="Save (Ctrl+S)"
+            data-tip={`Save (${fmtKey("Ctrl+S")})`}
             disabled={!dirty}
             onClick={() => void save()}
           >

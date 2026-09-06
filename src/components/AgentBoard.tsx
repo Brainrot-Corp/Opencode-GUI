@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useMemo, useCallback, useDeferredValue } f
 import type { Session } from "@opencode-ai/sdk/client";
 import type { Msg } from "../types";
 import { playSound } from "../lib/sounds";
+import { formatBinding } from "../lib/hotkeys";
 import "../styles/agent-board.css";
 
 type Props = {
@@ -18,6 +19,7 @@ type Props = {
   msgs?: Msg[];
   activeChildren?: Session[];
   childTaskCosts?: Record<string, { cost: number; tokens: number; title?: string }>;
+  toggleAgentsHotkey?: string | null;
 };
 
 const KEY = "oc.agentBoard.geom";
@@ -81,7 +83,7 @@ function statusFor(progress: number): SimStatus {
   return "done";
 }
 
-export default function AgentBoard({ open, onClose, sessions, busyIds, compactingIds, attentionIds, agents, getDirForSession, onOpenSession, activeId, msgs, activeChildren, childTaskCosts }: Props) {
+export default function AgentBoard({ open, onClose, sessions, busyIds, compactingIds, attentionIds, agents, getDirForSession, onOpenSession, activeId, msgs, activeChildren, childTaskCosts, toggleAgentsHotkey }: Props) {
   const [geom, setGeom] = useState<Geom>(() => loadGeom());
   const panelRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{ startX: number; startY: number; g0: Geom } | null>(null);
@@ -468,7 +470,7 @@ export default function AgentBoard({ open, onClose, sessions, busyIds, compactin
             <i className={`fa-solid ${simRunning ? "fa-stop" : "fa-play"}`} />
             {simRunning ? "Stop sim" : "Simulate"}
           </button>
-          <button className="icon-btn" data-tip="Close (Esc / Alt+A)" onClick={onClose} aria-label="Close">
+          <button className="icon-btn" data-tip={toggleAgentsHotkey ? `Close (${formatBinding("Escape")} / ${formatBinding(toggleAgentsHotkey)})` : `Close (${formatBinding("Escape")})`} onClick={onClose} aria-label="Close">
             <i className="fa-solid fa-xmark" />
           </button>
         </div>

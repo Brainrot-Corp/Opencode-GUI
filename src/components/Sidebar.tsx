@@ -7,6 +7,7 @@ import { clipboardWrite } from "../lib/clipboard";
 import { opencode, getDirectory } from "../api";
 import { addWorkspace, removeWorkspace, reorderWorkspaces, touchWorkspace } from "../lib/workspace";
 import { useTranslation } from "../lib/i18n";
+import { withHotkey } from "../lib/tip";
 import FileTree from "./FileTree";
 import GitPanel from "./GitPanel";
 import "../styles/sidebar.css";
@@ -51,6 +52,7 @@ export default function Sidebar({
   sidebarExtras,
   getDirForSession,
   refreshSessions,
+  toggleSidebarHotkey,
 }: {
   sessions: Session[];
   activeId: string;
@@ -77,6 +79,7 @@ export default function Sidebar({
   sidebarExtras?: React.ReactNode;
   getDirForSession?: (id: string) => string;
   refreshSessions?: () => void;
+  toggleSidebarHotkey?: string | null;
 }) {
   const [tab, setTab] = useState(() =>
     localStorage.getItem("oc.sb.tab") === "files" ? "files" : "chats",
@@ -365,7 +368,7 @@ export default function Sidebar({
     <>
       <aside
         className={`sidebar${collapsed ? " collapsed" : ""}${resizing ? " resizing" : ""}${dragOver ? " drag-over" : ""}`}
-        {...(collapsed ? ({ "data-tip": tr("sidebar.tip.show"), "data-tip-cursor": "" } as any) : {})}
+        {...(collapsed ? ({ "data-tip": withHotkey(tr("sidebar.tip.show"), toggleSidebarHotkey), "data-tip-cursor": "" } as any) : {})}
         onClick={collapsed ? () => { playSound("expand"); onToggle(); } : undefined}
         onDragOver={collapsed ? undefined : onDragOver}
         onDragLeave={collapsed ? undefined : onDragLeave}
@@ -385,7 +388,7 @@ export default function Sidebar({
                   <button role="tab" aria-selected={tab === "chats"} className={tab === "chats" ? "active" : ""} onClick={() => switchTab("chats")}><i className="fa-solid fa-comments" />{tr("sidebar.tabs.chats")}</button>
                   <button role="tab" aria-selected={tab === "files"} className={tab === "files" ? "active" : ""} onClick={() => switchTab("files")}><i className="fa-solid fa-folder-tree" />{tr("sidebar.tabs.files")}</button>
                 </div>
-                <button className="icon-btn sb-toggle" data-tip={tr("sidebar.tip.hide")} onClick={() => { playSound("collapse"); onToggle(); }}><i className="fa-solid fa-angles-left" /></button>
+                <button className="icon-btn sb-toggle" data-tip={withHotkey(tr("sidebar.tip.hide"), toggleSidebarHotkey)} onClick={() => { playSound("collapse"); onToggle(); }}><i className="fa-solid fa-angles-left" /></button>
               </div>
 
               {loading && sessions.length === 0 && (

@@ -9,6 +9,7 @@ import { detectLang, escPlain, hlHtml, insertFenced, looksLikeCode } from "../li
 import { handleComposerKeys } from "../lib/editorKeys";
 import { findMatches, highlightFindInHtml } from "../lib/find";
 import { matchesEvent } from "../lib/hotkeys";
+import { withHotkey } from "../lib/tip";
 import ModelMenu, { type ModelEntry } from "./ModelMenu";
 import AgentMenu from "./AgentMenu";
 import VariantMenu from "./VariantMenu";
@@ -896,6 +897,7 @@ export default function Composer({
             agents={agents}
             agentSel={agentSel}
             disabled={disabledAgents ?? new Set<string>()}
+            cycleHotkey={cycleAgentHotkey}
             onSelect={(n) => (onSelectAgent ? onSelectAgent(n) : onCycleAgent?.())}
             onToggleDisabled={(n) => onToggleDisabled?.(n)}
             onRefresh={onRefreshAgents}
@@ -975,7 +977,7 @@ export default function Composer({
           <button
             type="button"
             className="icon-btn diff-btn"
-            data-tip={`Workspace: ${workspace || "home folder"} — click to change (Ctrl+O)`}
+            data-tip={withHotkey(`Workspace: ${workspace || "home folder"} — click to change`, (hotkeys as any)?.openWorkspace)}
             onClick={onPickWorkspace}
           >
             <i className="fa-solid fa-folder-open" />
@@ -995,7 +997,7 @@ export default function Composer({
           <button
             type="button"
             className="icon-btn diff-btn"
-            data-tip="Terminal (Ctrl+`)"
+            data-tip={withHotkey("Terminal", (hotkeys as any)?.toggleTerm)}
             onClick={onToggleTerm}
           >
             <i className="fa-solid fa-terminal" />

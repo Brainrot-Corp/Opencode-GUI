@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { useContextMenu } from "../hooks/useContextMenu";
 import { clipboardWrite, clipboardRead } from "../lib/clipboard";
+import { fmtKey } from "../lib/tip";
 
 export default function SelectionMenu() {
   const ctx = (() => { try { return useContextMenu(); } catch { return null; } })();
@@ -103,7 +104,7 @@ export default function SelectionMenu() {
         }});
       }
       // Select All always available when editable or has selection container
-      items.push({ label: "Select All", icon: "fa-expand", shortcut: "Ctrl+A", action: () => {
+      items.push({ label: "Select All", icon: "fa-expand", shortcut: fmtKey("Ctrl+A"), action: () => {
         if (isEditable && ae && (ae as HTMLInputElement).select) {
           (ae as HTMLInputElement).select();
         } else {
