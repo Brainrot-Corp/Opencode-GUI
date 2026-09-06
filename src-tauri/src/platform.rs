@@ -272,7 +272,3 @@ pub fn center_traffic_lights(win: &tauri::WebviewWindow) {
         }
     }
 }
-
-/// Non-mac no-op so callers need no cfg.
-#[cfg(not(target_os = "macos"))]
-pub fn center_traffic_lights(_win: &tauri::WebviewWindow) {}

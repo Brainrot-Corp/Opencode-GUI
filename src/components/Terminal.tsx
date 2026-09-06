@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { playSound } from "../lib/sounds";
+import { isLiveFocusTarget, releaseTrapFocus } from "../lib/focus";
 import { fetchTerminalProfiles, useTerminalProfiles, type TerminalProfile } from "../hooks/useTerminalProfiles";
 import TermInstanceView from "./TermInstanceView";
 import DropdownPortal from "./DropdownPortal";
@@ -232,6 +233,24 @@ export default function TerminalPanel({
       setActiveId(id);
     }
   }, [open, terms.length, resolveProfile, terminal?.defaultProfileId]);
+
+  // closing the dock while it owns focus strands keyboard on a hidden helper:
+  // nothing looks focused and window shortcuts stop firing. Clear the was-term
+  // marker and move to the composer when a session is open, body otherwise
+  // (releaseTrapFocus no-ops when focus already landed somewhere live).
+  useEffect(() => {
+    if (open) return;
+    try { (window as any).__oc_lastWasTerm = false; } catch {}
+    requestAnimationFrame(() => {
+      const ae = document.activeElement as HTMLElement | null;
+      if (!ae?.closest?.(".term-dock")) return;
+      const comp = document.querySelector(".composer textarea") as HTMLElement | null;
+      try {
+        if (comp && isLiveFocusTarget(comp)) comp.focus({ preventScroll: true } as any);
+        else releaseTrapFocus();
+      } catch {}
+    });
+  }, [open]);
 
   // persist side + active + instances (lightweight)
   useEffect(() => { localStorage.setItem(SIDE_KEY, sideCollapsed ? "1" : "0"); }, [sideCollapsed]);

@@ -34,6 +34,7 @@ import { playSound } from "../lib/sounds";
 import { useSpeech } from "../hooks/useSpeech";
 import { pushToast, dismissToast } from "../hooks/useToast";
 import { matchesEvent } from "../lib/hotkeys";
+import { releaseTrapFocus } from "../lib/focus";
 import { usePlugins } from "../hooks/usePlugins";
 import { loadPluginsCatalog, fetchPluginFiles, pluginRawUrl, type PluginCatalogEntry } from "../lib/pluginsCatalog";
 import { isNewer, getAutoUpdateEnabled, setAutoUpdateEnabled } from "../lib/plugins";
@@ -784,6 +785,12 @@ export default function ChatPage() {
   useEffect(() => {
     localStorage.setItem("oc.term.open", termOpen ? "1" : "0");
   }, [termOpen]);
+  // closing the last session unmounts the composer — if it owned focus the
+  // keyboard is stranded on a detached node and window shortcuts stop firing.
+  // releaseTrapFocus no-ops when focus already landed somewhere live.
+  useEffect(() => {
+    if (!oc.activeId && !oc.booting) releaseTrapFocus();
+  }, [oc.activeId, oc.booting]);
 
   // permission/question overlay dynamic anchoring — bottom tracks composer top with 6px gap (spacing unit)
   useLayoutEffect(() => {

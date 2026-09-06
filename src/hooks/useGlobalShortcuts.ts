@@ -4,6 +4,7 @@ import type { AppSettings } from "./useSettings";
 import { playSound } from "../lib/sounds";
 import { UI_SCALES } from "../lib/uiScale";
 import { matchesEvent } from "../lib/hotkeys";
+import { isLiveFocusTarget, releaseTrapFocus } from "../lib/focus";
 
 // surfaces that own a single Escape (menus, dialogs, popups) — while any of
 // them is open the double-Escape stop gesture stands down entirely and the
@@ -402,7 +403,9 @@ export function useGlobalShortcuts({
     const savedRef = { current: null as HTMLElement | null };
     const saveFocus = () => {
       const ae = document.activeElement as HTMLElement | null;
-      if (ae && ae !== document.body && document.contains(ae)) {
+      // only remember live targets — a hidden helper (closed terminal dock)
+      // would re-trap focus on restore instead of freeing it
+      if (ae && ae !== document.body && isLiveFocusTarget(ae)) {
         // don't remember transient menu items that will be unmounted
         if (ae.closest(".ctx-menu, .cmd-menu, .model-menu")) return;
         savedRef.current = ae;
@@ -436,7 +439,7 @@ export function useGlobalShortcuts({
         const ae = document.activeElement as HTMLElement | null;
         const saved = savedRef.current;
 
-        if (saved && document.contains(saved) && saved !== document.body) {
+        if (saved && saved !== document.body && isLiveFocusTarget(saved)) {
           window.focus();
           try {
             saved.focus({ preventScroll: true } as any);
@@ -444,7 +447,7 @@ export function useGlobalShortcuts({
           if (document.hasFocus() && document.activeElement === saved) return true;
         }
 
-        if (ae && ae !== document.body && document.contains(ae)) {
+        if (ae && ae !== document.body && isLiveFocusTarget(ae)) {
           window.focus();
           try {
             ae.focus({ preventScroll: true } as any);
@@ -480,10 +483,10 @@ export function useGlobalShortcuts({
           }
         } catch {}
         if (document.hasFocus()) return true;
+        // last resort — park on body (focusable since startup) so window
+        // keydown shortcuts keep firing with "nothing" visibly focused
         if (!document.hasFocus() && document.body) {
-          if (!document.body.hasAttribute("tabindex")) document.body.setAttribute("tabindex", "-1");
-          document.body.focus({ preventScroll: true } as any);
-          window.focus();
+          releaseTrapFocus();
         }
         return document.hasFocus();
       };

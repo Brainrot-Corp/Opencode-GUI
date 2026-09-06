@@ -80,6 +80,13 @@ console.error = (...a) => {
   origErr(...a);
 };
 
+// body is the keyboard parking spot when focus is stranded on a hidden or
+// unmounted element (closed terminal dock, last session closed) — focusable
+// once at startup so window keydown shortcuts keep firing with "nothing" focused
+try {
+  if (!document.body.hasAttribute("tabindex")) document.body.setAttribute("tabindex", "-1");
+} catch {}
+
 hydrateWorkspace().finally(() => {
   ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(<App />);
 });
