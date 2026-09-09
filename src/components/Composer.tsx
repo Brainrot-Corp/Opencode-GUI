@@ -471,7 +471,7 @@ export default function Composer({
     }
   };
 
-  const attach = useAttachments();
+  const attach = useAttachments(sessionId);
   const [preview, setPreview] = useState<string | null>(null);
   useEffect(() => {
     if (!preview) return;

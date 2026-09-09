@@ -27,6 +27,7 @@ import {
 import { getPluginSlash } from "../lib/plugins";
 import { useProviders } from "./useProviders";
 import { clearDraft, setDraft } from "../lib/drafts";
+import { clearAttachmentDraft } from "./useAttachments";
 import { pushToast } from "./useToast";
 import type { Msg, OpenCodeEvent, PermAsk, ProviderGroup, Attachment, QuestionAsk, Cmd } from "../types";
 
@@ -905,6 +906,7 @@ export function useOpencode() {
             tracker.reset(delId);
             markCompacting(delId, false);
             clearDraft(delId);
+            clearAttachmentDraft(delId);
             questionsRef.current.delete(delId);
             permissionsRef.current.delete(delId);
             clearAttention(delId);
@@ -1615,6 +1617,7 @@ export function useOpencode() {
       markCompacting(id, false);
       tracker.reset(id);
       clearDraft(id);
+      clearAttachmentDraft(id);
       setSessionSecurity((prev) => {
         if (!(id in prev)) return prev;
         const next = { ...prev };
@@ -1790,6 +1793,7 @@ export function useOpencode() {
       markCompacting(id, false);
       tracker.reset(id);
       clearDraft(id);
+      clearAttachmentDraft(id);
     }
     setSessionSecurity((prev) => {
       let changed = false;
@@ -1837,6 +1841,7 @@ export function useOpencode() {
       markCompacting(id, false);
       tracker.reset(id);
       clearDraft(id);
+      clearAttachmentDraft(id);
     }
     setSessionSecurity((prev) => (Object.keys(prev).length ? {} : prev));
     setSessionAgents((prev) => (Object.keys(prev).length ? {} : prev));
