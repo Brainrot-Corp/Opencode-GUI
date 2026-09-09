@@ -6,6 +6,7 @@ import { useContextMenu } from "../hooks/useContextMenu";
 import { clipboardWrite } from "../lib/clipboard";
 import { opencode, getDirectory } from "../api";
 import { addWorkspace, removeWorkspace, reorderWorkspaces, touchWorkspace } from "../lib/workspace";
+import { setSessionOrder, orderUnpinned } from "../lib/sessionOrder";
 import { useTranslation } from "../lib/i18n";
 import { withHotkey } from "../lib/tip";
 import FileTree from "./FileTree";
@@ -95,6 +96,7 @@ export default function Sidebar({
   const [dropIndex, setDropIndex] = useState<number | null>(null);
   const [dragReorder, setDragReorder] = useState<number | null>(null);
   const [draggedName, setDraggedName] = useState<string | null>(null);
+  const [, setOrderVersion] = useState(0);
   const wsConfirmTimer = useRef(0);
   const scrollRef = useRef<HTMLDivElement>(null);
   const ctx = (() => { try { return useContextMenu(); } catch { return null; } })();
@@ -274,6 +276,133 @@ export default function Sidebar({
     touchWorkspace(dir);
   };
 
+  // session reorder — custom pointer drag vertical, copié des tabs notepad
+  // (default_plugins/notepad/main.js): pas de HTML5 DnD natif (curseur OS),
+  // seuil 6px, snapshot siblings une fois à l'activation, zéro setState
+  // mid-geste, un seul commit setSessionOrder au pointerup. Pins exclus :
+  // jamais draggables, toujours en tête (tri useOpencode).
+  const sessionDragRef = useRef<{
+    id: string; dir: string; startX: number; startY: number; active: boolean;
+    fromIdx: number; els: HTMLElement[]; rects: DOMRect[]; hintIdx: number;
+    src: HTMLElement | null;
+  } | null>(null);
+  const suppressSessionClick = useRef(false);
+  const SESSION_DRAG_PX = 6;
+  const clearSessionDrag = () => {
+    const d = sessionDragRef.current;
+    sessionDragRef.current = null;
+    try {
+      document.body.style.userSelect = "";
+      document.body.style.cursor = "";
+      scrollRef.current?.classList.remove("session-dragging");
+      scrollRef.current?.querySelectorAll(".session-row.dragging").forEach((el) => el.classList.remove("dragging"));
+      scrollRef.current?.querySelectorAll(".session-row.drop-before, .session-row.drop-after").forEach((el) => el.classList.remove("drop-before", "drop-after"));
+    } catch {}
+    window.removeEventListener("pointermove", onSessionPointerMove);
+    window.removeEventListener("pointerup", onSessionPointerUp);
+    window.removeEventListener("pointercancel", onSessionPointerCancel);
+    window.removeEventListener("keydown", onSessionPointerKey, true);
+    if (d && d.active) suppressSessionClick.current = true;
+  };
+  const paintSessionHint = (d: NonNullable<typeof sessionDragRef.current>, idx: number) => {
+    if (d.hintIdx === idx) return;
+    d.hintIdx = idx;
+    try {
+      d.els.forEach((el) => el.classList.remove("drop-before", "drop-after"));
+      d.src?.classList.remove("drop-before", "drop-after");
+      if (idx < d.els.length) d.els[idx].classList.add("drop-before");
+      else if (d.els.length) d.els[d.els.length - 1].classList.add("drop-after");
+      else d.src?.classList.add("drop-after");
+    } catch {}
+  };
+  const hintSessionIndexAt = (d: NonNullable<typeof sessionDragRef.current>, clientY: number) => {
+    for (let i = 0; i < d.rects.length; i++) {
+      if (clientY < d.rects[i].top + d.rects[i].height / 2) return i;
+    }
+    return d.rects.length;
+  };
+  const onSessionPointerMove = (e: PointerEvent) => {
+    const d = sessionDragRef.current;
+    if (!d) return;
+    if (!d.active) {
+      if (Math.abs(e.clientX - d.startX) < SESSION_DRAG_PX && Math.abs(e.clientY - d.startY) < SESSION_DRAG_PX) return;
+      d.active = true;
+      suppressSessionClick.current = false;
+      try {
+        const body = d.src?.closest("[data-ws-body]");
+        const all = body ? [...body.querySelectorAll<HTMLElement>("[data-session-id]")] : [];
+        d.els = all.filter((el) => el.dataset.sessionId !== d.id && el.dataset.pin !== "1");
+        d.rects = d.els.map((el) => el.getBoundingClientRect());
+        const ids = unpinnedIdsFor(d.dir);
+        d.fromIdx = ids.indexOf(d.id);
+        d.src?.classList.add("dragging");
+        scrollRef.current?.classList.add("session-dragging");
+        document.body.style.userSelect = "none";
+        document.body.style.cursor = "grabbing";
+      } catch {}
+    }
+    e.preventDefault();
+    paintSessionHint(d, hintSessionIndexAt(d, e.clientY));
+  };
+  const onSessionPointerUp = (e: PointerEvent) => {
+    const d = sessionDragRef.current;
+    if (!d) { clearSessionDrag(); return; }
+    if (!d.active) {
+      sessionDragRef.current = null;
+      window.removeEventListener("pointermove", onSessionPointerMove);
+      window.removeEventListener("pointerup", onSessionPointerUp);
+      window.removeEventListener("pointercancel", onSessionPointerCancel);
+      window.removeEventListener("keydown", onSessionPointerKey, true);
+      return;
+    }
+    const idx = hintSessionIndexAt(d, e.clientY);
+    const fromIdx = d.fromIdx;
+    const dir = d.dir;
+    const id = d.id;
+    clearSessionDrag();
+    // idx déjà en coords post-suppression (els exclut le draggé) — pas d'ajustement
+    if (fromIdx < 0 || fromIdx === idx) return;
+    const ids = unpinnedIdsFor(dir);
+    if (fromIdx >= ids.length || idx < 0 || idx > ids.length) return;
+    const next = [...ids];
+    const [mv] = next.splice(fromIdx, 1);
+    if (mv !== id) return;
+    next.splice(idx, 0, mv);
+    setSessionOrder(dir, next);
+    setOrderVersion((v) => v + 1);
+    playSound("click");
+  };
+  const onSessionPointerCancel = () => { clearSessionDrag(); };
+  const onSessionPointerKey = (e: KeyboardEvent) => {
+    if (e.key === "Escape") { e.stopPropagation(); clearSessionDrag(); }
+  };
+  const onSessionPointerDown = (id: string, dir: string, pinned: boolean) => (e: React.PointerEvent) => {
+    if (pinned) return;
+    if (e.button !== undefined && e.button !== 0) return;
+    if (renaming !== null) return;
+    if ((e.target as HTMLElement).closest(".del, input, button.del")) return;
+    // ne pas interférer avec le middle-click close ni le context menu
+    if ((e as any).button === 1) return;
+    sessionDragRef.current = {
+      id, dir, startX: e.clientX, startY: e.clientY, active: false,
+      fromIdx: -1, els: [], rects: [], hintIdx: -1,
+      src: e.currentTarget as HTMLElement,
+    };
+    window.addEventListener("pointermove", onSessionPointerMove as any);
+    window.addEventListener("pointerup", onSessionPointerUp as any);
+    window.addEventListener("pointercancel", onSessionPointerCancel as any);
+    window.addEventListener("keydown", onSessionPointerKey as any, true);
+  };
+  const orderedForDir = (dir: string, list: Session[]): Session[] => {
+    const pinned = list.filter((s) => isPinned?.(s.id));
+    const rest = list.filter((s) => !isPinned?.(s.id));
+    return [...pinned, ...orderUnpinned(dir, rest)];
+  };
+  const unpinnedIdsFor = (dir: string): string[] => {
+    const list = byDir.get(dir) ?? [];
+    return orderUnpinned(dir, list.filter((s) => !isPinned?.(s.id))).map((s) => s.id);
+  };
+
   const startRename = (s: Session) => {
     setRenaming(s.id);
     setDraftTitle(s.title || "");
@@ -303,17 +432,25 @@ export default function Sidebar({
     return m;
   }, [sessions, allDirs, getDirForSession, primaryDir]);
 
-  const renderSessionRow = (s: Session) => {
+  const renderSessionRow = (s: Session, dir: string) => {
     const pinned = !!isPinned?.(s.id);
     const busy = !!busyIds?.has(s.id);
     const needsAttention = !!attentionIds?.has(s.id);
     const attentionKind = attentionKinds?.[s.id] ?? (needsAttention ? "permission" : undefined);
+    const openSession = (id: string) => {
+      if (suppressSessionClick.current) { suppressSessionClick.current = false; return; }
+      onOpen(id);
+    };
     return (
       <div
         key={s.id}
+        data-session-id={s.id}
+        data-pin={pinned ? "1" : "0"}
         className={`session-row ${s.id === activeId ? "active" : ""}${pinned ? " pinned" : ""}${needsAttention ? ` attention attention-${attentionKind ?? "permission"}` : ""}`}
         onDoubleClick={(e) => { e.preventDefault(); e.stopPropagation(); if (renaming === s.id) setRenaming(null); else startRename(s); }}
         onMouseDown={(e) => { if (e.button !== 1) return; e.preventDefault(); onDelete(s.id); }}
+        onPointerDown={pinned ? undefined : onSessionPointerDown(s.id, dir, pinned)}
+        style={pinned ? undefined : { cursor: "grab" }}
         onContextMenu={(e) => {
           e.preventDefault(); if (!ctx) return;
           ctx.show(e.clientX, e.clientY, [
@@ -332,7 +469,7 @@ export default function Sidebar({
         {renaming === s.id ? (
           <input data-rename={s.id} className="session-rename" value={draftTitle} onChange={(e) => setDraftTitle(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); commitRename(); } else if (e.key === "Escape") { e.preventDefault(); setRenaming(null); } }} onDoubleClick={(e) => e.stopPropagation()} onBlur={commitRename} spellCheck={false} />
         ) : (
-          <button className="session-item" onClick={() => onOpen(s.id)} data-tip={`${s.title || s.id} — middle-click to close`}>
+          <button className="session-item" onClick={() => openSession(s.id)} data-tip={`${s.title || s.id} — middle-click to close`}>
             {pinned && <i className="fa-solid fa-thumbtack" style={{ fontSize: 9, marginRight: 4, color: "var(--accent)" }} />}
             {s.title || "New session"}
           </button>
@@ -434,7 +571,8 @@ export default function Sidebar({
               {/* Chats tab: grouped sessions */}
               <div style={{ display: loading && sessions.length === 0 || tab === "files" ? "none" : "block" }}>
                 {allDirs.map((dir, idx) => {
-                  const list = byDir.get(dir) ?? [];
+                  const rawList = byDir.get(dir) ?? [];
+                  const list = orderedForDir(dir, rawList);
                   const isCollapsed = !!wsCollapsed[dir];
                   const isPrimary = idx === 0;
                   const confirming = confirmWs === dir;
@@ -470,8 +608,8 @@ export default function Sidebar({
                         </span>
                       </div>
                       {!isCollapsed && (
-                        <div className="ws-body">
-                          {list.length === 0 ? <div className="gp-empty">No sessions</div> : list.map(renderSessionRow)}
+                        <div className="ws-body" data-ws-body={dir || "__cwd"}>
+                          {list.length === 0 ? <div className="gp-empty">No sessions</div> : list.map((s) => renderSessionRow(s, dir))}
                         </div>
                       )}
                     </div>
