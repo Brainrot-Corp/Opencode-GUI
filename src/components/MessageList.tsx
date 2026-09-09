@@ -554,12 +554,13 @@ const MsgRow = memo(function MsgRow({
   const err = m.info.role === "assistant" ? (m.info as any).error : null;
   const showErr = err && err.name !== "MessageAbortedError";
   const isCmd = !!(m as any)._isCommand;
+  const isQueued = !!(m as any)._isQueued;
   const rawTs = (m.info as any).time?.completed ?? (m.info as any).time?.created;
   const short = fmtTime(rawTs);
   const full = fmtFull(rawTs);
   return (
-    <div className={`msg ${m.info.role}${showErr ? " msg-error" : ""}${isCmd ? " msg-command" : ""}`}>
-      {m.info.role === "user" && !isCmd && (onRevert || onFork) && (
+    <div className={`msg ${m.info.role}${showErr ? " msg-error" : ""}${isCmd ? " msg-command" : ""}${isQueued ? " msg-queued" : ""}`}>
+      {m.info.role === "user" && !isCmd && !isQueued && (onRevert || onFork) && (
         <span className="msg-actions">
           {onFork && (
             <button
@@ -593,6 +594,7 @@ const MsgRow = memo(function MsgRow({
           <i className="fa-solid fa-clock" />
           {short}
           {isCmd && <span className="msg-cmd-label">· command not sent</span>}
+          {isQueued && <span className="msg-cmd-label">· queued</span>}
         </div>
       )}
     </div>

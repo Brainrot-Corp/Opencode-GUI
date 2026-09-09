@@ -4,13 +4,15 @@ import type { Attachment } from "../types";
 // React-free: the owner wires state setters and side effects via callbacks.
 const SETTLE_GRACE_MS = 1500;
 
-export type QueuedPrompt = { text: string; files?: Attachment[] };
+export type QueuedPrompt = { id: string; text: string; files?: Attachment[]; at: number };
 
 export function createBusyTracker(opts: {
   // mirrors busy state into React (Sidebar indicators, Send/Stop)
   setBusy: (fn: (prev: Set<string>) => Set<string>) => void;
   // queue badge per session; count = null removes the entry
   setQueueCount: (sid: string, count: number | null) => void;
+  // queued prompt bodies per session for chat display; null removes the entry
+  onQueueChange?: (sid: string, items: QueuedPrompt[] | null) => void;
   // true end-of-turn (grace elapsed, nothing inflight): drop indicators,
   // play sound, drain the queue — all owned by the caller
   onSettle: (sid: string) => void;
@@ -88,11 +90,13 @@ export function createBusyTracker(opts: {
     q.push(item);
     queues.set(sid, q);
     opts.setQueueCount(sid, q.length);
+    opts.onQueueChange?.(sid, [...q]);
   }
 
   const clearQueued = (sid: string) => {
     if (!queues.delete(sid)) return;
     opts.setQueueCount(sid, null);
+    opts.onQueueChange?.(sid, null);
   };
 
   // drain one queued prompt per settled turn — callers guard with hasInflight
@@ -103,6 +107,7 @@ export function createBusyTracker(opts: {
     const next = q.shift()!;
     if (!q.length) queues.delete(sid);
     opts.setQueueCount(sid, q.length || null);
+    opts.onQueueChange?.(sid, q.length ? [...q] : null);
     return next;
   }
 

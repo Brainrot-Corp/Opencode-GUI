@@ -171,6 +171,7 @@ export function useOpencode() {
   });
   const [dialog, setDialog] = useState<DialogState>(null);
   const [queueCounts, setQueueCounts] = useState<Record<string, number>>({});
+  const [queuedBySession, setQueuedBySession] = useState<Record<string, import("../lib/busyTracker").QueuedPrompt[]>>({});
   const [live, setLive] = useState(false);
   const [booting, setBooting] = useState(true);
 
@@ -220,6 +221,16 @@ export function useOpencode() {
             return next;
           }
           return prev[sid] === n ? prev : { ...prev, [sid]: n };
+        }),
+      onQueueChange: (sid, items) =>
+        setQueuedBySession((prev) => {
+          if (items === null) {
+            if (!(sid in prev)) return prev;
+            const next = { ...prev };
+            delete next[sid];
+            return next;
+          }
+          return { ...prev, [sid]: items };
         }),
       onSettle: (sid) => {
         tracker.markBusy(sid, false);
@@ -1319,7 +1330,12 @@ export function useOpencode() {
         return;
       }
       if (busyRef.current.has(activeId)) {
-        tracker.pushQueued(activeId, { text: trimmed, files });
+        tracker.pushQueued(activeId, {
+          id: `q-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          text: trimmed,
+          files,
+          at: Date.now(),
+        });
         playSound("send");
         return;
       }
@@ -1410,10 +1426,40 @@ export function useOpencode() {
   const revertId = sessions.find((s) => s.id === activeId)?.revert?.messageID ?? "";
   // hide everything past the rewind point (server still returns full history)
   const visibleMsgs = useMemo(() => {
-    if (!revertId) return msgs;
-    const i = msgs.findIndex((m) => m.info.id === revertId);
-    return i >= 0 ? msgs.slice(0, i + 1) : msgs;
-  }, [msgs, revertId]);
+    const base = !revertId ? msgs : (() => {
+      const i = msgs.findIndex((m) => m.info.id === revertId);
+      return i >= 0 ? msgs.slice(0, i + 1) : msgs;
+    })();
+    const q = queuedBySession[activeId] ?? [];
+    if (!q.length) return base;
+    const queued = q.map(
+      (item) =>
+        ({
+          info: {
+            id: item.id,
+            sessionID: activeId,
+            role: "user",
+            time: { created: item.at, completed: item.at },
+          },
+          parts: [
+            ...(item.text
+              ? [{ id: `${item.id}-p`, type: "text", text: item.text, sessionID: activeId, messageID: item.id }]
+              : []),
+            ...(item.files ?? []).map((f, fi) => ({
+              id: `${item.id}-f-${fi}`,
+              type: "file",
+              mime: f.mime,
+              filename: f.filename,
+              url: f.url,
+              sessionID: activeId,
+              messageID: item.id,
+            })),
+          ],
+          _isQueued: true,
+        }) as unknown as Msg,
+    );
+    return [...base, ...queued];
+  }, [msgs, revertId, queuedBySession, activeId]);
 
   const revertTo = useCallback(
     async (messageID: string) => {

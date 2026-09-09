@@ -347,7 +347,8 @@
   color: var(--text-faint);
   opacity: 0.9;
 }
-.msg.msg-command {
+.msg.msg-command,
+.msg.msg-queued {
   opacity: 0.78;
   border-style: dashed;
   background: color-mix(in srgb, var(--accent) calc(0.05 * 100%), transparent);
