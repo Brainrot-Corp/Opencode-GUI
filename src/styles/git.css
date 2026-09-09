@@ -435,6 +435,16 @@ body.gp-resizing * {
   cursor: default;
   color: var(--text-faint);
 }
+/* subfolder prefix — dimmed dir keeps rows unambiguous (VSCode style) */
+.gp-dir {
+  color: var(--text-faint);
+  opacity: 0.75;
+}
+/* conflict count badge */
+.gp-badge-conf {
+  background: rgba(201, 143, 217, 0.16);
+  color: #c98fd9;
+}
 
 /* hover actions; discard confirm state keeps the row tinted red */
 .gp-acts {

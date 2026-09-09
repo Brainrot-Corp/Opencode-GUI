@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, Component, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { getDirectory, opencode, tempSession, dropSession } from "../api";
 import { splitModel } from "../lib/models";
 import { extLang } from "../lib/syntax";
@@ -21,18 +22,31 @@ const AMEND_KEY = "oc.git.amend";
 const clampH = (h: number) =>
   Math.min(Math.max(GH_MIN, Math.floor(h)), Math.floor(window.innerHeight * 0.6));
 
-type GitFile = { path: string; x: string; y: string };
+type GitFile = { path: string; orig_path?: string | null; x: string; y: string; staged?: boolean; conflict?: boolean };
 type GitStatus = {
   repo: boolean;
+  root?: string;
   branch: string;
+  detached?: boolean;
+  upstream?: string | null;
+  gone?: boolean;
   ahead: number;
   behind: number;
   files: GitFile[];
+  initial?: boolean;
+  in_merge?: boolean;
+  in_rebase?: boolean;
+  stash_count?: number;
 };
 
 const CLEAN: GitStatus = { repo: false, branch: "", ahead: 0, behind: 0, files: [] };
 
 const base = (p: string) => p.replace(/\/$/, "").slice(p.replace(/\/$/, "").lastIndexOf("/") + 1);
+const dirOf = (p: string) => {
+  const t = p.replace(/\/$/, "");
+  const i = t.lastIndexOf("/");
+  return i > 0 ? t.slice(0, i) : "";
+};
 
 // primary commit actions — persisted as the split-button's current action
 type PrimaryAction =
@@ -88,9 +102,15 @@ async function variantFast(client: any, providerID: string, modelID: string, fal
   return undefined;
 }
 
-// staged = index column meaningful; changes = worktree column or untracked
-const stagedOf = (files: GitFile[]) => files.filter((f) => f.x !== " " && f.x !== "?");
-const changedOf = (files: GitFile[]) => files.filter((f) => f.y !== " ");
+// staged/conflict come from the backend (VSCode parity); fall back to XY
+// derivation for stale payloads. Untracked (??) is add, never conflict.
+const isConflict = (f: GitFile) =>
+  f.conflict ?? (f.x === "U" || f.y === "U" || (f.x === "A" && f.y === "A") || (f.x === "D" && f.y === "D"));
+const isStaged = (f: GitFile) =>
+  f.staged ?? (!isConflict(f) && f.x !== " " && f.x !== "?");
+const stagedOf = (files: GitFile[]) => files.filter(isStaged);
+const conflictsOf = (files: GitFile[]) => files.filter(isConflict);
+const changedOf = (files: GitFile[]) => files.filter((f) => !isConflict(f) && f.y !== " ");
 const isTracked = (f: GitFile) => !(f.x === "?" && f.y === "?");
 const isUntracked = (f: GitFile) => f.x === "?" && f.y === "?";
 const allTrackedDirtyOf = (files: GitFile[]) => files.filter((f) => isTracked(f) && (f.x !== " " || f.y !== " "));
@@ -130,7 +150,7 @@ const xcls = (l: string) =>
             ? "ren"
             : "oth";
 
-export default function GitPanel() {
+function GitPanelInner() {
   const [st, setSt] = useState<GitStatus>(CLEAN);
   const [open, setOpen] = useState(() => localStorage.getItem("oc.git.open") === "1");
   const [msg, setMsg] = useState("");
@@ -145,7 +165,11 @@ export default function GitPanel() {
   const genSidRef = useRef<string | null>(null);
   const [genHover, setGenHover] = useState(false);
   const { t } = useTranslation();
-  const dir = useRef(getDirectory());
+  const curDir = () => getDirectory();
+  const watchRootRef = useRef("");
+  const refreshTimer = useRef<number | null>(null);
+  const refreshingRef = useRef(false);
+  const queuedRef = useRef(false);
   const autosizeMsg = useCallback(() => {
     const el = msgRef.current;
     if (!el) return;
@@ -162,6 +186,7 @@ export default function GitPanel() {
   useEffect(() => { localStorage.setItem("oc.git.changesCollapsed", changesCollapsed ? "1" : "0"); }, [changesCollapsed]);
   const [commitMenuOpen, setCommitMenuOpen] = useState(false);
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
+  const [stashBusy, setStashBusy] = useState(false);
   const [amend, setAmend] = useState(() => localStorage.getItem(AMEND_KEY) === "1");
   const [primary, setPrimary] = useState<PrimaryAction>(() => loadPrimary());
   const commitAnchorRef = useRef<HTMLDivElement>(null);
@@ -219,14 +244,41 @@ export default function GitPanel() {
     playSound("click");
   }, []);
 
+  // single-flight: overlapping spawns (watcher burst + poll + file-saves,
+  // two mounted instances) coalesce instead of piling up git processes.
   const refresh = useCallback(async () => {
+    if (refreshingRef.current) {
+      queuedRef.current = true;
+      return;
+    }
+    refreshingRef.current = true;
     try {
-      const s = await invoke<GitStatus>("git_status", { dir: dir.current });
+      const s = await invoke<GitStatus>("git_status", { dir: curDir() });
       setSt(s);
+      if (s.repo && s.root && s.root !== watchRootRef.current) {
+        watchRootRef.current = s.root;
+        invoke("git_watch", { dir: curDir() }).catch(() => {});
+      }
     } catch {
       setSt(CLEAN);
+    } finally {
+      refreshingRef.current = false;
+    }
+    if (queuedRef.current) {
+      queuedRef.current = false;
+      void refresh();
     }
   }, []);
+
+  // trailing debounce for event-driven refreshes (file saves, watcher push,
+  // workspace/storage noise) — own ops and focus still refresh immediately.
+  const scheduleRefresh = useCallback(() => {
+    if (refreshTimer.current) window.clearTimeout(refreshTimer.current);
+    refreshTimer.current = window.setTimeout(() => {
+      refreshTimer.current = null;
+      void refresh();
+    }, 800);
+  }, [refresh]);
 
   const act = useCallback(
     async (fn: () => Promise<unknown>) => {
@@ -274,6 +326,8 @@ export default function GitPanel() {
   // derived file sets — keep before commit/gen helpers so deps exist
   const staged = stagedOf(st.files);
   const changes = changedOf(st.files);
+  const conflicts = conflictsOf(st.files);
+  const noUpstream = st.repo && !st.detached && !(st.upstream ?? "");
   const allTrackedDirty = allTrackedDirtyOf(st.files);
   const canCommitStaged = !!msg.trim() && staged.length > 0 && !busy;
   const canCommitAll = !!msg.trim() && allTrackedDirty.length > 0 && !busy;
@@ -300,17 +354,17 @@ export default function GitPanel() {
       const diffPromises: Promise<string>[] = [];
       if (useAll) {
         diffPromises.push(
-          invoke<string>("git_diff", { dir: dir.current, path: "", staged: true }).catch(() => ""),
-          invoke<string>("git_diff", { dir: dir.current, path: "", staged: false }).catch(() => ""),
+          invoke<string>("git_diff", { dir: curDir(), path: "", staged: true }).catch(() => ""),
+          invoke<string>("git_diff", { dir: curDir(), path: "", staged: false }).catch(() => ""),
         );
       } else {
-        diffPromises.push(invoke<string>("git_diff", { dir: dir.current, path: "", staged: true }).catch(() => ""));
+        diffPromises.push(invoke<string>("git_diff", { dir: curDir(), path: "", staged: true }).catch(() => ""));
       }
       const diffRaws = await Promise.all(diffPromises);
       const diffRaw = diffRaws.join("\n");
       const [statRaw, logRaw] = await Promise.all([
-        invoke<string>("git_diff_stat", { dir: dir.current }).catch(() => ""),
-        invoke<string>("git_log", { dir: dir.current }).catch(() => ""),
+        invoke<string>("git_diff_stat", { dir: curDir() }).catch(() => ""),
+        invoke<string>("git_log", { dir: curDir() }).catch(() => ""),
       ]);
       if (!diffRaw.trim() && !statRaw.trim()) {
         setErr("Diff is empty.");
@@ -414,7 +468,7 @@ export default function GitPanel() {
     }
     if (gen) abortGen();
     const ok = await act(async () => {
-      await invoke("git_commit", { dir: dir.current, message, amend, all: useAll });
+      await invoke("git_commit", { dir: curDir(), message, amend, all: useAll });
       if (useAll) {
         setSt((s) => ({
           ...s,
@@ -423,25 +477,24 @@ export default function GitPanel() {
       } else {
         setSt((s) => ({
           ...s,
-          files: s.files.filter((f) => f.x === " " || f.x === "?"),
+          files: s.files.filter((f) => !isStaged(f)),
         }));
       }
       setMsg("");
       if (useSync) {
-        await invoke("git_pull", { dir: dir.current });
-        await invoke("git_push", { dir: dir.current });
+        await invoke("git_sync", { dir: curDir() });
       } else if (usePush) {
-        await invoke("git_push", { dir: dir.current });
+        await invoke("git_push", { dir: curDir(), upstream: noUpstream ? true : undefined });
       }
     });
     return ok;
-  }, [msg, staged, allTrackedDirty, amend, gen, act, abortGen]);
+  }, [msg, staged, allTrackedDirty, amend, gen, act, abortGen, noUpstream]);
 
   const [pushed, setPushed] = useState<"idle" | "run" | "ok">("idle");
   const doPush = async () => {
     if (pushed !== "idle") return;
     setPushed("run");
-    const ok = await act(() => invoke("git_push", { dir: dir.current }));
+    const ok = await act(() => invoke("git_push", { dir: curDir(), upstream: noUpstream ? true : undefined }));
     setPushed(ok ? "ok" : "idle");
   };
   useEffect(() => {
@@ -450,34 +503,32 @@ export default function GitPanel() {
     return () => clearTimeout(t);
   }, [pushed]);
   const doFetch = async () => {
-    await act(() => invoke("git_fetch", { dir: dir.current }));
+    await act(() => invoke("git_fetch", { dir: curDir(), prune: true }));
     setMoreMenuOpen(false);
   };
   const doSync = async () => {
-    await act(async () => {
-      await invoke("git_pull", { dir: dir.current });
-      await invoke("git_push", { dir: dir.current });
-    });
+    await act(() => invoke("git_sync", { dir: curDir() }));
     setMoreMenuOpen(false);
   };
 
   const rowAct = (cmd: string, path: string) => {
     setConfirmPath("");
-    return act(() => invoke(cmd, { dir: dir.current, paths: [path] }));
+    return act(() => invoke(cmd, { dir: curDir(), paths: [path] }));
   };
 
+  // VSCode parity: discard covers untracked too (backend splits restore/clean).
+  // Single-file discard goes through the row confirm; bulk discard-all keeps
+  // its own "*" confirm in the Changes header.
   const discardAll = () => {
-    const paths = changes
-      .filter((f) => !(f.x === "?" && f.y === "?"))
-      .map((f) => f.path);
+    const paths = [...changes, ...staged.filter((f) => isUntracked(f))].map((f) => f.path);
     return act(() =>
-      invoke("git_discard", { dir: dir.current, paths }),
+      invoke("git_discard", { dir: curDir(), paths: [...new Set(paths)] }),
     ).then(() => setConfirmPath(""));
   };
 
   const openDiff = async (f: GitFile, isStaged: boolean) => {
     const patch = await invoke<string>("git_diff", {
-      dir: dir.current,
+      dir: curDir(),
       path: f.path,
       staged: isStaged,
     }).catch(() => "");
@@ -490,14 +541,33 @@ export default function GitPanel() {
   useEffect(() => {
     if (!open || !st.repo) return;
     refresh();
+    // watcher push (Rust `.git` notify → `git://changed`) + file-saves +
+    // workspace switches refresh debounced; 4s poll stays as fallback.
+    let tauriUnlisten: (() => void) | undefined;
+    listen<string>("git://changed", () => scheduleRefresh())
+      .then((off) => { tauriUnlisten = off; })
+      .catch(() => {});
     const t = setInterval(refresh, 4000);
     const onVis = () => document.visibilityState === "visible" && refresh();
     window.addEventListener("focus", onVis);
+    window.addEventListener("oc:file-changed", scheduleRefresh);
+    window.addEventListener("oc:workspaces-changed", scheduleRefresh);
+    window.addEventListener("oc:last-workspace-changed", scheduleRefresh);
+    window.addEventListener("storage", scheduleRefresh);
     return () => {
       clearInterval(t);
+      if (refreshTimer.current) {
+        window.clearTimeout(refreshTimer.current);
+        refreshTimer.current = null;
+      }
       window.removeEventListener("focus", onVis);
+      window.removeEventListener("oc:file-changed", scheduleRefresh);
+      window.removeEventListener("oc:workspaces-changed", scheduleRefresh);
+      window.removeEventListener("oc:last-workspace-changed", scheduleRefresh);
+      window.removeEventListener("storage", scheduleRefresh);
+      tauriUnlisten?.();
     };
-  }, [open, st.repo, refresh]);
+  }, [open, st.repo, refresh, scheduleRefresh]);
 
   const gitCmdRef = useRef<(cmd: string) => void>(() => {});
   useEffect(() => {
@@ -559,11 +629,11 @@ export default function GitPanel() {
       return;
     }
     if (cmd === "pull") {
-      void act(() => invoke("git_pull", { dir: dir.current }));
+      void act(() => invoke("git_pull", { dir: curDir() }));
       return;
     }
     if (cmd === "stageAll") {
-      void act(() => invoke("git_stage", { dir: dir.current, paths: changes.map((f) => f.path) }));
+      void act(() => invoke("git_stage", { dir: curDir(), paths: changes.map((f) => f.path) }));
       return;
     }
     if (busy || gen) return;
@@ -584,25 +654,28 @@ export default function GitPanel() {
   };
 
   const row = (f: GitFile, isStaged: boolean) => {
+    const untracked = isUntracked(f);
+    // untracked shows green A (was purple U — same glyph as conflicts);
+    // conflicts never reach here (own section) but stay purple if they do.
     const raw = isStaged ? f.x : f.y;
-    const letter = raw === "?" ? "U" : raw;
-    const untracked = f.x === "?" && f.y === "?";
+    const letter = untracked ? "A" : isConflict(f) ? "U" : raw === "?" ? "A" : raw;
     const confirming = confirmPath === f.path;
+    const d = dirOf(f.path);
     return (
       <div key={f.path + (isStaged ? "~s" : "~w")} className={`gp-row${confirming ? " confirming" : ""}`}>
         <span className={`gp-x ${xcls(letter)} mono`}>{letter}</span>
         <button
           className="gp-file mono"
-          data-tip={f.path}
+          data-tip={f.orig_path ? `${f.orig_path} → ${f.path}` : f.path}
           onClick={() => !untracked && openDiff(f, isStaged)}
           disabled={untracked}
         >
-          {base(f.path)}
+          {d ? <span className="gp-dir">{d}/</span> : null}{base(f.path)}
         </button>
         <span className="gp-acts">
           {confirming ? (
             <>
-              <button className="gp-act danger" data-tip="Really discard" onClick={() => rowAct("git_discard", f.path)}>
+              <button className="gp-act danger" data-tip={untracked ? "Really delete file" : "Really discard"} onClick={() => rowAct("git_discard", f.path)}>
                 <i className="fa-solid fa-check" />
               </button>
               <button className="gp-act" data-tip="Keep" onClick={() => setConfirmPath("")}>
@@ -620,10 +693,10 @@ export default function GitPanel() {
                   <i className="fa-solid fa-plus" />
                 </button>
               )}
-              {!isStaged && !untracked && (
+              {!isStaged && (
                 <button
                   className="gp-act"
-                  data-tip="Discard changes"
+                  data-tip={untracked ? "Delete file" : "Discard changes"}
                   onClick={() => setConfirmPath(f.path)}
                 >
                   <i className="fa-solid fa-rotate-left" />
@@ -634,6 +707,32 @@ export default function GitPanel() {
         </span>
       </div>
     );
+  };
+
+  const conflictRow = (f: GitFile) => {
+    const confirming = confirmPath === f.path;
+    const d = dirOf(f.path);
+    return (
+      <div key={f.path + "~c"} className={`gp-row${confirming ? " confirming" : ""}`}>
+        <span className="gp-x conf mono">U</span>
+        <button className="gp-file mono" data-tip={f.path} onClick={() => openDiff(f, false)}>
+          {d ? <span className="gp-dir">{d}/</span> : null}{base(f.path)}
+        </button>
+        <span className="gp-acts">
+          <button className="gp-act" data-tip="Accept ours" onClick={() => rowAct2("git_resolve", f.path, true)}>
+            <i className="fa-solid fa-arrow-left" />
+          </button>
+          <button className="gp-act" data-tip="Accept theirs" onClick={() => rowAct2("git_resolve", f.path, false)}>
+            <i className="fa-solid fa-arrow-right" />
+          </button>
+        </span>
+      </div>
+    );
+  };
+
+  const rowAct2 = (cmd: string, path: string, ours: boolean) => {
+    setConfirmPath("");
+    return act(() => invoke(cmd, { dir: curDir(), path, ours }));
   };
 
   const commitMenu = (
@@ -667,20 +766,57 @@ export default function GitPanel() {
     </div>
   );
 
+  const doStash = async (includeUntracked: boolean) => {
+    setMoreMenuOpen(false);
+    setStashBusy(true);
+    try {
+      await invoke("git_stash_push", { dir: curDir(), message: msg.trim() || null, include_untracked: includeUntracked });
+      setMsg("");
+      await refresh();
+    } catch (e) {
+      setErr(String(e).replace(/^Error:\s*/, ""));
+    } finally {
+      setStashBusy(false);
+    }
+  };
   const moreMenu = (
     <div className="gp-menu">
       <button className="gp-menu-item" disabled={busy} onClick={doFetch}>
-        <i className="fa-solid fa-cloud-arrow-down" /> Fetch
+        <i className="fa-solid fa-cloud-arrow-down" /> Fetch <span className="gp-menu-hint">prune</span>
       </button>
       <button className="gp-menu-item" disabled={busy} onClick={doSync}>
-        <i className="fa-solid fa-rotate" /> Sync <span className="gp-menu-hint">Pull then Push</span>
+        <i className="fa-solid fa-rotate" /> Sync <span className="gp-menu-hint">Pull --rebase then Push</span>
+      </button>
+      {noUpstream && (
+        <button className="gp-menu-item" disabled={busy} onClick={() => { setMoreMenuOpen(false); void act(() => invoke("git_publish", { dir: curDir() })); }}>
+          <i className="fa-solid fa-cloud-arrow-up" /> Publish branch <span className="gp-menu-hint">push -u origin</span>
+        </button>
+      )}
+      <button className="gp-menu-item" disabled={busy} onClick={() => {
+        setMoreMenuOpen(false);
+        if (confirmPath === "force-push") {
+          setConfirmPath("");
+          void act(() => invoke("git_push", { dir: curDir(), force_lease: true }));
+        } else setConfirmPath("force-push");
+      }}>
+        <i className="fa-solid fa-triangle-exclamation" /> {confirmPath === "force-push" ? "Confirm force-with-lease?" : "Force push (with lease)"}
       </button>
       <div className="gp-menu-sep" />
-      <button className="gp-menu-item" disabled={busy} onClick={() => { setMoreMenuOpen(false); void act(() => invoke("git_stage", { dir: dir.current, paths: changes.filter(isTracked).map(f=>f.path) })); }}>
+      <button className="gp-menu-item" disabled={busy} onClick={() => { setMoreMenuOpen(false); void act(() => invoke("git_stage", { dir: curDir(), paths: changes.filter(isTracked).map(f=>f.path) })); }}>
         <i className="fa-solid fa-plus" /> Stage all tracked
       </button>
       <button className="gp-menu-item" disabled={busy || !allTrackedDirty.length} onClick={() => { setMoreMenuOpen(false); void genMessage({ all: true }); }}>
         <i className="fa-solid fa-wand-magic-sparkles" /> Generate message (All)
+      </button>
+      <div className="gp-menu-sep" />
+      <button className="gp-menu-item" disabled={busy || stashBusy} onClick={() => void doStash(false)}>
+        <i className="fa-solid fa-box-archive" /> Stash changes
+      </button>
+      <button className="gp-menu-item" disabled={busy || stashBusy} onClick={() => void doStash(true)}>
+        <i className="fa-solid fa-boxes-stacked" /> Stash incl. untracked
+      </button>
+      <button className="gp-menu-item" disabled={busy || !(st.stash_count ?? 0)} onClick={() => { setMoreMenuOpen(false); void act(() => invoke("git_stash_pop", { dir: curDir() })); }}>
+        <i className="fa-solid fa-box-open" /> Stash pop {(st.stash_count ?? 0) > 0 && <span className="gp-menu-hint">{st.stash_count}</span>}
       </button>
     </div>
   );
@@ -699,7 +835,9 @@ export default function GitPanel() {
         <i className={`fa-solid fa-chevron-${open ? "down" : "right"} gp-chev`} />
         <i className="fa-solid fa-code-branch" />
         <span className="gp-right">
+          {!!conflicts.length && <span className="gp-badge gp-badge-conf">{conflicts.length}!</span>}
           {!!st.files.length && <span className="gp-badge">{st.files.length}</span>}
+          {(st.stash_count ?? 0) > 0 && <span className="gp-badge" data-tip={`${st.stash_count} stashes`}>≡{st.stash_count}</span>}
           {(st.ahead > 0 || st.behind > 0) && (
             <span className="gp-ab mono">
               {st.ahead > 0 && (
@@ -710,7 +848,9 @@ export default function GitPanel() {
               {st.behind > 0 && <em className="down">↓{st.behind}</em>}
             </span>
           )}
-          <span className="mono gp-branch-name">{st.branch}</span>
+          <span className="mono gp-branch-name" data-tip={st.detached ? "Detached HEAD" : st.upstream ? `tracking ${st.upstream}${st.gone ? " (gone)" : ""}` : "No upstream — use Publish"}>
+            {st.detached ? `HEAD ${st.branch}` : st.branch}{st.gone ? "?" : noUpstream ? " ↑" : ""}
+          </span>
         </span>
       </button>
 
@@ -789,8 +929,8 @@ export default function GitPanel() {
             </div>
             <button
               className={`push${pushed === "ok" ? " pushed" : ""}`}
-              data-tip="Push to remote"
-              disabled={busy || pushed === "run" || (!st.ahead && !staged.length && !allTrackedDirty.length)}
+              data-tip={noUpstream ? "Publish branch (push -u origin)" : "Push to remote"}
+              disabled={busy || pushed === "run" || (!st.ahead && !staged.length && !allTrackedDirty.length && !noUpstream)}
               onClick={doPush}
             >
               <i
@@ -802,9 +942,9 @@ export default function GitPanel() {
                       : "fa-arrow-up"
                 }`}
               />
-              {pushed === "ok" ? "Pushed" : "Push"}
+              {pushed === "ok" ? "Pushed" : noUpstream ? "Publish" : "Push"}
             </button>
-            <button data-tip="Pull" disabled={busy} onClick={() => act(() => invoke("git_pull", { dir: dir.current }))}>
+            <button data-tip="Pull" disabled={busy} onClick={() => act(() => invoke("git_pull", { dir: curDir() }))}>
               <i className="fa-solid fa-arrow-down" />
               Pull
             </button>
@@ -821,6 +961,30 @@ export default function GitPanel() {
           {err && <div className="gp-err mono">{err}</div>}
           {!err && hint && <div className="gp-hint mono">{hint}</div>}
           {amend && <div className="gp-hint mono">Amend mode — next commit amends the previous commit.</div>}
+          {st.detached && <div className="gp-hint mono">Detached HEAD at {st.branch} — checkout a branch to commit.</div>}
+          {st.initial && <div className="gp-hint mono">No commits yet — first commit creates the branch.</div>}
+          {noUpstream && !st.detached && <div className="gp-hint mono">No upstream — Push publishes (-u origin {st.branch}).</div>}
+          {st.gone && <div className="gp-hint mono">Upstream is gone — publish again or reset.</div>}
+          {(st.in_merge || st.in_rebase) && (
+            <div className="gp-hint mono">
+              {st.in_merge ? "Merging — resolve conflicts then commit." : "Rebasing — resolve then continue."}{" "}
+              <button className="gp-sact" disabled={busy} onClick={() => act(() => invoke(st.in_merge ? "git_merge_abort" : "git_rebase_abort", { dir: curDir() }))}>Abort</button>
+              {" "}
+              <button className="gp-sact" disabled={busy} onClick={() => act(() => invoke(st.in_merge ? "git_merge_continue" : "git_rebase_continue", { dir: curDir() }))}>Continue</button>
+            </div>
+          )}
+
+          {conflicts.length > 0 && (
+            <>
+              <div className="gp-sect" data-tip="Unmerged paths — pick ours/theirs per file">
+                <span className="gp-sect-toggle">
+                  <span>Conflicts</span>
+                  <span className="gp-sect-count">{conflicts.length}</span>
+                </span>
+              </div>
+              {conflicts.map(conflictRow)}
+            </>
+          )}
 
           {staged.length > 0 && (
             <>
@@ -848,7 +1012,7 @@ export default function GitPanel() {
                   disabled={busy}
                   onClick={(e) => {
                     e.stopPropagation();
-                    void act(() => invoke("git_unstage", { dir: dir.current, paths: staged.map((f) => f.path) }));
+                    void act(() => invoke("git_unstage", { dir: curDir(), paths: staged.map((f) => f.path) }));
                   }}
                 >
                   <i className="fa-solid fa-minus" />
@@ -885,18 +1049,18 @@ export default function GitPanel() {
                     disabled={busy}
                     onClick={(e) => {
                       e.stopPropagation();
-                      void act(() => invoke("git_stage", { dir: dir.current, paths: changes.map((f) => f.path) }));
+                      void act(() => invoke("git_stage", { dir: curDir(), paths: changes.map((f) => f.path) }));
                     }}
                   >
                     <i className="fa-solid fa-plus" />
                     Stage all
                   </button>
-                  {changes.some((f) => !(f.x === "?" && f.y === "?")) &&
+                  {changes.length > 0 &&
                     (confirmPath === "*" ? (
                       <>
                         <button
                           className="gp-sact danger"
-                          data-tip="Really discard all"
+                          data-tip="Really discard all (deletes untracked)"
                           disabled={busy}
                           onClick={(e) => {
                             e.stopPropagation();
@@ -920,7 +1084,7 @@ export default function GitPanel() {
                     ) : (
                       <button
                         className="gp-sact"
-                        data-tip="Discard all unstaged"
+                        data-tip="Discard all changes (deletes untracked)"
                         disabled={busy}
                         onClick={(e) => {
                           e.stopPropagation();
@@ -961,5 +1125,40 @@ export default function GitPanel() {
           document.body,
         )}
     </div>
+  );
+}
+
+// Error boundary: a render throw used to blank the whole app (React unmounts
+// the root). Show the message in-panel with a retry instead.
+class GitBoundary extends Component<{ children: ReactNode }, { error: unknown }> {
+  state: { error: unknown } = { error: null };
+  static getDerivedStateFromError(error: unknown) {
+    return { error };
+  }
+  componentDidCatch(error: unknown) {
+    console.error("[git-panel]", error);
+  }
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="git-panel">
+          <div className="gp-err mono">
+            Git panel crashed: {String((this.state.error as any)?.message ?? this.state.error)}
+          </div>
+          <button className="gp-sact" onClick={() => this.setState({ error: null })}>
+            <i className="fa-solid fa-rotate-right" /> Retry
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+export default function GitPanel() {
+  return (
+    <GitBoundary>
+      <GitPanelInner />
+    </GitBoundary>
   );
 }

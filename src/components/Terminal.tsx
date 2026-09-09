@@ -123,17 +123,24 @@ export default function TerminalPanel({
             }
             nextIdRef.current = maxId + 1;
             genCounterRef.current = maxGen + 1;
-            return valid.map((a) => ({
-              id: a.id,
-              gen: a.gen,
-              cwd: typeof a.cwd === "string" ? a.cwd : "",
-              title: typeof a.title === "string" ? a.title : `Terminal ${a.id}`,
-              dead: false,
-              err: "",
-              shell: typeof a.shell === "string" ? a.shell : undefined,
-              args: Array.isArray(a.args) ? a.args : undefined,
-              shellName: typeof a.shellName === "string" ? a.shellName : undefined,
-            }));
+            // retarget persisted terminals to the current workspace so a
+            // workspace switch (which reloads) respawns shells in the new dir;
+            // bump gen on retarget so the old backend's exit can't kill the new view
+            return valid.map((a) => {
+              const persistedCwd = typeof a.cwd === "string" ? a.cwd : "";
+              const retargeted = workspace !== undefined && workspace !== persistedCwd;
+              return {
+                id: a.id,
+                gen: retargeted ? genCounterRef.current++ : a.gen,
+                cwd: workspace ?? persistedCwd,
+                title: typeof a.title === "string" ? a.title : `Terminal ${a.id}`,
+                dead: false,
+                err: "",
+                shell: typeof a.shell === "string" ? a.shell : undefined,
+                args: Array.isArray(a.args) ? a.args : undefined,
+                shellName: typeof a.shellName === "string" ? a.shellName : undefined,
+              };
+            });
           } else if (valid.length > 0) {
             console.warn(`[term] persisted instances partially invalid: ${arr.length - valid.length} discarded`);
           }
@@ -271,6 +278,21 @@ export default function TerminalPanel({
 
   const termsRef = useRef(terms);
   useEffect(() => { termsRef.current = terms; }, [terms]);
+
+  // workspace switch while mounted (no reload path / HMR): move open
+  // terminals to the new dir — PTY cwd is fixed at spawn, so kill + respawn
+  const prevWsRef = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (workspace === undefined) return;
+    if (prevWsRef.current === undefined) { prevWsRef.current = workspace; return; }
+    if (prevWsRef.current === workspace) return;
+    prevWsRef.current = workspace;
+    const nextWs = workspace;
+    const snapshot = termsRef.current;
+    if (!snapshot.length) return;
+    for (const t of snapshot) void invoke("pty_kill", { id: t.id, gen: t.gen }).catch(() => {});
+    setTerms((prev) => prev.map((t) => ({ ...t, cwd: nextWs, gen: genCounterRef.current++, dead: false, err: "" })));
+  }, [workspace]);
 
   const onTitle = useCallback((id: number, title: string) => {
     setTerms((prev) => prev.map((t) => (t.id === id ? { ...t, title: title.slice(0, 80) } : t)));
