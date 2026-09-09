@@ -67,6 +67,11 @@
   background:color-mix(in srgb, var(--accent) 9%, transparent);
   border-color:color-mix(in srgb, var(--accent) 40%, transparent);
 }
+.notepad-tab{cursor:grab}
+.notepad-tabs.tab-dragging, .notepad-tabs.tab-dragging *{cursor:grabbing !important}
+.notepad-tab.dragging{opacity:0.4; cursor:grabbing}
+.notepad-tab.drop-before{box-shadow:inset 2px 0 0 var(--accent)}
+.notepad-tab.drop-after{box-shadow:inset -2px 0 0 var(--accent)}
 .notepad-tab-label{
   overflow:hidden;
   text-overflow:ellipsis;

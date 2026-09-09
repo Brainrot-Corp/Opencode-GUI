@@ -229,6 +229,8 @@ export default function activate(api){
     const panelRef = useRef(null);
     const dragRef = useRef(null);
     const resizeRef = useRef(null);
+    const tabDragRef = useRef(null); // {id, startX, startY, active, fromIdx, els, rects, hintIdx} — DOM-only, no setState mid-drag
+    const suppressClickRef = useRef(false);
     // debounce content writes — typing stays in React state, localStorage after idle
     const saveTimer = useRef(0);
     const pendingRef = useRef(null);
@@ -536,6 +538,115 @@ export default function activate(api){
     };
     const cancelRename = ()=> setRenaming(null);
 
+    // tab reorder — custom pointer drag (native HTML5 DnD leaves the cursor to
+    // the OS per hovered element, so "not-allowed" can never be fully removed).
+    // Drop resolves to an insertion index: first tab (excluding dragged) whose
+    // midpoint is right of the pointer, else the end. Zero setState mid-gesture;
+    // the single setState happens in moveTabToIndex on pointerup.
+    const TAB_DRAG_PX = 6;
+    const clearTabDrag = ()=>{
+      const d = tabDragRef.current;
+      tabDragRef.current = null;
+      try{
+        document.body.style.userSelect = "";
+        document.body.style.cursor = "";
+        const root = panelRef.current || document;
+        root.querySelectorAll(".notepad-tabs.tab-dragging").forEach(el=> el.classList.remove("tab-dragging"));
+        root.querySelectorAll(".notepad-tab.dragging").forEach(el=> el.classList.remove("dragging"));
+        root.querySelectorAll(".notepad-tab.drop-before, .notepad-tab.drop-after").forEach(el=> el.classList.remove("drop-before", "drop-after"));
+      }catch{}
+      window.removeEventListener("pointermove", onTabPointerMove);
+      window.removeEventListener("pointerup", onTabPointerUp);
+      window.removeEventListener("pointercancel", onTabPointerCancel);
+      window.removeEventListener("keydown", onTabPointerKey, true);
+      if(d && d.active) suppressClickRef.current = true;
+    };
+    const moveTabToIndex = (fromIdx, toIdx, id)=>{
+      if(fromIdx<0 || toIdx<0 || fromIdx===toIdx) return;
+      apply(s=>{
+        if(fromIdx>=s.tabs.length || toIdx>s.tabs.length) return s;
+        const tabs = [...s.tabs];
+        const [mv] = tabs.splice(fromIdx, 1);
+        tabs.splice(toIdx, 0, mv);
+        return {...s, tabs, activeId: id || mv.id};
+      }, true);
+      try{ api.playSound("click"); }catch{}
+    };
+    const paintHint = (d, idx)=>{
+      if(d.hintIdx===idx) return;
+      d.hintIdx = idx;
+      try{
+        d.els.forEach(el=> el.classList.remove("drop-before", "drop-after"));
+        if(idx < d.els.length) d.els[idx].classList.add("drop-before");
+        else if(d.els.length) d.els[d.els.length-1].classList.add("drop-after");
+      }catch{}
+    };
+    const hintIndexAt = (d, clientX)=>{
+      for(let i=0; i<d.rects.length; i++){
+        if(clientX < d.rects[i].left + d.rects[i].width / 2) return i;
+      }
+      return d.rects.length;
+    };
+    const onTabPointerMove = (e)=>{
+      const d = tabDragRef.current;
+      if(!d) return;
+      if(!d.active){
+        if(Math.abs(e.clientX - d.startX) < TAB_DRAG_PX && Math.abs(e.clientY - d.startY) < TAB_DRAG_PX) return;
+        // activate — snapshot sibling tabs once (rects stay valid: no setState mid-gesture)
+        d.active = true;
+        suppressClickRef.current = false;
+        try{
+          const strip = panelRef.current ? panelRef.current.querySelector(".notepad-tabs") : null;
+          const all = strip ? [...strip.querySelectorAll(".notepad-tab")] : [];
+          d.els = all.filter(el=> el.dataset && el.dataset.id!==d.id);
+          d.rects = d.els.map(el=> el.getBoundingClientRect());
+          d.fromIdx = stateRef.current.tabs.findIndex(t=>t.id===d.id);
+          if(d.src) d.src.classList.add("dragging");
+          if(strip) strip.classList.add("tab-dragging");
+          document.body.style.userSelect = "none";
+          document.body.style.cursor = "grabbing";
+        }catch{}
+      }
+      e.preventDefault();
+      paintHint(d, hintIndexAt(d, e.clientX));
+    };
+    const onTabPointerUp = (e)=>{
+      const d = tabDragRef.current;
+      if(!d){ clearTabDrag(); return; }
+      if(!d.active){ tabDragRef.current = null; detachTabDrag(); return; } // plain click — let onClick fire
+      const idx = hintIndexAt(d, e.clientX);
+      const fromIdx = d.fromIdx, id = d.id;
+      clearTabDrag();
+      // idx is already in post-removal coordinates (els excludes the dragged tab,
+      // same order as the array once removed) — no adjustment needed
+      moveTabToIndex(fromIdx, idx, id);
+    };
+    const onTabPointerCancel = ()=>{ clearTabDrag(); };
+    const onTabPointerKey = (e)=>{
+      if(e.key==="Escape"){ e.stopPropagation(); clearTabDrag(); }
+    };
+    const detachTabDrag = ()=>{
+      window.removeEventListener("pointermove", onTabPointerMove);
+      window.removeEventListener("pointerup", onTabPointerUp);
+      window.removeEventListener("pointercancel", onTabPointerCancel);
+      window.removeEventListener("keydown", onTabPointerKey, true);
+    };
+    const onTabPointerDown = (id)=>(e)=>{
+      if(e.button!==undefined && e.button!==0) return;
+      if(renaming===id) return;
+      if(e.target.closest(".notepad-tab-x")) return;
+      e.stopPropagation();
+      tabDragRef.current = { id, startX: e.clientX, startY: e.clientY, active: false, fromIdx: -1, els: [], rects: [], hintIdx: -1, src: e.currentTarget };
+      window.addEventListener("pointermove", onTabPointerMove);
+      window.addEventListener("pointerup", onTabPointerUp);
+      window.addEventListener("pointercancel", onTabPointerCancel);
+      window.addEventListener("keydown", onTabPointerKey, true);
+    };
+    const onTabClick = (id)=>(e)=>{
+      if(suppressClickRef.current){ suppressClickRef.current = false; e.preventDefault(); return; }
+      setActive(id);
+    };
+
     const closePanel = ()=>{
       // flush pending typing first
       if(pendingRef.current){ save(pendingRef.current, false); pendingRef.current=null; clearTimeout(saveTimer.current); }
@@ -665,10 +776,12 @@ export default function activate(api){
             }
             return h("button", {
               key:t.id,
+              "data-id":t.id,
               className:"notepad-tab"+(isActive?" on":""),
-              onClick:()=> setActive(t.id),
+              onClick:onTabClick(t.id),
               onDoubleClick:()=> startRename(t.id, t.title),
-              "data-tip":"Double-click to rename"
+              onPointerDown:onTabPointerDown(t.id),
+              "data-tip":"Drag to reorder — double-click to rename"
             },
               h("span", {className:"notepad-tab-label"}, t.title),
               h("button", {
@@ -714,17 +827,37 @@ export default function activate(api){
     }catch{}
   }
 
+  function shiftActiveTab(dir){
+    try{
+      const s = load();
+      if(!s.open || s.tabs.length<2) return;
+      const i = s.tabs.findIndex(t=>t.id===s.activeId);
+      const j = i + dir;
+      if(i<0 || j<0 || j>=s.tabs.length) return;
+      const tabs = [...s.tabs];
+      const tmp = tabs[i]; tabs[i] = tabs[j]; tabs[j] = tmp;
+      save({...s, tabs});
+      try{ api.playSound("click"); }catch{}
+    }catch{}
+  }
+
   return {
     Titlebar: TitlebarBtn,
     Overlay: Overlay,
     hotkeys: [
       { id: "toggle", default: "Alt+N", label: "toggle notepad", description: "Show/hide floating notepad" },
+      { id: "moveLeft", default: "Alt+Shift+ArrowLeft", label: "move notepad tab left", description: "Move active notepad tab left" },
+      { id: "moveRight", default: "Alt+Shift+ArrowRight", label: "move notepad tab right", description: "Move active notepad tab right" },
     ],
     onHotkey(id){
       if(id === "toggle") toggleNotepad();
+      else if(id === "moveLeft") shiftActiveTab(-1);
+      else if(id === "moveRight") shiftActiveTab(1);
     },
     info:{ keys:[
       ["Alt+N / Notepad (Titlebar)","Toggle floating notepad (sticky-note icon) — rebindable in Hotkeys"],
+      ["Drag tab ←/→","Reorder notepad tabs"],
+      ["Alt+Shift+← / →","Move active tab left / right — rebindable in Hotkeys"],
       ["Ctrl+C / Ctrl+X (no selection)","Copy / cut current line"],
       ["Ctrl+Shift+K","Delete line"],
       ["Alt+↑ / Alt+↓","Move line up / down"],
