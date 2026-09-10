@@ -7,6 +7,7 @@ import "./styles/syntax.css";
 import "./styles/layout.css";
 import "./styles/toast.css";
 import { getDirectory, setDirectory } from "./api";
+import { warmupMonaco } from "./lib/monaco";
 
 // debug local builds use http://localhost:1420 origin — localStorage there is
 // separate from the release tauri://localhost origin, so the last workspace
@@ -92,13 +93,11 @@ hydrateWorkspace().finally(() => {
 });
 
 // idle-time monaco + grammar warmup so the first diff/file paints colored
-// instead of popping in a beat later — never blocks startup
+// instead of popping in a beat later — static import adds nothing (the
+// module is already in the initial bundle via the chat components); only
+// the work itself is deferred, never blocking startup
 try {
-  const warm = () =>
-    import("./lib/monaco")
-      .then(({ warmupMonaco }) => warmupMonaco())
-      .catch(() => {});
   if (typeof (window as any).requestIdleCallback === "function")
-    (window as any).requestIdleCallback(warm, { timeout: 4000 });
-  else setTimeout(warm, 2000);
+    (window as any).requestIdleCallback(() => warmupMonaco(), { timeout: 4000 });
+  else setTimeout(() => warmupMonaco(), 2000);
 } catch {}
