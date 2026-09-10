@@ -47,6 +47,10 @@
   box-sizing: border-box;
   margin: 0;
   padding: 0;
+  /* Firefox/WebKitGTK fallback — ::-webkit-scrollbar below only covers
+     Chromium. Thin + accent everywhere (app + plugins) with zero per-file CSS. */
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--accent) calc(0.18 * 100%), transparent) transparent;
   /* JetBrains Mono merges ... /// :: ??? into single ligature glyphs,
      which reads as dropped characters — keep every char its own glyph */
   font-variant-ligatures: none;

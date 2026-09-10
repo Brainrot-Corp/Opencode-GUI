@@ -1,6 +1,6 @@
 {
   "id": "tuya-lights-control",
   "name": "Tuya",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "Voice + slash control for Tuya Smart Life lights and curtains — on/off, brightness, color, open/close/stop, percentage via the Tuya Cloud API"
 }

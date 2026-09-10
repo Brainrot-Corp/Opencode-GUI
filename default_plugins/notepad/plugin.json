@@ -1,6 +1,6 @@
 {
   "id": "notepad",
   "name": "Notepad",
-  "version": "1.7.0",
+  "version": "1.7.1",
   "description": "Floating resizable scratch notepad — multi-tab, Alt+N to toggle, editor keys rebindable"
 }

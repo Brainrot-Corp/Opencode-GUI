@@ -362,11 +362,11 @@ export default function activate(api){
 
     return h("div", {
       ref: panelRef,
-      className:"tiktok-panel",
+      className:"tiktok-panel oc-panel",
       style:{ left: geom.x+"px", top: geom.y+"px", width: geom.w+"px", height: geom.h+"px" },
     },
-      h("div", { className:"tiktok-head", onMouseDown:onDragStart },
-        h("span", { className:"tiktok-head-title" },
+      h("div", { className:"tiktok-head oc-panel-head", onMouseDown:onDragStart },
+        h("span", { className:"tiktok-head-title oc-panel-title" },
           h("i", { className:"fa-brands fa-tiktok" }),
           "TikTok"
         ),

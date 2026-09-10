@@ -380,7 +380,7 @@ export default function activate(api) {
         ),
         h("div", { className: "color-controls", style: { flexBasis: "100%", marginLeft: "30px" } },
           h("input", {
-            className: "discord-in",
+            className: "discord-in oc-input",
             value: conf.clientId,
             placeholder: "abc123…",
             spellCheck: false,
@@ -392,7 +392,7 @@ export default function activate(api) {
         h("button", { type: "button", className: "reset-btn", disabled: !conf.clientId || busy, onClick: () => void startAuth() },
           h("i", { className: "fa-solid fa-arrow-up-right-from-square" }), busy ? "…" : "Authorize"),
         h("input", {
-          className: "discord-in",
+          className: "discord-in oc-input",
           style: { flex: 1, minWidth: "160px" },
           value: code,
           placeholder: "Paste ?code=… or full redirect URL",
@@ -407,7 +407,7 @@ export default function activate(api) {
       authUrl ? h("div", { className: "mono-hint sp-hint", style: { margin: "0 10px", padding: "6px", border: "1px solid var(--line)", background: "rgba(255,255,255,.04)", wordBreak: "break-all", display: "flex", flexDirection: "column", gap: "6px" } },
         h("div", null, "If browser URL was truncated (client_id not present), copy this full URL and open manually:"),
         h("div", { style: { display: "flex", gap: "6px" } },
-          h("input", { className: "discord-in", style: { flex: 1, fontSize: "10px" }, value: authUrl, readOnly: true, spellCheck: false, onClick: (e) => e.target.select() }),
+          h("input", { className: "discord-in oc-input", style: { flex: 1, fontSize: "10px" }, value: authUrl, readOnly: true, spellCheck: false, onClick: (e) => e.target.select() }),
           h("button", { type: "button", className: "reset-btn", onClick: () => { try { navigator.clipboard.writeText(authUrl); } catch {} } }, h("i", { className: "fa-solid fa-copy" }), "Copy")
         )
       ) : null,
@@ -1215,7 +1215,7 @@ export default function activate(api) {
         h("button", { className:"reset-btn", onClick:()=>{ const q = encodeURIComponent(`${(curTrack.artists||[]).map(a=>a.name).join(" ")} ${curTrack.name}`); api.invoke("open_external",{url:`https://genius.com/search?q=${q}`}).catch(()=>{}); } }, h("i",{className:"fa-solid fa-arrow-up-right-from-square"}), " Search Genius")
       );
     } else if (lyrics.syncedAvailable && lyrics.lines.length) {
-      body = h("div", { ref: bodyRef, className:"lyrics-body synced" },
+      body = h("div", { ref: bodyRef, className:"lyrics-body synced oc-scroll-hidden" },
         ...lyrics.lines.map((ln,i)=>{
           const isActive = i===activeIdx;
           const isPast = i<activeIdx;
@@ -1225,12 +1225,12 @@ export default function activate(api) {
       );
     } else if (lyrics.plain) {
       const plainLines = lyrics.plain.split("\n");
-      body = h("div", { ref: bodyRef, className:"lyrics-body plain" },
+      body = h("div", { ref: bodyRef, className:"lyrics-body plain oc-scroll-hidden" },
         h("pre", { className:"lyrics-plain" }, lyrics.plain),
         h("div", { className:"mono-hint", style:{padding:"6px 0 2px", color:"var(--text-faint)", fontSize:"10px"} }, "Plain lyrics — no timestamps (seek disabled)")
       );
     } else if (lyrics.lines.length) {
-      body = h("div", { ref: bodyRef, className:"lyrics-body synced" },
+      body = h("div", { ref: bodyRef, className:"lyrics-body synced oc-scroll-hidden" },
         ...lyrics.lines.map((ln,i)=> h("div",{key:i, className:"lyrics-line plain-line"}, ln.text))
       );
     } else {
@@ -1239,12 +1239,12 @@ export default function activate(api) {
 
     return h("div", {
       ref: panelRef,
-      className:"lyrics-panel",
+      className:"lyrics-panel oc-panel",
       style:{ left: geom.x+"px", top: geom.y+"px", width: geom.w+"px", height: geom.h+"px" },
     },
-      h("div", { className:"lyrics-head", onMouseDown:onDragStart },
+      h("div", { className:"lyrics-head oc-panel-head", onMouseDown:onDragStart },
         h("i", { className:"fa-solid fa-microphone-lines", style:{color:"var(--accent)"} }),
-        h("span", { className:"lyrics-head-title" }, "Lyrics"),
+        h("span", { className:"lyrics-head-title oc-panel-title" }, "Lyrics"),
         h("span", { className:"lyrics-head-track mono-hint", title: trackLabel }, hasTrack ? trackLabel : "—"),
         h("span", { style:{marginLeft:"auto", display:"inline-flex", gap:"6px", alignItems:"center"} },
           hasTrack && lyrics.syncedAvailable ? h("span", { className:"mono-hint", style:{fontSize:"10px", color: curIsPlaying ? "var(--accent)" : "var(--text-faint)"} }, curIsPlaying ? "● synced" : "○ paused") : null,
@@ -1256,14 +1256,14 @@ export default function activate(api) {
         hasTrack ? `${curTrack.name} • ${fmt(curPos)} / ${fmt(curTrack.duration)}` : "",
         hasTrack && lyrics.syncedAvailable ? h("span", { style:{marginLeft:"8px", opacity:.6} }, "click line to seek") : null
       ),
-      h("div", { className:"lyrics-handle n", onMouseDown:onResizeStart("n") }),
-      h("div", { className:"lyrics-handle s", onMouseDown:onResizeStart("s") }),
-      h("div", { className:"lyrics-handle e", onMouseDown:onResizeStart("e") }),
-      h("div", { className:"lyrics-handle w", onMouseDown:onResizeStart("w") }),
-      h("div", { className:"lyrics-handle nw", onMouseDown:onResizeStart("nw") }),
-      h("div", { className:"lyrics-handle ne", onMouseDown:onResizeStart("ne") }),
-      h("div", { className:"lyrics-handle sw", onMouseDown:onResizeStart("sw") }),
-      h("div", { className:"lyrics-handle se", onMouseDown:onResizeStart("se") })
+      h("div", { className:"oc-handle n", onMouseDown:onResizeStart("n") }),
+      h("div", { className:"oc-handle s", onMouseDown:onResizeStart("s") }),
+      h("div", { className:"oc-handle e", onMouseDown:onResizeStart("e") }),
+      h("div", { className:"oc-handle w", onMouseDown:onResizeStart("w") }),
+      h("div", { className:"oc-handle nw", onMouseDown:onResizeStart("nw") }),
+      h("div", { className:"oc-handle ne", onMouseDown:onResizeStart("ne") }),
+      h("div", { className:"oc-handle sw", onMouseDown:onResizeStart("sw") }),
+      h("div", { className:"oc-handle se", onMouseDown:onResizeStart("se") })
     );
   }
 

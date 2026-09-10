@@ -750,20 +750,20 @@ export default function activate(api){
 
     return h("div", {
       ref: panelRef,
-      className:"notepad-panel",
+      className:"notepad-panel oc-panel",
       style:{ left: geom.x+"px", top: geom.y+"px", width: geom.w+"px", height: geom.h+"px" },
       onMouseDown:(e)=>{ if(e.target.closest("button, input, textarea")) return; },
     },
-      h("div", { className:"notepad-head", onMouseDown:onDragStart },
-        h("span", { className:"notepad-head-title" }, "Notepad"),
-        h("div", { className:"notepad-tabs" },
+      h("div", { className:"notepad-head oc-panel-head", onMouseDown:onDragStart },
+        h("span", { className:"notepad-head-title oc-panel-title" }, "Notepad"),
+        h("div", { className:"notepad-tabs oc-scroll" },
           ...state.tabs.map(t=>{
             const isActive = t.id===state.activeId;
             if(renaming===t.id){
               return h("input", {
                 key:t.id,
                 "data-id":t.id,
-                className:"notepad-rename",
+                className:"notepad-rename oc-input",
                 value: draftName,
                 autoFocus:true,
                 onChange:(e)=> setDraftName(e.target.value),
@@ -799,7 +799,7 @@ export default function activate(api){
       h("div", { className:"notepad-body" },
         h("textarea", {
           ref: taRef,
-          className:"notepad-ta",
+          className:"notepad-ta oc-scroll",
           value: active ? active.content : "",
           placeholder:"Scratch notes…",
           spellCheck:false,
@@ -807,14 +807,14 @@ export default function activate(api){
           onKeyDown: onNotepadKeyDown
         })
       ),
-      h("div", { className:"notepad-handle n", onMouseDown:onResizeStart("n") }),
-      h("div", { className:"notepad-handle s", onMouseDown:onResizeStart("s") }),
-      h("div", { className:"notepad-handle e", onMouseDown:onResizeStart("e") }),
-      h("div", { className:"notepad-handle w", onMouseDown:onResizeStart("w") }),
-      h("div", { className:"notepad-handle nw", onMouseDown:onResizeStart("nw") }),
-      h("div", { className:"notepad-handle ne", onMouseDown:onResizeStart("ne") }),
-      h("div", { className:"notepad-handle sw", onMouseDown:onResizeStart("sw") }),
-      h("div", { className:"notepad-handle se", onMouseDown:onResizeStart("se") })
+      h("div", { className:"oc-handle n", onMouseDown:onResizeStart("n") }),
+      h("div", { className:"oc-handle s", onMouseDown:onResizeStart("s") }),
+      h("div", { className:"oc-handle e", onMouseDown:onResizeStart("e") }),
+      h("div", { className:"oc-handle w", onMouseDown:onResizeStart("w") }),
+      h("div", { className:"oc-handle nw", onMouseDown:onResizeStart("nw") }),
+      h("div", { className:"oc-handle ne", onMouseDown:onResizeStart("ne") }),
+      h("div", { className:"oc-handle sw", onMouseDown:onResizeStart("sw") }),
+      h("div", { className:"oc-handle se", onMouseDown:onResizeStart("se") })
     );
   }
 

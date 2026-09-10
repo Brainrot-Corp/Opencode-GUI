@@ -169,6 +169,29 @@ export async function applyWorkspace(path: string) {
   window.dispatchEvent(new CustomEvent("oc:workspaces-changed"));
 }
 
+// reset to a clean slate: primary -> "" (server cwd), extras dropped.
+// Terminals are closed via oc:terms-close-all (Terminal kills the PTYs and
+// clears its persisted list); sessions stay server-side and reappear if a
+// workspace is re-added.
+export async function closeAllWorkspaces() {
+  touchWorkspace("");
+  setDirectory("");
+  try {
+    const raw = JSON.parse(localStorage.getItem("oc.settings") ?? "{}");
+    raw.workspace = "";
+    raw.workspaces = [];
+    localStorage.setItem("oc.settings", JSON.stringify(raw));
+  } catch {
+    // unreadable settings blob — sessions still follow the api dir
+  }
+  // debug local builds survive devUrl origin changes via Rust file
+  try {
+    await invoke("workspace_set", { path: "" });
+  } catch {}
+  window.dispatchEvent(new CustomEvent("oc:workspaces-changed"));
+  window.dispatchEvent(new Event("oc:terms-close-all"));
+}
+
 export async function pickWorkspace() {
   let def: string | undefined;
   try {
