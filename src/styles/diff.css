@@ -4,6 +4,7 @@
   border: 1px solid var(--line);
   border-radius: 4px;
   overflow: hidden;
+  background: var(--inset-bg);
 }
 
 .diff-file-head {
@@ -79,15 +80,6 @@
   color: var(--text-faint);
 }
 
-/* plain-rows fallback note when monaco fails to load — doubles as the
-   diagnosis channel (no devtools in the built app) */
-.ro-fail {
-  padding: 2px 10px 4px;
-  font-family: var(--mono);
-  font-size: 10px;
-  color: var(--text-faint);
-  white-space: pre-wrap;
-}
 /* read-only monaco diff — same rows/signs/tints as .diff-lines above,
    diff-ness via gutter signs (line numbers) + whole-line decorations */
 .ro-diff {
@@ -134,10 +126,13 @@
 .ro-hunk-inline {
   color: var(--accent-bright);
 }
-/* chat tool diffs share the tool input/output material (inset bg + border),
-   instead of showing the bubble surface through the transparent editor */
+/* diffs share the tool input/output material (inset bg + border) instead of
+   showing the flat bubble/dialog surface through the transparent editor —
+   in chat, and bare in dialogs (the session-changes card paints its own) */
 .msg .ro-diff,
-.msg .diff-lines.ro-fallback {
+.msg .diff-lines.ro-fallback,
+.dlg-body > .ro-diff,
+.dlg-body > .diff-lines.ro-fallback {
   background: var(--inset-bg);
   border: 1px solid var(--line);
   border-radius: 4px;

@@ -525,6 +525,34 @@
 .code-wrap .copy-btn:focus-visible {
   opacity: 1;
 }
+/* monaco-backed fenced block — same material as .msg pre (bg/border live
+   here; padding comes from the editor so columns never drift) */
+.code-mono {
+  background: var(--inset-bg);
+  border: 1px solid var(--line);
+  border-radius: 0;
+  margin: 0.5em 0;
+  overflow: hidden;
+}
+/* monaco-backed tool input/output — same material as .tool-input/.tool-out */
+.tool-mono {
+  background: var(--inset-bg);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  overflow: hidden;
+}
+/* monaco paints its own background — keep it transparent so the materials
+   above show through (same override lives in file-editor/diff css) */
+.code-mono .monaco-editor,
+.code-mono .monaco-editor-background,
+.tool-mono .monaco-editor,
+.tool-mono .monaco-editor-background {
+  background-color: transparent !important;
+}
+.code-mono .monaco-editor,
+.tool-mono .monaco-editor {
+  outline: none !important;
+}
 
 /* tool call blocks — collapsed header by default, mono body on expand */
 .msg .tool-block {

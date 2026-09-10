@@ -90,10 +90,19 @@ export default function ChatPage() {
     window.addEventListener("oc:composer-draft", onDraft);
     return () => window.removeEventListener("oc:composer-draft", onDraft);
   }, []);
+  // active session for the stale-event guard below (effect subscribes once)
+  const activeIdRef = useRef(oc.activeId);
+  activeIdRef.current = oc.activeId;
   useEffect(() => {
     const onDiff = (ev: Event) => {
-      const d = (ev as CustomEvent<string[]>).detail;
-      setDiffFiles(Array.isArray(d) ? d : []);
+      const d = (ev as CustomEvent<any>).detail;
+      // legacy shape (bare array) or tagged { sessionId, files } — drop
+      // events from a session that is no longer active (slow fetch for the
+      // previous session resolving after a switch)
+      const files = Array.isArray(d) ? d : Array.isArray(d?.files) ? d.files : [];
+      const sid = Array.isArray(d) ? undefined : d?.sessionId;
+      if (sid !== undefined && sid !== activeIdRef.current) return;
+      setDiffFiles(files);
     };
     window.addEventListener("oc:diff-files", onDiff);
     return () => window.removeEventListener("oc:diff-files", onDiff);

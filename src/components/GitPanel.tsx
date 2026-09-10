@@ -472,9 +472,15 @@ function GitPanelInner() {
     if (gen) abortGen();
     const ok = await act(async () => {
       if (useAll && snapPaths.length) {
-        // stage the click-time snapshot (M + A incl. untracked); commit reads
-        // the index only so later worktree changes stay out
-        await invoke("git_stage", { dir: curDir(), paths: [...new Set(snapPaths)] });
+        // stage only what isn't already staged — git fatals the whole batch
+        // on a pathspec matching nothing (e.g. an already-staged deletion),
+        // and the commit reads the index anyway
+        const needStage = [
+          ...new Set(snapPaths.filter((p) => allDirty.some((f) => f.path === p && f.y !== " "))),
+        ];
+        if (needStage.length) {
+          await invoke("git_stage", { dir: curDir(), paths: needStage });
+        }
         await invoke("git_commit", { dir: curDir(), message, amend, all: false });
       } else {
         await invoke("git_commit", { dir: curDir(), message, amend, all: useAll });

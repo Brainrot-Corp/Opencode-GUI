@@ -1,4 +1,5 @@
-import { memo, useCallback, useEffect, useRef, useState } from "react";
+import { Children, isValidElement, memo, useCallback, useEffect, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import { createPortal } from "react-dom";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -7,6 +8,8 @@ import type { Part } from "@opencode-ai/sdk/client";
 import type { Msg } from "../types";
 import { iconFor } from "../lib/attachments";
 import ToolBlock from "./ToolBlock";
+import MonacoBlock from "./MonacoBlock";
+import { hlToMonacoLang } from "../lib/monaco";
 import "../styles/chat.css";
 import "../styles/find.css";
 
@@ -300,14 +303,41 @@ function SubtaskBlock({ part, collapsedDefault }: { part: any; collapsedDefault:
   );
 }
 
-// fenced code block with a fast copy button — textContent is read at click
-// time so highlight spans / inline markup can never corrupt the copied source
-function CodePre(props: React.HTMLAttributes<HTMLPreElement> & { node?: unknown }) {
-  const { children, node, ...rest } = props;
-  const ref = useRef<HTMLPreElement>(null);
+// markdown helpers shared by the pre renderer below
+function codeText(node: ReactNode): string {
+  let out = "";
+  Children.forEach(node, (c) => {
+    if (typeof c === "string" || typeof c === "number") out += String(c);
+    else if (isValidElement(c)) out += codeText((c.props as any).children);
+  });
+  return out;
+}
+// rehype-highlight tags the <code> with language-<id> (highlight.js ids)
+function codeLang(node: ReactNode): string | undefined {
+  const kids = Children.toArray(node);
+  for (const c of kids) {
+    if (!isValidElement(c)) continue;
+    if (c.type === "code") {
+      const m = /language-([\w-]+)/.exec((c.props as any).className ?? "");
+      if (m) return m[1];
+    }
+    const nested = codeLang((c.props as any).children);
+    if (nested) return nested;
+  }
+  return undefined;
+}
+
+// fenced code block with a fast copy button — Monaco rendering under the
+// same .code-wrap chrome; copy uses the raw source so rendered markup (or
+// monaco's gutter) can never corrupt it. Untagged fences stay plaintext,
+// exactly like the old rehype-only rendering.
+function CodePre(props: { children?: ReactNode }) {
+  const { children } = props;
+  const text = codeText(children);
+  const lang = hlToMonacoLang(codeLang(children));
   const [copied, setCopied] = useState(false);
   const copy = () => {
-    navigator.clipboard.writeText(ref.current?.textContent ?? "").then(
+    navigator.clipboard.writeText(text).then(
       () => {
         setCopied(true);
         setTimeout(() => setCopied(false), 1200);
@@ -326,9 +356,17 @@ function CodePre(props: React.HTMLAttributes<HTMLPreElement> & { node?: unknown 
       >
         <i className={`fa-solid ${copied ? "fa-check" : "fa-copy"}`} />
       </button>
-      <pre ref={ref} {...rest}>
-        {children}
-      </pre>
+      <MonacoBlock
+        value={text}
+        language={lang}
+        fontSize={12.5}
+        lineHeight={21}
+        padTop={12}
+        padBottom={12}
+        leftPad={14}
+        className="code-mono"
+        fallback={<pre>{text}</pre>}
+      />
     </div>
   );
 }

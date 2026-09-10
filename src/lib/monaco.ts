@@ -20,31 +20,62 @@ export function loadMonaco(): Promise<typeof Monaco> {
   return monacoPromise;
 }
 
+// boot-time grammar warmup: first use of a language evaluates its
+// (bundled) definition and compiles the Monarch grammar — the slow part
+// behind "colors pop in a second later". Runs idle at startup for the usual
+// suspects so the first diff/file paints colored. Fire-and-forget.
+// wait until a language's grammar is actually usable, so first paint is
+// colored instead of popping in later. Standalone tokenize() falls back to
+// null tokens while the lazy grammar loads, so poll it: non-empty token
+// types mean the real grammar is live. Always resolves (timeout) —
+// plaintext/unknown ids resolve immediately since they never gain tokens.
+// Polling uses the task queue (setTimeout), never the idle queue, so it
+// still progresses on a busy streaming thread where Monaco's own
+// requestIdleCallback-scheduled background pass starves.
+export function whenGrammarReady(
+  m: typeof Monaco,
+  langId: string,
+  timeoutMs = 1500,
+): Promise<void> {
+  return new Promise((resolve) => {
+    try {
+      if (!langId || langId === "plaintext") return resolve();
+      const known = (m.languages?.getLanguages?.() || []).some((l: any) => l.id === langId);
+      if (!known) return resolve();
+    } catch {
+      return resolve();
+    }
+    const t0 = Date.now();
+    const probe = "const x = 1; // g";
+    const tick = () => {
+      let ready = false;
+      try {
+        const toks = m.editor.tokenize(probe, langId) as { type?: string }[][];
+        ready = (toks || []).some((line) => (line || []).some((t) => !!t?.type));
+      } catch {}
+      if (ready || Date.now() - t0 > timeoutMs) resolve();
+      else setTimeout(tick, 25);
+    };
+    tick();
+  });
+}
+
 // boot-time grammar warmup: first tokenize of a language evaluates its
 // (bundled) definition and compiles the Monarch grammar — the slow part
 // behind "colors pop in a second later". Runs idle at startup for the usual
-// suspects so the first diff paints colored; second pass compiles after the
-// async loaders resolve. Fire-and-forget, never blocks UI.
+// suspects so the first diff/file paints colored. Fire-and-forget.
 const WARM_LANGS = [
   "typescript", "javascript", "json", "python", "rust", "go",
   "shell", "markdown", "css", "html", "yaml", "powershell",
 ];
-const WARM_SAMPLE = "const x = 1;\n// warmup\nfunction f(a) {\n  return a + x;\n}\n";
 export function warmupMonaco(): void {
   void loadMonaco()
-    .then((m) => {
+    .then(async (m) => {
       for (const id of WARM_LANGS) {
         try {
-          m.editor.tokenize(WARM_SAMPLE, id);
+          await whenGrammarReady(m, id, 2500);
         } catch {}
       }
-      setTimeout(() => {
-        for (const id of WARM_LANGS) {
-          try {
-            m.editor.tokenize(WARM_SAMPLE, id);
-          } catch {}
-        }
-      }, 0);
     })
     .catch(() => {});
 }
@@ -230,6 +261,22 @@ export function forceCheapTokens(model: any, maxLines = 1000): void {
     const count = Math.min(Number(model.getLineCount?.() ?? 0), maxLines);
     for (let ln = 1; ln <= count; ln++) tz.tokenizeIfCheap(ln);
   } catch {}
+}
+
+// monospace advance at a given px size (canvas-measured, cached per size) —
+// drives code-block width expansion
+const charWCache = new Map<number, number>();
+export function measureCharWidth(fontPx: number): number {
+  const hit = charWCache.get(fontPx);
+  if (hit) return hit;
+  let w = Math.ceil(fontPx * 0.6);
+  try {
+    const ctx = document.createElement("canvas").getContext("2d")!;
+    ctx.font = `${fontPx}px ${MONO_STACK}`;
+    w = Math.ceil(ctx.measureText("MMMMMMMMMM").width / 10);
+  } catch {}
+  charWCache.set(fontPx, w);
+  return w;
 }
 
 // "Ctrl+Shift+K" → monaco keybinding. Returns null when unparseable.

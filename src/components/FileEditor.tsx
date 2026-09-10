@@ -13,8 +13,10 @@ import {
   baseOptions,
   bindingToKeybinding,
   defineGuiTheme,
+  forceCheapTokens,
   monacoLang,
   setupMonacoWorkers,
+  whenGrammarReady,
 } from "../lib/monaco";
 import { copyToClipboard } from "../lib/editorKeys";
 import { DEFAULT_HOTKEYS } from "../lib/hotkeys";
@@ -66,6 +68,9 @@ export default function FileEditor({
   const mountRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
   const decosRef = useRef<string[]>([]);
+  // create only once the language grammar is live so first paint is
+  // colored (same gate as the read-only blocks)
+  const [gramReady, setGramReady] = useState(false);
   const savedRef = useRef(saved);
   savedRef.current = saved;
   const draftRef = useRef(draft);
@@ -168,6 +173,19 @@ export default function FileEditor({
 
   useEffect(() => {
     if (!editable) return;
+    let dead = false;
+    setGramReady(false);
+    void whenGrammarReady(monaco, monacoLang(path)).then(() => {
+      if (!dead) setGramReady(true);
+    });
+    return () => {
+      dead = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editable, path]);
+
+  useEffect(() => {
+    if (!editable || !gramReady) return;
     const el = mountRef.current;
     if (!el) return;
     defineGuiTheme(monaco);
@@ -177,12 +195,17 @@ export default function FileEditor({
       language: monacoLang(path),
     });
     editorRef.current = editor;
+    forceCheapTokens(editor.getModel());
     const sub = editor.onDidChangeModelContent(() => {
       const v = editor.getValue();
       if (v !== draftRef.current) {
         draftRef.current = v;
         setDraft(v);
         setStatus("");
+        // paint the just-typed line synchronously — same idle-starvation
+        // reasoning as everywhere else; post-warmup this is one cheap line
+        // plus trivial validity checks, far below the setState next to it
+        forceCheapTokens(editor.getModel());
       }
     });
     // Escape closes the custom find bar first (Dialog closes on Escape otherwise)
@@ -203,7 +226,7 @@ export default function FileEditor({
       m?.dispose();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editable, path]);
+  }, [editable, path, gramReady]);
 
   // external draft updates (initial load, watcher reload, stale reload)
   // push into the editor; keystrokes already match so this is a no-op for them
@@ -214,6 +237,7 @@ export default function FileEditor({
     if (!model) return;
     if (draft !== editor.getValue()) {
       editor.executeEdits("external", [{ range: model.getFullModelRange(), text: draft }]);
+      forceCheapTokens(model);
     }
   }, [draft]);
 

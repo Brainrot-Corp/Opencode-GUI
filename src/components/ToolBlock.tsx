@@ -1,14 +1,30 @@
 import { useMemo, useState } from "react";
 import type { Part } from "@opencode-ai/sdk/client";
 import type { QuestionInfo } from "../types";
-import { hlHtml, extLang } from "../lib/syntax";
+import { detectLang, extLang } from "../lib/syntax";
+import { hlToMonacoLang } from "../lib/monaco";
 import { DiffLines } from "./DiffPanel";
+import MonacoBlock from "./MonacoBlock";
 
-// highlighted mono text for tool inputs/outputs — language auto-detected,
-// oversized/odd input falls back to escaped plain text inside hlHtml
+// read-only mono text for tool inputs/outputs — Monaco rendering with the
+// language auto-detected, same as the old lowlight rendering
 function Hi({ text }: { text: string }) {
-  const html = useMemo(() => ({ __html: hlHtml(text) }), [text]);
-  return <span dangerouslySetInnerHTML={html} />;
+  const lang = useMemo(() => hlToMonacoLang(detectLang(text)), [text]);
+  return (
+    <MonacoBlock
+      value={text}
+      language={lang}
+      fontSize={11}
+      lineHeight={17}
+      padTop={6}
+      padBottom={6}
+      leftPad={8}
+      wrap
+      maxHeight={240}
+      className="tool-mono"
+      fallback={<pre className="tool-out">{text}</pre>}
+    />
+  );
 }
 
 const TOOL_ICONS: Record<string, string> = {
@@ -429,7 +445,7 @@ export default function ToolBlock({
           {patch !== null && filePath ? (
             <>
               <DiffLines patch={patch} lang={extLang(String(filePath))} />
-              {out && <pre className="tool-out">{out}</pre>}
+              {out && <Hi text={out} />}
             </>
           ) : todos.length > 0 ? (
             <TodoView todos={todos} />
@@ -440,28 +456,18 @@ export default function ToolBlock({
             (st.input.questions as any[]).length > 0 ? (
             <>
               <QuestionView t={t} />
-              {out && !QuestionAnswered(t) && (
-                <pre className="tool-out">
-                  <Hi text={out} />
-                </pre>
-              )}
+              {out && !QuestionAnswered(t) && <Hi text={out} />}
             </>
           ) : (
             <>
               {input.length > 0 && (
-                <pre className="tool-input">
-                  <Hi
-                    text={input
-                      .map(([k, v]) => `${k}: ${typeof v === "string" ? v : JSON.stringify(v)}`)
-                      .join("\n")}
-                  />
-                </pre>
+                <Hi
+                  text={input
+                    .map(([k, v]) => `${k}: ${typeof v === "string" ? v : JSON.stringify(v)}`)
+                    .join("\n")}
+                />
               )}
-              {out && (
-                <pre className="tool-out">
-                  <Hi text={pretty ?? out} />
-                </pre>
-              )}
+              {out && <Hi text={pretty ?? out} />}
             </>
           )}
         </div>
