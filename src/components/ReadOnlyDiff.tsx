@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type * as Monaco from "monaco-editor";
 import {
   MONACO_THEME,
@@ -13,6 +13,22 @@ type Row = { cls: "add" | "del" | "ctx" | "hunk"; sign: string; text: string };
 // tall diffs scroll inside the block instead of stretching the chat;
 // keep in sync with .ro-diff / .ro-fallback max-height in diff.css
 const MAX_H = 420;
+// wide diffs grow into free stage space (assistant bubbles stop at 84%)
+// before scrolling horizontally — capped so it stays a nudge, not a takeover
+const MAX_EXPAND = 320;
+
+let charW = 0;
+function monoCharWidth(): number {
+  if (charW > 0) return charW;
+  try {
+    const ctx = document.createElement("canvas").getContext("2d")!;
+    ctx.font = `12px ${MONO_STACK}`;
+    charW = Math.ceil(ctx.measureText("MMMMMMMMMM").width / 10);
+  } catch {
+    charW = 8;
+  }
+  return charW;
+}
 
 // same row split as the old DOM version: hunk/file headers stay whole,
 // +/- prefixes are stripped into the sign gutter so token colors stay clean
@@ -42,6 +58,7 @@ function parsePatch(patch: string): Row[] {
 // language, diff-ness comes only from gutter signs + line decorations
 export default function ReadOnlyDiff({ patch, lang }: { patch: string; lang?: string }) {
   const mountRef = useRef<HTMLDivElement>(null);
+  const fallRef = useRef<HTMLDivElement>(null);
   const edRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
   const decosRef = useRef<string[]>([]);
   const [mod, setMod] = useState<typeof Monaco | null>(null);
@@ -62,6 +79,47 @@ export default function ReadOnlyDiff({ patch, lang }: { patch: string; lang?: st
   const langRef = useRef(lang);
   langRef.current = lang;
   const fitRef = useRef<(() => void) | null>(null);
+  const longest = useMemo(() => rows.reduce((m, r) => Math.max(m, r.text.length), 0), [rows]);
+
+  // grow the block toward the longest line when free stage space allows —
+  // capped at MAX_EXPAND past the natural column width and never past the
+  // scroller, so the chat itself never gains a horizontal scrollbar
+  const applyWidth = useCallback(() => {
+    const box = mountRef.current ?? fallRef.current;
+    if (!box || !box.isConnected) return;
+    const natural = box.parentElement?.clientWidth || box.clientWidth;
+    const ed = edRef.current;
+    const left = ed ? ed.getLayoutInfo().contentLeft : 18;
+    const needed = Math.ceil(left + longest * monoCharWidth() + 14);
+    let avail = natural + MAX_EXPAND;
+    const scroller = box.closest(".messages, .dlg-body");
+    if (scroller) {
+      const sr = scroller.getBoundingClientRect();
+      const br = box.getBoundingClientRect();
+      const pr = parseFloat(getComputedStyle(scroller).paddingRight || "0") || 0;
+      avail = Math.floor(sr.right - br.left - pr - 4);
+    }
+    const target = Math.min(needed, Math.min(natural + MAX_EXPAND, avail));
+    if (target > natural + 32) {
+      box.style.width = `${Math.floor(target)}px`;
+      try {
+        ed?.layout();
+      } catch {}
+    } else if (box.style.width) {
+      box.style.width = "";
+      try {
+        ed?.layout();
+      } catch {}
+    }
+  }, [longest]);
+
+  useEffect(() => {
+    applyWidth();
+  }, [applyWidth]);
+  useEffect(() => {
+    window.addEventListener("resize", applyWidth);
+    return () => window.removeEventListener("resize", applyWidth);
+  }, [applyWidth]);
 
   useEffect(() => {
     let dead = false;
@@ -224,6 +282,7 @@ export default function ReadOnlyDiff({ patch, lang }: { patch: string; lang?: st
       try {
         fitRef.current?.();
       } catch {}
+      applyWidth();
     } catch (e) {
       try {
         ed.dispose();
@@ -232,7 +291,7 @@ export default function ReadOnlyDiff({ patch, lang }: { patch: string; lang?: st
       decosRef.current = [];
       setFail(`sync: ${e instanceof Error ? e.message : e}`);
     }
-  }, [mod, rows, text, lang, fail]);
+  }, [mod, rows, text, lang, fail, applyWidth]);
 
   // monaco unavailable (still loading, or load/create/sync failed) — plain
   // rows, no highlight (same shape, so no layout jump when the editor takes
@@ -240,7 +299,7 @@ export default function ReadOnlyDiff({ patch, lang }: { patch: string; lang?: st
   if (!mod || fail) {
     if (!patch.trim()) return null;
     return (
-      <div className="diff-lines mono ro-fallback">
+      <div ref={fallRef} className="diff-lines mono ro-fallback">
         {fail && <div className="ro-fail">Monaco unavailable ({fail})</div>}
         {rows.map((r, i) => (
           <div key={i} className={r.cls}>
