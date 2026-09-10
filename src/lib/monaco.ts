@@ -68,9 +68,17 @@ const WARM_LANGS = [
   "typescript", "javascript", "json", "python", "rust", "go",
   "shell", "markdown", "css", "html", "yaml", "powershell",
 ];
+const WARM_PROBE = "const x = 1; // g";
 export function warmupMonaco(): void {
   void loadMonaco()
     .then(async (m) => {
+      // kick every loader first so their async resolution overlaps, then
+      // await readiness each (compiles as they land)
+      for (const id of WARM_LANGS) {
+        try {
+          m.editor.tokenize(WARM_PROBE, id);
+        } catch {}
+      }
       for (const id of WARM_LANGS) {
         try {
           await whenGrammarReady(m, id, 2500);

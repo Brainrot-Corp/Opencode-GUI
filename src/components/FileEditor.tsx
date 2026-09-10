@@ -68,9 +68,6 @@ export default function FileEditor({
   const mountRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
   const decosRef = useRef<string[]>([]);
-  // create only once the language grammar is live so first paint is
-  // colored (same gate as the read-only blocks)
-  const [gramReady, setGramReady] = useState(false);
   const savedRef = useRef(saved);
   savedRef.current = saved;
   const draftRef = useRef(draft);
@@ -170,22 +167,11 @@ export default function FileEditor({
   }, [draft, query, matchCase, findOpen]);
 
   // ---- monaco lifecycle: create once the text is loaded ----
+  // text mounts immediately (instant open); colors follow as soon as the
+  // grammar is live — waiting for colors first left an empty box instead
 
   useEffect(() => {
     if (!editable) return;
-    let dead = false;
-    setGramReady(false);
-    void whenGrammarReady(monaco, monacoLang(path)).then(() => {
-      if (!dead) setGramReady(true);
-    });
-    return () => {
-      dead = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editable, path]);
-
-  useEffect(() => {
-    if (!editable || !gramReady) return;
     const el = mountRef.current;
     if (!el) return;
     defineGuiTheme(monaco);
@@ -196,6 +182,13 @@ export default function FileEditor({
     });
     editorRef.current = editor;
     forceCheapTokens(editor.getModel());
+    // grammar may still be loading (cold language, busy thread) — repaint
+    // the moment it's usable instead of waiting on the idle queue
+    void whenGrammarReady(monaco, monacoLang(path)).then(() => {
+      if (editorRef.current !== editor) return;
+      const m = editor.getModel();
+      if (m) forceCheapTokens(m);
+    });
     const sub = editor.onDidChangeModelContent(() => {
       const v = editor.getValue();
       if (v !== draftRef.current) {
@@ -226,7 +219,7 @@ export default function FileEditor({
       m?.dispose();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editable, path, gramReady]);
+  }, [editable, path]);
 
   // external draft updates (initial load, watcher reload, stale reload)
   // push into the editor; keystrokes already match so this is a no-op for them
