@@ -471,7 +471,7 @@ export function useGlobalShortcuts({
         } else {
           fallback =
             (document.querySelector(".composer textarea") as HTMLElement | null) ||
-            (document.querySelector(".fe-ta") as HTMLElement | null) ||
+            (document.querySelector(".fe-monaco .inputarea") as HTMLElement | null) ||
             termHelper ||
             document.body;
         }

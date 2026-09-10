@@ -10,15 +10,19 @@ export default defineConfig(async () => ({
   build: {
     // dict chunk is ~3.2 MB of english words (an-array-of-english-words) — already
     // code-split via dynamic import() and excluded from the initial load.
-    // Initial chunks are kept <500 kB; the limit is raised only to silence the
-    // expected warning for this intentionally-lazy dictionary chunk.
-    chunkSizeWarningLimit: 3600,
+    // monaco (~4.4 MB) is likewise lazy through FileEditorHost. Initial chunks
+    // are kept <500 kB; the limit is raised only to silence the expected
+    // warnings for these intentionally-lazy chunks.
+    chunkSizeWarningLimit: 4500,
     rollupOptions: {
       output: {
         manualChunks(id) {
           if (!id.includes("node_modules")) return;
           if (id.includes("an-array-of-english-words")) return "dict";
           if (id.includes("@xterm")) return "xterm";
+          // monaco is self-hosted (local workers, offline-safe) and only
+          // loaded through the lazy FileEditor — isolated chunk
+          if (id.includes("monaco-editor")) return "monaco";
           // markdown + syntax highlighting stack — isolated so the initial
           // vendor chunk stays <500kB; generic utils (bail/trough/etc.) stay
           // in vendor to avoid circular deps (markdown -> vendor is fine,

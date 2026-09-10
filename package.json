@@ -23,6 +23,7 @@
     "double-metaphone": "^2.0.1",
     "hast-util-to-html": "^9.0.5",
     "lowlight": "^3.3.0",
+    "monaco-editor": "^0.56.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "react-markdown": "^10.1.0",

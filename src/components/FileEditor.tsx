@@ -1,6 +1,5 @@
 import {
   useCallback,
-  useDeferredValue,
   useEffect,
   useMemo,
   useRef,
@@ -8,17 +7,29 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
+import * as monaco from "monaco-editor";
 import { opencode } from "../api";
-import { extLang, hlHtml } from "../lib/syntax";
-import { handleEditorKeys } from "../lib/editorKeys";
+import {
+  baseOptions,
+  bindingToKeybinding,
+  defineGuiTheme,
+  monacoLang,
+  setupMonacoWorkers,
+} from "../lib/monaco";
+import { copyToClipboard } from "../lib/editorKeys";
+import { DEFAULT_HOTKEYS } from "../lib/hotkeys";
 import { fmtKey } from "../lib/tip";
-import { findMatches, highlightFindInHtml } from "../lib/find";
+import { findMatches } from "../lib/find";
 import Dialog from "./Dialog";
 import "../styles/file-editor.css";
 import "../styles/find.css";
 
+setupMonacoWorkers();
+
 // centered editable file viewer — portal-mounted so the sidebar's
-// backdrop-filter ancestors can't turn position:fixed into sidebar-relative
+// backdrop-filter ancestors can't turn position:fixed into sidebar-relative.
+// Rendering is Monaco; all surrounding chrome + logic (dirty, autosave,
+// custom find bar, stale-disk banner) is unchanged from the textarea version.
 export default function FileEditor({
   path,
   absolute,
@@ -52,18 +63,14 @@ export default function FileEditor({
   // two-step close: first attempt with unsaved edits arms, second commits
   const [closeArmed, setCloseArmed] = useState(false);
 
-  const taRef = useRef<HTMLTextAreaElement>(null);
-  const hlRef = useRef<HTMLPreElement>(null);
+  const mountRef = useRef<HTMLDivElement>(null);
+  const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
+  const decosRef = useRef<string[]>([]);
   const savedRef = useRef(saved);
   savedRef.current = saved;
   const draftRef = useRef(draft);
   draftRef.current = draft;
   const savingRef = useRef(false);
-  // undo/redo for programmatic line ops (cut, delete, move, etc.) — native
-  // textarea history is lost for controlled value, so we keep our own
-  const historyRef = useRef<string[]>([]);
-  const futureRef = useRef<string[]>([]);
-  const isUndoRedoRef = useRef(false);
 
   const dirty = saved !== null && draft !== saved;
   const editable = !binary && !error && saved !== null;
@@ -89,8 +96,6 @@ export default function FileEditor({
       const text = raw.includes("\r") ? raw.replace(/\r\n/g, "\n").replace(/\r/g, "\n") : raw;
       setSaved(text);
       setDraft(text);
-      historyRef.current = [];
-      futureRef.current = [];
       setStaleDisk(null);
       setError("");
     } catch (e) {
@@ -100,8 +105,6 @@ export default function FileEditor({
 
   useEffect(() => {
     void load();
-    historyRef.current = [];
-    futureRef.current = [];
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [path]);
 
@@ -156,6 +159,219 @@ export default function FileEditor({
     if (!dirty) setCloseArmed(false);
   }, [dirty]);
 
+  const matches = useMemo(() => {
+    if (!findOpen || !query) return [];
+    return findMatches(draft, query, matchCase);
+  }, [draft, query, matchCase, findOpen]);
+
+  // ---- monaco lifecycle: create once the text is loaded ----
+
+  useEffect(() => {
+    if (!editable) return;
+    const el = mountRef.current;
+    if (!el) return;
+    defineGuiTheme(monaco);
+    const editor = monaco.editor.create(el, {
+      ...baseOptions(monaco),
+      value: draftRef.current,
+      language: monacoLang(path),
+    });
+    editorRef.current = editor;
+    const sub = editor.onDidChangeModelContent(() => {
+      const v = editor.getValue();
+      if (v !== draftRef.current) {
+        draftRef.current = v;
+        setDraft(v);
+        setStatus("");
+      }
+    });
+    // Escape closes the custom find bar first (Dialog closes on Escape otherwise)
+    const keySub = editor.onKeyDown((e) => {
+      if (findOpenRef.current && e.keyCode === monaco.KeyCode.Escape) {
+        setFindOpen(false);
+        e.preventDefault();
+        e.stopPropagation();
+      }
+    });
+    return () => {
+      keySub.dispose();
+      sub.dispose();
+      editorRef.current = null;
+      decosRef.current = [];
+      const m = editor.getModel();
+      editor.dispose();
+      m?.dispose();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editable, path]);
+
+  // external draft updates (initial load, watcher reload, stale reload)
+  // push into the editor; keystrokes already match so this is a no-op for them
+  useEffect(() => {
+    const editor = editorRef.current;
+    if (!editor) return;
+    const model = editor.getModel();
+    if (!model) return;
+    if (draft !== editor.getValue()) {
+      editor.executeEdits("external", [{ range: model.getFullModelRange(), text: draft }]);
+    }
+  }, [draft]);
+
+  useEffect(() => {
+    const editor = editorRef.current;
+    const model = editor?.getModel();
+    if (!editor || !model) return;
+    monaco.editor.setModelLanguage(model, monacoLang(path));
+  }, [path]);
+
+  // rebindable line ops on top of monaco built-ins. Bindings left at their
+  // VS Code default are already correct natively, so only non-default
+  // bindings get an overriding action (avoids double-firing the default).
+  useEffect(() => {
+    const editor = editorRef.current;
+    if (!editor || !editable) return;
+    let hk: Record<string, string | null> | undefined = hotkeys;
+    if (!hk) {
+      try {
+        hk = JSON.parse(localStorage.getItem("oc.settings") || "{}").hotkeys;
+      } catch {
+        hk = undefined;
+      }
+    }
+    const binding = (id: keyof typeof DEFAULT_HOTKEYS): string | null =>
+      (hk as any)?.[id] ?? DEFAULT_HOTKEYS[id];
+    const sameAsDefault = (id: keyof typeof DEFAULT_HOTKEYS): boolean =>
+      binding(id) === DEFAULT_HOTKEYS[id];
+    const disps: monaco.IDisposable[] = [];
+    const addOverride = (id: keyof typeof DEFAULT_HOTKEYS, run: (ed: monaco.editor.IStandaloneCodeEditor) => void) => {
+      if (sameAsDefault(id)) return;
+      const kb = bindingToKeybinding(monaco, binding(id));
+      if (kb == null) return;
+      disps.push(
+        editor.addAction({ id: `fe-${id}`, label: id, keybindings: [kb], run: (ed) => run(ed as monaco.editor.IStandaloneCodeEditor) }),
+      );
+    };
+    const trigger = (ed: monaco.editor.IStandaloneCodeEditor, action: string) =>
+      ed.trigger("fe", action, null);
+
+    // copy/cut line when the selection is empty — native emptySelectionClipboard
+    // already covers the Ctrl+C/X defaults, so these only fire for custom binds
+    addOverride("editorCopyLine", (ed) => {
+      const m = ed.getModel();
+      const s = ed.getSelection();
+      if (!m || !s || !s.isEmpty()) return;
+      copyToClipboard(m.getLineContent(s.positionLineNumber) + m.getEOL());
+    });
+    addOverride("editorCutLine", (ed) => {
+      const m = ed.getModel();
+      const s = ed.getSelection();
+      if (!m || !s || !s.isEmpty()) return;
+      const ln = s.positionLineNumber;
+      copyToClipboard(m.getLineContent(ln) + m.getEOL());
+      const max = m.getLineCount();
+      const range =
+        ln < max
+          ? new monaco.Range(ln, 1, ln + 1, 1)
+          : ln > 1
+            ? new monaco.Range(ln - 1, m.getLineMaxColumn(ln - 1), ln, m.getLineMaxColumn(ln))
+            : new monaco.Range(ln, 1, ln, m.getLineMaxColumn(ln));
+      ed.executeEdits("fe-cut-line", [{ range, text: "" }]);
+    });
+    addOverride("editorDeleteLine", (ed) => trigger(ed, "editor.action.deleteLines"));
+    addOverride("editorToggleComment", (ed) => trigger(ed, "editor.action.commentLine"));
+    addOverride("editorMoveUp", (ed) => trigger(ed, "editor.action.moveLinesUpAction"));
+    addOverride("editorMoveDown", (ed) => trigger(ed, "editor.action.moveLinesDownAction"));
+    addOverride("editorDuplicateUp", (ed) => trigger(ed, "editor.action.copyLinesUpAction"));
+    addOverride("editorDuplicateDown", (ed) => trigger(ed, "editor.action.copyLinesDownAction"));
+    addOverride("editorInsertBelow", (ed) => trigger(ed, "editor.action.insertLineAfter"));
+    addOverride("editorInsertAbove", (ed) => trigger(ed, "editor.action.insertLineBefore"));
+    // select-line has no stable built-in id across monaco versions — do it directly
+    addOverride("editorSelectLine", (ed) => {
+      const m = ed.getModel();
+      const s = ed.getSelection();
+      if (!m || !s) return;
+      let end = s.endLineNumber;
+      if (end > s.startLineNumber && s.endColumn === 1) end -= 1;
+      ed.setSelection(new monaco.Range(s.startLineNumber, 1, end, m.getLineMaxColumn(end)));
+    });
+    // save + custom-find entry must work with focus inside monaco too
+    disps.push(
+      editor.addAction({
+        id: "fe-save",
+        label: "Save",
+        keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS],
+        run: () => void save(),
+      }),
+    );
+    disps.push(
+      editor.addAction({
+        id: "fe-find",
+        label: "Find",
+        keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyF],
+        run: () => openFindRef.current(),
+      }),
+    );
+    return () => disps.forEach((d) => d.dispose());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editable, hotkeys, path, save]);
+
+  // ---- custom find, wired to monaco selections + inline decorations ----
+
+  // find-hit classes come from styles/find.css, same colors as before
+  useEffect(() => {
+    const editor = editorRef.current;
+    const model = editor?.getModel();
+    if (!editor || !model) return;
+    if (!findOpen || !query || !matches.length) {
+      decosRef.current = editor.deltaDecorations(decosRef.current, []);
+      return;
+    }
+    const active = ((cur % matches.length) + matches.length) % matches.length;
+    decosRef.current = editor.deltaDecorations(
+      decosRef.current,
+      matches.map((off) => {
+        const s = model.getPositionAt(off);
+        const e = model.getPositionAt(off + query.length);
+        return {
+          range: new monaco.Range(s.lineNumber, s.column, e.lineNumber, e.column),
+          options: {
+            inlineClassName: off === matches[active] ? "find-hit active" : "find-hit",
+            stickiness: monaco.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges,
+          },
+        };
+      }),
+    );
+  }, [findOpen, query, matchCase, cur, matches]);
+
+  const goto = (idx: number) => {
+    if (!matches.length) return;
+    const j = ((idx % matches.length) + matches.length) % matches.length;
+    setCur(j);
+    const editor = editorRef.current;
+    const model = editor?.getModel();
+    if (!editor || !model) return;
+    const s = model.getPositionAt(matches[j]);
+    const e = model.getPositionAt(matches[j] + query.length);
+    editor.setSelection(new monaco.Range(s.lineNumber, s.column, e.lineNumber, e.column));
+    editor.revealLineInCenter(s.lineNumber);
+    editor.focus();
+  };
+  const gotoRef = useRef(goto);
+  gotoRef.current = goto;
+
+  const openFind = () => {
+    const editor = editorRef.current;
+    const model = editor?.getModel();
+    const sel = editor?.getSelection();
+    if (editor && model && sel && !sel.isEmpty())
+      setQuery(model.getValueInRange(sel));
+    setCur(0);
+    setFindOpen(true);
+    window.dispatchEvent(new CustomEvent("oc:find-opened", { detail: "file" }));
+  };
+  const openFindRef = useRef(openFind);
+  openFindRef.current = openFind;
+
   // Ctrl+S save + navigation — find open is routed via oc:file-find
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
@@ -166,10 +382,10 @@ export default function FileEditor({
         void save();
       } else if (k === "g" && findOpen && editable) {
         e.preventDefault();
-        goto(cur + (e.shiftKey ? -1 : 1));
+        gotoRef.current(cur + (e.shiftKey ? -1 : 1));
       } else if (e.key === "F3" && findOpen && editable) {
         e.preventDefault();
-        goto(cur + (e.shiftKey ? -1 : 1));
+        gotoRef.current(cur + (e.shiftKey ? -1 : 1));
       }
     };
     window.addEventListener("keydown", key, { capture: true } as any);
@@ -184,7 +400,7 @@ export default function FileEditor({
         input?.select();
         return;
       }
-      openFind();
+      openFindRef.current();
     };
     window.addEventListener("oc:file-find", onFind);
     return () => window.removeEventListener("oc:file-find", onFind);
@@ -246,183 +462,58 @@ export default function FileEditor({
     };
   }, [path, absolute]);
 
-  const matches = useMemo(() => {
-    if (!findOpen || !query) return [];
-    return findMatches(draft, query, matchCase);
-  }, [draft, query, matchCase, findOpen]);
-
-  const rafRef = useRef<number | null>(null);
-  const syncScroll = useCallback(() => {
-    if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
-    rafRef.current = requestAnimationFrame(() => {
-      const hl = hlRef.current;
-      const ta = taRef.current;
-      if (!hl || !ta) return;
-      hl.scrollTop = ta.scrollTop;
-      hl.scrollLeft = ta.scrollLeft;
-    });
-  }, []);
-  useEffect(() => () => { if (rafRef.current !== null) cancelAnimationFrame(rafRef.current); }, []);
-  useEffect(() => {
-    syncScroll();
-  }, [draft, syncScroll]);
-
-  const deferred = useDeferredValue(draft);
-  const lang = extLang(path);
-  const hlBase = useMemo(
-    // trailing newline: pre collapses the final empty line a textarea shows
-    () => hlHtml(deferred, lang) + (/\n$/.test(deferred) ? "\n" : ""),
-    [deferred, lang],
-  );
-  const hlMarkup = useMemo(() => {
-    if (!findOpen || !query || !matches.length) return hlBase;
-    return highlightFindInHtml(hlBase, query, matchCase, cur);
-  }, [hlBase, findOpen, query, matchCase, cur, matches.length]);
-
-  // deferred highlight can be shorter than textarea while typing — sync
-  // clamps then; re-sync after highlight paints so offset doesn't stick
-  useEffect(() => {
-    syncScroll();
-  }, [hlMarkup, syncScroll]);
-
-  const goto = (idx: number) => {
-    if (!matches.length) return;
-    const j = ((idx % matches.length) + matches.length) % matches.length;
-    setCur(j);
-    const ta = taRef.current;
-    if (!ta) return;
-    const start = matches[j];
-    ta.focus();
-    ta.setSelectionRange(start, start + query.length);
-    const lh = parseFloat(getComputedStyle(ta).lineHeight) || 17;
-    const line = (draft.slice(0, start).match(/\n/g) ?? []).length;
-    ta.scrollTop = Math.max(0, line * lh - ta.clientHeight / 2);
-    syncScroll();
-  };
-
-  const openFind = () => {
-    const ta = taRef.current;
-    if (ta && ta.selectionStart !== ta.selectionEnd)
-      setQuery(draft.slice(ta.selectionStart, ta.selectionEnd));
-    setCur(0);
-    setFindOpen(true);
-    window.dispatchEvent(new CustomEvent("oc:find-opened", { detail: "file" }));
-  };
-
   // stopPropagation keeps Dialog's window Escape handler closed
   const onFindKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
     e.stopPropagation();
     if (e.key === "Escape") {
       e.preventDefault();
       setFindOpen(false);
-      taRef.current?.focus();
+      editorRef.current?.focus();
     } else if (e.key === "Enter") {
       e.preventDefault();
       goto(cur + (e.shiftKey ? -1 : 1));
     }
   };
 
+  // programmatic text set (stale-disk reload) — keystrokes flow through the
+  // monaco content listener instead; the draft→editor effect pushes this in
   const applyEdit = (text: string) => {
     if (text === draftRef.current) return;
-    if (!isUndoRedoRef.current) {
-      historyRef.current.push(draftRef.current);
-      if (historyRef.current.length > 200) historyRef.current.shift();
-      futureRef.current = [];
-    }
+    draftRef.current = text;
     setDraft(text);
     setStatus("");
   };
 
-  const undo = () => {
-    const h = historyRef.current;
-    if (!h.length) return false;
-    const prev = h.pop()!;
-    futureRef.current.push(draftRef.current);
-    isUndoRedoRef.current = true;
-    setDraft(prev);
-    setStatus("");
-    requestAnimationFrame(() => {
-      isUndoRedoRef.current = false;
-      const ta = taRef.current;
-      if (ta) {
-        ta.focus();
-        try {
-          const pos = Math.min(ta.selectionStart ?? 0, prev.length);
-          ta.setSelectionRange(pos, pos);
-        } catch {}
-      }
-    });
-    return true;
-  };
-
-  const redo = () => {
-    const f = futureRef.current;
-    if (!f.length) return false;
-    const next = f.pop()!;
-    historyRef.current.push(draftRef.current);
-    isUndoRedoRef.current = true;
-    setDraft(next);
-    setStatus("");
-    requestAnimationFrame(() => {
-      isUndoRedoRef.current = false;
-      const ta = taRef.current;
-      if (ta) {
-        ta.focus();
-        try {
-          const pos = Math.min(ta.selectionStart ?? 0, next.length);
-          ta.setSelectionRange(pos, pos);
-        } catch {}
-      }
-    });
-    return true;
-  };
-
   const replaceCurrent = () => {
-    if (!matches.length) return;
-    const s = matches[Math.min(cur, matches.length - 1)];
-    applyEdit(draft.slice(0, s) + repl + draft.slice(s + query.length));
+    const editor = editorRef.current;
+    const model = editor?.getModel();
+    if (!editor || !model || !matches.length || !query) return;
+    const off = matches[Math.min(cur, matches.length - 1)];
+    const s = model.getPositionAt(off);
+    const e = model.getPositionAt(off + query.length);
+    editor.executeEdits("fe-replace", [{
+      range: new monaco.Range(s.lineNumber, s.column, e.lineNumber, e.column),
+      text: repl,
+    }]);
+    editor.focus();
   };
 
   const replaceAll = () => {
-    if (!query) return;
-    const rx = new RegExp(
-      query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
-      matchCase ? "g" : "gi",
+    const editor = editorRef.current;
+    const model = editor?.getModel();
+    if (!editor || !model || !query || !matches.length) return;
+    editor.executeEdits(
+      "fe-replace-all",
+      matches.map((off) => {
+        const s = model.getPositionAt(off);
+        const e = model.getPositionAt(off + query.length);
+        return {
+          range: new monaco.Range(s.lineNumber, s.column, e.lineNumber, e.column),
+          text: repl,
+        };
+      }),
     );
-    applyEdit(draft.replace(rx, () => repl));
-  };
-
-  const onEdit = (e: React.ChangeEvent<HTMLTextAreaElement>) =>
-    applyEdit(e.target.value);
-
-  const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (findOpen && e.key === "Escape") {
-      e.preventDefault();
-      e.stopPropagation();
-      setFindOpen(false);
-      return;
-    }
-    const ta = e.currentTarget;
-    const isMod = e.ctrlKey || e.metaKey;
-    const k = e.key.toLowerCase();
-    if (isMod && !e.altKey && k === "z" && !e.shiftKey) {
-      e.preventDefault();
-      undo();
-      return;
-    }
-    if (isMod && !e.altKey && (k === "y" || (k === "z" && e.shiftKey))) {
-      e.preventDefault();
-      redo();
-      return;
-    }
-    if (handleEditorKeys(e, ta, draft, applyEdit, { path, allowInsert: true, hotkeys: hotkeys ?? (()=>{ try{ return JSON.parse(localStorage.getItem("oc.settings")||"{}").hotkeys; }catch{ return undefined; }})() })) return;
-    if (e.key === "Tab") {
-      e.preventDefault();
-      const s = ta.selectionStart;
-      const en = ta.selectionEnd;
-      applyEdit(draft.slice(0, s) + "  " + draft.slice(en));
-      requestAnimationFrame(() => ta.setSelectionRange(s + 2, s + 2));
-    }
+    editor.focus();
   };
 
   const reloadFromDisk = () => {
@@ -458,7 +549,7 @@ export default function FileEditor({
             className="icon-btn"
             data-tip={`Find and replace (${fmtKey("Ctrl+F")})`}
             disabled={!editable}
-            onClick={() => (findOpen ? (setFindOpen(false), taRef.current?.focus()) : openFind())}
+            onClick={() => (findOpen ? (setFindOpen(false), editorRef.current?.focus()) : openFind())}
           >
             <i className="fa-solid fa-magnifying-glass" />
           </button>
@@ -560,21 +651,7 @@ export default function FileEditor({
       )}
       {editable && (
         <div className="fe-stack">
-          <pre
-            className="fe-hl mono"
-            ref={hlRef}
-            dangerouslySetInnerHTML={{ __html: hlMarkup }}
-          />
-          <textarea
-            ref={taRef}
-            className="fe-ta mono"
-            value={draft}
-            spellCheck={false}
-            wrap="off"
-            onChange={onEdit}
-            onScroll={syncScroll}
-            onKeyDown={onKeyDown}
-          />
+          <div ref={mountRef} className="fe-monaco" />
         </div>
       )}
     </Dialog>,
