@@ -80,6 +80,9 @@ export default function ReadOnlyDiff({ patch, lang }: { patch: string; lang?: st
   langRef.current = lang;
   const fitRef = useRef<(() => void) | null>(null);
   const longest = useMemo(() => rows.reduce((m, r) => Math.max(m, r.text.length), 0), [rows]);
+  // grammars compile on first use per language — run one synchronous pass
+  // so colors are ready for first paint instead of popping in a beat later
+  const warmLangRef = useRef<string | null>(null);
 
   // grow the block toward the longest line when free stage space allows —
   // capped at MAX_EXPAND past the natural column width and never past the
@@ -180,6 +183,7 @@ export default function ReadOnlyDiff({ patch, lang }: { patch: string; lang?: st
       guides: { bracketPairs: false, indentation: false },
       fixedOverflowWidgets: true,
       automaticLayout: true,
+      smoothScrolling: true,
       scrollbar: {
         vertical: "auto",
         horizontal: "auto",
@@ -236,6 +240,12 @@ export default function ReadOnlyDiff({ patch, lang }: { patch: string; lang?: st
       const monacoLangId = hlToMonacoLang(lang);
       if (model.getLanguageId() !== monacoLangId) {
         mod.editor.setModelLanguage(model, monacoLangId);
+      }
+      if (warmLangRef.current !== monacoLangId && text.length < 500_000) {
+        warmLangRef.current = monacoLangId;
+        try {
+          mod.editor.tokenize(text, monacoLangId);
+        } catch {}
       }
       // whole-line background + inline text color per row — exactly the old
       // .diff-lines look (plain text takes the row color, token spans keep

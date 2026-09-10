@@ -134,8 +134,14 @@
 .ro-hunk-inline {
   color: var(--accent-bright);
 }
-/* loading/failure fallback: same rows unhighlighted, never a thin strip,
-   capped like the monaco block */
+/* chat tool diffs share the tool input/output material (inset bg + border),
+   instead of showing the bubble surface through the transparent editor */
+.msg .ro-diff,
+.msg .diff-lines.ro-fallback {
+  background: var(--inset-bg);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+}
 .diff-lines.ro-fallback {
   min-height: 114px;
   max-height: 420px;

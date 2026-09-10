@@ -182,6 +182,7 @@ export function baseOptions(monaco: typeof Monaco): Monaco.editor.IStandaloneEdi
     wordBasedSuggestions: "off",
     parameterHints: { enabled: false },
     fixedOverflowWidgets: true,
+    smoothScrolling: true,
     scrollbar: { verticalScrollbarSize: 8, horizontalScrollbarSize: 8, useShadows: false },
   };
 }
