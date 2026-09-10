@@ -8,6 +8,7 @@ import { playSound } from "../lib/sounds";
 import { isLiveFocusTarget, releaseTrapFocus } from "../lib/focus";
 import { useTerminalProfilesFor, type TerminalProfile } from "../hooks/useTerminalProfiles";
 import { getAllWorkspaces } from "../lib/workspace";
+import { normWorkspace } from "../lib/platform";
 import { isRemoteDir, remoteLabel } from "../lib/remotes";
 import TermInstanceView from "./TermInstanceView";
 import DropdownPortal from "./DropdownPortal";
@@ -160,16 +161,26 @@ export default function TerminalPanel({
             }
             nextIdRef.current = maxId + 1;
             genCounterRef.current = maxGen + 1;
-            // retarget persisted terminals to the current workspace so a
-            // workspace switch (which reloads) respawns shells in the new dir;
-            // bump gen on retarget so the old backend's exit can't kill the new view
+            // keep each terminal's own cwd (multi-workspace + ssh:// remotes).
+            // Only orphaned terminals — whose cwd is no longer a known
+            // workspace — follow a workspace switch (which reloads) into the
+            // new dir; bump gen on retarget so the old backend's exit can't
+            // kill the new view
+            let known: Set<string> | null = null;
+            try {
+              const dirs = getAllWorkspaces();
+              if (workspace !== undefined) dirs.push(workspace);
+              known = new Set(dirs.map((d) => normWorkspace(d ?? "")));
+            } catch { known = null; }
             return valid.map((a) => {
               const persistedCwd = typeof a.cwd === "string" ? a.cwd : "";
-              const retargeted = workspace !== undefined && workspace !== persistedCwd;
+              const orphaned = workspace !== undefined && known !== null
+                ? !known.has(normWorkspace(persistedCwd))
+                : false;
               return {
                 id: a.id,
-                gen: retargeted ? genCounterRef.current++ : a.gen,
-                cwd: workspace ?? persistedCwd,
+                gen: orphaned ? genCounterRef.current++ : a.gen,
+                cwd: orphaned ? (workspace ?? persistedCwd) : persistedCwd,
                 title: typeof a.title === "string" ? a.title : `Terminal ${a.id}`,
                 dead: false,
                 err: "",
@@ -316,19 +327,26 @@ export default function TerminalPanel({
   const termsRef = useRef(terms);
   useEffect(() => { termsRef.current = terms; }, [terms]);
 
-  // workspace switch while mounted (no reload path / HMR): move open
-  // terminals to the new dir — PTY cwd is fixed at spawn, so kill + respawn
+  // workspace switch while mounted (no reload path / HMR): move only the
+  // terminals that lived in the previous dir — PTY cwd is fixed at spawn,
+  // so kill + respawn those. Terminals in other workspaces (incl. ssh://
+  // remotes) stay put instead of being clobbered into the new dir.
   const prevWsRef = useRef<string | undefined>(undefined);
   useEffect(() => {
     if (workspace === undefined) return;
     if (prevWsRef.current === undefined) { prevWsRef.current = workspace; return; }
     if (prevWsRef.current === workspace) return;
+    const oldWs = prevWsRef.current;
     prevWsRef.current = workspace;
     const nextWs = workspace;
     const snapshot = termsRef.current;
     if (!snapshot.length) return;
-    for (const t of snapshot) void invoke("pty_kill", { id: t.id, gen: t.gen }).catch(() => {});
-    setTerms((prev) => prev.map((t) => ({ ...t, cwd: nextWs, gen: genCounterRef.current++, dead: false, err: "" })));
+    const oldKey = normWorkspace(oldWs ?? "");
+    const moving = snapshot.filter((t) => normWorkspace(t.cwd ?? "") === oldKey);
+    if (!moving.length) return;
+    for (const t of moving) void invoke("pty_kill", { id: t.id, gen: t.gen }).catch(() => {});
+    const movingIds = new Set(moving.map((t) => t.id));
+    setTerms((prev) => prev.map((t) => (movingIds.has(t.id) ? { ...t, cwd: nextWs, gen: genCounterRef.current++, dead: false, err: "" } : t)));
   }, [workspace]);
 
   const onTitle = useCallback((id: number, title: string) => {
