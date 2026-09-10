@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { opencode, opencodeFor } from "../api";
+import { applyWorkspace } from "../lib/workspace";
 import { useContextMenu } from "../hooks/useContextMenu";
 import { invalidateFileCache, normalizeFilePath, useFileCache } from "../hooks/useFileCache";
 import { clipboardWrite } from "../lib/clipboard";
@@ -172,7 +173,7 @@ export default function FileTree({ dir = "" }: { dir?: string }) {
 
   function openFile(n: Node) {
     window.dispatchEvent(
-      new CustomEvent("oc:open-file", { detail: { path: n.path, absolute: n.absolute } }),
+      new CustomEvent("oc:open-file", { detail: { path: n.path, absolute: n.absolute, dir } }),
     );
   }
 
@@ -242,6 +243,7 @@ export default function FileTree({ dir = "" }: { dir?: string }) {
     const isDir = n.type === "directory";
     ctx.show(e.clientX, e.clientY, [
       ...(isDir ? [] : [{ label: t("fileTree.open"), icon: "fa-arrow-up-right-from-square", action: () => openFile(n) } as any]),
+      ...(isDir ? [{ label: t("fileTree.setAsWorkspace"), icon: "fa-folder-open", action: () => void applyWorkspace(n.absolute) } as any] : []),
       { label: t("fileTree.openWithDefault"), icon: "fa-up-right-from-square", action: () => void invoke("file_open", { path: n.absolute }).catch((er)=> setError(String(er))) },
       { separator: true },
       { label: t("fileTree.copyPath"), icon: "fa-link", action: () => void clipboardWrite(n.absolute) },

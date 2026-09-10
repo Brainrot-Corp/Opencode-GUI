@@ -1,5 +1,6 @@
 import { createOpencodeClient } from "@opencode-ai/sdk/client";
 import { invoke } from "@tauri-apps/api/core";
+import { isRemoteDir, remoteBaseUrl, serverDir } from "./lib/remotes";
 
 let cached: Promise<{ base: string; client: ReturnType<typeof createOpencodeClient> }> | null =
   null;
@@ -22,10 +23,12 @@ export function getDirectory() {
   return directory;
 }
 
-// merge ?directory= into the query of any SDK call options object
+// merge ?directory= into the query of any SDK call options object.
+// SSH workspaces send the remote-local path (the server's own view).
 function withDir(args: any, dir = directory) {
-  if (!dir) return args;
-  return { ...(args ?? {}), query: { ...(args?.query ?? {}), directory: dir } };
+  const sd = serverDir(dir);
+  if (!sd) return args;
+  return { ...(args ?? {}), query: { ...(args?.query ?? {}), directory: sd } };
 }
 
 // wrap the SDK client so every namespaced method (session.*, file.*, …)
@@ -43,16 +46,48 @@ function wrap(obj: any, dir?: string): any {
 }
 
 export async function opencodeFor(dir: string) {
-  const { base } = await opencode();
+  const base = await baseFor(dir);
   const client = wrap(createOpencodeClient({ baseUrl: base }), dir);
   return { base, client };
 }
 
 export async function serverFetchFor(dir: string, path: string, init?: RequestInit) {
-  const { base } = await opencode();
+  const base = await baseFor(dir);
+  const sd = serverDir(dir);
   const sep = path.includes("?") ? "&" : "?";
-  const url = `${base}${path}${dir ? `${sep}directory=${encodeURIComponent(dir)}` : ""}`;
+  const url = `${base}${path}${sd ? `${sep}directory=${encodeURIComponent(sd)}` : ""}`;
   return fetch(url, init);
+}
+
+// per-workspace server base. Local workspaces share the sidecar URL;
+// each SSH workspace has its own tunnel port (auto-connected on demand).
+// Remote entries are evicted when the tunnel dies so the next call re-dials.
+const remoteBases = new Map<string, string>();
+const remoteDialing = new Map<string, Promise<string>>();
+
+export async function baseFor(dir: string): Promise<string> {
+  const d = (dir ?? "").trim();
+  if (!isRemoteDir(d)) return (await opencode()).base;
+  const hit = remoteBases.get(d);
+  if (hit) return hit;
+  const dial = remoteDialing.get(d);
+  if (dial) return dial;
+  const p = remoteBaseUrl(d)
+    .then((base) => {
+      remoteBases.set(d, base);
+      remoteDialing.delete(d);
+      return base;
+    })
+    .catch((e) => {
+      remoteDialing.delete(d);
+      throw e;
+    });
+  remoteDialing.set(d, p);
+  return p;
+}
+
+export function evictRemoteBase(dir: string) {
+  remoteBases.delete((dir ?? "").trim());
 }
 
 // a rejected invoke must not stay cached, or silent-retry boot would spin
@@ -89,9 +124,10 @@ export function resetOpencodeCache() {
 // raw fetch for endpoints missing from the stale SDK types (/question*) —
 // carries ?directory= like every wrapped SDK call
 export async function serverFetch(path: string, init?: RequestInit) {
-  const { base } = await opencode();
+  const base = await baseFor(directory);
+  const sd = serverDir(directory);
   const sep = path.includes("?") ? "&" : "?";
-  const url = `${base}${path}${directory ? `${sep}directory=${encodeURIComponent(directory)}` : ""}`;
+  const url = `${base}${path}${sd ? `${sep}directory=${encodeURIComponent(sd)}` : ""}`;
   return fetch(url, init);
 }
 

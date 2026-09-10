@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useSyncExternalStore } from "react";
 import { opencode, opencodeFor } from "../api";
+import { toOpPath } from "../lib/remotes";
 
 export type FileNode = {
   name: string;
@@ -53,7 +54,12 @@ async function fetchKids(path: string, retries = 2, dir = ""): Promise<FileNode[
     try {
       const { client } = dir ? await opencodeFor(dir) : await opencode();
       const r = await (client.file as any).list({ query: { path } });
-      const nodes = ((r.data ?? []) as FileNode[]).slice().sort((a, b) => {
+      const nodes = ((r.data ?? []) as FileNode[]).map((n) => ({
+        ...n,
+        // remote servers report their own paths — map to ssh:// pseudo-paths
+        // so Tauri file ops route over ssh (local paths pass through)
+        absolute: toOpPath(n.absolute, dir),
+      })).slice().sort((a, b) => {
         if (a.type !== b.type) return a.type === "directory" ? -1 : 1;
         return a.name.localeCompare(b.name);
       });

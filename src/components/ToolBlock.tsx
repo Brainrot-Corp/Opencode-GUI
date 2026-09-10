@@ -280,10 +280,12 @@ export default function ToolBlock({
   part,
   collapsedDefault,
   taskCosts,
+  dir,
 }: {
   part: Part;
   collapsedDefault: boolean;
   taskCosts?: Record<string, { cost: number; tokens: number }>;
+  dir?: string;
 }) {
   const t = part as any;
   const st = t.state ?? {};
@@ -320,7 +322,7 @@ export default function ToolBlock({
   // read/edit/write titles carry a workspace-relative file ref — clicking it
   // opens the built-in editor via the always-mounted FileEditorHost
   const openFile = () =>
-    window.dispatchEvent(new CustomEvent("oc:open-file", { detail: { path: String(filePath) } }));
+    window.dispatchEvent(new CustomEvent("oc:open-file", { detail: { path: String(filePath), dir } }));
   const titleEl = filePath ? (
     <span
       role="button"

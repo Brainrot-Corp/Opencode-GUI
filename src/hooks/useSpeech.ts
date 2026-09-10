@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import {
   getDirectory,
   opencode,
+  opencodeFor,
   tempSession,
   dropSession,
   withDeadline,
@@ -757,7 +758,7 @@ export function useSpeech(oc: SpeechOc, settings: AppSettings) {
             `\n\nGIT LOG (last commits):\n${logTrim || "(empty)"}` +
             `\n\nRECENT USER PROMPTS (why, most recent last):\n${recent || "(none)"}`;
           // hidden temp session — use promptAsync + polling like GitPanel (sync prompt hangs on stalled provider)
-          const { client } = await opencode();
+          const { client } = dir ? await opencodeFor(dir) : await opencode();
           sid = await tempSession(dir || undefined);
           let summary = "";
           const [providerID, modelID] = splitModel(secondaryModel);
@@ -823,7 +824,7 @@ export function useSpeech(oc: SpeechOc, settings: AppSettings) {
           { const c = cleanSpeech(`Debrief failed: ${String(e).slice(0, 200)}`); if (c) { ttsQ.current.push(c); capQueue(); pumpTTS(); } }
         } finally {
           if (sid) {
-            try { await (await opencode()).client.session.abort({ path: { id: sid } } as any).catch(()=>{}); } catch {}
+            try { await (dir ? await opencodeFor(dir) : await opencode()).client.session.abort({ path: { id: sid } } as any).catch(()=>{}); } catch {}
             await dropSession(sid, dir || undefined).catch(()=>{});
           }
           debriefBusy.current = false;

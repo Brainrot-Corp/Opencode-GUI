@@ -14,11 +14,13 @@ export function isWindows(): boolean {
 
 /** Normalize a workspace dir for dedup/keying.
  * Windows is case-insensitive → lower; mac/linux case-sensitive → exact (trimmed).
- * Empty string (server cwd) stays "".
+ * SSH workspace URIs (`ssh://…`) are always case-sensitive — remote paths
+ * live on (usually case-sensitive) remote filesystems. Empty stays "".
  */
 export function normWorkspace(dir: string): string {
   const t = (dir ?? "").trim();
   if (!t) return "";
+  if (t.startsWith("ssh://")) return t;
   return isWindows() ? t.toLowerCase() : t;
 }
 
@@ -56,7 +58,7 @@ export function dedupeWithEmpty(list: string[]): string[] {
       out.push("");
       continue;
     }
-    const key = isWindows() ? t.toLowerCase() : t;
+    const key = normWorkspace(t);
     if (seen.has(key)) continue;
     seen.add(key);
     out.push(t);

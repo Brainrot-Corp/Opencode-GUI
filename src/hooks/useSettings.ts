@@ -16,7 +16,7 @@ import {
 } from "../lib/themes";
 import { DEFAULT_HOTKEYS, normalizeBinding, type HotkeysMap, type PluginHotkeysMap } from "../lib/hotkeys";
 import { pushToast } from "./useToast";
-import { isWindows } from "../lib/platform";
+import { normWorkspace } from "../lib/platform";
 
 export type ThemeName = string;
 export type Mode = "dark" | "light";
@@ -297,7 +297,7 @@ export function useSettings() {
           const out: string[] = [];
           const seen = new Set<string>();
           const primary = typeof p.workspace === "string" ? p.workspace.trim() : "";
-          const norm = (s: string) => isWindows() ? s.toLowerCase() : s;
+          const norm = (s: string) => normWorkspace(s);
           for (const v of arr) {
             if (typeof v !== "string") continue;
             const t = v.trim();

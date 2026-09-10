@@ -441,6 +441,7 @@ function renderPart(
   collapsedDefault?: boolean,
   onImage?: (url: string) => void,
   taskCosts?: Record<string, { cost: number; tokens: number }>,
+  partDir?: string,
 ) {
   if (part.type === "text") {
     const t = (part as any).text ?? "";
@@ -461,7 +462,7 @@ function renderPart(
     return <Reasoning key={(part as any).id || key} part={part} defaultOpen={!collapsedDefault} />;
   }
   if (part.type === "tool") {
-    return <ToolBlock key={(part as any).id || key} part={part} collapsedDefault={!!collapsedDefault} taskCosts={taskCosts} />;
+    return <ToolBlock key={(part as any).id || key} part={part} collapsedDefault={!!collapsedDefault} taskCosts={taskCosts} dir={partDir} />;
   }
   if (part.type === "step-finish") {
     const sf = part as any;
@@ -584,6 +585,7 @@ const MsgRow = memo(function MsgRow({
   onFork,
   onImage,
   taskCosts,
+  dir,
 }: {
   m: Msg;
   collapsed?: boolean;
@@ -591,6 +593,7 @@ const MsgRow = memo(function MsgRow({
   onFork?: (messageID: string) => void;
   onImage?: (url: string) => void;
   taskCosts?: Record<string, { cost: number; tokens: number }>;
+  dir?: string;
 }) {
   const err = m.info.role === "assistant" ? (m.info as any).error : null;
   const showErr = err && err.name !== "MessageAbortedError";
@@ -629,7 +632,7 @@ const MsgRow = memo(function MsgRow({
           <span>{errText(err)}</span>
         </div>
       )}
-      {m.parts.map((part, i) => renderPart(part, i, collapsed, onImage, taskCosts))}
+      {m.parts.map((part, i) => renderPart(part, i, collapsed, onImage, taskCosts, dir))}
       {short && (
         <div className="msg-time" data-tip={full} data-tip-cursor="">
           <i className="fa-solid fa-clock" />
@@ -663,6 +666,7 @@ export default function MessageList({
   onFindNext,
   onFindPrev,
   taskCosts,
+  dir,
 }: {
   msgs: Msg[];
   busy: boolean;
@@ -685,6 +689,7 @@ export default function MessageList({
   onFindNext?: () => void;
   onFindPrev?: () => void;
   taskCosts?: Record<string, { cost: number; tokens: number }>;
+  dir?: string;
 }) {
   const [lightbox, setLightbox] = useState<string | null>(null);
   useEffect(() => {
@@ -949,7 +954,7 @@ export default function MessageList({
         )}
         {!loading && msgs.length === 0 && !busy && <p className="empty">Say something…</p>}
         {msgs.filter(rowVisible).map((m) => (
-          <MsgRow key={m.info.id} m={m} collapsed={collapsed} onRevert={onRevert} onFork={onFork} onImage={setLightbox} taskCosts={taskCosts} />
+          <MsgRow key={m.info.id} m={m} collapsed={collapsed} onRevert={onRevert} onFork={onFork} onImage={setLightbox} taskCosts={taskCosts} dir={dir} />
         ))}
         {compacting && (
           <div className="compacting">

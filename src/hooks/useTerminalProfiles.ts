@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useSyncExternalStore } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { isRemoteDir } from "../lib/remotes";
 
 export type TerminalProfile = {
   id: string;
@@ -84,4 +85,72 @@ export function useTerminalProfiles() {
   const refresh = useCallback((force = true) => fetchTerminalProfiles(force).catch(() => {}), []);
 
   return { profiles, loading: isLoading, error, refresh, fetch: fetchTerminalProfiles };
+}
+
+// --- remote shells ----------------------------------------------------------
+// SSH workspaces probe the remote for shells (local list_terminals is
+// meaningless there). Per-workspace cache; pty_spawn routes `ssh -tt` when
+// the terminal cwd is an ssh:// uri, so profile paths are remote paths.
+const remoteCache = new Map<string, { profiles: TerminalProfile[]; at: number }>();
+const remotePending = new Map<string, Promise<TerminalProfile[]>>();
+let remoteVersion = 0;
+const remoteSubs = new Set<() => void>();
+
+function remoteNotify() {
+  remoteVersion++;
+  for (const c of remoteSubs) c();
+}
+function remoteSubscribe(cb: () => void) {
+  remoteSubs.add(cb);
+  return () => remoteSubs.delete(cb);
+}
+function remoteGetVersion() {
+  return remoteVersion;
+}
+
+export function fetchRemoteProfiles(dir: string, force = false): Promise<TerminalProfile[]> {
+  const key = (dir ?? "").trim();
+  if (!force) {
+    const hit = remoteCache.get(key);
+    if (hit && Date.now() - hit.at < 60_000) return Promise.resolve(hit.profiles);
+    const p = remotePending.get(key);
+    if (p) return p;
+  }
+  const p = invoke<TerminalProfile[]>("remote_terminals", { uri: key })
+    .then((list) => {
+      const profiles = Array.isArray(list) ? list : [];
+      remoteCache.set(key, { profiles, at: Date.now() });
+      remotePending.delete(key);
+      remoteNotify();
+      return profiles;
+    })
+    .catch((e) => {
+      remotePending.delete(key);
+      remoteNotify();
+      throw e;
+    });
+  remotePending.set(key, p);
+  return p;
+}
+
+/** Dir-scoped profiles: remote list for ssh:// workspaces, local otherwise. */
+export function useTerminalProfilesFor(dir?: string) {
+  const v = useSyncExternalStore(remoteSubscribe, remoteGetVersion, remoteGetVersion);
+  void v;
+  const local = useTerminalProfiles();
+  const d = (dir ?? "").trim();
+  const remote = isRemoteDir(d);
+  useEffect(() => {
+    if (!remote || remoteCache.get(d) || remotePending.has(d)) return;
+    void fetchRemoteProfiles(d).catch(() => {});
+  }, [d, remote]);
+  if (!remote) return local;
+  const hit = remoteCache.get(d);
+  return {
+    profiles: hit?.profiles ?? [],
+    loading: !hit && remotePending.has(d),
+    error: null,
+    refresh: (force = true) => fetchRemoteProfiles(d, force).catch(() => {}),
+    fetch: (force = false) => fetchRemoteProfiles(d, force),
+  };
 }

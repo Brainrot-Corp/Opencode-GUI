@@ -96,7 +96,14 @@ fn base_dir(dir: &str) -> PathBuf {
 /// wedge it: `GIT_TERMINAL_PROMPT=0` fails fast instead of waiting on stdin.
 /// `git_status` additionally wraps in `spawn_blocking` + timeout since it
 /// fires on every poll/watch event.
+///
+/// Remote workspaces (`ssh://…` pseudo-paths from repo_root) re-run over the
+/// ssh tunnel instead — same argv, `git -C <remote-path>`.
 fn run_blocking(cwd: &std::path::Path, args: &[&str]) -> Result<String, String> {
+    let s = cwd.to_string_lossy();
+    if crate::remote::is_remote(&s) {
+        return crate::remote::exec_git_global(&s, args);
+    }
     let mut cmd = std::process::Command::new("git");
     cmd.args(args).current_dir(cwd);
     cmd.env("GIT_TERMINAL_PROMPT", "0");
@@ -126,7 +133,20 @@ fn run_root(root: &std::path::Path, args: &[&str], _timeout: Duration) -> Result
 
 /// Resolve the enclosing repo root for `dir` (handles workspace = parent or
 /// subfolder of the repo). Returns `None` when not inside a repo.
+/// Remote dirs resolve over ssh and come back as `ssh://…` pseudo-paths so
+/// every downstream `run_root` call routes remotely with zero call-site churn.
 fn repo_root(dir: &str) -> Option<PathBuf> {
+    if crate::remote::is_remote(dir) {
+        let out = crate::remote::exec_git_global(dir, &["rev-parse", "--show-toplevel"]).ok()?;
+        let rp = out.trim();
+        if rp.is_empty() || !rp.starts_with('/') {
+            return None;
+        }
+        if !crate::remote::test_global(dir, "-d", rp) {
+            return None;
+        }
+        return crate::remote::pseudo_with_abs(dir, rp).map(PathBuf::from);
+    }
     let cwd = base_dir(dir);
     let out = run_blocking(&cwd, &["rev-parse", "--show-toplevel"]).ok()?;
     let p = PathBuf::from(out.trim());
@@ -141,6 +161,18 @@ fn git_dir_of(root: &std::path::Path) -> PathBuf {
     // handles worktrees/submodules where .git is a file
     let out = run_blocking(root, &["rev-parse", "--git-dir"]).unwrap_or_default();
     let g = out.trim();
+    if crate::remote::is_remote_path(root) {
+        let rs = root.to_string_lossy().into_owned();
+        if g.is_empty() {
+            return PathBuf::from(crate::remote::pseudo_join(&rs, ".git"));
+        }
+        if g.starts_with('/') {
+            if let Some(p) = crate::remote::pseudo_with_abs(&rs, g) {
+                return PathBuf::from(p);
+            }
+        }
+        return PathBuf::from(crate::remote::pseudo_join(&rs, g));
+    }
     if g.is_empty() {
         return root.join(".git");
     }
@@ -149,6 +181,52 @@ fn git_dir_of(root: &std::path::Path) -> PathBuf {
         p
     } else {
         root.join(p)
+    }
+}
+
+/// Pseudo-path-aware predicates — `ssh://…` paths test remotely, so Windows
+/// PathBuf separators never leak into remote posix paths.
+fn path_exists(p: &std::path::Path) -> bool {
+    let s = p.to_string_lossy();
+    match crate::remote::split_remote(&s) {
+        Some(t) => crate::remote::test_global(&crate::remote::uri_of(&t), "-e", &t.path),
+        None => p.exists(),
+    }
+}
+
+fn path_is_dir(p: &std::path::Path) -> bool {
+    let s = p.to_string_lossy();
+    match crate::remote::split_remote(&s) {
+        Some(t) => crate::remote::test_global(&crate::remote::uri_of(&t), "-d", &t.path),
+        None => p.is_dir(),
+    }
+}
+
+fn path_is_file(p: &std::path::Path) -> bool {
+    let s = p.to_string_lossy();
+    match crate::remote::split_remote(&s) {
+        Some(t) => crate::remote::test_global(&crate::remote::uri_of(&t), "-f", &t.path),
+        None => p.is_file(),
+    }
+}
+
+/// Posix-correct join for pseudo-paths, std join otherwise.
+fn path_join(base: &std::path::Path, rel: &str) -> PathBuf {
+    let s = base.to_string_lossy();
+    if crate::remote::is_remote(&s) {
+        PathBuf::from(crate::remote::pseudo_join(&s, rel))
+    } else {
+        base.join(rel)
+    }
+}
+
+fn remove_path(p: &std::path::Path) {
+    let s = p.to_string_lossy();
+    if let Some(t) = crate::remote::split_remote(&s) {
+        let uri = crate::remote::uri_of(&t);
+        let _ = crate::remote::script_global(&uri, &format!("rm -f {}", crate::remote::sh_quote(&t.path)));
+    } else if path_is_file(p) {
+        let _ = std::fs::remove_file(p);
     }
 }
 
@@ -407,9 +485,9 @@ fn enrich(root: &std::path::Path, mut st: GitStatus) -> GitStatus {
     st.root = root.to_string_lossy().into_owned();
     let gd = git_dir_of(root);
     st.in_merge =
-        gd.join("MERGE_HEAD").exists() || gd.join("CHERRY_PICK_HEAD").exists();
+        path_exists(&path_join(&gd, "MERGE_HEAD")) || path_exists(&path_join(&gd, "CHERRY_PICK_HEAD"));
     st.in_rebase =
-        gd.join("rebase-merge").exists() || gd.join("rebase-apply").exists();
+        path_exists(&path_join(&gd, "rebase-merge")) || path_exists(&path_join(&gd, "rebase-apply"));
     if st.detached {
         if let Ok(h) = run_root(root, &["rev-parse", "--short", "HEAD"], OP_TIMEOUT) {
             let h = h.trim().to_string();
@@ -544,8 +622,8 @@ pub async fn git_discard(dir: String, paths: Vec<String>) -> Result<(), String> 
     let mut untracked_files: Vec<String> = Vec::new();
     let mut untracked_dirs: Vec<String> = Vec::new();
     for p in &paths {
-        let abs = root.join(p);
-        if abs.is_dir() {
+        let abs = path_join(&root, p);
+        if path_is_dir(&abs) {
             // discard dir = restore tracked inside + clean untracked inside
             tracked.push(p.clone());
             untracked_dirs.push(p.clone());
@@ -578,10 +656,7 @@ pub async fn git_discard(dir: String, paths: Vec<String>) -> Result<(), String> 
                 let r: Vec<&str> = rm.iter().map(String::as_str).collect();
                 let _ = run_root(&root, &r, OP_TIMEOUT);
                 for p in &tracked {
-                    let abs = root.join(p);
-                    if abs.is_file() {
-                        let _ = std::fs::remove_file(&abs);
-                    }
+                    remove_path(&path_join(&root, p));
                 }
             } else if e.contains("did not match") {
                 // partially untracked — fall through to clean below
@@ -1069,7 +1144,34 @@ pub async fn git_watch(app: tauri::AppHandle, dir: String) -> Result<(), String>
         return Ok(());
     };
     let gd = git_dir_of(&root);
-    if !gd.is_dir() {
+    if !path_is_dir(&gd) {
+        return Ok(());
+    }
+    if crate::remote::is_remote_path(&root) {
+        // no filesystem notify over ssh — poll HEAD + porcelain digest (the
+        // frontend already polls every 4s too; this keeps push events live)
+        let root_s = root.to_string_lossy().into_owned();
+        std::thread::spawn(move || {
+            use tauri::Emitter;
+            let snapshot = || {
+                let head = crate::remote::exec_git_global(&root_s, &["rev-parse", "HEAD"]).unwrap_or_default();
+                let st = crate::remote::exec_git_global(
+                    &root_s,
+                    &["-c", "status.relativePaths=false", "status", "--porcelain=v1", "-z", "-b"],
+                )
+                .unwrap_or_default();
+                format!("{}:{}", head.trim(), st.len())
+            };
+            let mut last = snapshot();
+            loop {
+                std::thread::sleep(std::time::Duration::from_secs(4));
+                let cur = snapshot();
+                if cur != last {
+                    last = cur;
+                    let _ = app.emit("git://changed", root_s.clone());
+                }
+            }
+        });
         return Ok(());
     }
     std::thread::spawn(move || {

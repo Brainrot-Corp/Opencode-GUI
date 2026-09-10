@@ -30,6 +30,8 @@ import { useVoice, type VdbgKind } from "../hooks/useVoice";
 import { routeVoice, routerInput, type VoiceAct } from "../lib/voiceRouter";
 import { ensureDict } from "../lib/dictWords";
 import { pickWorkspace, getLastWorkspace, getAllWorkspaces } from "../lib/workspace";
+import { normWorkspace } from "../lib/platform";
+import { remoteLabel } from "../lib/remotes";
 import { playSound } from "../lib/sounds";
 import { useSpeech } from "../hooks/useSpeech";
 import { pushToast, dismissToast } from "../hooks/useToast";
@@ -265,7 +267,7 @@ export default function ChatPage() {
       const last = getLastWorkspace();
       if (last) {
         const all = getAllWorkspaces();
-        const exists = all.some((d) => d.toLowerCase() === last.toLowerCase());
+        const exists = all.some((d) => normWorkspace(d) === normWorkspace(last));
         if (exists) { void (oc as any).newSession(last); return; }
       }
       void (oc as any).newSession();
@@ -1232,10 +1234,11 @@ export default function ChatPage() {
                 {(() => {
                   const activeDir = oc.activeId ? ((oc as any).getDirForSession?.(oc.activeId) ?? settings.workspace) : settings.workspace;
                   if (!activeDir) return null;
+                  const remote = activeDir.startsWith("ssh://");
                   return (
                     <button type="button" className="stage-head stage-head--action" data-tip={activeDir} data-tip-cursor="" aria-label="Open workspace" onClick={() => void pickWorkspace()}>
-                      <i className="fa-solid fa-folder-open" aria-hidden="true" />
-                      <span className="mono">{activeDir}</span>
+                      <i className={`fa-solid ${remote ? "fa-server" : "fa-folder-open"}`} aria-hidden="true" />
+                      <span className="mono">{remote ? remoteLabel(activeDir) : activeDir}</span>
                     </button>
                   );
                 })()}
@@ -1248,6 +1251,7 @@ export default function ChatPage() {
                   onRevert={oc.revertTo}
                   onFork={oc.forkFrom}
                   sessionId={oc.activeId}
+                  dir={oc.activeId ? ((oc as any).getDirForSession?.(oc.activeId) ?? settings.workspace) : settings.workspace}
                   taskCosts={(oc as any).childTaskCosts}
                   findOpen={chatFindOpen}
                   findQuery={chatFindQuery}
@@ -1379,7 +1383,7 @@ export default function ChatPage() {
             onClose={oc.closeDialog}
           />
         )}
-        {diffOpen && oc.activeId && <DiffPanel sessionId={oc.activeId} onClose={() => setDiffOpen(false)} />}
+        {diffOpen && oc.activeId && <DiffPanel sessionId={oc.activeId} dir={(oc as any).getDirForSession?.(oc.activeId) ?? settings.workspace} onClose={() => setDiffOpen(false)} />}
         <AgentBoard
           open={agentsOpen}
           onClose={() => setAgentsOpen(false)}

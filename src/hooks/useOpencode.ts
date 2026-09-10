@@ -4,6 +4,8 @@ import type { Message, Session } from "@opencode-ai/sdk/client";
 import {
   opencode,
   opencodeFor,
+  baseFor,
+  evictRemoteBase,
   getDirectory,
   serverFetch,
   serverFetchFor,
@@ -12,11 +14,12 @@ import {
   withDeadline,
   resetOpencodeCache,
 } from "../api";
+import { isRemoteDir, remoteStatus, serverDir } from "../lib/remotes";
 import { playSound } from "../lib/sounds";
 import { createSessionStore } from "../lib/sessionStore";
 import { splitModel } from "../lib/models";
 import { touchWorkspace } from "../lib/workspace";
-import { isWindows } from "../lib/platform";
+import { normWorkspace } from "../lib/platform";
 import { createBusyTracker } from "../lib/busyTracker";
 import {
   buildCmdList,
@@ -560,7 +563,7 @@ export function useOpencode() {
         out.push("");
         continue;
       }
-      const key = isWindows() ? t.toLowerCase() : t;
+      const key = normWorkspace(t);
       if (seen.has(key)) continue;
       seen.add(key);
       out.push(t);
@@ -594,7 +597,7 @@ export function useOpencode() {
       all.push(...list);
     }
     // preserve pending creations whose dir still exists
-    const norm = (s: string) => isWindows() ? s.toLowerCase() : s;
+    const norm = (s: string) => normWorkspace(s);
     const dirSet = new Set(dirs.map((d) => (d ? norm(d) : "__EMPTY__")));
     const hasDir = (dir: string) => dirSet.has(dir ? norm(dir) : "__EMPTY__");
     for (const [id, dir] of sessionDirRef.current) if (!nextMap.has(id) && hasDir(dir ?? "")) nextMap.set(id, dir);
@@ -995,14 +998,20 @@ export function useOpencode() {
         const { base, client } = await opencode();
         baseRef.current = base;
         let currentBase = base;
-        // one live SSE per workspace (5 max) — each filtered by ?directory=
+        // one live SSE per workspace (5 max) — each filtered by ?directory=.
+        // SSH workspaces resolve their own tunnel base (?directory= is the
+        // remote-local path); dead tunnels evict + re-dial on the next tick.
         let liveCount = 0;
         const updateLive = () => setLive(liveCount > 0);
-        const setupSSE = (baseVal: string) => {
-          const dirs = getAllDirs();
-          for (const d of dirs) {
-            if (esMap.has(d)) continue;
-            const url = d ? `${baseVal}/event?directory=${encodeURIComponent(d)}` : `${baseVal}/event`;
+        const resolving = new Set<string>();
+        const addStream = async (d: string, baseVal: string) => {
+          if (esMap.has(d) || resolving.has(d)) return;
+          resolving.add(d);
+          try {
+            const b = isRemoteDir(d) ? await baseFor(d) : baseVal;
+            if (disposed || esMap.has(d)) return;
+            const sd = serverDir(d);
+            const url = sd ? `${b}/event?directory=${encodeURIComponent(sd)}` : `${b}/event`;
             const es = new EventSource(url);
             es.onopen = () => { liveCount++; updateLive(); };
             es.onerror = () => { /* EventSource auto-reconnects; live reflects open count */ };
@@ -1010,7 +1019,14 @@ export function useOpencode() {
               try { onEvent(JSON.parse(ev.data), d); } catch {}
             };
             esMap.set(d, es);
+          } catch (e) {
+            if (!disposed) pushToast(`SSH workspace unreachable: ${e}`);
+          } finally {
+            resolving.delete(d);
           }
+        };
+        const setupSSE = (baseVal: string) => {
+          for (const d of getAllDirs()) void addStream(d, baseVal);
         };
         setupSSE(currentBase);
         // watch for workspace list changes — add/remove streams live; re-subscribes when base changes
@@ -1030,15 +1046,20 @@ export function useOpencode() {
             updateLive();
           }
           const cur = getAllDirs();
-          // add new
-          for (const d of cur) if (!esMap.has(d)) {
-            const url = d ? `${liveBase}/event?directory=${encodeURIComponent(d)}` : `${liveBase}/event`;
-            const es = new EventSource(url);
-            es.onopen = () => { liveCount++; updateLive(); };
-            es.onerror = () => {};
-            es.onmessage = (ev) => { try { onEvent(JSON.parse(ev.data), d); } catch {} };
-            esMap.set(d, es);
+          // drop dead SSH tunnels so the add pass below re-dials them
+          for (const d of cur) {
+            if (!isRemoteDir(d) || !esMap.has(d) || resolving.has(d)) continue;
+            try {
+              const st = await remoteStatus(d).catch(() => null);
+              if (st && !st.alive) {
+                esMap.get(d)?.close();
+                esMap.delete(d);
+                evictRemoteBase(d);
+              }
+            } catch {}
           }
+          // add new
+          for (const d of cur) if (!esMap.has(d)) void addStream(d, liveBase);
           // remove gone (closed workspace)
           for (const [d, es] of [...esMap]) if (!(cur as string[]).includes(d)) { es.close(); esMap.delete(d); }
         }, 2000);
@@ -1050,7 +1071,12 @@ export function useOpencode() {
         if (target && !disposed)
           await withDeadline(openSession(target.id), 15_000, "session reopen").catch(() => {});
 
-        if (!disposed) await prov.loadProviders(client).catch(() => {});
+        // models from every server (local + SSH remotes carry their own auth)
+        if (!disposed) {
+          const dirs = getAllDirs().filter((d) => d);
+          const getClient = (d: string) => (d ? opencodeFor(d) : opencode());
+          await (prov as any).loadProvidersAll(getClient, dirs).catch(() => {});
+        }
       } catch (e) {
         if (!disposed) pushToast(`Connection error: ${e}`);
       } finally {
@@ -1609,6 +1635,7 @@ export function useOpencode() {
         cycleAgent,
         refreshSessions,
         openSession,
+        getDirForSession,
       });
       if (!handled) {
         // any slash input stays local — display as command trace, never hit the model
@@ -1818,9 +1845,9 @@ export function useOpencode() {
 
   const clearSessionsFor = useCallback(async (dir: string) => {
     if (dir) touchWorkspace(dir);
-    const norm = (dir ?? "").toLowerCase();
+    const norm = normWorkspace(dir ?? "");
     const ids = sessionsRef.current
-      .filter((s) => (sessionDirRef.current.get(s.id) ?? "").toLowerCase() === norm)
+      .filter((s) => normWorkspace(sessionDirRef.current.get(s.id) ?? "") === norm)
       .map((s) => s.id);
     if (!ids.length) return;
     await Promise.all(

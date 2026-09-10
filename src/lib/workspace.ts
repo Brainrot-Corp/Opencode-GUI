@@ -1,7 +1,7 @@
 import { open } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
 import { getDirectory, setDirectory } from "../api";
-import { isWindows } from "./platform";
+import { normWorkspace } from "./platform";
 
 const MAX_EXTRA = 5;
 const LAST_WS_KEY = "oc.lastWorkspace";
@@ -69,7 +69,7 @@ export function getAllWorkspaces(): string[] {
       out.push("");
       continue;
     }
-    const key = isWindows() ? t.toLowerCase() : t;
+    const key = normWorkspace(t);
     if (seen.has(key)) continue;
     seen.add(key);
     out.push(t);
@@ -79,10 +79,15 @@ export function getAllWorkspaces(): string[] {
 export async function addWorkspace(path: string, atIndex?: number): Promise<boolean> {
   const p = path.trim();
   if (!p) return false;
-  const isDir = await invoke<boolean>("workspace_is_dir", { path: p }).catch(() => false);
-  if (!isDir) return false;
+  // SSH workspaces are validated by the SSH dialog (remote_test) up front —
+  // password-auth tunnels can't pass a detached is-dir probe, so skip the
+  // local gate and let the first server call surface any staleness.
+  if (!p.startsWith("ssh://")) {
+    const isDir = await invoke<boolean>("workspace_is_dir", { path: p }).catch(() => false);
+    if (!isDir) return false;
+  }
   const primary = getDirectory().trim();
-  const norm = (s: string) => isWindows() ? s.toLowerCase() : s;
+  const norm = (s: string) => normWorkspace(s);
   if (norm(p) === norm(primary)) return false;
   try {
     const raw = JSON.parse(localStorage.getItem("oc.settings") ?? "{}");
@@ -98,7 +103,7 @@ export async function addWorkspace(path: string, atIndex?: number): Promise<bool
   return true;
 }
 export function removeWorkspace(path: string) {
-  const norm = (s: string) => isWindows() ? s.toLowerCase() : s;
+  const norm = (s: string) => normWorkspace(s);
   const target = norm(path.trim());
   safeWriteExtras((prev) => prev.filter((e) => norm(e) !== target));
 }

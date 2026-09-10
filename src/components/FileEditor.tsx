@@ -8,7 +8,8 @@ import {
 import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import * as monaco from "monaco-editor";
-import { opencode } from "../api";
+import { opencode, opencodeFor } from "../api";
+import { toOpPath } from "../lib/remotes";
 import {
   baseOptions,
   bindingToKeybinding,
@@ -35,12 +36,14 @@ setupMonacoWorkers();
 export default function FileEditor({
   path,
   absolute,
+  dir,
   onDirty,
   onClose,
   hotkeys,
 }: {
   path: string;
   absolute: string;
+  dir?: string;
   // lets the tree ask before replacing a dirty editor with another file
   onDirty?: (dirty: boolean) => void;
   onClose: () => void;
@@ -84,7 +87,7 @@ export default function FileEditor({
 
   async function load() {
     try {
-      const { client } = await opencode();
+      const { client } = dir ? await opencodeFor(dir) : await opencode();
       const r: any = await client.file.read({ query: { path } });
       const fc = r.data;
       if (fc?.type === "binary") {
@@ -118,14 +121,14 @@ export default function FileEditor({
     savingRef.current = true;
     setStatus("Saving…");
     try {
-      await invoke("write_file", { path: absolute, content: d });
+      await invoke("write_file", { path: toOpPath(absolute, dir ?? ""), content: d });
       setSaved(d);
       setStatus("Saved");
     } catch (e) {
       setStatus(String(e));
     }
     savingRef.current = false;
-  }, [absolute]);
+  }, [absolute, dir]);
 
   useEffect(() => {
     if (!autosave || saved === null || draft === saved) return;
@@ -458,7 +461,7 @@ export default function FileEditor({
       clearTimeout(t);
       t = setTimeout(async () => {
         try {
-          const { client } = await opencode();
+          const { client } = dir ? await opencodeFor(dir) : await opencode();
           const r: any = await client.file.read({ query: { path } });
           if (r.data?.type === "binary") return;
           const disk = r.data?.content ?? "";
@@ -477,7 +480,7 @@ export default function FileEditor({
       window.removeEventListener("oc:file-changed", onFileChanged);
       clearTimeout(t);
     };
-  }, [path, absolute]);
+  }, [path, absolute, dir]);
 
   // stopPropagation keeps Dialog's window Escape handler closed
   const onFindKey = (e: React.KeyboardEvent<HTMLInputElement>) => {

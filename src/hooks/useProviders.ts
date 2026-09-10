@@ -21,6 +21,76 @@ function isReachable(model: string, groups: ProviderGroup[]): boolean {
   return groups.some((g) => g.id === pid && g.models.some((m) => m.id === mid));
 }
 
+// fetch one server's provider groups (no state writes — merged by callers)
+async function fetchGroups(client: OcClient): Promise<ProviderGroup[]> {
+  const pr = await client.config.providers();
+  const groups: ProviderGroup[] = ((pr.data?.providers ?? []) as any[]).map((prov) => ({
+    id: prov.id,
+    label: prov.name || prov.id,
+    models: Object.entries(prov.models ?? {}).map(([mid, m]: [string, any]) => ({
+      id: mid,
+      label: m.name || mid,
+      variants: Object.keys((m as any).variants ?? {}),
+    })),
+  }));
+  try {
+    const pl = await client.provider.list();
+    const caps = new Map<string, { attachment: boolean; input: string[] }>();
+    for (const prov of ((pl.data as any)?.all ?? []) as any[]) {
+      for (const [mid, m] of Object.entries(prov.models ?? {})) {
+        const cap = (m as any).capabilities ?? {};
+        const kinds = Object.entries(cap.input ?? {})
+          .filter(([, v]) => v === true)
+          .map(([k]) => k);
+        caps.set(`${prov.id}/${mid}`, {
+          attachment: !!cap.attachment,
+          input: kinds,
+        });
+      }
+    }
+    for (const g of groups)
+      for (const m of g.models) {
+        const c = caps.get(`${g.id}/${m.id}`);
+        if (c) {
+          m.attachment = c.attachment;
+          m.input = c.input;
+        }
+      }
+  } catch {
+    // missing hints = UI stays fully enabled
+  }
+  groups.sort((a, b) => a.label.localeCompare(b.label));
+  return groups;
+}
+
+// union provider groups across servers (local + SSH remotes may each have
+// their own auth/models). Same provider id merges model lists by model id.
+function mergeGroups(all: ProviderGroup[][]): ProviderGroup[] {
+  const byId = new Map<string, ProviderGroup>();
+  for (const groups of all) {
+    for (const g of groups) {
+      const cur = byId.get(g.id);
+      if (!cur) {
+        byId.set(g.id, { ...g, models: [...g.models] });
+        continue;
+      }
+      const have = new Set(cur.models.map((m) => m.id));
+      for (const m of g.models) {
+        const at = cur.models.findIndex((x) => x.id === m.id);
+        if (at < 0) {
+          cur.models.push(m);
+          have.add(m.id);
+        } else {
+          const u = new Set([...(cur.models[at].variants ?? []), ...(m.variants ?? [])]);
+          cur.models[at] = { ...cur.models[at], variants: [...u] };
+        }
+      }
+      if (!cur.label && g.label) cur.label = g.label;
+    }
+  }
+  return [...byId.values()].sort((a, b) => a.label.localeCompare(b.label));
+}
+
 export function useProviders(activeId: string) {
   const activeIdRef = useRef(activeId);
   useEffect(() => { activeIdRef.current = activeId; }, [activeId]);
@@ -216,104 +286,91 @@ export function useProviders(activeId: string) {
     rememberSession(sid, modelSel);
   }, [modelSel, providers]);
 
+  // shared tail: publish groups, prune vanished per-session pins, restore last
+  const applyGroups = useCallback((groups: ProviderGroup[]) => {
+    setProviders(groups);
+
+    // prune any per-session entries that vanished (provider/model removed)
+    setSessionModels((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      for (const [sid, mod] of Object.entries(prev)) {
+        if (!isReachable(mod, groups)) {
+          delete next[sid];
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+
+    // restore the *shared* last hand-picked model (localStorage so every
+    // window/instance sees the same value). Migrate a legacy per-window
+    // sessionStorage entry if it exists — the app used to be per-instance.
+    let saved: string | null = null;
+    try {
+      saved = localStorage.getItem(LAST_MODEL_KEY);
+    } catch {}
+    if (!saved) {
+      try {
+        const legacy = sessionStorage.getItem(LAST_MODEL_KEY);
+        if (legacy) {
+          try {
+            localStorage.setItem(LAST_MODEL_KEY, legacy);
+          } catch {}
+          try {
+            sessionStorage.removeItem(LAST_MODEL_KEY);
+          } catch {}
+          saved = legacy;
+        }
+      } catch {}
+    }
+    if (saved) {
+      const [pid, mid] = splitModel(saved);
+      if (groups.some((g) => g.id === pid && g.models.some((m) => m.id === mid))) {
+        setModelSel((cur) => (cur === saved! ? cur : saved!));
+      } else {
+        try {
+          localStorage.removeItem(LAST_MODEL_KEY);
+        } catch {}
+        try {
+          sessionStorage.removeItem(LAST_MODEL_KEY);
+        } catch {}
+      }
+    }
+  }, []);
+
   // boot-time provider list + optional capability enrichment. attachment /
   // modality hints live only in GET /provider; SDK types stale AGAIN: runtime
   // nests under capabilities.{attachment,input} (input is a boolean map)
   const loadProviders = useCallback(
     async (client: OcClient) => {
       try {
-        const pr = await client.config.providers();
-        const groups: ProviderGroup[] = ((pr.data?.providers ?? []) as any[]).map((prov) => ({
-          id: prov.id,
-          label: prov.name || prov.id,
-          models: Object.entries(prov.models ?? {}).map(([mid, m]: [string, any]) => ({
-            id: mid,
-            label: m.name || mid,
-            variants: Object.keys((m as any).variants ?? {}),
-          })),
-        }));
-        try {
-          const pl = await client.provider.list();
-          const caps = new Map<string, { attachment: boolean; input: string[] }>();
-          for (const prov of ((pl.data as any)?.all ?? []) as any[]) {
-            for (const [mid, m] of Object.entries(prov.models ?? {})) {
-              const cap = (m as any).capabilities ?? {};
-              const kinds = Object.entries(cap.input ?? {})
-                .filter(([, v]) => v === true)
-                .map(([k]) => k);
-              caps.set(`${prov.id}/${mid}`, {
-                attachment: !!cap.attachment,
-                input: kinds,
-              });
-            }
-          }
-          for (const g of groups)
-            for (const m of g.models) {
-              const c = caps.get(`${g.id}/${m.id}`);
-              if (c) {
-                m.attachment = c.attachment;
-                m.input = c.input;
-              }
-            }
-        } catch {
-          // missing hints = UI stays fully enabled
-        }
-        groups.sort((a, b) => a.label.localeCompare(b.label));
-        setProviders(groups);
-
-        // prune any per-session entries that vanished (provider/model removed)
-        setSessionModels((prev) => {
-          let changed = false;
-          const next = { ...prev };
-          for (const [sid, mod] of Object.entries(prev)) {
-            if (!isReachable(mod, groups)) {
-              delete next[sid];
-              changed = true;
-            }
-          }
-          return changed ? next : prev;
-        });
-
-        // restore the *shared* last hand-picked model (localStorage so every
-        // window/instance sees the same value). Migrate a legacy per-window
-        // sessionStorage entry if it exists — the app used to be per-instance.
-        let saved: string | null = null;
-        try {
-          saved = localStorage.getItem(LAST_MODEL_KEY);
-        } catch {}
-        if (!saved) {
-          try {
-            const legacy = sessionStorage.getItem(LAST_MODEL_KEY);
-            if (legacy) {
-              try {
-                localStorage.setItem(LAST_MODEL_KEY, legacy);
-              } catch {}
-              try {
-                sessionStorage.removeItem(LAST_MODEL_KEY);
-              } catch {}
-              saved = legacy;
-            }
-          } catch {}
-        }
-        if (saved) {
-          const [pid, mid] = splitModel(saved);
-          if (groups.some((g) => g.id === pid && g.models.some((m) => m.id === mid))) {
-            setModelSel((cur) => (cur === saved! ? cur : saved!));
-          } else {
-            try {
-              localStorage.removeItem(LAST_MODEL_KEY);
-            } catch {}
-            try {
-              sessionStorage.removeItem(LAST_MODEL_KEY);
-            } catch {}
-          }
-        }
+        applyGroups(await fetchGroups(client));
       } catch (e) {
         // provider listing is optional, but show why it failed
         pushToast(`Failed to load models: ${e}`);
       }
     },
-    [],
+    [applyGroups],
+  );
+
+  // union across local + SSH servers (each may carry its own auth/models).
+  // getClient resolves a workspace dir to its server client; failures per
+  // server are skipped so one dead tunnel can't hide the local list.
+  const loadProvidersAll = useCallback(
+    async (getClient: (dir: string) => Promise<{ client: OcClient }>, dirs: string[]) => {
+      const all: ProviderGroup[][] = [];
+      for (const d of ["", ...dirs]) {
+        try {
+          const { client } = await getClient(d);
+          all.push(await fetchGroups(client));
+        } catch {
+          // dead tunnel / missing server — skip, toast comes from SSE layer
+        }
+      }
+      if (all.length) applyGroups(mergeGroups(all));
+    },
+    [applyGroups],
   );
 
   // thinking-effort options for the selected model
@@ -433,6 +490,7 @@ export function useProviders(activeId: string) {
     sentExplicitModel,
     markExplicit,
     loadProviders,
+    loadProvidersAll,
     modelVariants,
     modelCaps,
     variantSel,

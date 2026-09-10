@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, Component, type ReactNode } f
 import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { getDirectory, opencode, tempSession, dropSession } from "../api";
+import { getDirectory, opencodeFor, tempSession, dropSession } from "../api";
 import { splitModel } from "../lib/models";
 import { extLang } from "../lib/syntax";
 import { playSound } from "../lib/sounds";
@@ -313,8 +313,9 @@ function GitPanelInner() {
     setGen(false);
     setGenHover(false);
     if (sid) {
-      opencode().then(({ client }) => client.session.abort({ path: { id: sid } }).catch(() => {})).catch(() => {});
-      dropSession(sid).catch(() => {});
+      const dir = curDir();
+      opencodeFor(dir).then(({ client }) => client.session.abort({ path: { id: sid } }).catch(() => {})).catch(() => {});
+      dropSession(sid, dir).catch(() => {});
     }
   }, [gen]);
 
@@ -374,7 +375,8 @@ function GitPanelInner() {
       heuristicFallback = heuristic;
       setMsg(heuristic);
       if (!model) return heuristic;
-      const { client } = await opencode();
+      const dir = curDir();
+      const { client } = await opencodeFor(dir);
       const [providerID, modelID] = splitModel(model);
       const cached = cachedVariant(model);
       const variant = await variantFast(client, providerID, modelID, cached);
@@ -386,7 +388,7 @@ function GitPanelInner() {
         log: logRaw,
         includeBody,
       });
-      const sid = await tempSession();
+      const sid = await tempSession(dir);
       genSidRef.current = sid;
       let best = heuristic;
       let streamed = "";
@@ -433,7 +435,7 @@ function GitPanelInner() {
         return best;
       } finally {
         if (genSidRef.current === sid) genSidRef.current = null;
-        await dropSession(sid);
+        await dropSession(sid, dir);
       }
     } catch (e) {
       if (genIdRef.current !== myId) return heuristicFallback;

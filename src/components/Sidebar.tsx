@@ -4,8 +4,11 @@ import { listen } from "@tauri-apps/api/event";
 import { playSound } from "../lib/sounds";
 import { useContextMenu } from "../hooks/useContextMenu";
 import { clipboardWrite } from "../lib/clipboard";
-import { opencode, getDirectory } from "../api";
+import { getDirectory, opencodeFor } from "../api";
 import { addWorkspace, removeWorkspace, reorderWorkspaces, touchWorkspace } from "../lib/workspace";
+import { normWorkspace } from "../lib/platform";
+import { isRemoteDir, remoteLabel } from "../lib/remotes";
+import SshWorkspaceDialog from "./SshWorkspaceDialog";
 import { setSessionOrder, orderUnpinned } from "../lib/sessionOrder";
 import { useTranslation } from "../lib/i18n";
 import { withHotkey } from "../lib/tip";
@@ -23,6 +26,16 @@ function setWsCollapsed(map: Record<string, boolean>) {
 }
 function baseName(p: string): string {
   if (!p) return "Server cwd";
+  if (p.startsWith("ssh://")) {
+    // `host:leaf` so two remotes with the same folder name stay distinct
+    const rest = p.slice("ssh://".length);
+    const i = rest.indexOf("/");
+    const auth = i < 0 ? rest : rest.slice(0, i);
+    const rp = i < 0 ? "" : rest.slice(i).replace(/\/+$/, "");
+    const leaf = rp.slice(rp.lastIndexOf("/") + 1) || "/";
+    const host = auth.includes("@") ? auth.slice(auth.lastIndexOf("@") + 1) : auth;
+    return `${host}:${leaf}`;
+  }
   const t = p.replace(/[\/\\]+$/, "");
   const idx = Math.max(t.lastIndexOf("\\"), t.lastIndexOf("/"));
   return idx >= 0 ? t.slice(idx + 1) : t;
@@ -96,6 +109,7 @@ export default function Sidebar({
   const [dropIndex, setDropIndex] = useState<number | null>(null);
   const [dragReorder, setDragReorder] = useState<number | null>(null);
   const [draggedName, setDraggedName] = useState<string | null>(null);
+  const [sshOpen, setSshOpen] = useState(false);
   const [, setOrderVersion] = useState(0);
   const wsConfirmTimer = useRef(0);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -115,7 +129,7 @@ export default function Sidebar({
       const extras = Array.isArray(p.workspaces) ? p.workspaces : [];
       const seen = new Set<string>();
       const out: string[] = [];
-      for (const d of [primary, ...extras]) { const k = (d ?? "").toLowerCase(); if (seen.has(k)) continue; seen.add(k); out.push(d ?? ""); }
+      for (const d of [primary, ...extras]) { const k = normWorkspace(d ?? ""); if (seen.has(k)) continue; seen.add(k); out.push(d ?? ""); }
       return out;
     } catch { return [getDirectory()]; }
   });
@@ -127,7 +141,7 @@ export default function Sidebar({
         const extras = Array.isArray(p.workspaces) ? p.workspaces : [];
         const seen = new Set<string>();
         const out: string[] = [];
-        for (const d of [primary, ...extras]) { const k = (d ?? "").toLowerCase(); if (seen.has(k)) continue; seen.add(k); out.push(d ?? ""); }
+      for (const d of [primary, ...extras]) { const k = normWorkspace(d ?? ""); if (seen.has(k)) continue; seen.add(k); out.push(d ?? ""); }
         setAllDirs(out);
       } catch {}
     };
@@ -424,7 +438,7 @@ export default function Sidebar({
     for (const d of allDirs) m.set(d, []);
     for (const s of sessions) {
       const d = getDirForSession ? getDirForSession(s.id) : primaryDir;
-      const key = allDirs.find(a => a.toLowerCase() === (d ?? "").toLowerCase()) ?? d;
+      const key = allDirs.find(a => normWorkspace(a) === normWorkspace(d ?? "")) ?? d;
       const arr = m.get(key);
       if (arr) arr.push(s);
       else m.set(key!, [s]);
@@ -460,7 +474,7 @@ export default function Sidebar({
             { separator: true },
             { label: tr("sidebar.session.copyId"), icon: "fa-id-badge", action: () => void clipboardWrite(s.id) },
             { label: tr("sidebar.session.copyTitle"), icon: "fa-heading", action: () => void clipboardWrite(s.title || s.id) },
-            { label: tr("sidebar.session.share"), icon: "fa-share", action: async () => { try { const { client } = await opencode(); const r: any = await (client as any).session.share?.({ path: { id: s.id } }); const url = r?.data?.url || r?.data?.shareUrl || window.location.href + "#session-" + s.id; await clipboardWrite(String(url)); } catch { await clipboardWrite(s.id); } } },
+            { label: tr("sidebar.session.share"), icon: "fa-share", action: async () => { try { const { client } = await opencodeFor(dir); const r: any = await (client as any).session.share?.({ path: { id: s.id } }); const url = r?.data?.url || r?.data?.shareUrl || window.location.href + "#session-" + s.id; await clipboardWrite(String(url)); } catch { await clipboardWrite(s.id); } } },
             { separator: true },
             { label: tr("sidebar.session.close"), icon: "fa-xmark", danger: true, action: () => onDelete(s.id) },
           ]);
@@ -544,8 +558,8 @@ export default function Sidebar({
                   return (
                     <div key={`ft-${dir || "__cwd"}`} data-ws-header>
                       {!isPrimary && dropHint(extraIdx)}
-                      <div className="gp-sect ws-head ws-head--large" role="button" tabIndex={0} draggable={!isPrimary} onDragStart={() => { if (!isPrimary) setDragReorder(extraIdx); }} onDragEnd={() => { setDragReorder(null); setDropIndex(null); }} onClick={() => toggleWs(dir)} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggleWs(dir); } }} data-tip={dir || "Server cwd"} style={!isPrimary ? { cursor: "grab" } : undefined}>
-                        <span className="gp-sect-toggle ws-toggle--large"><i className={`fa-solid fa-chevron-${isCollapsed ? "right" : "down"} gp-sect-chev`} /><i className="fa-solid fa-folder" style={{ fontSize: 13, color: "var(--accent)", opacity: 0.9 }} /><span className="ws-title mono" style={{ maxWidth: 140, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{baseName(dir)}</span><span className="gp-sect-count">{dir ? "" : ""}</span></span>
+                      <div className="gp-sect ws-head ws-head--large" role="button" tabIndex={0} draggable={!isPrimary} onDragStart={() => { if (!isPrimary) setDragReorder(extraIdx); }} onDragEnd={() => { setDragReorder(null); setDropIndex(null); }} onClick={() => toggleWs(dir)} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggleWs(dir); } }} data-tip={isRemoteDir(dir) ? remoteLabel(dir) : (dir || "Server cwd")} style={!isPrimary ? { cursor: "grab" } : undefined}>
+                        <span className="gp-sect-toggle ws-toggle--large"><i className={`fa-solid fa-chevron-${isCollapsed ? "right" : "down"} gp-sect-chev`} /><i className={`fa-solid ${isRemoteDir(dir) ? "fa-server" : "fa-folder"}`} style={{ fontSize: 13, color: "var(--accent)", opacity: 0.9 }} /><span className="ws-title mono" style={{ maxWidth: 140, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{baseName(dir)}</span><span className="gp-sect-count">{dir ? "" : ""}</span></span>
                         <span className="gp-sect-acts ws-acts--large" onClick={(e) => e.stopPropagation()}>
                           <button className="gp-sact ws-action--large" data-tip="Copy path" onClick={() => void clipboardWrite(dir)}><i className="fa-solid fa-link" /></button>
                           {!isPrimary && (
@@ -566,6 +580,7 @@ export default function Sidebar({
                 })}
                 {dropHint(extraDirs.length)}
                 {dragOver && dragReorder === null && <div className="ws-drop-zone">Drop folder to add workspace</div>}
+                <button className="gp-sact ws-action--large" data-tip="Add an SSH remote workspace" style={{ margin: "2px 0 4px 6px" }} onClick={() => { playSound("click"); setSshOpen(true); }}><i className="fa-solid fa-server" />SSH</button>
               </div>
 
               {/* Chats tab: grouped sessions */}
@@ -581,8 +596,8 @@ export default function Sidebar({
                   return (
                     <div key={`ch-${dir || "__cwd"}`} data-ws-header>
                       {!isPrimary && dropHint(extraIdx)}
-                      <div className="gp-sect ws-head ws-head--large" role="button" tabIndex={0} draggable={!isPrimary} onDragStart={() => { if (!isPrimary) setDragReorder(extraIdx); }} onDragEnd={() => { setDragReorder(null); setDropIndex(null); }} onClick={() => toggleWs(dir)} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggleWs(dir); } }} data-tip={dir || "Server cwd"} style={!isPrimary ? { cursor: "grab" } : undefined}>
-                        <span className="gp-sect-toggle ws-toggle--large"><i className={`fa-solid fa-chevron-${isCollapsed ? "right" : "down"} gp-sect-chev`} /><i className="fa-solid fa-folder" style={{ fontSize: 13, color: "var(--accent)", opacity: 0.9 }} /><span className="ws-title mono" style={{ maxWidth: 140, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{baseName(dir)}</span><span className="gp-sect-count">{list.length}</span></span>
+                      <div className="gp-sect ws-head ws-head--large" role="button" tabIndex={0} draggable={!isPrimary} onDragStart={() => { if (!isPrimary) setDragReorder(extraIdx); }} onDragEnd={() => { setDragReorder(null); setDropIndex(null); }} onClick={() => toggleWs(dir)} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggleWs(dir); } }} data-tip={isRemoteDir(dir) ? remoteLabel(dir) : (dir || "Server cwd")} style={!isPrimary ? { cursor: "grab" } : undefined}>
+                        <span className="gp-sect-toggle ws-toggle--large"><i className={`fa-solid fa-chevron-${isCollapsed ? "right" : "down"} gp-sect-chev`} /><i className={`fa-solid ${isRemoteDir(dir) ? "fa-server" : "fa-folder"}`} style={{ fontSize: 13, color: "var(--accent)", opacity: 0.9 }} /><span className="ws-title mono" style={{ maxWidth: 140, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{baseName(dir)}</span><span className="gp-sect-count">{list.length}</span></span>
                         <span className="gp-sect-acts ws-acts--large" onClick={(e) => e.stopPropagation()}>
                           <button className="gp-sact ws-action--large" data-tip={`New chat in ${baseName(dir)}`} onClick={() => onNew(dir)}><i className="fa-solid fa-plus" />New</button>
                           {!!list.length && (
@@ -625,6 +640,7 @@ export default function Sidebar({
           </>
         )}
       </aside>
+      <SshWorkspaceDialog open={sshOpen} mode="extra" onClose={(added) => { setSshOpen(false); if (added) refreshSessions?.(); }} />
     </>
   );
 }

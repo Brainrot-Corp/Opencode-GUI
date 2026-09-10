@@ -21,6 +21,12 @@ use git::{git_branch_create, git_branch_delete, git_branch_rename, git_branches,
 
 mod platform;
 
+mod remote;
+use remote::{
+    remote_base_url, remote_ensure, remote_get_key, remote_remove, remote_set_key,
+    remote_status, remote_terminals, remote_test, RemoteState,
+};
+
 mod pty;
 use pty::{kill_all as pty_kill_all, pty_kill, pty_resize, pty_spawn, pty_write, PtyState};
 
@@ -47,7 +53,7 @@ struct ServerState {
 // Windows Job Object: child dies with parent even on crash (KILL_ON_JOB_CLOSE).
 // Without it a hard renderer crash orphans opencode.exe on its port.
 #[cfg(windows)]
-mod job {
+pub(crate) mod job {
     use std::os::windows::io::AsRawHandle;
     use std::process::Child;
     use std::sync::OnceLock;
@@ -105,9 +111,9 @@ mod job {
     }
 }
 #[cfg(not(windows))]
-mod job {
+pub(crate) mod job {
     use std::process::Child;
-    pub fn assign(_: &Child) {}
+    pub(crate) fn assign(_: &Child) {}
 }
 
 // workspace persistence — saved per local dev build so debug restarts reopen
@@ -216,7 +222,7 @@ fn resolve_opencode_exe(exe_dir: &std::path::Path) -> PathBuf {
     fallback
 }
 
-fn wait_for_port(port: u16, timeout: std::time::Duration) -> bool {
+pub(crate) fn wait_for_port(port: u16, timeout: std::time::Duration) -> bool {
     use std::io::{Read, Write};
     use std::net::TcpStream;
     use std::time::Instant;
@@ -505,18 +511,48 @@ fn theme_config_read(app: tauri::AppHandle) -> Result<String, String> {
 }
 
 // save edited workspace files from the centered file viewer — the opencode
-// server API is read-only for files, so writes go through the Tauri host
+// server API is read-only for files, so writes go through the Tauri host.
+// `ssh://` pseudo-paths run on the remote instead (binary-safe via stdin).
 #[tauri::command]
-fn write_file(path: String, content: String) -> Result<(), String> {
+fn write_file(app: tauri::AppHandle, remote: State<'_, RemoteState>, path: String, content: String) -> Result<(), String> {
     if path.trim().is_empty() {
         return Err("empty path".into());
+    }
+    if crate::remote::is_remote(&path) {
+        let t = crate::remote::split_remote(path.trim()).ok_or("bad ssh path")?;
+        let uri = crate::remote::uri_of(&t);
+        let script = format!(
+            "mkdir -p {} && cat > {}",
+            crate::remote::sh_quote(crate::remote::remote_parent(&t.path)),
+            crate::remote::sh_quote(&t.path)
+        );
+        return crate::remote::exec_script(&app, &remote, &uri, &script, Some(content.as_bytes())).map(|_| ());
     }
     std::fs::write(&path, content).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn file_create(path: String, is_dir: bool) -> Result<(), String> {
+fn file_create(app: tauri::AppHandle, remote: State<'_, RemoteState>, path: String, is_dir: bool) -> Result<(), String> {
     if path.trim().is_empty() { return Err("empty path".into()); }
+    if crate::remote::is_remote(&path) {
+        let t = crate::remote::split_remote(path.trim()).ok_or("bad ssh path")?;
+        let uri = crate::remote::uri_of(&t);
+        let script = if is_dir {
+            format!("mkdir -p {}", crate::remote::sh_quote(&t.path))
+        } else {
+            format!(
+                "mkdir -p {} && (test -e {} && echo exists || touch {})",
+                crate::remote::sh_quote(crate::remote::remote_parent(&t.path)),
+                crate::remote::sh_quote(&t.path),
+                crate::remote::sh_quote(&t.path)
+            )
+        };
+        let out = crate::remote::exec_script(&app, &remote, &uri, &script, None)?;
+        if out.contains("exists") {
+            return Err("file exists".into());
+        }
+        return Ok(());
+    }
     if is_dir {
         std::fs::create_dir_all(&path).map_err(|e| e.to_string())
     } else {
@@ -529,16 +565,51 @@ fn file_create(path: String, is_dir: bool) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn file_delete(path: String) -> Result<(), String> {
+fn file_delete(app: tauri::AppHandle, remote: State<'_, RemoteState>, path: String) -> Result<(), String> {
     if path.trim().is_empty() { return Err("empty path".into()); }
+    if crate::remote::is_remote(&path) {
+        let t = crate::remote::split_remote(path.trim()).ok_or("bad ssh path")?;
+        let uri = crate::remote::uri_of(&t);
+        let script = format!(
+            "test -e {} || {{ echo missing; exit 0; }}; rm -rf {}",
+            crate::remote::sh_quote(&t.path),
+            crate::remote::sh_quote(&t.path)
+        );
+        let out = crate::remote::exec_script(&app, &remote, &uri, &script, None)?;
+        if out.contains("missing") {
+            return Err("not found".into());
+        }
+        return Ok(());
+    }
     let p = std::path::Path::new(&path);
     if !p.exists() { return Err("not found".into()); }
     if p.is_dir() { std::fs::remove_dir_all(p).map_err(|e| e.to_string()) } else { std::fs::remove_file(p).map_err(|e| e.to_string()) }
 }
 
 #[tauri::command]
-fn file_rename(from: String, to: String) -> Result<(), String> {
+fn file_rename(app: tauri::AppHandle, remote: State<'_, RemoteState>, from: String, to: String) -> Result<(), String> {
     if from.trim().is_empty() || to.trim().is_empty() { return Err("empty path".into()); }
+    if crate::remote::is_remote(&from) || crate::remote::is_remote(&to) {
+        let f = crate::remote::split_remote(from.trim()).ok_or("bad ssh path")?;
+        let d = crate::remote::split_remote(to.trim()).ok_or("bad ssh path")?;
+        let uri = crate::remote::uri_of(&f);
+        let script = format!(
+            "test -e {} || {{ echo missing; exit 0; }}; test -e {} && {{ echo target-exists; exit 0; }}; mkdir -p {} && mv {} {}",
+            crate::remote::sh_quote(&f.path),
+            crate::remote::sh_quote(&d.path),
+            crate::remote::sh_quote(crate::remote::remote_parent(&d.path)),
+            crate::remote::sh_quote(&f.path),
+            crate::remote::sh_quote(&d.path),
+        );
+        let out = crate::remote::exec_script(&app, &remote, &uri, &script, None)?;
+        if out.contains("missing") {
+            return Err("not found".into());
+        }
+        if out.contains("target-exists") {
+            return Err("target exists".into());
+        }
+        return Ok(());
+    }
     if std::path::Path::new(&to).exists() { return Err("target exists".into()); }
     if let Some(parent) = std::path::Path::new(&to).parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
@@ -547,8 +618,45 @@ fn file_rename(from: String, to: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn file_duplicate(path: String) -> Result<String, String> {
+fn file_duplicate(app: tauri::AppHandle, remote: State<'_, RemoteState>, path: String) -> Result<String, String> {
     if path.trim().is_empty() { return Err("empty path".into()); }
+    if crate::remote::is_remote(&path) {
+        let t = crate::remote::split_remote(path.trim()).ok_or("bad ssh path")?;
+        let uri = crate::remote::uri_of(&t);
+        // sibling copy-name scheme mirrors the local branch below
+        let (parent, name) = match t.path.rfind('/') {
+            Some(i) => (&t.path[..i], &t.path[i + 1..]),
+            None => ("/", t.path.as_str()),
+        };
+        let (stem, ext) = match name.rfind('.') {
+            Some(i) if i > 0 => (&name[..i], &name[i..]),
+            _ => (name, ""),
+        };
+        for i in 1..100 {
+            let cand_name = if i == 1 { format!("{stem} copy{ext}") } else { format!("{stem} copy {i}{ext}") };
+            let dest = if parent.is_empty() { format!("/{cand_name}") } else { format!("{parent}/{cand_name}") };
+            let script = format!(
+                "test -e {} || {{ echo missing; exit 0; }}; test -e {} && {{ echo taken; exit 0; }}; cp -r {} {} && echo {}",
+                crate::remote::sh_quote(&t.path),
+                crate::remote::sh_quote(&dest),
+                crate::remote::sh_quote(&t.path),
+                crate::remote::sh_quote(&dest),
+                crate::remote::sh_quote(&dest),
+            );
+            let out = crate::remote::exec_script(&app, &remote, &uri, &script, None)?;
+            if out.contains("missing") {
+                return Err("not found".into());
+            }
+            if out.contains("taken") {
+                continue;
+            }
+            // echo back the pseudo-path so the frontend stays in ssh:// space
+            let mut nt = t.clone();
+            nt.path = dest;
+            return Ok(crate::remote::uri_of(&nt));
+        }
+        return Err("too many copies".into());
+    }
     let p = std::path::Path::new(&path);
     if !p.exists() { return Err("not found".into()); }
     let parent = p.parent().unwrap_or_else(|| std::path::Path::new("."));
@@ -583,6 +691,9 @@ fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> std::io::
 #[tauri::command]
 fn file_reveal(path: String) -> Result<(), String> {
     if path.trim().is_empty() { return Err("empty path".into()); }
+    if crate::remote::is_remote(&path) {
+        return Err("remote files can't be revealed locally".into());
+    }
     crate::platform::reveal_path(&path).map(|_| ()).map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -590,6 +701,9 @@ fn file_reveal(path: String) -> Result<(), String> {
 #[tauri::command]
 fn file_open(path: String) -> Result<(), String> {
     if path.trim().is_empty() { return Err("empty path".into()); }
+    if crate::remote::is_remote(&path) {
+        return Err("remote files can't be opened locally".into());
+    }
     crate::platform::open_path(&path).map(|_| ()).map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -612,9 +726,19 @@ fn reveal_config_dir(app: tauri::AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn workspace_is_dir(path: String) -> bool {
-    let p = std::path::Path::new(path.trim());
-    p.is_dir()
+fn workspace_is_dir(app: tauri::AppHandle, remote: State<'_, RemoteState>, path: String) -> bool {
+    let p = path.trim();
+    if crate::remote::is_remote(p) {
+        return match crate::remote::split_remote(p) {
+            Some(t) => {
+                let uri = crate::remote::uri_of(&t);
+                let script = format!("test -d {}", crate::remote::sh_quote(&t.path));
+                crate::remote::exec_script(&app, &remote, &uri, &script, None).is_ok()
+            }
+            None => false,
+        };
+    }
+    std::path::Path::new(p).is_dir()
 }
 
 #[tauri::command]
@@ -1910,6 +2034,14 @@ pub fn run() {
             spawn_new_instance,
             debug_log,
             resize_cursor,
+            remote_test,
+            remote_ensure,
+            remote_base_url,
+            remote_status,
+            remote_remove,
+            remote_set_key,
+            remote_get_key,
+            remote_terminals,
         ]);
 
     // global hotkeys, work system-wide. The plugin itself registers nothing;
@@ -2018,6 +2150,8 @@ pub fn run() {
                 },
             };
             app.manage(state);
+            app.manage(RemoteState::default());
+            crate::remote::init(app.handle().clone());
             app.manage(browser::BrowserState::default());
             app.manage(browser::FloatingState::default());
             app.manage(PtyState::default());
@@ -2212,6 +2346,10 @@ pub fn run() {
                 // terminal shells die with the app
                 if let Some(state) = _app_handle.try_state::<PtyState>() {
                     pty_kill_all(&state);
+                }
+                // ssh tunnels + remote serves die with the app
+                if let Some(state) = _app_handle.try_state::<RemoteState>() {
+                    crate::remote::kill_all(&state);
                 }
                 // discord ipc pipe close
                 if let Some(state) = _app_handle.try_state::<DiscordState>() {

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type * as Monaco from "monaco-editor";
 import type { Msg } from "../types";
-import { opencode } from "../api";
+import { opencode, opencodeFor } from "../api";
 import { extLang } from "../lib/syntax";
 import { hlToMonacoLang } from "../lib/monaco";
 import Dialog from "./Dialog";
@@ -20,9 +20,11 @@ type FileDiff = {
 
 export default function DiffPanel({
   sessionId,
+  dir,
   onClose,
 }: {
   sessionId: string;
+  dir?: string;
   onClose: () => void;
 }) {
   const [diffs, setDiffs] = useState<FileDiff[] | null>(null);
@@ -39,7 +41,7 @@ export default function DiffPanel({
     setError("");
     (async () => {
       try {
-        const { client } = await opencode();
+        const { client } = dir ? await opencodeFor(dir) : await opencode();
         // the endpoint returns [] without a messageID — it serves each USER
         // message's precomputed summary.diffs; merge across the whole session
         // (later prompts win for the same file)
@@ -62,7 +64,7 @@ export default function DiffPanel({
         setError(String(e));
       }
     })();
-  }, [sessionId]);
+  }, [sessionId, dir]);
 
   return (
     <Dialog title="Changes in this session" onClose={onClose} stage>

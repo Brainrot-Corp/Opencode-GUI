@@ -1,6 +1,6 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { Session } from "@opencode-ai/sdk/client";
-import { opencode } from "../api";
+import { opencode, opencodeFor } from "../api";
 import { splitModel } from "./models";
 import { playSound } from "../lib/sounds";
 import type { Cmd } from "../types";
@@ -49,6 +49,8 @@ export type SlashCtx = {
   cycleAgent(): void;
   refreshSessions(): Promise<Session[]>;
   openSession(id: string): Promise<void>;
+  // session → workspace dir (SSH sessions live on their tunnel server)
+  getDirForSession?: (id: string) => string;
 };
 
 const SLASH_RE = /^\/([\w-]+)(?:\s+([\s\S]*))?$/;
@@ -104,6 +106,12 @@ export async function handleSlash(text: string, ctx: SlashCtx): Promise<boolean>
   }
 
   const id = ctx.activeId;
+  // session-scoped server calls must hit the session's own server
+  // (SSH sessions live on their tunnel, not the local sidecar)
+  const clientFor = async (sid: string) => {
+    const dir = ctx.getDirForSession?.(sid) ?? "";
+    return dir ? opencodeFor(dir) : opencode();
+  };
 
   if (id) {
     switch (name) {
@@ -122,7 +130,7 @@ export async function handleSlash(text: string, ctx: SlashCtx): Promise<boolean>
         if (!sel) return true;
         const [providerID, modelID] = splitModel(sel);
         ctx.setBusy(id, true);
-        const { client } = await opencode();
+        const { client } = await clientFor(id);
         try {
           await client.session.summarize({ path: { id }, body: { providerID, modelID } });
         } catch (e) {
@@ -132,7 +140,7 @@ export async function handleSlash(text: string, ctx: SlashCtx): Promise<boolean>
         return true;
       }
       case "share": {
-        const { client } = await opencode();
+        const { client } = await clientFor(id);
         try {
           await client.session.share({ path: { id } });
           const r = await client.session.get({ path: { id } });
@@ -145,13 +153,13 @@ export async function handleSlash(text: string, ctx: SlashCtx): Promise<boolean>
         return true;
       }
       case "unshare": {
-        const { client } = await opencode();
-        await client.session.unshare({ path: { id } }).catch((e) => ctx.setError(String(e)));
+        const { client } = await clientFor(id);
+        await (client.session.unshare as any)({ path: { id } }).catch((e: any) => ctx.setError(String(e)));
         return true;
       }
       case "fork": {
         if (ctx.isBusy(id)) return true;
-        const { client } = await opencode();
+        const { client } = await clientFor(id);
         try {
           const r = await client.session.fork({ path: { id } });
           const s = r.data as Session;
@@ -182,7 +190,7 @@ export async function handleSlash(text: string, ctx: SlashCtx): Promise<boolean>
       if (ctx.isBusy(id)) return true;
       ctx.setBusy(id, true);
       ctx.onRegistryCommand?.();
-      const { client } = await opencode();
+      const { client } = await clientFor(id);
       try {
         const body: any = { command: name, arguments: args ?? "" };
         if (ctx.agentSel) body.agent = ctx.agentSel;

@@ -7,6 +7,8 @@ import type { ThemeMeta } from "../lib/themes";
 import type { SoundPrefs } from "../lib/sounds";
 import type { CmdEntry } from "../hooks/useOpencode";
 import { applyWorkspace, pickWorkspace } from "../lib/workspace";
+import { isRemoteDir, remoteLabel } from "../lib/remotes";
+import SshWorkspaceDialog from "./SshWorkspaceDialog";
 import { UI_SCALES } from "../lib/uiScale";
 import ThemeSelect from "./ThemeSelect";
 import SecondaryModelPicker from "./SecondaryModelPicker";
@@ -93,6 +95,7 @@ export default function SettingsDrawer({
   const [debugLocalPath, setDebugLocalPath] = useState(() => {
     try { return localStorage.getItem("oc.debugLocalPath") ?? ""; } catch { return ""; }
   });
+  const [sshOpen, setSshOpen] = useState(false);
   const [debugLocalErr, setDebugLocalErr] = useState("");
   const [debugLocalBusy, setDebugLocalBusy] = useState(false);
   useEffect(() => { try { localStorage.setItem("oc.debugLocalPath", debugLocalPath); } catch {} }, [debugLocalPath]);
@@ -348,7 +351,7 @@ export default function SettingsDrawer({
                 <div>
                   <div className="setting-name">{t("settings.project.workspace.name")}</div>
                   <div className="setting-desc mono-hint">
-                    {settings.workspace || t("settings.project.workspace.home")}
+                    {isRemoteDir(settings.workspace) ? remoteLabel(settings.workspace) : (settings.workspace || t("settings.project.workspace.home"))}
                   </div>
                 </div>
               </div>
@@ -367,8 +370,13 @@ export default function SettingsDrawer({
                   <i className="fa-solid fa-folder" />
                   {t("settings.project.workspace.browse")}
                 </button>
+                <button type="button" className="reset-btn" data-tip="Open an SSH remote workspace" onClick={() => setSshOpen(true)}>
+                  <i className="fa-solid fa-server" />
+                  SSH
+                </button>
               </div>
             </div>
+            <SshWorkspaceDialog open={sshOpen} mode="primary" onClose={() => setSshOpen(false)} />
 
             <div className="setting-row drop git-model-row secondary-model-row">
               <div className="setting-info">

@@ -6,7 +6,7 @@ import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { playSound } from "../lib/sounds";
 import { isLiveFocusTarget, releaseTrapFocus } from "../lib/focus";
-import { fetchTerminalProfiles, useTerminalProfiles, type TerminalProfile } from "../hooks/useTerminalProfiles";
+import { useTerminalProfilesFor, type TerminalProfile } from "../hooks/useTerminalProfiles";
 import TermInstanceView from "./TermInstanceView";
 import DropdownPortal from "./DropdownPortal";
 import "../styles/terminal.css";
@@ -90,7 +90,7 @@ export default function TerminalPanel({
       setSideCollapsed(true);
     }
   }, []);
-  const { profiles } = useTerminalProfiles();
+  const { profiles, fetch: fetchProfiles } = useTerminalProfilesFor(workspace);
   const [addMenuOpen, setAddMenuOpen] = useState(false);
   const [switchMenu, setSwitchMenu] = useState<{ id: number; x: number; y: number } | null>(null);
   const switchMenuRef = useRef<HTMLDivElement>(null);
@@ -168,8 +168,8 @@ export default function TerminalPanel({
   useEffect(() => {
     if (!addMenuOpen) return;
     if (profiles.length) return;
-    void fetchTerminalProfiles().catch(() => {});
-  }, [addMenuOpen, profiles.length]);
+    void fetchProfiles().catch(() => {});
+  }, [addMenuOpen, profiles.length, fetchProfiles]);
 
   // close add menu on outside click — portal lives at body, so check both anchor + portaled menu
   useEffect(() => {
@@ -190,7 +190,7 @@ export default function TerminalPanel({
   // shell-switch menu: outside click + Escape closes, fetch profiles if needed
   useEffect(() => {
     if (!switchMenu) return;
-    if (!profiles.length) void fetchTerminalProfiles().catch(() => {});
+    if (!profiles.length) void fetchProfiles().catch(() => {});
     const onDown = (e: Event) => {
       if (!switchMenuRef.current?.contains(e.target as Node)) setSwitchMenu(null);
     };

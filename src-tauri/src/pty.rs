@@ -126,28 +126,49 @@ pub fn pty_spawn(
     let pair = native_pty_system()
         .openpty(PtySize { rows: init_rows, cols: init_cols, pixel_width: 0, pixel_height: 0 })
         .map_err(|e| e.to_string())?;
-    let shell_cmd = match shell_param {
+    let shell_cmd = match &shell_param {
         Some(s) if !s.trim().is_empty() => s.trim().to_string(),
         _ => default_shell(),
     };
     let mut extra_args: Vec<String> = args.unwrap_or_default();
     extra_args.extend(parse_shell_args(shell_args));
-    // validate absolute/relative paths early for clearer errors
-    if shell_cmd.contains('\\') || shell_cmd.contains('/') {
-        let p = std::path::Path::new(&shell_cmd);
-        if !p.exists() {
-            return Err(format!("shell not found: {}", shell_cmd));
+    // SSH workspace: run the remote shell through the system ssh client
+    // inside the local pty — all xterm streaming stays untouched, and auth
+    // prompts (passphrase/password) work interactively in the terminal.
+    let display: String;
+    let mut cmd: CommandBuilder;
+    if crate::remote::is_remote(&cwd) {
+        let (argv, dest, cmd_str) =
+            crate::remote::pty_ssh_parts(&cwd, shell_param.as_deref()).ok_or("bad ssh workspace")?;
+        let mut c = CommandBuilder::new(&argv[0]);
+        for a in &argv[1..] {
+            c.arg(a);
         }
+        c.arg(dest);
+        c.arg(cmd_str);
+        c.cwd(crate::platform::home_dir());
+        display = "ssh".to_string();
+        cmd = c;
+    } else {
+        // validate absolute/relative paths early for clearer errors
+        if shell_cmd.contains('\\') || shell_cmd.contains('/') {
+            let p = std::path::Path::new(&shell_cmd);
+            if !p.exists() {
+                return Err(format!("shell not found: {}", shell_cmd));
+            }
+        }
+        let mut c = CommandBuilder::new(shell_cmd.clone());
+        let low = shell_cmd.to_lowercase();
+        if (low.contains("powershell") || low.contains("pwsh")) && !extra_args.iter().any(|a| a == "-NoLogo") {
+            c.arg("-NoLogo");
+        }
+        for a in &extra_args {
+            c.arg(a);
+        }
+        c.cwd(workdir(&cwd));
+        display = shell_cmd.clone();
+        cmd = c;
     }
-    let mut cmd = CommandBuilder::new(shell_cmd.clone());
-    let low = shell_cmd.to_lowercase();
-    if (low.contains("powershell") || low.contains("pwsh")) && !extra_args.iter().any(|a| a == "-NoLogo") {
-        cmd.arg("-NoLogo");
-    }
-    for a in &extra_args {
-        cmd.arg(a);
-    }
-    cmd.cwd(workdir(&cwd));
     // The shell talks to xterm.js, not whatever terminal launched the app. GUI
     // launches (Finder/Dock/Start Menu) inherit no TERM — without it zsh's ZLE
     // loses terminfo keybindings (dead arrow keys, no erase, Ctrl+L won't
@@ -155,7 +176,7 @@ pub fn pty_spawn(
     // an inherited screen/tmux TERM can't lie either.
     cmd.env("TERM", "xterm-256color");
     cmd.env("COLORTERM", "truecolor");
-    let child = pair.slave.spawn_command(cmd).map_err(|e| format!("{}: {e}", shell_cmd))?;
+    let child = pair.slave.spawn_command(cmd).map_err(|e| format!("{}: {e}", display))?;
     drop(pair.slave);
 
     let mut reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
