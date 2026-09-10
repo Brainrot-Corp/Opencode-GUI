@@ -1,42 +1,5 @@
-/* timer — floating glass panel, Apple-Clock-style face */
-.timer-panel{
-  position:fixed;
-  z-index:40;
-  width:320px;
-  display:flex;
-  flex-direction:column;
-  background:var(--surface);
-  border:1px solid color-mix(in srgb, var(--accent) 22%, var(--line));
-  box-shadow:0 24px 64px -24px var(--accent-glow);
-  backdrop-filter:blur(8px);
-  -webkit-backdrop-filter:blur(8px);
-  will-change:transform;
-  contain:layout style paint;
-  transform:translateZ(0);
-}
-.timer-head{
-  display:flex;
-  align-items:center;
-  gap:6px;
-  padding:8px 8px 8px 10px;
-  border-bottom:1px solid var(--line);
-  cursor:grab;
-  user-select:none;
-  flex-shrink:0;
-}
-.timer-head:active{cursor:grabbing}
-.timer-head-title{
-  font-family:var(--sans);
-  font-size:11px;
-  font-weight:600;
-  letter-spacing:0.08em;
-  text-transform:uppercase;
-  color:var(--text-faint);
-  pointer-events:none;
-  display:inline-flex;
-  align-items:center;
-  gap:6px;
-}
+/* timer — floating glass panel (.oc-panel) + Apple-Clock-style face */
+.timer-panel{width:320px}
 .timer-body{
   display:flex;
   flex-direction:column;
@@ -123,28 +86,9 @@
   animation:timer-blink 1.2s steps(2) infinite;
 }
 @keyframes timer-blink{50%{opacity:0.35}}
-/* buttons */
+/* buttons — base is .oc-btn, variants stay local */
 .timer-row{display:flex; gap:8px; width:100%}
-.timer-btn{
-  flex:1;
-  display:inline-flex;
-  align-items:center;
-  justify-content:center;
-  gap:8px;
-  padding:9px 12px;
-  font-family:var(--sans);
-  font-size:12.5px;
-  font-weight:600;
-  color:var(--text);
-  background:var(--inset-bg);
-  border:1px solid var(--line);
-  border-radius:6px;
-  cursor:pointer;
-  transition:color 0.15s var(--ease), border-color 0.15s var(--ease), background 0.15s var(--ease), box-shadow 0.15s var(--ease);
-}
-.timer-btn:hover{color:var(--accent-bright); border-color:color-mix(in srgb, var(--accent) 40%, transparent)}
-.timer-btn:disabled{opacity:0.4; cursor:default}
-.timer-btn:disabled:hover{color:var(--text); border-color:var(--line)}
+.timer-row .timer-btn{flex:1}
 .timer-btn.big{width:100%; flex:none; padding:11px 12px; font-size:13px}
 .timer-btn.start, .timer-btn.resume{
   color:var(--accent-bright);
@@ -155,20 +99,10 @@
 .timer-btn.stop:hover{color:var(--danger); border-color:color-mix(in srgb, var(--danger) 50%, transparent)}
 /* setup */
 .timer-setup{display:flex; flex-direction:column; gap:10px; width:100%}
-.timer-label{
-  width:100%;
-  padding:8px 10px;
-  font-family:var(--sans);
-  font-size:12.5px;
-  color:var(--text);
-  background:var(--inset-bg);
-  border:1px solid var(--line);
-  border-radius:6px;
-  outline:none;
-}
-.timer-label:focus{border-color:color-mix(in srgb, var(--accent) 40%, transparent)}
+/* label field is plain .oc-input — no deltas */
 .timer-inputs{display:flex; align-items:flex-end; justify-content:center; gap:6px}
 .timer-field{display:flex; flex-direction:column; align-items:center; gap:3px}
+/* number fields — sizing/typography deltas over .oc-input */
 .timer-num{
   width:64px;
   padding:7px 4px;
@@ -176,18 +110,11 @@
   font-family:var(--mono);
   font-size:17px;
   font-weight:600;
-  color:var(--text);
-  background:var(--inset-bg);
-  border:1px solid var(--line);
-  border-radius:6px;
-  outline:none;
   font-variant-numeric:tabular-nums;
   -moz-appearance:textfield;
   appearance:textfield;
 }
 .timer-num::-webkit-outer-spin-button, .timer-num::-webkit-inner-spin-button{-webkit-appearance:none; margin:0}
-.timer-num:focus{border-color:color-mix(in srgb, var(--accent) 40%, transparent)}
-.timer-num:disabled{opacity:0.55}
 .timer-field-cap{
   font-family:var(--sans);
   font-size:10px;

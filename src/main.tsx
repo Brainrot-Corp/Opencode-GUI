@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import App from "./App";
 import "@fortawesome/fontawesome-free/css/all.min.css";
 import "./styles/tokens.css";
+import "./styles/plugin-ui.css";
 import "./styles/syntax.css";
 import "./styles/layout.css";
 import "./styles/toast.css";

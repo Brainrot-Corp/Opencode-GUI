@@ -147,7 +147,7 @@ export default function activate(api) {
         ),
         h("div", { className: "color-controls", style: { flexBasis: "100%", marginLeft: "30px" } },
           h("input", {
-            className: "discord-in",
+            className: "discord-in oc-input",
             value: conf.clientId,
             placeholder: DEFAULT_ID,
             spellCheck: false,
@@ -167,7 +167,7 @@ export default function activate(api) {
         ),
         h("div", { className: "color-controls", style: { flexBasis: "100%", marginLeft: "30px" } },
           h("input", {
-            className: "discord-in",
+            className: "discord-in oc-input",
             value: conf.detailsTpl,
             placeholder: "{workspace}",
             spellCheck: false,
@@ -187,7 +187,7 @@ export default function activate(api) {
         ),
         h("div", { className: "color-controls", style: { flexBasis: "100%", marginLeft: "30px" } },
           h("input", {
-            className: "discord-in",
+            className: "discord-in oc-input",
             value: conf.stateTpl,
             placeholder: "{status}",
             spellCheck: false,
@@ -207,7 +207,7 @@ export default function activate(api) {
         ),
         h("div", { className: "color-controls", style: { flexBasis: "100%", marginLeft: "30px", display: "flex", gap: "6px" } },
           h("input", {
-            className: "discord-in",
+            className: "discord-in oc-input",
             style: { flex: 1 },
             value: conf.largeImage,
             placeholder: "(vide)",
@@ -215,7 +215,7 @@ export default function activate(api) {
             onChange: (e) => set({ largeImage: e.target.value.trim() }),
           }),
           h("input", {
-            className: "discord-in",
+            className: "discord-in oc-input",
             style: { flex: 1 },
             value: conf.largeTextTpl,
             placeholder: "{workspace}",

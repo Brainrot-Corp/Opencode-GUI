@@ -666,7 +666,7 @@ export default function activate(api) {
       h("div", { className: "hue-fields" },
         h("div", { style: { display: "flex", gap: "6px" } },
           h("input", {
-            className: "hue-in",
+            className: "hue-in oc-input",
             style: { flex: "1" },
             placeholder: "Bridge IP (e.g. 192.168.1.42)",
             value: hue.bridgeIp,
@@ -682,7 +682,7 @@ export default function activate(api) {
         ) : null,
         h("div", { style: { display: "flex", gap: "6px" } },
           h("input", {
-            className: "hue-in",
+            className: "hue-in oc-input",
             style: { flex: "1" },
             placeholder: "Username (auto-filled after Pair)",
             value: hue.username,

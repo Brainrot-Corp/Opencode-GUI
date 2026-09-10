@@ -6,7 +6,7 @@ import { useUpdater as useUpdaterInternal } from "../hooks/useUpdater";
 import type { ThemeMeta } from "../lib/themes";
 import type { SoundPrefs } from "../lib/sounds";
 import type { CmdEntry } from "../hooks/useOpencode";
-import { applyWorkspace, pickWorkspace } from "../lib/workspace";
+import { closeAllWorkspaces, pickWorkspace } from "../lib/workspace";
 import { isRemoteDir, remoteLabel } from "../lib/remotes";
 import SshWorkspaceDialog from "./SshWorkspaceDialog";
 import { UI_SCALES } from "../lib/uiScale";
@@ -356,14 +356,14 @@ export default function SettingsDrawer({
                 </div>
               </div>
               <div className="color-controls">
-                {settings.workspace && (
+                {(settings.workspace || settings.workspaces.length > 0) && (
                   <button
                     type="button"
                     className="reset-btn"
-                    data-tip={t("settings.project.workspace.back")}
-                    onClick={() => applyWorkspace("")}
+                    data-tip={t("settings.project.workspace.closeAll")}
+                    onClick={() => void closeAllWorkspaces()}
                   >
-                    <i className="fa-solid fa-rotate-left" />
+                    <i className="fa-solid fa-xmark" />
                   </button>
                 )}
                 <button type="button" className="reset-btn" data-tip={t("settings.project.workspace.browseTip")} onClick={() => pickWorkspace()}>

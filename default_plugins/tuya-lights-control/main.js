@@ -636,14 +636,14 @@ export default function activate(api) {
       ),
       h("div", { className: "tuya-fields" },
         h("input", {
-          className: "tuya-in",
+          className: "tuya-in oc-input",
           placeholder: "Access ID (client id)",
           value: tuya.clientId,
           onChange: (e) => set({ clientId: e.target.value.trim() }),
           spellCheck: false,
         }),
         h("input", {
-          className: "tuya-in",
+          className: "tuya-in oc-input",
           type: "password",
           placeholder: "Access Secret",
           value: tuya.secret,
@@ -651,7 +651,7 @@ export default function activate(api) {
           spellCheck: false,
         }),
         h("input", {
-          className: "tuya-in",
+          className: "tuya-in oc-input",
           placeholder: "App account UID (Linked Accounts page)",
           value: tuya.uid,
           onChange: (e) => set({ uid: e.target.value.trim() }),

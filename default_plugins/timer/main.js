@@ -396,7 +396,7 @@ export default function activate(api){
       return h("label", { className:"timer-field" },
         h("input", {
           type:"number",
-          className:"timer-num",
+          className:"timer-num oc-input",
           min:0, max, step:1,
           value: String(snap[k]),
           disabled: snap.status !== "idle",
@@ -433,26 +433,26 @@ export default function activate(api){
 
     const controls = ringing
       ? h("button", {
-          className:"timer-btn stop big", onClick:()=>{ stopTimer(); setSnap(load()); },
+          className:"timer-btn oc-btn stop big", onClick:()=>{ stopTimer(); setSnap(load()); },
           autoFocus:true,
         }, h("i", { className:"fa-solid fa-stop" }), "Stop")
       : snap.status === "running"
         ? h("div", { className:"timer-row" },
-            h("button", { className:"timer-btn pause", "data-tip":"Pause (Space)", onClick:()=>{ pauseTimer(); setSnap(load()); } },
+            h("button", { className:"timer-btn oc-btn pause", "data-tip":"Pause (Space)", onClick:()=>{ pauseTimer(); setSnap(load()); } },
               h("i", { className:"fa-solid fa-pause" }), "Pause"),
-            h("button", { className:"timer-btn stop", "data-tip":"Stop and reset", onClick:()=>{ stopTimer(); setSnap(load()); } },
+            h("button", { className:"timer-btn oc-btn stop", "data-tip":"Stop and reset", onClick:()=>{ stopTimer(); setSnap(load()); } },
               h("i", { className:"fa-solid fa-stop" }), "Stop"))
         : snap.status === "paused"
           ? h("div", { className:"timer-row" },
-              h("button", { className:"timer-btn resume", "data-tip":"Resume (Space)", onClick:()=>{ resumeTimer(); setSnap(load()); }, autoFocus:true },
+              h("button", { className:"timer-btn oc-btn resume", "data-tip":"Resume (Space)", onClick:()=>{ resumeTimer(); setSnap(load()); }, autoFocus:true },
                 h("i", { className:"fa-solid fa-play" }), "Resume"),
-              h("button", { className:"timer-btn stop", "data-tip":"Stop and reset", onClick:()=>{ stopTimer(); setSnap(load()); } },
+              h("button", { className:"timer-btn oc-btn stop", "data-tip":"Stop and reset", onClick:()=>{ stopTimer(); setSnap(load()); } },
                 h("i", { className:"fa-solid fa-stop" }), "Stop"))
           : null;
 
     const setup = snap.status === "idle" ? h("div", { className:"timer-setup" },
       h("input", {
-        className:"timer-label",
+        className:"timer-label oc-input",
         placeholder:"Label (optional)",
         maxLength:80,
         value: snap.label,
@@ -481,7 +481,7 @@ export default function activate(api){
         })
       ),
       h("button", {
-        className:"timer-btn start big",
+        className:"timer-btn oc-btn start big",
         disabled: ((snap.h * 60 + snap.m) * 60 + snap.s) <= 0,
         onClick: ()=>{ startTimer(); setSnap(load()); },
       }, h("i", { className:"fa-solid fa-play" }), "Start")
@@ -489,11 +489,11 @@ export default function activate(api){
 
     return h("div", {
       ref: panelRef,
-      className: `timer-panel${ringing ? " ringing" : ""}`,
+      className: `timer-panel oc-panel${ringing ? " ringing" : ""}`,
       style:{ left: snap.geom.x + "px", top: snap.geom.y + "px" },
     },
-      h("div", { className:"timer-head", onMouseDown:onDragStart },
-        h("span", { className:"timer-head-title" },
+      h("div", { className:"timer-head oc-panel-head", onMouseDown:onDragStart },
+        h("span", { className:"timer-head-title oc-panel-title" },
           h("i", { className:"fa-solid fa-stopwatch" }), "Timer"
         ),
         h("span", { style:{ flex:1 } }),

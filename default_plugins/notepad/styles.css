@@ -1,39 +1,5 @@
-/* notepad — floating glass panel, tab strip, resize handles (no fullscreen scrim) */
-.notepad-panel{
-  position:fixed;
-  z-index:40;
-  display:flex;
-  flex-direction:column;
-  background:var(--surface);
-  border:1px solid color-mix(in srgb, var(--accent) 22%, var(--line));
-  box-shadow:0 24px 64px -24px var(--accent-glow);
-  backdrop-filter:blur(8px);
-  -webkit-backdrop-filter:blur(8px);
-  /* promote to own layer so backdrop blur doesn't repaint on every keystroke */
-  will-change:transform;
-  contain:layout style paint;
-  transform:translateZ(0);
-}
-.notepad-head{
-  display:flex;
-  align-items:center;
-  gap:6px;
-  padding:8px 8px 8px 10px;
-  border-bottom:1px solid var(--line);
-  cursor:grab;
-  user-select:none;
-  flex-shrink:0;
-}
-.notepad-head:active{cursor:grabbing}
-.notepad-head-title{
-  font-family:var(--sans);
-  font-size:11px;
-  font-weight:600;
-  letter-spacing:0.08em;
-  text-transform:uppercase;
-  color:var(--text-faint);
-  pointer-events:none;
-}
+/* notepad — floating glass panel, tab strip (chrome: .oc-panel/.oc-panel-head/
+   .oc-panel-title/.oc-handle/.oc-scroll/.oc-input from the app's plugin-ui.css) */
 .notepad-tabs{
   display:flex;
   align-items:center;
@@ -41,7 +7,6 @@
   flex:1;
   min-width:0;
   overflow-x:auto;
-  scrollbar-width:thin;
   margin:0 6px;
 }
 .notepad-tab{
@@ -108,17 +73,13 @@
   font-size:10px;
 }
 .notepad-add:hover{color:var(--accent-bright); border-color:color-mix(in srgb, var(--accent) 40%, transparent)}
+/* compact rename field — sizing deltas over .oc-input */
 .notepad-rename{
   flex-shrink:0;
   max-width:140px;
   padding:4px 6px;
-  font-family:var(--sans);
   font-size:11.5px;
-  color:var(--text);
-  background:var(--inset-bg);
-  border:1px solid color-mix(in srgb, var(--accent) 40%, transparent);
-  border-radius:4px;
-  outline:none;
+  border-color:color-mix(in srgb, var(--accent) 40%, transparent);
 }
 .notepad-body{flex:1; min-height:0; display:flex; padding:6px}
 .notepad-ta{
@@ -141,12 +102,3 @@
 }
 .notepad-ta:focus{border-color:color-mix(in srgb, var(--accent) 40%, transparent)}
 .notepad-ta::selection{background:rgba(127,212,212,0.25)}
-.notepad-handle{position:absolute; background:transparent; z-index:1}
-.notepad-handle.n{top:-3px; left:6px; right:6px; height:6px; cursor:ns-resize}
-.notepad-handle.s{bottom:-3px; left:6px; right:6px; height:6px; cursor:ns-resize}
-.notepad-handle.e{top:6px; right:-3px; bottom:6px; width:6px; cursor:ew-resize}
-.notepad-handle.w{top:6px; left:-3px; bottom:6px; width:6px; cursor:ew-resize}
-.notepad-handle.nw{top:-3px; left:-3px; width:10px; height:10px; cursor:nwse-resize}
-.notepad-handle.ne{top:-3px; right:-3px; width:10px; height:10px; cursor:nesw-resize}
-.notepad-handle.sw{bottom:-3px; left:-3px; width:10px; height:10px; cursor:nesw-resize}
-.notepad-handle.se{bottom:-3px; right:-3px; width:10px; height:10px; cursor:nwse-resize}

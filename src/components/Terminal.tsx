@@ -539,6 +539,22 @@ export default function TerminalPanel({
     });
   }, [activeId, onClose]);
 
+  // close-all workspaces (SettingsDrawer): kill every PTY and drop the list
+  // so reboot seeds fresh instead of resurrecting stale cwds
+  useEffect(() => {
+    const onCloseAll = () => {
+      const snapshot = termsRef.current;
+      if (!snapshot.length) return;
+      for (const t of snapshot) void invoke("pty_kill", { id: t.id, gen: t.gen }).catch(() => {});
+      termsRef.current = [];
+      setTerms([]);
+      playSound("close");
+      setTimeout(() => onClose(), 0);
+    };
+    window.addEventListener("oc:terms-close-all", onCloseAll);
+    return () => window.removeEventListener("oc:terms-close-all", onCloseAll);
+  }, [onClose]);
+
   // vertical resize handle (same as single-terminal version).
   // mousemove can fire far above display refresh — coalesce to one setH per
   // frame or every event schedules its own render + xterm fit + repaint.
