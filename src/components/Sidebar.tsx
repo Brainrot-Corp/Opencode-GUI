@@ -16,13 +16,34 @@ import FileTree from "./FileTree";
 import GitPanel from "./GitPanel";
 import "../styles/sidebar.css";
 
-const WS_COLLAPSED_KEY = "oc.ws.collapsed";
-function getWsCollapsed(): Record<string, boolean> {
-  try { const raw = localStorage.getItem(WS_COLLAPSED_KEY); if (raw) { const o = JSON.parse(raw); if (o && typeof o === "object") return o; } } catch {}
+const WS_COLLAPSED_PREFIX = "oc.ws.collapsed.";
+const WS_COLLAPSED_LEGACY = "oc.ws.collapsed";
+let wsCollapsedMigrated = false;
+function migrateWsCollapsed() {
+  // one-time migration from the old shared key — seed both tabs, then drop it
+  if (wsCollapsedMigrated) return;
+  wsCollapsedMigrated = true;
+  try {
+    const legacy = localStorage.getItem(WS_COLLAPSED_LEGACY);
+    if (legacy) {
+      try {
+        const o = JSON.parse(legacy);
+        if (o && typeof o === "object") {
+          if (!localStorage.getItem(WS_COLLAPSED_PREFIX + "chats")) localStorage.setItem(WS_COLLAPSED_PREFIX + "chats", legacy);
+          if (!localStorage.getItem(WS_COLLAPSED_PREFIX + "files")) localStorage.setItem(WS_COLLAPSED_PREFIX + "files", legacy);
+        }
+      } catch {}
+      localStorage.removeItem(WS_COLLAPSED_LEGACY);
+    }
+  } catch {}
+}
+function getWsCollapsed(tab: "chats" | "files"): Record<string, boolean> {
+  migrateWsCollapsed();
+  try { const raw = localStorage.getItem(WS_COLLAPSED_PREFIX + tab); if (raw) { const o = JSON.parse(raw); if (o && typeof o === "object") return o; } } catch {}
   return {};
 }
-function setWsCollapsed(map: Record<string, boolean>) {
-  try { localStorage.setItem(WS_COLLAPSED_KEY, JSON.stringify(map)); } catch {}
+function setWsCollapsed(tab: "chats" | "files", map: Record<string, boolean>) {
+  try { localStorage.setItem(WS_COLLAPSED_PREFIX + tab, JSON.stringify(map)); } catch {}
 }
 function baseName(p: string): string {
   if (!p) return "Server cwd";
@@ -103,7 +124,8 @@ export default function Sidebar({
   const clearTimer = useRef(0);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [draftTitle, setDraftTitle] = useState("");
-  const [wsCollapsed, setWsCollapsedState] = useState<Record<string, boolean>>(() => getWsCollapsed());
+  const [chatsCollapsed, setChatsCollapsedState] = useState<Record<string, boolean>>(() => getWsCollapsed("chats"));
+  const [filesCollapsed, setFilesCollapsedState] = useState<Record<string, boolean>>(() => getWsCollapsed("files"));
   const [confirmWs, setConfirmWs] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const [dropIndex, setDropIndex] = useState<number | null>(null);
@@ -284,9 +306,11 @@ export default function Sidebar({
     if (paths.length) refreshSessions?.();
   }
 
-  const toggleWs = (dir: string) => {
-    const next = { ...wsCollapsed, [dir]: !wsCollapsed[dir] };
-    setWsCollapsedState(next); setWsCollapsed(next);
+  const toggleWs = (dir: string, tab: "chats" | "files") => {
+    const cur = tab === "files" ? filesCollapsed : chatsCollapsed;
+    const next = { ...cur, [dir]: !cur[dir] };
+    if (tab === "files") setFilesCollapsedState(next); else setChatsCollapsedState(next);
+    setWsCollapsed(tab, next);
     touchWorkspace(dir);
   };
 
@@ -308,6 +332,48 @@ export default function Sidebar({
       { label: tr("fileTree.refresh"), icon: "fa-arrows-rotate", action: () => fire("refresh") },
       { label: tr("fileTree.copyWorkspacePath"), icon: "fa-link", action: () => void clipboardWrite(dir) },
     ]);
+  };
+
+  // shared workspace section chrome for both tabs — called as a plain
+  // function (not a component) so FileTree/session rows keep stable keys
+  // and never remount. Only count, leading actions and body differ per tab.
+  const renderWsSection = (p: {
+    tab: "chats" | "files";
+    dir: string;
+    index: number;
+    count: React.ReactNode;
+    acts: React.ReactNode;
+    body: React.ReactNode;
+  }) => {
+    const { tab, dir, index: i } = p;
+    const isCollapsed = tab === "files" ? !!filesCollapsed[dir] : !!chatsCollapsed[dir];
+    const isPrimary = i === 0;
+    const confirming = confirmWs === dir;
+    const extraIdx = i - 1;
+    const keyPrefix = tab === "files" ? "ft" : "ch";
+    const onKey = (e: React.KeyboardEvent) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggleWs(dir, tab); } };
+    return (
+      <div key={`${keyPrefix}-${dir || "__cwd"}`} data-ws-header>
+        {!isPrimary && dropHint(extraIdx)}
+        <div className="gp-sect ws-head ws-head--large" role="button" tabIndex={0} draggable={!isPrimary} onDragStart={() => { if (!isPrimary) setDragReorder(extraIdx); }} onDragEnd={() => { setDragReorder(null); setDropIndex(null); }} onClick={() => toggleWs(dir, tab)} {...(tab === "files" ? { onContextMenu: (e: React.MouseEvent) => showWsMenu(e, dir) } : {})} onKeyDown={onKey} data-tip={isRemoteDir(dir) ? remoteLabel(dir) : (dir || "Server cwd")} style={!isPrimary ? { cursor: "grab" } : undefined}>
+          <span className="gp-sect-toggle ws-toggle--large"><i className={`fa-solid fa-chevron-${isCollapsed ? "right" : "down"} gp-sect-chev`} /><i className={`fa-solid ${isRemoteDir(dir) ? "fa-server" : "fa-folder"}`} style={{ fontSize: 13, color: "var(--accent)", opacity: 0.9 }} /><span className="ws-title mono" style={{ maxWidth: 140, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{baseName(dir)}</span><span className="gp-sect-count">{p.count}</span></span>
+          <span className="gp-sect-acts ws-acts--large" onClick={(e) => e.stopPropagation()}>
+            {p.acts}
+            {!isPrimary && (
+              confirming ? (
+                <>
+                  <button className="gp-sact ws-action--large danger" data-tip="Really remove workspace" onClick={() => { setConfirmWs(null); window.clearTimeout(wsConfirmTimer.current); removeWorkspace(dir); refreshSessions?.(); }}><i className="fa-solid fa-check" /></button>
+                  <button className="gp-sact ws-action--large" data-tip="Keep" onClick={() => { setConfirmWs(null); window.clearTimeout(wsConfirmTimer.current); }}><i className="fa-solid fa-xmark" /></button>
+                </>
+              ) : (
+                <button className="gp-sact ws-action--large" data-tip="Remove workspace" onClick={() => { playSound("click"); setConfirmWs(dir); window.clearTimeout(wsConfirmTimer.current); wsConfirmTimer.current = window.setTimeout(() => setConfirmWs(null), 3000); }}><i className="fa-solid fa-xmark" /></button>
+              )
+            )}
+          </span>
+        </div>
+        {!isCollapsed && p.body}
+      </div>
+    );
   };
 
   // session reorder — custom pointer drag vertical, copié des tabs notepad
@@ -570,34 +636,14 @@ export default function Sidebar({
 
               {/* Files tab: one FileTree per workspace with collapsable header */}
               <div style={{ display: loading && sessions.length === 0 ? "none" : tab === "files" ? "block" : "none" }}>
-                {allDirs.map((dir, i) => {
-                  const isCollapsed = !!wsCollapsed[dir];
-                  const isPrimary = i === 0;
-                  const confirming = confirmWs === dir;
-                  const extraIdx = i - 1;
-                  return (
-                    <div key={`ft-${dir || "__cwd"}`} data-ws-header>
-                      {!isPrimary && dropHint(extraIdx)}
-                      <div className="gp-sect ws-head ws-head--large" role="button" tabIndex={0} draggable={!isPrimary} onDragStart={() => { if (!isPrimary) setDragReorder(extraIdx); }} onDragEnd={() => { setDragReorder(null); setDropIndex(null); }} onClick={() => toggleWs(dir)} onContextMenu={(e) => showWsMenu(e, dir)} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggleWs(dir); } }} data-tip={isRemoteDir(dir) ? remoteLabel(dir) : (dir || "Server cwd")} style={!isPrimary ? { cursor: "grab" } : undefined}>
-                        <span className="gp-sect-toggle ws-toggle--large"><i className={`fa-solid fa-chevron-${isCollapsed ? "right" : "down"} gp-sect-chev`} /><i className={`fa-solid ${isRemoteDir(dir) ? "fa-server" : "fa-folder"}`} style={{ fontSize: 13, color: "var(--accent)", opacity: 0.9 }} /><span className="ws-title mono" style={{ maxWidth: 140, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{baseName(dir)}</span><span className="gp-sect-count">{dir ? "" : ""}</span></span>
-                        <span className="gp-sect-acts ws-acts--large" onClick={(e) => e.stopPropagation()}>
-                          <button className="gp-sact ws-action--large" data-tip="Copy path" onClick={() => void clipboardWrite(dir)}><i className="fa-solid fa-link" /></button>
-                          {!isPrimary && (
-                            confirming ? (
-                              <>
-                                <button className="gp-sact ws-action--large danger" data-tip="Really remove workspace" onClick={() => { setConfirmWs(null); window.clearTimeout(wsConfirmTimer.current); removeWorkspace(dir); refreshSessions?.(); }}><i className="fa-solid fa-check" /></button>
-                                <button className="gp-sact ws-action--large" data-tip="Keep" onClick={() => { setConfirmWs(null); window.clearTimeout(wsConfirmTimer.current); }}><i className="fa-solid fa-xmark" /></button>
-                              </>
-                            ) : (
-                              <button className="gp-sact ws-action--large" data-tip="Remove workspace" onClick={() => { playSound("click"); setConfirmWs(dir); window.clearTimeout(wsConfirmTimer.current); wsConfirmTimer.current = window.setTimeout(() => setConfirmWs(null), 3000); }}><i className="fa-solid fa-xmark" /></button>
-                            )
-                          )}
-                        </span>
-                      </div>
-                      {!isCollapsed && <div className="ws-body"><FileTree dir={dir} /></div>}
-                    </div>
-                  );
-                })}
+                {allDirs.map((dir, i) => renderWsSection({
+                  tab: "files",
+                  dir,
+                  index: i,
+                  count: (dir ? "" : ""),
+                  acts: <button className="gp-sact ws-action--large" data-tip="Copy path" onClick={() => void clipboardWrite(dir)}><i className="fa-solid fa-link" /></button>,
+                  body: <div className="ws-body"><FileTree dir={dir} /></div>,
+                }))}
                 {dropHint(extraDirs.length)}
                 {dragOver && dragReorder === null && <div className="ws-drop-zone">Drop folder to add workspace</div>}
                 <button className="gp-sact ws-action--large" data-tip="Add an SSH remote workspace" style={{ margin: "2px 0 4px 6px" }} onClick={() => { playSound("click"); setSshOpen(true); }}><i className="fa-solid fa-server" />SSH</button>
@@ -608,47 +654,29 @@ export default function Sidebar({
                 {allDirs.map((dir, idx) => {
                   const rawList = byDir.get(dir) ?? [];
                   const list = orderedForDir(dir, rawList);
-                  const isCollapsed = !!wsCollapsed[dir];
-                  const isPrimary = idx === 0;
-                  const confirming = confirmWs === dir;
-                  const extraIdx = idx - 1;
                   const clearArmed = clearConfirm === dir;
-                  return (
-                    <div key={`ch-${dir || "__cwd"}`} data-ws-header>
-                      {!isPrimary && dropHint(extraIdx)}
-                      <div className="gp-sect ws-head ws-head--large" role="button" tabIndex={0} draggable={!isPrimary} onDragStart={() => { if (!isPrimary) setDragReorder(extraIdx); }} onDragEnd={() => { setDragReorder(null); setDropIndex(null); }} onClick={() => toggleWs(dir)} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggleWs(dir); } }} data-tip={isRemoteDir(dir) ? remoteLabel(dir) : (dir || "Server cwd")} style={!isPrimary ? { cursor: "grab" } : undefined}>
-                        <span className="gp-sect-toggle ws-toggle--large"><i className={`fa-solid fa-chevron-${isCollapsed ? "right" : "down"} gp-sect-chev`} /><i className={`fa-solid ${isRemoteDir(dir) ? "fa-server" : "fa-folder"}`} style={{ fontSize: 13, color: "var(--accent)", opacity: 0.9 }} /><span className="ws-title mono" style={{ maxWidth: 140, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{baseName(dir)}</span><span className="gp-sect-count">{list.length}</span></span>
-                        <span className="gp-sect-acts ws-acts--large" onClick={(e) => e.stopPropagation()}>
-                          <button className="gp-sact ws-action--large" data-tip={`New chat in ${baseName(dir)}`} onClick={() => onNew(dir)}><i className="fa-solid fa-plus" />New</button>
-                          {!!list.length && (
-                            clearArmed ? (
-                              <>
-                                <button className="gp-sact ws-action--large danger" data-tip="Really clear all sessions in this workspace?" onClick={() => { window.clearTimeout(clearTimer.current); setClearConfirm(null); onClearForDir ? onClearForDir(dir) : onClearAll(); }}><i className="fa-solid fa-check" /></button>
-                                <button className="gp-sact ws-action--large" data-tip="Keep" onClick={() => { window.clearTimeout(clearTimer.current); setClearConfirm(null); }}><i className="fa-solid fa-xmark" /></button>
-                              </>
-                            ) : (
-                              <button className="gp-sact ws-action--large" data-tip="Clear sessions in this workspace" onClick={() => { playSound("click"); setClearConfirm(dir); window.clearTimeout(clearTimer.current); clearTimer.current = window.setTimeout(() => setClearConfirm(null), 3000); }}><i className="fa-solid fa-trash-can" /></button>
-                            )
-                          )}
-                          {!isPrimary && (
-                            confirming ? (
-                              <>
-                                <button className="gp-sact ws-action--large danger" data-tip="Really remove workspace" onClick={() => { setConfirmWs(null); window.clearTimeout(wsConfirmTimer.current); removeWorkspace(dir); refreshSessions?.(); }}><i className="fa-solid fa-check" /></button>
-                                <button className="gp-sact ws-action--large" data-tip="Keep" onClick={() => { setConfirmWs(null); window.clearTimeout(wsConfirmTimer.current); }}><i className="fa-solid fa-xmark" /></button>
-                              </>
-                            ) : (
-                              <button className="gp-sact ws-action--large" data-tip="Remove workspace" onClick={() => { playSound("click"); setConfirmWs(dir); window.clearTimeout(wsConfirmTimer.current); wsConfirmTimer.current = window.setTimeout(() => setConfirmWs(null), 3000); }}><i className="fa-solid fa-xmark" /></button>
-                            )
-                          )}
-                        </span>
-                      </div>
-                      {!isCollapsed && (
-                        <div className="ws-body" data-ws-body={dir || "__cwd"}>
-                          {list.length === 0 ? <div className="gp-empty">No sessions</div> : list.map((s) => renderSessionRow(s, dir))}
-                        </div>
+                  return renderWsSection({
+                    tab: "chats",
+                    dir,
+                    index: idx,
+                    count: list.length,
+                    acts: (<>
+                      <button className="gp-sact ws-action--large" data-tip={`New chat in ${baseName(dir)}`} onClick={() => onNew(dir)}><i className="fa-solid fa-plus" />New</button>
+                      {!!list.length && (
+                        clearArmed ? (
+                          <>
+                            <button className="gp-sact ws-action--large danger" data-tip="Really clear all sessions in this workspace?" onClick={() => { window.clearTimeout(clearTimer.current); setClearConfirm(null); onClearForDir ? onClearForDir(dir) : onClearAll(); }}><i className="fa-solid fa-check" /></button>
+                            <button className="gp-sact ws-action--large" data-tip="Keep" onClick={() => { window.clearTimeout(clearTimer.current); setClearConfirm(null); }}><i className="fa-solid fa-xmark" /></button>
+                          </>
+                        ) : (
+                          <button className="gp-sact ws-action--large" data-tip="Clear sessions in this workspace" onClick={() => { playSound("click"); setClearConfirm(dir); window.clearTimeout(clearTimer.current); clearTimer.current = window.setTimeout(() => setClearConfirm(null), 3000); }}><i className="fa-solid fa-trash-can" /></button>
+                        )
                       )}
-                    </div>
-                  );
+                    </>),
+                    body: (<div className="ws-body" data-ws-body={dir || "__cwd"}>
+                      {list.length === 0 ? <div className="gp-empty">No sessions</div> : list.map((s) => renderSessionRow(s, dir))}
+                    </div>),
+                  });
                 })}
                 {dropHint(extraDirs.length)}
                 {dragOver && dragReorder === null && <div className="ws-drop-zone">Drop folder to add workspace</div>}
