@@ -263,21 +263,31 @@ export function forceCheapTokens(model: any, maxLines = 1000): void {
   } catch {}
 }
 
-// monospace advance at a given px size (canvas-measured, cached per size) —
-// drives code-block width expansion
-const charWCache = new Map<number, number>();
-export function measureCharWidth(fontPx: number): number {
-  const hit = charWCache.get(fontPx);
-  if (hit) return hit;
-  let w = Math.ceil(fontPx * 0.6);
-  try {
-    const ctx = document.createElement("canvas").getContext("2d")!;
-    ctx.font = `${fontPx}px ${MONO_STACK}`;
-    w = Math.ceil(ctx.measureText("MMMMMMMMMM").width / 10);
-  } catch {}
-  charWCache.set(fontPx, w);
-  return w;
+// exact rendered width of one mono line (tabs expanded like the editor) —
+// drives code-block width expansion; canvas-measured so wide glyphs and
+// fallback fonts measure truthfully instead of chars × average
+const lineCtxCache = new Map<number, CanvasRenderingContext2D | null>();
+function lineCtx(fontPx: number): CanvasRenderingContext2D | null {
+  if (!lineCtxCache.has(fontPx)) {
+    let ctx: CanvasRenderingContext2D | null = null;
+    try {
+      ctx = document.createElement("canvas").getContext("2d");
+      if (ctx) ctx.font = `${fontPx}px ${MONO_STACK}`;
+    } catch {}
+    lineCtxCache.set(fontPx, ctx);
+  }
+  return lineCtxCache.get(fontPx) ?? null;
 }
+export function measureLineWidth(line: string, fontPx: number, tabSize: number): number {
+  const expanded = line.replace(/\t/g, " ".repeat(Math.max(1, tabSize)));
+  try {
+    const w = lineCtx(fontPx)?.measureText(expanded).width;
+    if (typeof w === "number" && isFinite(w)) return Math.ceil(w);
+  } catch {}
+  return Math.ceil(expanded.length * fontPx * 0.6);
+}
+
+// monospace advance at a given px size (cached) — fallback estimate only
 
 // "Ctrl+Shift+K" → monaco keybinding. Returns null when unparseable.
 export function bindingToKeybinding(monaco: typeof Monaco, binding: string | null | undefined): number | null {

@@ -7,7 +7,7 @@ import {
   defineGuiTheme,
   forceCheapTokens,
   loadMonaco,
-  measureCharWidth,
+  measureLineWidth,
   whenGrammarReady,
 } from "../lib/monaco";
 
@@ -90,10 +90,11 @@ export default function MonacoBlock({
   const maxHeightRef = useRef(maxHeight);
   maxHeightRef.current = maxHeight;
   const fitRef = useRef<(() => void) | null>(null);
-  const longest = useMemo(
-    () => value.split("\n").reduce((m, l) => Math.max(m, l.length), 0),
-    [value],
-  );
+  const longestLine = useMemo(() => {
+    let best = "";
+    for (const l of value.split("\n")) if (l.length > best.length) best = l;
+    return best;
+  }, [value]);
   // first paint must be colored: wait for the language grammar before
   // creating (fallback shows meanwhile — same shape, no layout shift).
   // Only gates first creation; later updates flow through the sync effect.
@@ -109,9 +110,9 @@ export default function MonacoBlock({
   // grow toward the longest line when free stage space allows — capped at
   // MAX_EXPAND past the natural width and never past the scroller, so the
   // chat itself never gains a horizontal scrollbar. Skipped for wrapped
-  // content (wrapping already removes the need). Prefers the editor's own
-  // scroll width (ground truth, immune to font-metric mismatches) and falls
-  // back to measured estimates before the editor exists.
+  // content (wrapping already removes the need). Need is the max of the
+  // exact measured line and the editor's own scroll width (ground truth
+  // once laid out) — either alone can lie (unloaded webfont vs stale layout).
   const applyWidth = useCallback(() => {
     const box = mountRef.current;
     if (!box || !box.isConnected) return;
@@ -121,17 +122,12 @@ export default function MonacoBlock({
     }
     const natural = box.parentElement?.clientWidth || box.clientWidth;
     const ed = edRef.current;
-    let needed: number;
+    let needed = Math.ceil(leftPad + 8 + measureLineWidth(longestLine, fontSize, tabSize) + 14);
     if (ed) {
       try {
         const li = ed.getLayoutInfo();
-        needed = Math.ceil(li.contentLeft + ed.getScrollWidth() + 14);
-      } catch {
-        needed = Math.ceil(leftPad + 8 + longest * measureCharWidth(fontSize) + 14);
-      }
-    } else {
-      const left = leftPad + 8;
-      needed = Math.ceil(left + longest * measureCharWidth(fontSize) + 14);
+        needed = Math.max(needed, Math.ceil(li.contentLeft + ed.getScrollWidth() + 14));
+      } catch {}
     }
     let avail = natural + MAX_EXPAND;
     const scroller = box.closest(".messages, .dlg-body");
@@ -153,7 +149,7 @@ export default function MonacoBlock({
         ed?.layout();
       } catch {}
     }
-  }, [longest, wrap, fontSize, leftPad]);
+  }, [longestLine, wrap, fontSize, leftPad, tabSize]);
 
   useEffect(() => {
     if (expandWidth) applyWidth();
@@ -327,6 +323,18 @@ export default function MonacoBlock({
         fitRef.current?.();
       } catch {}
       if (expandWidth) applyWidth();
+      // layout settles async (fonts, virtualized rows) — re-check once next
+      // frame with fresh scroll metrics so a stale first measure can't stick
+      if (expandWidth) {
+        requestAnimationFrame(() => {
+          try {
+            fitRef.current?.();
+          } catch {}
+          try {
+            applyWidth();
+          } catch {}
+        });
+      }
     } catch (e) {
       try {
         ed.dispose();
