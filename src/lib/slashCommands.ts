@@ -2,6 +2,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { Session } from "@opencode-ai/sdk/client";
 import { opencode, opencodeFor } from "../api";
 import { splitModel } from "./models";
+import { isModelOnServer } from "../hooks/useProviders";
 import { playSound } from "../lib/sounds";
 import type { Cmd } from "../types";
 
@@ -128,6 +129,11 @@ export async function handleSlash(text: string, ctx: SlashCtx): Promise<boolean>
         if (ctx.isBusy(id)) return true;
         const sel = ctx.modelSel || ctx.defaultModel;
         if (!sel) return true;
+        const dir = ctx.getDirForSession?.(id) ?? "";
+        if (!isModelOnServer(sel, dir)) {
+          ctx.setError(`Model ${sel} isn't on this server — pick one it has to compact.`);
+          return true;
+        }
         const [providerID, modelID] = splitModel(sel);
         ctx.setBusy(id, true);
         const { client } = await clientFor(id);

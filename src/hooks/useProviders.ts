@@ -21,6 +21,36 @@ function isReachable(model: string, groups: ProviderGroup[]): boolean {
   return groups.some((g) => g.id === pid && g.models.some((m) => m.id === mid));
 }
 
+// per-server groups, module-level so non-hook send sites (commit-gen,
+// voice debrief, slash commands) can apply the same foreign-model guard
+// without prop drilling. Written by loadProvidersAll, read-only otherwise.
+const serverModelGroups = new Map<string, ProviderGroup[]>();
+export function isModelOnServer(model: string, dir: string): boolean {
+  if (!model) return true;
+  const g = serverModelGroups.get(dir ?? "");
+  if (!g) return true;
+  return isReachable(model, g);
+}
+
+// fetch + record one server's groups unless already known. Fills the gap
+// loadProvidersAll leaves when a tunnel wasn't up at boot (it skips dead
+// servers silently) — without this the guard above fails open forever and
+// the first send to that server dies the silent death. Failures stay
+// fail-open; the send surfaces whatever happens.
+export async function ensureServerGroups(
+  getClient: (dir: string) => Promise<{ client: OcClient }>,
+  dir: string,
+): Promise<void> {
+  const d = dir ?? "";
+  if (serverModelGroups.has(d)) return;
+  try {
+    const { client } = await getClient(d);
+    serverModelGroups.set(d, await fetchGroups(client));
+  } catch {
+    // still unreachable — fail open, the send surfaces whatever happens
+  }
+}
+
 // fetch one server's provider groups (no state writes — merged by callers)
 async function fetchGroups(client: OcClient): Promise<ProviderGroup[]> {
   const pr = await client.config.providers();
@@ -357,13 +387,18 @@ export function useProviders(activeId: string) {
   // union across local + SSH servers (each may carry its own auth/models).
   // getClient resolves a workspace dir to its server client; failures per
   // server are skipped so one dead tunnel can't hide the local list.
+  // Provenance is kept per dir: the merged picker can't tell which server
+  // actually serves a model, and sending a foreign one dies SILENTLY
+  // server-side (upstream prompt-loop bug: no session.error, just idle).
   const loadProvidersAll = useCallback(
     async (getClient: (dir: string) => Promise<{ client: OcClient }>, dirs: string[]) => {
       const all: ProviderGroup[][] = [];
       for (const d of ["", ...dirs]) {
         try {
           const { client } = await getClient(d);
-          all.push(await fetchGroups(client));
+          const groups = await fetchGroups(client);
+          serverModelGroups.set(d, groups);
+          all.push(groups);
         } catch {
           // dead tunnel / missing server — skip, toast comes from SSE layer
         }
@@ -372,6 +407,12 @@ export function useProviders(activeId: string) {
     },
     [applyGroups],
   );
+
+  // per-server reachability for a model id. Unknown dirs fail open (today's
+  // behavior — server default or a visible request error, never new harm).
+  const isModelOn = useCallback((model: string, dir: string): boolean => {
+    return isModelOnServer(model, dir);
+  }, []);
 
   // thinking-effort options for the selected model
   const modelVariants = useMemo(() => {
@@ -491,6 +532,7 @@ export function useProviders(activeId: string) {
     markExplicit,
     loadProviders,
     loadProvidersAll,
+    isModelOn,
     modelVariants,
     modelCaps,
     variantSel,

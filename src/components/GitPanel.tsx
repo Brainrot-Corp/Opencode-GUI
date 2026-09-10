@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getDirectory, opencodeFor, tempSession, dropSession } from "../api";
+import { isModelOnServer } from "../hooks/useProviders";
 import { splitModel } from "../lib/models";
 import { extLang } from "../lib/syntax";
 import { playSound } from "../lib/sounds";
@@ -376,6 +377,12 @@ function GitPanelInner() {
       setMsg(heuristic);
       if (!model) return heuristic;
       const dir = curDir();
+      // a foreign model dies silently server-side (no session.error, just
+      // idle) — fall back to the heuristic with a visible note instead
+      if (!isModelOnServer(model, dir)) {
+        setErr(`Model ${model} isn't on this server — heuristic used.`);
+        return heuristic;
+      }
       const { client } = await opencodeFor(dir);
       const [providerID, modelID] = splitModel(model);
       const cached = cachedVariant(model);

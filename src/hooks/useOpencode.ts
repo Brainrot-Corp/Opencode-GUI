@@ -28,7 +28,7 @@ import {
   type DialogState,
 } from "../lib/slashCommands";
 import { getPluginSlash } from "../lib/plugins";
-import { useProviders } from "./useProviders";
+import { ensureServerGroups, useProviders } from "./useProviders";
 import { clearDraft, setDraft } from "../lib/drafts";
 import { clearAttachmentDraft } from "./useAttachments";
 import { pushToast } from "./useToast";
@@ -64,6 +64,8 @@ export function useOpencode() {
   const questionsRef = useRef<Map<string, QuestionAsk>>(new Map());
   const [question, setQuestion] = useState<QuestionAsk | null>(null);
   const permissionsRef = useRef<Map<string, PermAsk>>(new Map());
+  // sessions already warned about model fallback (model → warned model id)
+  const modelFallbackWarned = useRef(new Map<string, string>());
   const [permission, setPermission] = useState<PermAsk | null>(null);
   // sidebar attention: which sessions need a click (permission or question)
   const [attentionIds, setAttentionIds] = useState<Set<string>>(new Set());
@@ -856,6 +858,24 @@ export function useOpencode() {
           // mid-turn idles in heavier tasks are ignored
           if (!tracker.hasInflight(p.sessionID)) tracker.settle(p.sessionID);
           break;
+        case "session.error": {
+          // runtime turn failure (provider auth, API errors…) — the prompt
+          // call already succeeded, so this event is the ONLY signal. Mirror
+          // the prompt-failure path: visible bubble + toast, then settle.
+          // (Upstream still skips this event for some paths — e.g. a missing
+          // model idles silently — which the per-server model guard above
+          // prevents instead.)
+          const sid = p.sessionID as string | undefined;
+          const err = (p as any).error as any;
+          if (err?.name === "MessageAbortedError") break; // ours — abort path owns it
+          const msg = String(err?.data?.message ?? err?.message ?? "The server ended the turn with an error.");
+          if (sid) {
+            store.addError(sid, msg);
+            tracker.settle(sid);
+          }
+          pushToast(msg);
+          break;
+        }
         // compaction live indicator — server decides when to compact (auto
         // or manual /compact); we just surface its progress per-session
         case "session.compacted":
@@ -920,6 +940,7 @@ export function useOpencode() {
           const delId = p.sessionID ?? p.id;
           if (delId) {
             sessionDirRef.current.delete(delId);
+            modelFallbackWarned.current.delete(delId);
             store.remove(delId);
             tracker.reset(delId);
             markCompacting(delId, false);
@@ -1330,18 +1351,37 @@ export function useOpencode() {
       tracker.markBusy(sid, true);
       try {
         const dirFor = sessionDirRef.current.get(sid) ?? getDirectory();
-        const { client } = dirFor ? await opencodeFor(dirFor) : await opencode();
+        const getClient = (d: string) => (d ? opencodeFor(d) : opencode());
+        // make sure this server's models are known before the guard below
+        // runs — boot skips servers whose tunnel isn't up yet, and without
+        // this the guard would fail open on them forever
+        await ensureServerGroups(getClient, dirFor);
+        const { client } = await getClient(dirFor);
         const parts: any[] = [{ type: "text", text }];
         for (const f of files ?? [])
           parts.push({ type: "file", mime: f.mime, filename: f.filename, url: f.url });
         const body: any = { parts };
-        prov.sentExplicitModel.current = !!prov.modelSel;
-        if (prov.modelSel) {
-          const [providerID, modelID] = splitModel(prov.modelSel);
+        // the picker list is merged across servers — a model picked for one
+        // may not exist on this session's. The server then dies SILENTLY
+        // (no session.error, just idle), so fall back to its default instead
+        // of sending a doomed model. Unknown servers fail open as before.
+        let effModel = prov.modelSel;
+        let effVariant = prov.variantSel;
+        if (effModel && !prov.isModelOn(effModel, dirFor)) {
+          effModel = "";
+          effVariant = "";
+          if (modelFallbackWarned.current.get(sid) !== prov.modelSel) {
+            modelFallbackWarned.current.set(sid, prov.modelSel);
+            pushToast(`Model ${prov.modelSel} isn't on this server — using its default instead.`);
+          }
+        }
+        prov.sentExplicitModel.current = !!effModel;
+        if (effModel) {
+          const [providerID, modelID] = splitModel(effModel);
           body.model = { providerID, modelID };
         }
         if (agentSel) body.agent = agentSel;
-        if (prov.variantSel) body.variant = prov.variantSel;
+        if (effVariant) body.variant = effVariant;
         await (client.session as any).promptAsync({ path: { id: sid }, body });
       } catch (e) {
         tracker.reset(sid);
@@ -1350,7 +1390,7 @@ export function useOpencode() {
         pushToast(String(e));
       }
     },
-    [prov.modelSel, prov.variantSel, agentSel],
+    [prov.modelSel, prov.variantSel, prov.isModelOn, agentSel],
   );
 
   // public entry: while the session is streaming, queue instead of dropping

@@ -8,6 +8,7 @@ import {
   dropSession,
   withDeadline,
 } from "../api";
+import { isModelOnServer } from "./useProviders";
 import { playSound } from "../lib/sounds";
 import { pushToast } from "./useToast";
 import { splitModel } from "../lib/models";
@@ -758,6 +759,9 @@ export function useSpeech(oc: SpeechOc, settings: AppSettings) {
             `\n\nGIT LOG (last commits):\n${logTrim || "(empty)"}` +
             `\n\nRECENT USER PROMPTS (why, most recent last):\n${recent || "(none)"}`;
           // hidden temp session — use promptAsync + polling like GitPanel (sync prompt hangs on stalled provider)
+          // a foreign model dies silently server-side (no session.error,
+          // just idle) — refuse up front with a speakable reason instead
+          if (!isModelOnServer(secondaryModel, dir)) throw new Error(`Model "${secondaryModel}" isn't on this server`);
           const { client } = dir ? await opencodeFor(dir) : await opencode();
           sid = await tempSession(dir || undefined);
           let summary = "";
