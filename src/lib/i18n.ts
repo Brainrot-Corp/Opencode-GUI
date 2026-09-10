@@ -427,6 +427,7 @@ const en: Dict = {
   "fileTree.error.separators": "Name cannot contain path separators",
   "fileTree.error.noRoot": "Cannot determine workspace root — open a workspace first",
   "fileTree.error.noSeparators": "Name cannot contain separators",
+  "fileTree.error.setWorkspace": "Already a workspace or invalid folder",
 
   // plugins
   "plugins.title": "Plugins",
@@ -899,6 +900,7 @@ const fr: Dict = {
   "fileTree.error.separators": "Le nom ne peut contenir de séparateurs",
   "fileTree.error.noRoot": "Impossible de déterminer la racine — ouvrez un espace d'abord",
   "fileTree.error.noSeparators": "Le nom ne peut contenir de séparateurs",
+  "fileTree.error.setWorkspace": "Déjà un espace de travail ou dossier invalide",
   "plugins.title": "Plugins",
   "plugins.tabs.installed": "Installés ({count})",
   "plugins.tabs.browse": "Parcourir",
@@ -1359,6 +1361,7 @@ const es: Dict = {
   "fileTree.error.separators": "El nombre no puede contener separadores",
   "fileTree.error.noRoot": "No se pudo determinar la raíz — abre un espacio primero",
   "fileTree.error.noSeparators": "El nombre no puede contener separadores",
+  "fileTree.error.setWorkspace": "Ya es un espacio de trabajo o carpeta no válida",
   "plugins.title": "Plugins",
   "plugins.tabs.installed": "Instalados ({count})",
   "plugins.tabs.browse": "Explorar",

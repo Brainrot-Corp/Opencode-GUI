@@ -7,6 +7,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { playSound } from "../lib/sounds";
 import { isLiveFocusTarget, releaseTrapFocus } from "../lib/focus";
 import { useTerminalProfilesFor, type TerminalProfile } from "../hooks/useTerminalProfiles";
+import { getAllWorkspaces } from "../lib/workspace";
+import { isRemoteDir, remoteLabel } from "../lib/remotes";
 import TermInstanceView from "./TermInstanceView";
 import DropdownPortal from "./DropdownPortal";
 import "../styles/terminal.css";
@@ -59,6 +61,16 @@ function parseArgsString(s: string): string[] {
 const clampH = (h: number) =>
   Math.min(Math.max(H_MIN, Math.floor(h)), Math.floor(window.innerHeight * 0.7));
 
+// short display name for the workspace picker (remote shows host:path)
+function wsLabel(d: string): string {
+  const t = (d ?? "").trim();
+  if (!t) return "Server cwd";
+  if (isRemoteDir(t)) return remoteLabel(t);
+  const s = t.replace(/[\/\\]+$/, "");
+  const idx = Math.max(s.lastIndexOf("\\"), s.lastIndexOf("/"));
+  return idx >= 0 ? s.slice(idx + 1) : s;
+}
+
 export default function TerminalPanel({
   open,
   workspace,
@@ -92,6 +104,7 @@ export default function TerminalPanel({
   }, []);
   const { profiles, fetch: fetchProfiles } = useTerminalProfilesFor(workspace);
   const [addMenuOpen, setAddMenuOpen] = useState(false);
+  const [wsMenuOpen, setWsMenuOpen] = useState(false);
   const [switchMenu, setSwitchMenu] = useState<{ id: number; x: number; y: number } | null>(null);
   const switchMenuRef = useRef<HTMLDivElement>(null);
   // prevent height transition on first paint — avoids flash open→close on app launch
@@ -102,6 +115,30 @@ export default function TerminalPanel({
   }, []);
   const addMenuRef = useRef<HTMLDivElement>(null);
   const addMenuPortalRef = useRef<HTMLDivElement>(null);
+  const wsMenuPortalRef = useRef<HTMLDivElement>(null);
+  const footAddRef = useRef<HTMLButtonElement | null>(null);
+
+  // all workspaces for the "+" picker — live sync, no reload needed
+  const [allDirs, setAllDirs] = useState<string[]>(() => {
+    try {
+      return getAllWorkspaces();
+    } catch {
+      return [];
+    }
+  });
+  useEffect(() => {
+    const sync = () => {
+      try {
+        setAllDirs(getAllWorkspaces());
+      } catch {}
+    };
+    window.addEventListener("oc:workspaces-changed", sync as EventListener);
+    window.addEventListener("storage", sync);
+    return () => {
+      window.removeEventListener("oc:workspaces-changed", sync as EventListener);
+      window.removeEventListener("storage", sync);
+    };
+  }, []);
 
   const nextIdRef = useRef(1);
   const genCounterRef = useRef(1);
@@ -173,19 +210,19 @@ export default function TerminalPanel({
 
   // close add menu on outside click — portal lives at body, so check both anchor + portaled menu
   useEffect(() => {
-    if (!addMenuOpen) return;
+    if (!addMenuOpen && !wsMenuOpen) return;
     const onDown = (e: Event) => {
       const t = e.target as Node;
-      if (!addMenuRef.current?.contains(t) && !addMenuPortalRef.current?.contains(t)) setAddMenuOpen(false);
+      if (!addMenuRef.current?.contains(t) && !addMenuPortalRef.current?.contains(t) && !wsMenuPortalRef.current?.contains(t)) { setAddMenuOpen(false); setWsMenuOpen(false); }
     };
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setAddMenuOpen(false); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") { setAddMenuOpen(false); setWsMenuOpen(false); } };
     document.addEventListener("pointerdown", onDown, true);
     document.addEventListener("keydown", onKey);
     return () => {
       document.removeEventListener("pointerdown", onDown, true);
       document.removeEventListener("keydown", onKey);
     };
-  }, [addMenuOpen]);
+  }, [addMenuOpen, wsMenuOpen]);
 
   // shell-switch menu: outside click + Escape closes, fetch profiles if needed
   useEffect(() => {
@@ -326,7 +363,7 @@ export default function TerminalPanel({
     onExit(id);
   }, [onExit]);
 
-  const addTerm = useCallback((profileId?: string | null) => {
+  const addTerm = useCallback((profileId?: string | null, cwdOverride?: string) => {
     if (termsRef.current.length >= 8) {
       setMaxErr("max 8 terminals");
       window.setTimeout(() => setMaxErr(""), 2500);
@@ -335,18 +372,33 @@ export default function TerminalPanel({
     }
     const id = nextIdRef.current++;
     const gen = genCounterRef.current++;
-    const cwd = workspaceRef.current ?? "";
+    const cwd = cwdOverride ?? workspaceRef.current ?? "";
+    const remote = isRemoteDir(cwd);
     const pid = profileId !== undefined ? profileId : (terminal?.defaultProfileId ?? null);
-    const resolved = resolveProfile(pid);
+    // remote shells resolve server-side ($SHELL -l) — a local default profile
+    // path would be meaningless there, so only explicit picks are honored
+    const resolved = remote && profileId === undefined ? null : resolveProfile(pid);
     const entry: TermEntry = {
       id, gen, title: `Terminal ${id}`, cwd, dead: false, err: "",
-      shell: resolved?.path, args: resolved?.args, shellName: resolved?.name ?? (pid ? undefined : "System default"),
+      shell: resolved?.path, args: resolved?.args,
+      shellName: resolved?.name ?? (remote ? "Remote login shell" : (pid ? undefined : "System default")),
     };
     setTerms((prev) => [...prev, entry]);
     setActiveId(id);
     playSound("click");
     setAddMenuOpen(false);
+    setWsMenuOpen(false);
   }, [terminal?.defaultProfileId, resolveProfile]);
+
+  // "+" spawns instantly with a single workspace, otherwise asks where
+  const handlePlus = useCallback(() => {
+    if (allDirs.length <= 1) {
+      addTerm();
+      return;
+    }
+    setAddMenuOpen(false);
+    setWsMenuOpen((v) => !v);
+  }, [allDirs.length, addTerm]);
 
   const reloadTerm = useCallback(async (id: number) => {
     const t = termsRef.current.find((x) => x.id === id);
@@ -623,10 +675,10 @@ export default function TerminalPanel({
             {!sideCollapsed && (
               <>
                 <div ref={addMenuRef} style={{ display: "flex", alignItems: "center", gap: "2px" }}>
-                  <button className="icon-btn term-btn small" data-tip="New terminal (default shell)" onClick={() => addTerm()}>
+                  <button className="icon-btn term-btn small" data-tip={allDirs.length > 1 ? "New terminal in workspace…" : "New terminal (default shell)"} onClick={handlePlus}>
                     <i className="fa-solid fa-plus" />
                   </button>
-                  <button className="icon-btn term-btn small" data-tip="New terminal with shell…" onClick={() => setAddMenuOpen((v) => !v)} style={{ width: "18px" }}>
+                  <button className="icon-btn term-btn small" data-tip="New terminal with shell…" onClick={() => { setWsMenuOpen(false); setAddMenuOpen((v) => !v); }} style={{ width: "18px" }}>
                     <i className={`fa-solid fa-caret-${addMenuOpen ? "up" : "down"}`} style={{ fontSize: "8px" }} />
                   </button>
                 </div>
@@ -742,7 +794,7 @@ export default function TerminalPanel({
           </div>
           {sideCollapsed && (
             <div className="term-side-foot">
-              <button className="icon-btn term-btn small" data-tip="New terminal (default shell)" onClick={() => addTerm()}>
+              <button ref={footAddRef} className="icon-btn term-btn small" data-tip={allDirs.length > 1 ? "New terminal in workspace…" : "New terminal (default shell)"} onClick={handlePlus}>
                 <i className="fa-solid fa-plus" />
               </button>
             </div>
@@ -750,6 +802,16 @@ export default function TerminalPanel({
           {!sideCollapsed && terms.length >= 8 && <div className="term-side-hint">max 8 reached</div>}
         </div>
       </div>
+      <DropdownPortal anchor={sideCollapsed ? footAddRef : addMenuRef} open={wsMenuOpen} align="right" prefer="down">
+        <div className="term-add-menu" ref={wsMenuPortalRef}>
+          <div className="term-add-group">New terminal in workspace</div>
+          {allDirs.map((d) => (
+            <button key={d || "__cwd"} className="term-add-item" onClick={() => addTerm(undefined, d)} data-tip={d || "Server cwd"}>
+              <i className={`fa-solid ${isRemoteDir(d) ? "fa-server" : "fa-folder"}`} /> {wsLabel(d)}{d === (workspace ?? "") ? " (current)" : ""}
+            </button>
+          ))}
+        </div>
+      </DropdownPortal>
       {switchMenu && createPortal(
         <div
           ref={switchMenuRef}

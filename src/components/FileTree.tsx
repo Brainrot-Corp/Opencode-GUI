@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { opencode, opencodeFor } from "../api";
-import { applyWorkspace } from "../lib/workspace";
+import { opencode, opencodeFor, getDirectory } from "../api";
+import { applyWorkspace, replaceWorkspace } from "../lib/workspace";
+import { normWorkspace } from "../lib/platform";
 import { useContextMenu } from "../hooks/useContextMenu";
 import { invalidateFileCache, normalizeFilePath, useFileCache } from "../hooks/useFileCache";
 import { clipboardWrite } from "../lib/clipboard";
@@ -252,13 +253,29 @@ export default function FileTree({ dir = "" }: { dir?: string }) {
     } catch (e) { setError(String(e)); }
   }
 
+  // "Set as workspace" is per tree: inside the primary workspace it switches
+  // the primary; inside an added workspace it swaps that slot instead
+  async function setAsWorkspace(n: Node) {
+    try {
+      const mine = (dir ?? "").trim();
+      if (!mine || normWorkspace(mine) === normWorkspace(getDirectory().trim())) {
+        await applyWorkspace(n.absolute);
+        return;
+      }
+      const ok = await replaceWorkspace(mine, n.absolute);
+      if (!ok) { setError(t("fileTree.error.setWorkspace")); return; }
+      // reload so sessions/messages/events rebuild for the swapped directory
+      setTimeout(() => location.reload(), 50);
+    } catch (e) { setError(String(e)); }
+  }
+
   function showFileMenu(e: React.MouseEvent, n: Node) {
     e.preventDefault();
     if (!ctx) return;
     const isDir = n.type === "directory";
     ctx.show(e.clientX, e.clientY, [
       ...(isDir ? [] : [{ label: t("fileTree.open"), icon: "fa-arrow-up-right-from-square", action: () => openFile(n) } as any]),
-      ...(isDir ? [{ label: t("fileTree.setAsWorkspace"), icon: "fa-folder-open", action: () => void applyWorkspace(n.absolute) } as any] : []),
+      ...(isDir ? [{ label: t("fileTree.setAsWorkspace"), icon: "fa-folder-open", action: () => void setAsWorkspace(n) } as any] : []),
       { label: t("fileTree.openWithDefault"), icon: "fa-up-right-from-square", action: () => void invoke("file_open", { path: n.absolute }).catch((er)=> setError(String(er))) },
       { separator: true },
       { label: t("fileTree.copyPath"), icon: "fa-link", action: () => void clipboardWrite(n.absolute) },

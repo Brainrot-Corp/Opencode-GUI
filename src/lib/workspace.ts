@@ -107,6 +107,33 @@ export function removeWorkspace(path: string) {
   const target = norm(path.trim());
   safeWriteExtras((prev) => prev.filter((e) => norm(e) !== target));
 }
+// swap one added (non-primary) workspace slot for a new folder in place;
+// the primary workspace is handled by applyWorkspace instead
+export async function replaceWorkspace(oldPath: string, newPath: string): Promise<boolean> {
+  const oldP = oldPath.trim();
+  const p = newPath.trim();
+  if (!oldP || !p) return false;
+  const norm = (s: string) => normWorkspace(s);
+  if (norm(p) === norm(oldP)) return false;
+  if (!p.startsWith("ssh://")) {
+    const isDir = await invoke<boolean>("workspace_is_dir", { path: p }).catch(() => false);
+    if (!isDir) return false;
+  }
+  const primary = getDirectory().trim();
+  if (norm(p) === norm(primary)) return false;
+  try {
+    const raw = JSON.parse(localStorage.getItem("oc.settings") ?? "{}");
+    const extras: string[] = Array.isArray(raw.workspaces) ? raw.workspaces.filter((x: unknown) => typeof x === "string") : [];
+    const idx = extras.findIndex((e) => norm(e) === norm(oldP));
+    if (idx < 0) return false;
+    if (extras.some((e, i) => i !== idx && norm(e) === norm(p))) return false;
+    extras[idx] = p;
+    raw.workspaces = extras.slice(0, MAX_EXTRA);
+    localStorage.setItem("oc.settings", JSON.stringify(raw));
+  } catch { return false; }
+  window.dispatchEvent(new CustomEvent("oc:workspaces-changed"));
+  return true;
+}
 export function reorderWorkspaces(from: number, to: number) {
   safeWriteExtras((prev) => {
     if (from < 0 || from >= prev.length || to < 0 || to >= prev.length) return prev;

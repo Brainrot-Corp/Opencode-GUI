@@ -652,6 +652,7 @@ export default function Sidebar({
                 })}
                 {dropHint(extraDirs.length)}
                 {dragOver && dragReorder === null && <div className="ws-drop-zone">Drop folder to add workspace</div>}
+                <button className="gp-sact ws-action--large" data-tip="Add an SSH remote workspace" style={{ margin: "2px 0 4px 6px" }} onClick={() => { playSound("click"); setSshOpen(true); }}><i className="fa-solid fa-server" />SSH</button>
               </div>
             </div>
             {sidebarExtras}
