@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import "../styles/dialog.css";
 
 // centered square glass dialog — shared shell for command output overlays
@@ -30,8 +30,34 @@ export default function Dialog({
     return () => window.removeEventListener("keydown", key);
   }, [onClose]);
 
+  // scrim click closes — but a text-selection drag that starts inside the
+  // panel and releases outside (or vice versa) also fires click on the scrim
+  // (nearest common ancestor), which used to slam the dialog shut mid-select.
+  // Only honor presses that both start AND end on the scrim itself; a press
+  // with no recorded mousedown (touch/keyboard) keeps the old behavior.
+  const downT = useRef<EventTarget | null>(null);
+  const upT = useRef<EventTarget | null>(null);
+  const onScrimClick = (e: React.MouseEvent) => {
+    const scrim = e.currentTarget;
+    const down = downT.current;
+    const up = upT.current;
+    downT.current = null;
+    upT.current = null;
+    if (down && (down !== scrim || up !== scrim)) return;
+    onClose();
+  };
+
   return (
-    <div className={`dlg-scrim${top ? " dlg-top" : ""}`} onClick={onClose}>
+    <div
+      className={`dlg-scrim${top ? " dlg-top" : ""}`}
+      onMouseDown={(e) => {
+        downT.current = e.target;
+      }}
+      onMouseUp={(e) => {
+        upT.current = e.target;
+      }}
+      onClick={onScrimClick}
+    >
       <div
         className={`dlg-panel${wide ? " dlg-wide" : ""}${stage ? " dlg-stage" : ""}`}
         onClick={(e) => e.stopPropagation()}

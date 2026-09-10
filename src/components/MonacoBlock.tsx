@@ -109,7 +109,9 @@ export default function MonacoBlock({
   // grow toward the longest line when free stage space allows — capped at
   // MAX_EXPAND past the natural width and never past the scroller, so the
   // chat itself never gains a horizontal scrollbar. Skipped for wrapped
-  // content (wrapping already removes the need).
+  // content (wrapping already removes the need). Prefers the editor's own
+  // scroll width (ground truth, immune to font-metric mismatches) and falls
+  // back to measured estimates before the editor exists.
   const applyWidth = useCallback(() => {
     const box = mountRef.current;
     if (!box || !box.isConnected) return;
@@ -119,8 +121,18 @@ export default function MonacoBlock({
     }
     const natural = box.parentElement?.clientWidth || box.clientWidth;
     const ed = edRef.current;
-    const left = ed ? ed.getLayoutInfo().contentLeft : leftPad + 8;
-    const needed = Math.ceil(left + longest * measureCharWidth(fontSize) + 14);
+    let needed: number;
+    if (ed) {
+      try {
+        const li = ed.getLayoutInfo();
+        needed = Math.ceil(li.contentLeft + ed.getScrollWidth() + 14);
+      } catch {
+        needed = Math.ceil(leftPad + 8 + longest * measureCharWidth(fontSize) + 14);
+      }
+    } else {
+      const left = leftPad + 8;
+      needed = Math.ceil(left + longest * measureCharWidth(fontSize) + 14);
+    }
     let avail = natural + MAX_EXPAND;
     const scroller = box.closest(".messages, .dlg-body");
     if (scroller) {
@@ -130,7 +142,7 @@ export default function MonacoBlock({
       avail = Math.floor(sr.right - br.left - pr - 4);
     }
     const target = Math.min(needed, Math.min(natural + MAX_EXPAND, avail));
-    if (target > natural + 32) {
+    if (target > natural + 16) {
       box.style.width = `${Math.floor(target)}px`;
       try {
         ed?.layout();
@@ -150,6 +162,22 @@ export default function MonacoBlock({
     if (!expandWidth) return;
     window.addEventListener("resize", applyWidth);
     return () => window.removeEventListener("resize", applyWidth);
+  }, [applyWidth, expandWidth]);
+  // webfont swaps change glyph advances after measure — re-fit once fonts
+  // settle so late-loading JetBrains Mono can't leave lines scrolling
+  useEffect(() => {
+    if (!expandWidth) return;
+    let dead = false;
+    try {
+      document.fonts?.ready
+        .then(() => {
+          if (!dead) applyWidth();
+        })
+        .catch(() => {});
+    } catch {}
+    return () => {
+      dead = true;
+    };
   }, [applyWidth, expandWidth]);
 
   useEffect(() => {
