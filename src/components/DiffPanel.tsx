@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
-import type { ReactNode } from "react";
 import type { Msg } from "../types";
 import { opencode } from "../api";
-import { extLang, hlHtml } from "../lib/syntax";
+import { extLang } from "../lib/syntax";
 import Dialog from "./Dialog";
+import ReadOnlyDiff from "./ReadOnlyDiff";
 import "../styles/diff.css";
 
 type FileDiff = {
@@ -75,58 +75,10 @@ export default function DiffPanel({
   );
 }
 
-// colorize the server-provided unified diff: runs of add/del/context lines
-// are highlighted as one block (so multi-line tokens stay consistent), then
-// re-split by line; hunk and file headers keep their plain styling
+// unified diff for a patch — read-only monaco rendering with the same
+// rows/signs/tints as the old DOM version
 // (also reused by chat tool blocks for edit/write diffs)
 export function DiffLines({ patch, lang }: { patch: string; lang?: string }) {
   if (!patch.trim()) return null;
-  const lines = patch.split("\n");
-  if (lines[lines.length - 1] === "") lines.pop();
-
-  const out: ReactNode[] = [];
-  let buf: { cls: string; sign: string; code: string }[] = [];
-  const flush = () => {
-    if (!buf.length) return;
-    const html = lang
-      ? hlHtml(buf.map((b) => b.code).join("\n"), lang).split("\n")
-      : null;
-    for (const b of buf)
-      out.push(
-        <div key={out.length} className={b.cls}>
-          <span className="sign">{b.sign}</span>
-          {html ? <span dangerouslySetInnerHTML={{ __html: html.shift() ?? "" }} /> : b.code}
-        </div>,
-      );
-    buf = [];
-  };
-
-  for (const l of lines) {
-    if (l.startsWith("@@")) {
-      flush();
-      out.push(
-        <div key={out.length} className="hunk">
-          {l}
-        </div>,
-      );
-      continue;
-    }
-    if (/^(---|\+\+\+|diff |index |old mode|new mode)/.test(l)) {
-      flush();
-      out.push(
-        <div key={out.length} className="ctx meta">
-          {l}
-        </div>,
-      );
-      continue;
-    }
-    const cls = l.startsWith("+") ? "add" : l.startsWith("-") ? "del" : "ctx";
-    const sign = cls === "add" ? "+" : cls === "del" ? "-" : " ";
-    // strip the diff prefix so it doesn't pollute the first token
-    const code = cls === "ctx" ? (l.startsWith(" ") ? l.slice(1) : l) : l.slice(1);
-    buf.push({ cls, sign, code });
-  }
-  flush();
-
-  return <div className="diff-lines mono">{out}</div>;
+  return <ReadOnlyDiff patch={patch} lang={lang} />;
 }

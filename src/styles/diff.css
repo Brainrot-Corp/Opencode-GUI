@@ -78,3 +78,38 @@
   font-size: 12px;
   color: var(--text-faint);
 }
+
+/* read-only monaco diff — same rows/signs/tints as .diff-lines above,
+   diff-ness via gutter signs (line numbers) + whole-line decorations */
+.ro-diff {
+  overflow: hidden;
+}
+.ro-diff .monaco-editor,
+.ro-diff .monaco-editor-background {
+  background-color: transparent !important;
+}
+.ro-diff .monaco-editor {
+  outline: none !important;
+}
+/* whole-line row tints (isWholeLine decorations) */
+.ro-row.ro-add {
+  background: color-mix(in srgb, var(--accent) calc(0.1 * 100%), transparent);
+}
+.ro-row.ro-del {
+  background: rgba(224, 143, 143, 0.09);
+  opacity: 0.85;
+}
+.ro-row.ro-ctx {
+  color: var(--text-dim);
+  opacity: 0.75;
+}
+/* plain (untokenized) text takes the row color; token spans keep theirs */
+.ro-add-inline {
+  color: var(--accent);
+}
+.ro-del-inline {
+  color: var(--danger);
+}
+.ro-hunk-inline {
+  color: var(--accent-bright);
+}

@@ -6,6 +6,19 @@ import type * as Monaco from "monaco-editor";
 import editorWorker from "monaco-editor/editor/editor.worker?worker";
 
 export const MONACO_THEME = "opencode-gui";
+export const MONO_STACK =
+  '"JetBrains Mono", ui-monospace, "Cascadia Mono", Consolas, "Courier New", monospace';
+
+// singleton async loader — read-only viewers dynamic-import monaco so the
+// chunk stays out of the initial bundle; every mount shares one import
+let monacoPromise: Promise<typeof Monaco> | null = null;
+export function loadMonaco(): Promise<typeof Monaco> {
+  if (!monacoPromise) {
+    setupMonacoWorkers();
+    monacoPromise = import("monaco-editor");
+  }
+  return monacoPromise;
+}
 
 let workersSetup = false;
 export function setupMonacoWorkers() {
@@ -46,6 +59,14 @@ export function monacoLang(path: string): string {
   const dot = base.lastIndexOf(".");
   if (dot < 0) return "plaintext";
   return EXT_MONACO[base.slice(dot + 1).toLowerCase()] ?? "plaintext";
+}
+
+// lowlight hl id (what DiffLines receives via extLang) → monaco id.
+// Nearly 1:1 — only bash has no monaco counterpart (shell covers it).
+export function hlToMonacoLang(hl?: string): string {
+  if (!hl) return "plaintext";
+  if (hl === "bash") return "shell";
+  return hl;
 }
 
 function cssVar(name: string, fallback: string): string {
@@ -122,7 +143,7 @@ export function baseOptions(monaco: typeof Monaco): Monaco.editor.IStandaloneEdi
   void monaco;
   return {
     theme: MONACO_THEME,
-    fontFamily: '"JetBrains Mono", ui-monospace, "Cascadia Mono", Consolas, "Courier New", monospace',
+    fontFamily: MONO_STACK,
     fontSize: 11,
     lineHeight: 17,
     fontLigatures: false,
