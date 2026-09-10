@@ -109,21 +109,42 @@ export default function MonacoBlock({
 
   // grow toward the longest line when free stage space allows — capped at
   // MAX_EXPAND past the natural width and never past the scroller, so the
-  // chat itself never gains a horizontal scrollbar. Skipped for wrapped
-  // content (wrapping already removes the need). Need is the max of the
-  // exact measured line and the editor's own scroll width (ground truth
-  // once laid out) — either alone can lie (unloaded webfont vs stale layout).
+  // chat itself never gains a horizontal scrollbar. Wrapped blocks normally
+  // need nothing (wrapping absorbs overflow); only unbreakable spill grows
+  // them, by exactly the spilled amount (never the full unwrapped estimate).
+  // Hysteresis throughout (grow past +16, shrink back only with 32+ spare)
+  // so streaming never flickers the width, and layout runs only on change.
   const applyWidth = useCallback(() => {
     const box = mountRef.current;
     if (!box || !box.isConnected) return;
-    if (wrap) {
-      if (box.style.width) box.style.width = "";
-      return;
-    }
     const natural = box.parentElement?.clientWidth || box.clientWidth;
     const ed = edRef.current;
-    let needed = Math.ceil(leftPad + 8 + measureLineWidth(longestLine, fontSize, tabSize) + 14);
-    if (ed) {
+    let wrapSpill: number | null = null;
+    if (wrap) {
+      let clear = true;
+      if (ed) {
+        try {
+          const li = ed.getLayoutInfo();
+          const slack = li.width - li.contentLeft - ed.getScrollWidth();
+          if (slack < -2) {
+            clear = false;
+            wrapSpill = Math.ceil(li.contentLeft + ed.getScrollWidth() + 14);
+          } else if (slack <= 32) return; // deadband: keep current width
+        } catch {}
+      }
+      if (clear) {
+        if (box.style.width) {
+          box.style.width = "";
+          try {
+            ed?.layout();
+          } catch {}
+        }
+        return;
+      }
+    }
+    let needed =
+      wrapSpill ?? Math.ceil(leftPad + 8 + measureLineWidth(longestLine, fontSize, tabSize) + 14);
+    if (ed && wrapSpill == null) {
       try {
         const li = ed.getLayoutInfo();
         needed = Math.max(needed, Math.ceil(li.contentLeft + ed.getScrollWidth() + 14));
@@ -139,10 +160,13 @@ export default function MonacoBlock({
     }
     const target = Math.min(needed, Math.min(natural + MAX_EXPAND, avail));
     if (target > natural + 16) {
-      box.style.width = `${Math.floor(target)}px`;
-      try {
-        ed?.layout();
-      } catch {}
+      const v = `${Math.floor(target)}px`;
+      if (box.style.width !== v) {
+        box.style.width = v;
+        try {
+          ed?.layout();
+        } catch {}
+      }
     } else if (box.style.width) {
       box.style.width = "";
       try {

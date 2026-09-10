@@ -10,6 +10,7 @@ import { iconFor } from "../lib/attachments";
 import ToolBlock from "./ToolBlock";
 import MonacoBlock from "./MonacoBlock";
 import { hlToMonacoLang } from "../lib/monaco";
+import { stripAnsi } from "../lib/syntax";
 import "../styles/chat.css";
 import "../styles/find.css";
 
@@ -333,7 +334,9 @@ function codeLang(node: ReactNode): string | undefined {
 // exactly like the old rehype-only rendering.
 function CodePre(props: { children?: ReactNode }) {
   const { children } = props;
-  const text = codeText(children);
+  // strip terminal escapes: <pre> swallowed them invisibly, Monaco would
+  // draw them as glyphs; copy matches what's seen
+  const text = stripAnsi(codeText(children));
   const lang = hlToMonacoLang(codeLang(children));
   const [copied, setCopied] = useState(false);
   const copy = () => {

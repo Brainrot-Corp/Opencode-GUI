@@ -31,6 +31,15 @@ export function escPlain(code: string): string {
   return code.replace(/[&<>]/g, (c) => (c === "&" ? "&amp;" : c === "<" ? "&lt;" : "&gt;"));
 }
 
+// strip terminal escape sequences (colors, cursor, OSC hyperlinks) for
+// display — <pre> swallowed these control chars invisibly, but Monaco draws
+// them as visible glyphs, so unfiltered tool output reads as [2m[36m noise
+// eslint-disable-next-line no-control-regex
+const ANSI_RE = /[\u001b\u009b][[()#;?]*(?:\d{1,4}(?:[;:]\d{0,4})*)?[0-9A-ORZcf-nqry=><]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g;
+export function stripAnsi(s: string): string {
+  return s.replace(ANSI_RE, "");
+}
+
 // ponytail: whole-string highlighting, no incremental parser — inputs above
 // these caps skip highlighting rather than jank the UI; streaming/worker
 // splitting only if real files ever hit this in practice

@@ -1,18 +1,21 @@
 import { useMemo, useState } from "react";
 import type { Part } from "@opencode-ai/sdk/client";
 import type { QuestionInfo } from "../types";
-import { detectLang, extLang } from "../lib/syntax";
+import { detectLang, extLang, stripAnsi } from "../lib/syntax";
 import { hlToMonacoLang } from "../lib/monaco";
 import { DiffLines } from "./DiffPanel";
 import MonacoBlock from "./MonacoBlock";
 
 // read-only mono text for tool inputs/outputs — Monaco rendering with the
-// language auto-detected, same as the old lowlight rendering
+// language auto-detected, same as the old lowlight rendering. Terminal
+// escapes are stripped for display (<pre> swallowed them invisibly, Monaco
+// would draw them as glyphs); copies stay raw.
 function Hi({ text }: { text: string }) {
-  const lang = useMemo(() => hlToMonacoLang(detectLang(text)), [text]);
+  const clean = useMemo(() => stripAnsi(text), [text]);
+  const lang = useMemo(() => hlToMonacoLang(detectLang(clean)), [clean]);
   return (
     <MonacoBlock
-      value={text}
+      value={clean}
       language={lang}
       fontSize={11}
       lineHeight={17}
@@ -22,7 +25,7 @@ function Hi({ text }: { text: string }) {
       wrap
       maxHeight={240}
       className="tool-mono"
-      fallback={<pre className="tool-out">{text}</pre>}
+      fallback={<pre className="tool-out">{clean}</pre>}
     />
   );
 }
@@ -100,10 +103,12 @@ function prettyJson(out: string): string | null {
 
 // strips render-only gutters so copied text is paste-ready: file-read output
 // carries line-number prefixes ("  12→code") that shouldn't survive a copy —
-// only stripped when ~every line has one, so numbered prose stays intact
+// only stripped when ~every line has one, so numbered prose stays intact.
+// Terminal escapes are always stripped (invisible in copy, garbage on paste).
 function cleanForCopy(tool: string, out: string): string {
-  if (tool !== "read") return out;
-  const lines = out.split("\n");
+  const plain = stripAnsi(out);
+  if (tool !== "read") return plain;
+  const lines = plain.split("\n");
   const nonEmpty = lines.filter((l) => l.trim());
   if (!nonEmpty.length) return out;
   const guttered = nonEmpty.filter((l) => /^\s*\d+\s?[→:|]\s?/.test(l)).length;
