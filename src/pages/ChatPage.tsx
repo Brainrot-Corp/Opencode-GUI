@@ -31,12 +31,10 @@ import { routeVoice, routerInput, type VoiceAct } from "../lib/voiceRouter";
 import { ensureDict } from "../lib/dictWords";
 import { pickWorkspace, getLastWorkspace, getAllWorkspaces, removeWorkspace, applyWorkspace } from "../lib/workspace";
 import { normWorkspace } from "../lib/platform";
-import { remoteLabel } from "../lib/remotes";
 import { playSound } from "../lib/sounds";
 import { useSpeech } from "../hooks/useSpeech";
 import { pushToast, dismissToast } from "../hooks/useToast";
 import { matchesEvent } from "../lib/hotkeys";
-import { withHotkey } from "../lib/tip";
 import { releaseTrapFocus } from "../lib/focus";
 import { usePlugins } from "../hooks/usePlugins";
 import { loadPluginsCatalog, fetchPluginFiles, pluginRawUrl, type PluginCatalogEntry } from "../lib/pluginsCatalog";
@@ -1323,40 +1321,7 @@ export default function ChatPage() {
             )}
             {(oc.activeId || oc.booting) && (
               <>
-                {(() => {
-                  const activeDir = oc.activeId ? ((oc as any).getDirForSession?.(oc.activeId) ?? settings.workspace) : settings.workspace;
-                  if (!activeDir) return null;
-                  // close what you see: an active extra, or a lone non-home
-                  // primary (which goes home). Extras with primary active stay
-                  // on their sidebar rows — the x never closes a background ws.
-                  const allWs = getAllWorkspaces();
-                  const primaryWs = allWs[0] ?? "";
-                  const activeIsExtra =
-                    allWs.length > 1 && normWorkspace(activeDir) !== normWorkspace(primaryWs);
-                  const primaryHomeable =
-                    allWs.length <= 1 && primaryWs !== "" && normWorkspace(primaryWs) !== "";
-                  const removable = activeIsExtra || primaryHomeable;
-                  const remote = activeDir.startsWith("ssh://");
-                  return (
-                    <span className="stage-head-wrap">
-                      <button type="button" className={`stage-head stage-head--action${removable ? " stage-head--with-close" : ""}`} data-tip={activeDir} data-tip-cursor="" aria-label="Open workspace" onClick={() => void pickWorkspace()}>
-                        <i className={`fa-solid ${remote ? "fa-server" : "fa-folder-open"}`} aria-hidden="true" />
-                        <span className="mono">{remote ? remoteLabel(activeDir) : activeDir}</span>
-                      </button>
-                      {removable && (
-                        <button
-                          type="button"
-                          className={`icon-btn close stage-head-close${wsCloseHint ? " armed" : ""}`}
-                          data-tip={withHotkey(wsCloseHint ? (activeIsExtra ? t("sidebar.workspace.removeConfirm") : t("chat.closeWorkspaceConfirm")) : (activeIsExtra ? t("sidebar.workspace.remove") : t("settings.project.workspace.back")), settings.hotkeys.closeWorkspace)}
-                          aria-label="Close workspace"
-                          onClick={closeActiveWorkspace}
-                        >
-                          <i className={`fa-solid ${wsCloseHint ? "fa-check" : "fa-xmark"}`} aria-hidden="true" />
-                        </button>
-                      )}
-                    </span>
-                  );
-                })()}
+                {/* ponytail: stage-head workspace banner hidden for now, restore block below when needed */}
                 <MessageList
                   msgs={oc.msgs}
                   busy={oc.busy}
