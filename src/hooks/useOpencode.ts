@@ -45,6 +45,10 @@ function isAgentReachable(name: string, list: { name: string }[]): boolean {
 // re-exported: composer + command dialog import the type from here
 export type { CmdEntry } from "../lib/slashCommands";
 
+// remotes already toasted as down this session — the 2s SSE tick re-fails
+// a dead host constantly; notify once per outage, not once per tick
+const remoteDownToasted = new Set<string>();
+
 export function useOpencode() {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [activeId, setActiveId] = useState("");
@@ -1019,8 +1023,12 @@ export function useOpencode() {
               try { onEvent(JSON.parse(ev.data), d); } catch {}
             };
             esMap.set(d, es);
+            remoteDownToasted.delete(d);
           } catch (e) {
-            if (!disposed) pushToast(`SSH workspace unreachable: ${e}`);
+            if (!disposed && !remoteDownToasted.has(d)) {
+              remoteDownToasted.add(d);
+              pushToast(`SSH workspace unreachable: ${e}`);
+            }
           } finally {
             resolving.delete(d);
           }

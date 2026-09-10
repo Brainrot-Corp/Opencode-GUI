@@ -849,8 +849,19 @@ export default function ChatPage() {
       // descendant cursor rule (panels/buttons/editors all declare their own)
       document.body.classList.add("resizing");
       document.body.style.userSelect = "none";
+      // rAF-coalesced like the terminal dock drags — raw mousemove far
+      // outpaces paint and each event would schedule a full app relayout
+      let raf = 0;
+      let pending: number | null = null;
       const move = (ev: MouseEvent) => {
-        setSbW(Math.min(Math.max(280, startW + (ev.clientX - startX)), 440));
+        pending = Math.min(Math.max(280, startW + (ev.clientX - startX)), 440);
+        if (raf) return;
+        raf = requestAnimationFrame(() => {
+          raf = 0;
+          if (pending === null) return;
+          setSbW(pending);
+          pending = null;
+        });
         const now = performance.now();
         if (now - lastTick > 70) {
           lastTick = now;
@@ -858,6 +869,8 @@ export default function ChatPage() {
         }
       };
       const up = () => {
+        if (raf) { cancelAnimationFrame(raf); raf = 0; }
+        if (pending !== null) { setSbW(pending); pending = null; }
         setResizing(false);
         document.body.classList.remove("resizing");
         document.body.style.userSelect = "";

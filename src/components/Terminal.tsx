@@ -442,22 +442,35 @@ export default function TerminalPanel({
     });
   }, [activeId, onClose]);
 
-  // vertical resize handle (same as single-terminal version)
+  // vertical resize handle (same as single-terminal version).
+  // mousemove can fire far above display refresh — coalesce to one setH per
+  // frame or every event schedules its own render + xterm fit + repaint.
   const startResize = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
     const startY = e.clientY;
     const startH = h;
     let lastTick = 0;
+    let raf = 0;
+    let pending: number | null = null;
     setDragging(true);
     document.body.classList.add("resizing");
     document.body.style.userSelect = "none";
     document.body.style.cursor = "row-resize";
     const move = (ev: MouseEvent) => {
-      setH(clampH(startH + (startY - ev.clientY)));
+      pending = clampH(startH + (startY - ev.clientY));
+      if (raf) return;
+      raf = requestAnimationFrame(() => {
+        raf = 0;
+        if (pending === null) return;
+        setH(pending);
+        pending = null;
+      });
       const now = performance.now();
       if (now - lastTick > 70) { lastTick = now; playSound("resize"); }
     };
     const up = () => {
+      if (raf) { cancelAnimationFrame(raf); raf = 0; }
+      if (pending !== null) { setH(pending); pending = null; }
       setDragging(false);
       document.body.classList.remove("resizing");
       document.body.style.userSelect = "";
@@ -473,26 +486,41 @@ export default function TerminalPanel({
 
   const resetSize = useCallback(() => { setH(H_DEFAULT); playSound("click"); }, []);
 
-  // horizontal resize for expanded side panel — mirrors sidebar drag
+  // horizontal resize for expanded side panel — mirrors sidebar drag,
+  // same rAF coalescing as the vertical handle (see above)
   const startSideResize = useCallback((e: React.MouseEvent) => {
     if (sideCollapsed) return;
     e.preventDefault();
     const startX = e.clientX;
     const startW = sideW;
     let lastTick = 0;
+    let raf = 0;
+    let pending: number | null = null;
     setSideResizing(true);
+    // same frozen-visuals treatment as the vertical drag (xterm + blur
+    // suspend while body.resizing; single settle pass on mouseup)
+    setDragging(true);
     document.body.classList.add("resizing");
     (document.body as any).__termSideResizing = true;
     document.body.style.userSelect = "none";
     document.body.style.cursor = "col-resize";
     const move = (ev: MouseEvent) => {
-      const next = Math.min(Math.max(SIDE_W_MIN, startW + (startX - ev.clientX)), SIDE_W_MAX);
-      setSideW(next);
+      pending = Math.min(Math.max(SIDE_W_MIN, startW + (startX - ev.clientX)), SIDE_W_MAX);
+      if (raf) return;
+      raf = requestAnimationFrame(() => {
+        raf = 0;
+        if (pending === null) return;
+        setSideW(pending);
+        pending = null;
+      });
       const now = performance.now();
       if (now - lastTick > 70) { lastTick = now; playSound("resize"); }
     };
     const up = () => {
+      if (raf) { cancelAnimationFrame(raf); raf = 0; }
+      if (pending !== null) { setSideW(pending); pending = null; }
       setSideResizing(false);
+      setDragging(false);
       document.body.classList.remove("resizing");
       delete (document.body as any).__termSideResizing;
       document.body.style.userSelect = "";

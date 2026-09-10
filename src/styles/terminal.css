@@ -41,6 +41,17 @@
 .term-dock.no-anim {
   transition: none;
 }
+/* while dragging the terminal visuals are frozen (fit work is deferred to
+   mouseup) — hide the xterm layer so no canvas repaints, and suspend the
+   full-dock blur so the compositor isn't re-rasterizing it every frame.
+   Layout is untouched, so the container still tracks the cursor live. */
+.term-dock.dragging .term-body {
+  visibility: hidden;
+}
+.term-dock.dragging::before {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
 
 /* drag handle — horizontal twin of .sb-resize: faint resting sash + centered
    grip icon so affordance is discoverable without hover */

@@ -138,6 +138,10 @@ pub fn pty_spawn(
     let display: String;
     let mut cmd: CommandBuilder;
     if crate::remote::is_remote(&cwd) {
+        // dead host? fail now instead of parking a spawn on ConnectTimeout
+        if crate::remote::circuit_open_uri(&cwd) {
+            return Err("ssh host unreachable (failed recently — retrying shortly)".into());
+        }
         let (argv, dest, cmd_str) =
             crate::remote::pty_ssh_parts(&cwd, shell_param.as_deref()).ok_or("bad ssh workspace")?;
         let mut c = CommandBuilder::new(&argv[0]);

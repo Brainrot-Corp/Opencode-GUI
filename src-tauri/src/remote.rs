@@ -60,6 +60,95 @@ fn global_key_for(t: &RemoteTarget) -> Option<String> {
     })
 }
 
+/// Circuit breaker: a host that just failed at the TRANSPORT level stays
+/// failed-fast for a while. Without it a dead box wedges the whole app —
+/// the boot retry loop, 2s SSE ticks and 4s git polls would otherwise stack
+/// 10–40s blocking ssh calls until Tauri's command pool starves and even
+/// trivial invokes stop running (the total-freeze-on-launch failure).
+static HOST_DOWN: LazyLock<Mutex<HashMap<String, std::time::Instant>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+const BREAKER_WINDOW: std::time::Duration = std::time::Duration::from_secs(20);
+
+/// ssh reserves exit code 255 for its own failures (vs the remote command's
+/// exit code). With LC_ALL=C the markers below are stable across locales.
+#[derive(Debug, PartialEq, Eq)]
+enum SshFailure {
+    /// network/host unreachable — trip the breaker, fail fast for a while
+    Transport,
+    /// bad credentials — never trip (the user may fix the key/password and
+    /// retry immediately; a tripped breaker would swallow that retry)
+    Auth,
+    /// the remote command itself failed (host is fine) — never trip
+    Command,
+}
+
+fn classify_ssh_failure(code: Option<i32>, stderr: &str) -> SshFailure {
+    if code != Some(255) {
+        return SshFailure::Command;
+    }
+    let lower = stderr.to_lowercase();
+    // auth first: a throttled/drop-happy server can print both, and a wrong
+    // password must stay instantly retryable
+    if lower.contains("permission denied") {
+        return SshFailure::Auth;
+    }
+    const TRANSPORT: &[&str] = &[
+        "connection refused",
+        "connection timed out",
+        "connection reset",
+        "operation timed out",
+        "no route to host",
+        "network is unreachable",
+        "could not resolve hostname",
+        "name or service not known",
+        "closed by remote host",
+        "broken pipe",
+    ];
+    if TRANSPORT.iter().any(|m| lower.contains(m)) {
+        SshFailure::Transport
+    } else {
+        // unknown 255 (e.g. host-key changed): fail safe == no trip, just an
+        // error. Worst case is today's behavior, never a worse one.
+        SshFailure::Command
+    }
+}
+
+fn breaker_key(t: &RemoteTarget) -> String {
+    // host-level: every workspace on the box shares one breaker
+    if t.port != 22 {
+        format!("{}:{}", t.host, t.port)
+    } else {
+        t.host.clone()
+    }
+}
+
+fn open_since(at: std::time::Instant, window: std::time::Duration) -> bool {
+    at.elapsed() < window
+}
+
+/// True when this host failed transport recently — callers must fail fast
+/// without spawning ssh.
+pub fn circuit_open(t: &RemoteTarget) -> bool {
+    let map = HOST_DOWN.lock().unwrap_or_else(|e| e.into_inner());
+    map.get(&breaker_key(t))
+        .is_some_and(|at| open_since(*at, BREAKER_WINDOW))
+}
+
+/// Same check from a workspace uri / pseudo-path (for call sites like pty
+/// that never build a target for grading).
+pub fn circuit_open_uri(uri: &str) -> bool {
+    parse_remote(uri.trim()).is_some_and(|t| circuit_open(&t))
+}
+
+fn note_transport(t: &RemoteTarget, ok: bool) {
+    let mut map = HOST_DOWN.lock().unwrap_or_else(|e| e.into_inner());
+    if ok {
+        map.remove(&breaker_key(t));
+    } else {
+        map.insert(breaker_key(t), std::time::Instant::now());
+    }
+}
+
 /// Run `git -C <remote-path> …` using global creds (for git.rs, which has no
 /// State in scope). Entry may be a workspace uri or a pseudo root path.
 pub fn exec_git_global(cwd_uri: &str, args: &[&str]) -> Result<String, String> {
@@ -312,6 +401,8 @@ fn ssh_destination(t: &RemoteTarget) -> String {
 
 /// Run a command on the remote via short-lived `ssh` (git, test, mkdir…).
 /// `stdin_bytes` pipes raw bytes to the remote stdin (binary-safe writes).
+/// Dead hosts fail FAST via the circuit breaker instead of burning a full
+/// ConnectTimeout on every caller (boot loop, SSE ticks, git polls).
 pub fn exec_remote(
     t: &RemoteTarget,
     key_file: Option<&str>,
@@ -319,6 +410,12 @@ pub fn exec_remote(
     remote_cmd: &str,
     stdin_bytes: Option<&[u8]>,
 ) -> Result<String, String> {
+    if circuit_open(t) {
+        return Err(format!(
+            "ssh to {} failed recently — retrying shortly (host unreachable)",
+            t.host
+        ));
+    }
     let want_pw = password.is_some_and(|p| !p.is_empty());
     // askpass answers the prompt; BatchMode would suppress prompting
     let argv = ssh_argv(t, key_file, !want_pw);
@@ -358,9 +455,16 @@ pub fn exec_remote(
     }
     let out = child.wait_with_output().map_err(|e| format!("ssh: {e}"))?;
     if out.status.success() {
+        note_transport(t, true);
         Ok(String::from_utf8_lossy(&out.stdout).into_owned())
     } else {
-        Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
+        let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        // only transport failures trip the breaker — auth problems stay
+        // instantly retryable, command errors mean the host is fine
+        if classify_ssh_failure(out.status.code(), &stderr) == SshFailure::Transport {
+            note_transport(t, false);
+        }
+        Err(stderr)
     }
 }
 
@@ -423,40 +527,64 @@ pub fn pty_ssh_parts(uri: &str, shell: Option<&str>) -> Option<(Vec<String>, Str
     Some((argv, dest, cmd))
 }
 
-/// Ensure tunnel + remote `opencode serve` for a workspace uri.
-/// Returns the local forwarded port. Reuses a live conn when present.
-pub fn ensure_tunnel(
-    app: &AppHandle,
-    state: &State<'_, RemoteState>,
-    uri: &str,
-    password: Option<String>,
-) -> Result<u16, String> {
-    let uri = uri.trim().to_string();
-    let t = target_from_uri(&uri)?;
-    if let Some(pw) = password {
-        state.passwords.lock().unwrap_or_else(|e| e.into_inner()).insert(uri.clone(), pw.clone());
-        remember_password(&uri, pw);
+/// Fast (non-blocking) half of the tunnel: reuse a live conn if present.
+fn live_port(state: &State<'_, RemoteState>, uri: &str) -> Option<u16> {
+    let mut conns = state.conns.lock().unwrap_or_else(|e| e.into_inner());
+    let alive = match conns.get_mut(uri.trim()) {
+        Some(c) => matches!(c.child.try_wait(), Ok(None)),
+        None => return None,
+    };
+    if alive {
+        conns.get(uri.trim()).map(|c| c.port)
+    } else {
+        conns.remove(uri.trim());
+        None
     }
-    // reuse live conn
-    {
-        let mut conns = state.conns.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(c) = conns.get_mut(&uri) {
-            match c.child.try_wait() {
-                Ok(None) => return Ok(c.port),
-                _ => {
-                    conns.remove(&uri);
-                }
-            }
+}
+
+fn store_conn(state: &State<'_, RemoteState>, uri: String, port: u16, child: Child) {
+    state
+        .conns
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(uri, RemoteConn { port, child });
+}
+
+/// Wait for the forwarded port, but bail the moment ssh itself dies instead
+/// of burning the whole timeout (connection refused / bad auth used to cost
+/// a full 10s wait per attempt before anyone noticed the corpse).
+fn wait_for_tunnel(local: u16, child: &mut Child, timeout: std::time::Duration) -> bool {
+    let slices = (timeout.as_millis() / 500).max(1);
+    for _ in 0..slices {
+        if crate::wait_for_port(local, std::time::Duration::from_millis(500)) {
+            return true;
+        }
+        match child.try_wait() {
+            Ok(Some(_)) => return false,
+            _ => {}
         }
     }
-    let (key, pw) = creds_for(app, state, &t);
-    // password file is created once and lives until this function returns
-    // (all paths) — the tunnel only prompts at connect time
+    false
+}
+
+/// Blocking tunnel dial: pick ports, spawn `ssh -L … opencode serve`, wait
+/// for health. Pure owned inputs so commands can run it on the blocking
+/// pool; all fast map/cred work stays outside. Returns the local port +
+/// the ssh child on success.
+fn dial_blocking(
+    t: RemoteTarget,
+    key: Option<String>,
+    pw: Option<String>,
+) -> Result<(u16, Child), String> {
+    // password file is created once and lives for all attempts — the tunnel
+    // only prompts at connect time
     let askpass_guard: Option<AskpassFile> = match pw.as_deref() {
         Some(p) if !p.is_empty() => Some(write_askpass_file(p)?),
         _ => None,
     };
-    const RETRIES: u32 = 4;
+    // two attempts max: a refused/dead host won't heal 250ms later, and
+    // deterministic failures (bad auth, missing remote binary) return at once
+    const RETRIES: u32 = 2;
     let mut last_err = String::from("failed to start remote opencode");
     for _ in 0..RETRIES {
         let local = std::net::TcpListener::bind("127.0.0.1:0")
@@ -484,51 +612,94 @@ pub fn ensure_tunnel(
             .arg(&fwd)
             .arg(dest)
             .arg(&serve);
-        #[cfg(debug_assertions)]
-        let _ = cmd.stdout(Stdio::inherit()).stderr(Stdio::inherit());
+        // stderr is piped (not nulled) so an early death can be classified
+        // below; no console window is created either way
+        cmd.stdout(Stdio::null()).stderr(Stdio::piped());
         #[cfg(all(windows, not(debug_assertions)))]
         {
             use std::os::windows::process::CommandExt;
             const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-            cmd.creation_flags(CREATE_NO_WINDOW).stdout(Stdio::null()).stderr(Stdio::null());
+            cmd.creation_flags(CREATE_NO_WINDOW);
         }
-        #[cfg(all(not(windows), not(debug_assertions)))]
+        #[cfg(debug_assertions)]
         {
-            let _ = cmd.stdout(Stdio::null()).stderr(Stdio::null());
+            // debug builds still surface the child on the console via stderr
+            let _ = cmd.stdout(Stdio::inherit());
         }
         let mut child = match cmd.spawn() {
             Ok(c) => c,
             Err(e) => {
-                last_err = format!("ssh: {e}");
-                std::thread::sleep(std::time::Duration::from_millis(200));
-                continue;
+                // local spawn failure (no ssh binary) — instant, never trips
+                return Err(format!("ssh: {e}"));
             }
         };
         crate::job::assign(&child);
-        let listening = crate::wait_for_port(local, std::time::Duration::from_secs(10));
-        match child.try_wait() {
-            Ok(Some(_)) => {
-                last_err = format!(
+        let listening = wait_for_tunnel(local, &mut child, std::time::Duration::from_secs(10));
+        if listening {
+            note_transport(&t, true);
+            return Ok((local, child));
+        }
+        // Not listening: either ssh died on its own (classify the corpse)
+        // or it's still hanging (slow host — kill it, no verdict yet, and
+        // above all don't report it as a missing remote binary).
+        let early_exit = matches!(child.try_wait(), Ok(Some(_)));
+        if !early_exit {
+            let _ = child.kill();
+        }
+        let status = child.wait().ok();
+        // drain stderr for classification (EOF is immediate — the child is
+        // dead here; no console window is created either way)
+        let mut stderr_text = String::new();
+        if let Some(mut pipe) = child.stderr.take() {
+            use std::io::Read;
+            let mut buf = String::new();
+            let _ = pipe.read_to_string(&mut buf);
+            stderr_text = buf;
+        }
+        if !early_exit {
+            last_err = format!(
+                "tunnel to {} not listening on 127.0.0.1:{local} (host slow or firewalled?)",
+                t.host
+            );
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            continue;
+        }
+        match classify_ssh_failure(status.and_then(|s| s.code()), &stderr_text) {
+            SshFailure::Auth => {
+                return Err(format!(
+                    "ssh to {} rejected the credentials (check key/agent/password)",
+                    ssh_destination(&t)
+                ));
+            }
+            SshFailure::Transport => {
+                note_transport(&t, false);
+                last_err = format!("ssh to {} unreachable: {}", t.host, first_line(&stderr_text));
+                std::thread::sleep(std::time::Duration::from_millis(300));
+                continue;
+            }
+            SshFailure::Command => {
+                // deterministic remote failure (e.g. no `opencode` binary) —
+                // retrying an identical command is pointless
+                return Err(format!(
                     "remote `opencode serve` exited on {fwd} (is opencode installed on {}? check `ssh {} opencode --version`)",
                     t.host,
                     ssh_destination(&t)
-                );
-                std::thread::sleep(std::time::Duration::from_millis(250));
-                continue;
-            }
-            Ok(None) if listening => {
-                state.conns.lock().unwrap_or_else(|e| e.into_inner()).insert(uri.clone(), RemoteConn { port: local, child });
-                return Ok(local);
-            }
-            _ => {
-                let _ = child.kill();
-                let _ = child.wait();
-                last_err = format!("tunnel to {} not listening on 127.0.0.1:{local}", t.host);
-                std::thread::sleep(std::time::Duration::from_millis(300));
+                ));
             }
         }
     }
+    note_transport(&t, false);
     Err(last_err)
+}
+
+fn first_line(s: &str) -> String {
+    s.lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .unwrap_or("connection failed")
+        .chars()
+        .take(160)
+        .collect()
 }
 
 pub fn kill_all(state: &RemoteState) {
@@ -542,7 +713,7 @@ pub fn kill_all(state: &RemoteState) {
 // --- Tauri commands ---------------------------------------------------------
 
 #[tauri::command]
-pub fn remote_test(app: AppHandle, state: State<'_, RemoteState>, uri: String, password: Option<String>) -> Result<String, String> {
+pub async fn remote_test(app: AppHandle, state: State<'_, RemoteState>, uri: String, password: Option<String>) -> Result<String, String> {
     let uri = uri.trim().to_string();
     if let Some(pw) = password.clone() {
         if !pw.is_empty() {
@@ -552,31 +723,61 @@ pub fn remote_test(app: AppHandle, state: State<'_, RemoteState>, uri: String, p
     }
     let t = target_from_uri(&uri)?;
     let (key, pw) = creds_for(&app, &state, &t);
-    let out = exec_remote(&t, key.as_deref(), pw.as_deref(), &format!("test -d {} && echo dir-ok; opencode --version || echo no-opencode", sh_quote(&t.path)), None)?;
+    // off the command thread: a dead host burns a full ConnectTimeout here
+    let out = tauri::async_runtime::spawn_blocking(move || {
+        let script = format!("test -d {} && echo dir-ok; opencode --version || echo no-opencode", sh_quote(&t.path));
+        exec_remote(&t, key.as_deref(), pw.as_deref(), &script, None)
+    })
+    .await
+    .map_err(|e| format!("ssh task failed: {e}"))??;
     if !out.contains("dir-ok") {
-        return Err(format!("remote path not found: {}", t.path));
+        return Err(format!("remote path not found: {}", uri));
     }
     Ok(out.trim().to_string())
 }
 
 #[tauri::command]
-pub fn remote_ensure(app: AppHandle, state: State<'_, RemoteState>, uri: String, password: Option<String>) -> Result<u16, String> {
-    ensure_tunnel(&app, &state, &uri, password)
+pub async fn remote_ensure(app: AppHandle, state: State<'_, RemoteState>, uri: String, password: Option<String>) -> Result<u16, String> {
+    ensure_tunnel_async(app, state, uri, password).await
+}
+
+/// Shared slow path for remote_ensure / remote_base_url: fast map + cred
+/// work inline, blocking dial on the blocking pool.
+async fn ensure_tunnel_async(
+    app: AppHandle,
+    state: State<'_, RemoteState>,
+    uri: String,
+    password: Option<String>,
+) -> Result<u16, String> {
+    let uri = uri.trim().to_string();
+    let t = target_from_uri(&uri)?;
+    if let Some(pw) = password {
+        state.passwords.lock().unwrap_or_else(|e| e.into_inner()).insert(uri.clone(), pw.clone());
+        remember_password(&uri, pw);
+    }
+    if let Some(port) = live_port(&state, &uri) {
+        return Ok(port);
+    }
+    if circuit_open(&t) {
+        return Err(format!(
+            "ssh to {} failed recently — retrying shortly (host unreachable)",
+            t.host
+        ));
+    }
+    let (key, pw) = creds_for(&app, &state, &t);
+    let (port, child) = tauri::async_runtime::spawn_blocking(move || dial_blocking(t, key, pw))
+        .await
+        .map_err(|e| format!("tunnel task failed: {e}"))??;
+    store_conn(&state, uri, port, child);
+    Ok(port)
 }
 
 #[tauri::command]
-pub fn remote_base_url(app: AppHandle, state: State<'_, RemoteState>, uri: String) -> Result<String, String> {
-    // fast path: live conn without spawning
-    {
-        let mut conns = state.conns.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(c) = conns.get_mut(uri.trim()) {
-            if matches!(c.child.try_wait(), Ok(None)) {
-                return Ok(format!("http://127.0.0.1:{}", c.port));
-            }
-            conns.remove(uri.trim());
-        }
+pub async fn remote_base_url(app: AppHandle, state: State<'_, RemoteState>, uri: String) -> Result<String, String> {
+    if let Some(port) = live_port(&state, uri.trim()) {
+        return Ok(format!("http://127.0.0.1:{port}"));
     }
-    ensure_tunnel(&app, &state, &uri, None).map(|p| format!("http://127.0.0.1:{p}"))
+    ensure_tunnel_async(app, state, uri, None).await.map(|p| format!("http://127.0.0.1:{p}"))
 }
 
 #[derive(serde::Serialize)]
@@ -752,8 +953,9 @@ mod tests {
         }
     }
 
-    #[test]
-    fn askpass_file_self_deletes() {        let path = {
+        #[test]
+    fn askpass_file_self_deletes() {
+        let path = {
             let g = write_askpass_file("s3cret").unwrap();
             assert!(g.0.is_file());
             #[cfg(unix)]
@@ -765,5 +967,51 @@ mod tests {
             g.0.clone()
         };
         assert!(!path.exists());
+    }
+
+    #[test]
+    fn classify_transport_failures_trip() {
+        use SshFailure::*;
+        // ssh's own exit code + network markers → breaker trips
+        assert_eq!(classify_ssh_failure(Some(255), "ssh: connect to host h port 22: Connection refused"), Transport);
+        assert_eq!(classify_ssh_failure(Some(255), "ssh: connect to host h port 22: Connection timed out"), Transport);
+        assert_eq!(classify_ssh_failure(Some(255), "ssh: Could not resolve hostname nope: Name or service not known"), Transport);
+        assert_eq!(classify_ssh_failure(Some(255), "Connection closed by remote host"), Transport);
+        assert_eq!(classify_ssh_failure(Some(255), "No route to host"), Transport);
+        // auth failures stay instantly retryable even at 255…
+        assert_eq!(classify_ssh_failure(Some(255), "user@h: Permission denied (publickey,password)."), Auth);
+        // …and win over transport markers when a throttled server prints both
+        assert_eq!(classify_ssh_failure(Some(255), "Permission denied, please try again.\r\nConnection closed by remote host"), Auth);
+        // remote command failures mean the host is fine — never trip
+        assert_eq!(classify_ssh_failure(Some(1), "fatal: not a git repository"), Command);
+        assert_eq!(classify_ssh_failure(Some(127), "opencode: command not found"), Command);
+        assert_eq!(classify_ssh_failure(Some(128), "Permission denied (publickey)"), Command);
+        assert_eq!(classify_ssh_failure(None, "killed"), Command);
+        // unknown 255 fails safe: an error, but no trip (today's behavior)
+        assert_eq!(classify_ssh_failure(Some(255), "Host key verification failed."), Command);
+        assert_eq!(classify_ssh_failure(Some(255), ""), Command);
+    }
+
+    #[test]
+    fn breaker_opens_and_expires() {
+        let t = parse_remote("ssh://u@h:2222/a").unwrap();
+        assert_eq!(breaker_key(&t), "h:2222");
+        assert_eq!(breaker_key(&parse_remote("ssh://h/a").unwrap()), "h");
+        assert!(!open_since(std::time::Instant::now() - std::time::Duration::from_secs(30), std::time::Duration::from_secs(20)));
+        assert!(open_since(std::time::Instant::now(), std::time::Duration::from_secs(20)));
+        // trip → open; success → closed again (fast recovery, no waiting out the window)
+        note_transport(&t, false);
+        assert!(circuit_open(&t));
+        assert!(circuit_open_uri("ssh://u@h:2222/other/path"));
+        assert!(!circuit_open_uri("ssh://other-host/a"));
+        note_transport(&t, true);
+        assert!(!circuit_open(&t));
+    }
+
+    #[test]
+    fn first_line_truncates_noise() {
+        assert_eq!(first_line(""), "connection failed");
+        assert_eq!(first_line("\n  ssh: boom  \nsecond"), "ssh: boom");
+        assert_eq!(first_line(&"x".repeat(500)).len(), 160);
     }
 }

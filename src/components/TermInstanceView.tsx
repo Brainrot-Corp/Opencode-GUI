@@ -139,6 +139,10 @@ export default function TermInstanceView({
     resizeTimeoutRef.current = window.setTimeout(flushResize, 90) as unknown as number;
   }, [flushResize]);
 
+  // set when a fit pass skipped its full repaint mid-drag — the drag-end
+  // listener below spends it on exactly one final fit+refresh
+  const skippedRefreshRef = useRef(false);
+
   const spawn = useCallback(async () => {
     const curId = idRef.current;
     const curGen = genRef.current;
@@ -318,6 +322,15 @@ export default function TermInstanceView({
       return;
     }
     let proposed: { cols: number; rows: number } | undefined;
+    // mid-drag the terminal visuals are frozen (see .term-dock.dragging CSS)
+    // and the container is hidden — skip ALL xterm work until release, when
+    // the drag-end listener below does one settling fit+refresh+resize
+    try {
+      if (document.body.classList.contains("resizing")) {
+        skippedRefreshRef.current = true;
+        return;
+      }
+    } catch {}
     try { proposed = fit.proposeDimensions(); } catch { return; }
     if (!proposed || !Number.isFinite(proposed.cols) || !Number.isFinite(proposed.rows) || proposed.cols < 2 || proposed.rows < 2 || proposed.cols > 1000 || proposed.rows > 1000) return;
     try { fit.fit(); } catch { return; }
@@ -438,6 +451,26 @@ export default function TermInstanceView({
     hlRef.current?.dispose();
     termRef.current?.dispose();
     void invoke("pty_kill", { id: idRef.current, gen: genRef.current }).catch(() => {});
+  }, []);
+
+  // drag-end settle — fit passes skip their full repaint while body.resizing
+  // (see fitNow), so spend exactly one final fit+refresh here. Deferred two
+  // frames: the panel's own mouseup listener removes the class synchronously,
+  // and this listener (registered first, at mount) would otherwise still see it.
+  useEffect(() => {
+    const end = () => {
+      if (!skippedRefreshRef.current) return;
+      skippedRefreshRef.current = false;
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        try { fitNowRef.current(); } catch {}
+      }));
+    };
+    window.addEventListener("mouseup", end);
+    window.addEventListener("blur", end);
+    return () => {
+      window.removeEventListener("mouseup", end);
+      window.removeEventListener("blur", end);
+    };
   }, []);
 
   // resize observer — ResizeObserver on the mount covers window resizes too,

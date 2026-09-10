@@ -64,21 +64,32 @@ export async function serverFetchFor(dir: string, path: string, init?: RequestIn
 // Remote entries are evicted when the tunnel dies so the next call re-dials.
 const remoteBases = new Map<string, string>();
 const remoteDialing = new Map<string, Promise<string>>();
+// negative cache: a failed dial fails fast for a while instead of parking
+// yet another invoke on a dead host (boot loop + 2s SSE ticks would
+// otherwise stack slow calls faster than Rust can shed them)
+const remoteFailedAt = new Map<string, number>();
+const REMOTE_FAIL_WINDOW = 15_000;
 
 export async function baseFor(dir: string): Promise<string> {
   const d = (dir ?? "").trim();
   if (!isRemoteDir(d)) return (await opencode()).base;
   const hit = remoteBases.get(d);
   if (hit) return hit;
+  const failed = remoteFailedAt.get(d);
+  if (failed && Date.now() - failed < REMOTE_FAIL_WINDOW) {
+    throw new Error(`SSH workspace unreachable (retrying shortly): ${d}`);
+  }
   const dial = remoteDialing.get(d);
   if (dial) return dial;
   const p = remoteBaseUrl(d)
     .then((base) => {
+      remoteFailedAt.delete(d);
       remoteBases.set(d, base);
       remoteDialing.delete(d);
       return base;
     })
     .catch((e) => {
+      remoteFailedAt.set(d, Date.now());
       remoteDialing.delete(d);
       throw e;
     });
