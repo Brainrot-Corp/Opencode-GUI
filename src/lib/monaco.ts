@@ -216,6 +216,22 @@ export function baseOptions(monaco: typeof Monaco): Monaco.editor.IStandaloneEdi
   };
 }
 
+// paint cheap lines synchronously — Monaco colors the model on
+// requestIdleCallback, which starves on a busy (streaming) main thread and
+// delays visible colors ~1s. There is no public force API; this uses the
+// same internal hook Monaco's own completions/comments use (ascending lines
+// advance the frontier; >2048-char lines stay background). Guarded to no-op
+// when absent (e.g. future monaco versions), so behavior only ever degrades
+// to today's background timing.
+export function forceCheapTokens(model: any, maxLines = 1000): void {
+  try {
+    const tz = model?.tokenization;
+    if (!tz || typeof tz.tokenizeIfCheap !== "function") return;
+    const count = Math.min(Number(model.getLineCount?.() ?? 0), maxLines);
+    for (let ln = 1; ln <= count; ln++) tz.tokenizeIfCheap(ln);
+  } catch {}
+}
+
 // "Ctrl+Shift+K" → monaco keybinding. Returns null when unparseable.
 export function bindingToKeybinding(monaco: typeof Monaco, binding: string | null | undefined): number | null {
   if (!binding) return null;

@@ -4,6 +4,7 @@ import {
   MONACO_THEME,
   MONO_STACK,
   defineGuiTheme,
+  forceCheapTokens,
   hlToMonacoLang,
   loadMonaco,
 } from "../lib/monaco";
@@ -317,6 +318,8 @@ export default function ReadOnlyDiff({ patch, lang }: { patch: string; lang?: st
           mod.editor.tokenize(text, monacoLangId);
         } catch {}
       }
+      // synchronous paint for what's on screen — see forceCheapTokens
+      forceCheapTokens(model);
       // whole-line background + inline text color per row — exactly the old
       // .diff-lines look (plain text takes the row color, token spans keep
       // theirs). Ranges come from string lengths only, never the model, so
