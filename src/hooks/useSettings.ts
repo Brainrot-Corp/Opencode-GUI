@@ -510,6 +510,51 @@ export function useSettings() {
     if (getDirectory() !== settings.workspace) setDirectory(settings.workspace);
   }, [settings.workspace]);
 
+  // live workspace switch (FileTree "Set as workspace" writes localStorage +
+  // api dir directly, no reload) — adopt workspace/workspaces so Terminal,
+  // stage-head and drawers follow without tearing down busy sessions
+  useEffect(() => {
+    const sync = () => {
+      let ws: string | null = null;
+      let wss: string[] | null = null;
+      try {
+        const raw = JSON.parse(localStorage.getItem(KEY) ?? "{}");
+        if (typeof raw.workspace === "string") ws = raw.workspace;
+        if (Array.isArray(raw.workspaces)) wss = raw.workspaces.filter((x: unknown) => typeof x === "string");
+      } catch { return; }
+      if (ws === null && wss === null) return;
+      setSettings((s) => {
+        const wsChanged = ws !== null && ws !== s.workspace;
+        let nextWss = s.workspaces;
+        let wssChanged = false;
+        if (wss !== null) {
+          const primary = ws ?? s.workspace;
+          const out: string[] = [];
+          const seen = new Set<string>();
+          for (const v of wss) {
+            const t = v.trim();
+            if (!t || normWorkspace(t) === normWorkspace(primary)) continue;
+            const key = normWorkspace(t);
+            if (seen.has(key)) continue;
+            seen.add(key);
+            out.push(t);
+            if (out.length >= 5) break;
+          }
+          wssChanged = out.length !== s.workspaces.length || out.some((v, i) => v !== s.workspaces[i]);
+          nextWss = out;
+        }
+        if (!wsChanged && !wssChanged) return s;
+        return { ...s, ...(wsChanged ? { workspace: ws as string } : {}), ...(wssChanged ? { workspaces: nextWss } : {}) };
+      });
+    };
+    window.addEventListener("storage", sync);
+    window.addEventListener("oc:workspaces-changed", sync as EventListener);
+    return () => {
+      window.removeEventListener("storage", sync);
+      window.removeEventListener("oc:workspaces-changed", sync as EventListener);
+    };
+  }, []);
+
   // native close button (mac stoplight / taskbar close) honors this Rust-side
   useEffect(() => {
     invoke("set_close_on_x", { on: settings.closeOnX }).catch(() => {});

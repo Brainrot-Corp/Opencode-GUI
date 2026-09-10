@@ -149,8 +149,9 @@ export async function pickExtraWorkspace(atIndex?: number) {
   if (typeof path === "string") await addWorkspace(path, atIndex);
 }
 
-// persist + apply a workspace switch; full webview reload rebuilds
-// sessions/messages/events for the new directory
+// persist + apply a workspace switch live (no reload): Sidebar, Terminal,
+// GitPanel and sessions converge via oc:workspaces-changed + the 2s SSE
+// tick, so busy sessions on untouched workspaces keep streaming.
 export async function applyWorkspace(path: string) {
   touchWorkspace(path);
   setDirectory(path);
@@ -159,14 +160,13 @@ export async function applyWorkspace(path: string) {
     raw.workspace = path;
     localStorage.setItem("oc.settings", JSON.stringify(raw));
   } catch {
-    // unreadable settings blob — reload still applies the session-side dir
+    // unreadable settings blob — sessions still follow the api dir
   }
-  // debug local builds survive devUrl origin changes via Rust file — must
-  // complete before the reload tears down the IPC bridge
+  // debug local builds survive devUrl origin changes via Rust file
   try {
     await invoke("workspace_set", { path });
   } catch {}
-  setTimeout(() => location.reload(), 50);
+  window.dispatchEvent(new CustomEvent("oc:workspaces-changed"));
 }
 
 export async function pickWorkspace() {

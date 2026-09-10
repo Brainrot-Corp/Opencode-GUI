@@ -633,6 +633,15 @@ export function useOpencode() {
     }
   }, [refreshSessions]);
 
+  // live workspace switch (no reload): rebuild the session list for the new
+  // dirs; SSE streams converge via the 2s tick, busy sessions on untouched
+  // workspaces keep streaming
+  useEffect(() => {
+    const onWs = () => { void guardedRefresh(); };
+    window.addEventListener("oc:workspaces-changed", onWs);
+    return () => window.removeEventListener("oc:workspaces-changed", onWs);
+  }, [guardedRefresh]);
+
   // server registry: custom + plugin-registered + skill commands.
   // hot reload: refetched on "/" menu open, window focus, and .opencode
   // file-watcher events — but NEW command files only appear after a sidecar

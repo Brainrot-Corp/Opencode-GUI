@@ -72,6 +72,85 @@ function wsLabel(d: string): string {
   return idx >= 0 ? s.slice(idx + 1) : s;
 }
 
+// shell-switch menu scoped to one terminal's own cwd — remote instances
+// probe the remote for shells, locals reuse the shared list. Resolves the
+// pick before returning so the parent just applies path/args/name.
+function SwitchShellMenu({
+  cwd,
+  customShells,
+  onPick,
+}: {
+  cwd: string;
+  customShells: CustomShell[];
+  onPick: (resolved: { path?: string; args?: string[]; name?: string } | null) => void;
+}) {
+  const { profiles, fetch } = useTerminalProfilesFor(cwd);
+  useEffect(() => {
+    if (!profiles.length) void fetch().catch(() => {});
+  }, [profiles.length, fetch]);
+  const remote = isRemoteDir(cwd);
+  const groups: Record<string, TerminalProfile[]> = { probe: [], wsl: [], wt: [], ssh: [] };
+  for (const p of profiles) {
+    if (p.source === "wsl") groups.wsl.push(p);
+    else if (p.source === "wt") groups.wt.push(p);
+    else if (p.source === "ssh") groups.ssh.push(p);
+    else groups.probe.push(p);
+  }
+  return (
+    <>
+      <button className="term-add-item" onClick={() => onPick(null)}>
+        <i className={`fa-solid ${remote ? "fa-server" : "fa-terminal"}`} /> {remote ? "Remote login shell" : "System default (PowerShell)"}
+      </button>
+      {!profiles.length && (
+        <>
+          <div className="skel-row" style={{ height: 28, margin: "4px 8px", opacity: 0.6 }} />
+          <div className="skel-row" style={{ height: 28, margin: "4px 8px", animationDelay: "0.15s", opacity: 0.6 }} />
+        </>
+      )}
+      {groups.ssh.length > 0 && (
+        <>
+          <div className="term-add-group">Remote shells</div>
+          {groups.ssh.map((p) => (
+            <button key={p.id} className="term-add-item" onClick={() => onPick({ path: p.path, args: p.args, name: p.name })} data-tip={p.path}><i className="fa-solid fa-server" /> {p.name}</button>
+          ))}
+        </>
+      )}
+      {groups.probe.length > 0 && (
+        <>
+          <div className="term-add-group">Installed shells</div>
+          {groups.probe.map((p) => (
+            <button key={p.id} className="term-add-item" onClick={() => onPick({ path: p.path, args: p.args, name: p.name })} data-tip={`${p.path} ${p.args.join(" ")}`}><i className="fa-solid fa-terminal" /> {p.name}</button>
+          ))}
+        </>
+      )}
+      {groups.wsl.length > 0 && (
+        <>
+          <div className="term-add-group">WSL</div>
+          {groups.wsl.map((p) => (
+            <button key={p.id} className="term-add-item" onClick={() => onPick({ path: p.path, args: p.args, name: p.name })} data-tip={`${p.path} ${p.args.join(" ")}`}><i className="fa-solid fa-cube" /> {p.name}</button>
+          ))}
+        </>
+      )}
+      {groups.wt.length > 0 && (
+        <>
+          <div className="term-add-group">Windows Terminal</div>
+          {groups.wt.map((p) => (
+            <button key={p.id} className="term-add-item" onClick={() => onPick({ path: p.path, args: p.args, name: p.name })} data-tip={`${p.path} ${p.args.join(" ")}`}><i className="fa-solid fa-window-restore" /> {p.name}</button>
+          ))}
+        </>
+      )}
+      {customShells.length > 0 && (
+        <>
+          <div className="term-add-group">Custom</div>
+          {customShells.map((c) => (
+            <button key={c.id} className="term-add-item" onClick={() => onPick({ path: c.path, args: c.args ? parseArgsString(c.args) : [], name: c.name })} data-tip={`${c.path} ${c.args}`}><i className="fa-solid fa-wrench" /> {c.name}</button>
+          ))}
+        </>
+      )}
+    </>
+  );
+}
+
 export default function TerminalPanel({
   open,
   workspace,
@@ -235,10 +314,10 @@ export default function TerminalPanel({
     };
   }, [addMenuOpen, wsMenuOpen]);
 
-  // shell-switch menu: outside click + Escape closes, fetch profiles if needed
+  // shell-switch menu: outside click + Escape closes (profiles are fetched
+  // per-terminal inside SwitchShellMenu for the instance's own cwd)
   useEffect(() => {
     if (!switchMenu) return;
-    if (!profiles.length) void fetchProfiles().catch(() => {});
     const onDown = (e: Event) => {
       if (!switchMenuRef.current?.contains(e.target as Node)) setSwitchMenu(null);
     };
@@ -249,7 +328,7 @@ export default function TerminalPanel({
       document.removeEventListener("pointerdown", onDown, true);
       document.removeEventListener("keydown", onKey);
     };
-  }, [switchMenu, profiles.length]);
+  }, [switchMenu]);
 
   const resolveProfile = useCallback((profileId: string | null | undefined): { path?: string; args?: string[]; name?: string } | null => {
     if (!profileId) return null;
@@ -428,15 +507,15 @@ export default function TerminalPanel({
     setTerms((prev) => prev.map((x) => (x.id === id ? { ...x, gen: newGen, dead: false, err: "" } : x)));
   }, [resolveProfile]);
 
-  const changeTermShell = useCallback(async (id: number, profileId: string | null) => {
+  const applyTermShell = useCallback(async (id: number, resolved: { path?: string; args?: string[]; name?: string } | null) => {
     const t = termsRef.current.find((x) => x.id === id);
     if (!t) return;
     playSound("click");
     await invoke("pty_kill", { id, gen: t.gen }).catch(() => {});
-    const resolved = resolveProfile(profileId);
     const newGen = genCounterRef.current++;
-    setTerms((prev) => prev.map((x) => (x.id === id ? { ...x, gen: newGen, dead: false, err: "", shell: resolved?.path, args: resolved?.args, shellName: resolved?.name ?? (profileId ? undefined : "System default") } : x)));
-  }, [resolveProfile]);
+    const fallback = isRemoteDir(t.cwd ?? "") ? "Remote login shell" : "System default";
+    setTerms((prev) => prev.map((x) => (x.id === id ? { ...x, gen: newGen, dead: false, err: "", shell: resolved?.path, args: resolved?.args, shellName: resolved?.name ?? fallback } : x)));
+  }, []);
 
   const killTerm = useCallback(async (id: number) => {
     const t = termsRef.current.find((x) => x.id === id);
@@ -738,16 +817,24 @@ export default function TerminalPanel({
                       </>
                     )}
                     {(() => {
-                      const groups: Record<string, TerminalProfile[]> = { probe: [], wsl: [], wt: [] };
+                      const groups: Record<string, TerminalProfile[]> = { probe: [], wsl: [], wt: [], ssh: [] };
                       for (const p of profiles) {
                         if (p.source === "wsl") groups.wsl.push(p);
                         else if (p.source === "wt") groups.wt.push(p);
+                        else if (p.source === "ssh") groups.ssh.push(p);
                         else groups.probe.push(p);
                       }
                       const customs = terminal?.customShells ?? [];
                       return (
                         <>
-                          {groups.probe.length > 0 && (
+                          {groups.ssh.length > 0 && (
+                            <>
+                              <div className="term-add-group">Remote shells</div>
+                              {groups.ssh.map((p) => (
+                                <button key={p.id} className="term-add-item" onClick={() => addTerm(p.id)} onContextMenu={(e)=>{e.preventDefault(); addTerm(p.id); onSetDefault?.(p.id);}} data-tip={`${p.path} · Right-click to open & set as default`}><i className="fa-solid fa-server" /> {p.name}</button>
+                              ))}
+                            </>
+                          )}                          {groups.probe.length > 0 && (
                             <>
                               <div className="term-add-group">Installed shells</div>
                               {groups.probe.map((p) => (
@@ -866,52 +953,11 @@ export default function TerminalPanel({
           onClick={(e) => e.stopPropagation()}
         >
           <div className="term-add-group">Switch shell — Terminal {switchMenu.id}</div>
-          <button className="term-add-item" onClick={() => { const id = switchMenu.id; setSwitchMenu(null); void changeTermShell(id, null); }}><i className="fa-solid fa-terminal" /> System default (PowerShell)</button>
-          {(() => {
-            const groups: Record<string, TerminalProfile[]> = { probe: [], wsl: [], wt: [] };
-            for (const p of profiles) {
-              if (p.source === "wsl") groups.wsl.push(p);
-              else if (p.source === "wt") groups.wt.push(p);
-              else groups.probe.push(p);
-            }
-            const customs = terminal?.customShells ?? [];
-            return (
-              <>
-                {groups.probe.length > 0 && (
-                  <>
-                    <div className="term-add-group">Installed shells</div>
-                    {groups.probe.map((p) => (
-                      <button key={p.id} className="term-add-item" onClick={() => { const id = switchMenu.id; const pid = p.id; setSwitchMenu(null); void changeTermShell(id, pid); }}><i className="fa-solid fa-terminal" /> {p.name}</button>
-                    ))}
-                  </>
-                )}
-                {groups.wsl.length > 0 && (
-                  <>
-                    <div className="term-add-group">WSL</div>
-                    {groups.wsl.map((p) => (
-                      <button key={p.id} className="term-add-item" onClick={() => { const id = switchMenu.id; const pid = p.id; setSwitchMenu(null); void changeTermShell(id, pid); }}><i className="fa-solid fa-cube" /> {p.name}</button>
-                    ))}
-                  </>
-                )}
-                {groups.wt.length > 0 && (
-                  <>
-                    <div className="term-add-group">Windows Terminal</div>
-                    {groups.wt.map((p) => (
-                      <button key={p.id} className="term-add-item" onClick={() => { const id = switchMenu.id; const pid = p.id; setSwitchMenu(null); void changeTermShell(id, pid); }}><i className="fa-solid fa-window-restore" /> {p.name}</button>
-                    ))}
-                  </>
-                )}
-                {customs.length > 0 && (
-                  <>
-                    <div className="term-add-group">Custom</div>
-                    {customs.map((c) => (
-                      <button key={c.id} className="term-add-item" onClick={() => { const id = switchMenu.id; const pid = c.id; setSwitchMenu(null); void changeTermShell(id, pid); }}><i className="fa-solid fa-wrench" /> {c.name}</button>
-                    ))}
-                  </>
-                )}
-              </>
-            );
-          })()}
+          <SwitchShellMenu
+            cwd={terms.find((t) => t.id === switchMenu.id)?.cwd ?? workspace ?? ""}
+            customShells={terminal?.customShells ?? []}
+            onPick={(resolved) => { const id = switchMenu.id; setSwitchMenu(null); void applyTermShell(id, resolved); }}
+          />
         </div>,
         document.body,
       )}

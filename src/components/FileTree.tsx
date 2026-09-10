@@ -264,8 +264,8 @@ export default function FileTree({ dir = "" }: { dir?: string }) {
       }
       const ok = await replaceWorkspace(mine, n.absolute);
       if (!ok) { setError(t("fileTree.error.setWorkspace")); return; }
-      // reload so sessions/messages/events rebuild for the swapped directory
-      setTimeout(() => location.reload(), 50);
+      // live: Sidebar/sessions/GitPanel converge via oc:workspaces-changed,
+      // busy sessions on untouched workspaces keep streaming (no reload)
     } catch (e) { setError(String(e)); }
   }
 
