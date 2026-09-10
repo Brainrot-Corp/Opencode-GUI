@@ -31,6 +31,7 @@ import { getPluginSlash } from "../lib/plugins";
 import { ensureServerGroups, useProviders } from "./useProviders";
 import { clearDraft, setDraft } from "../lib/drafts";
 import { clearAttachmentDraft } from "./useAttachments";
+import { invalidateFileCache } from "./useFileCache";
 import { pushToast } from "./useToast";
 import type { Msg, OpenCodeEvent, PermAsk, ProviderGroup, Attachment, QuestionAsk, Cmd } from "../types";
 
@@ -547,6 +548,7 @@ export function useOpencode() {
 
   // --- multi-workspace helpers ---
   const sessionDirRef = useRef<Map<string, string>>(new Map());
+  const prevDirsRef = useRef<string[]>([]);
   const getWorkspaces = useCallback((): string[] => {
     try {
       const raw = JSON.parse(localStorage.getItem("oc.settings") ?? "{}");
@@ -592,6 +594,48 @@ export function useOpencode() {
 
   const refreshSessions = useCallback(async () => {
     const dirs = getAllDirs();
+    // drop file caches for workspaces that just closed so a re-added
+    // folder (or SERVER CWD coinciding with it) never shows stale trees
+    try {
+      const prev = prevDirsRef.current;
+      if (prev.length) {
+        const norm = (s: string) => normWorkspace(s);
+        const cur = new Set(dirs.map((d) => (d ? norm(d) : "__EMPTY__")));
+        for (const d of prev) {
+          const k = d ? norm(d) : "__EMPTY__";
+          if (!cur.has(k) && d) {
+            try { invalidateFileCache("", d); } catch {}
+          }
+        }
+      }
+    } catch {}
+    prevDirsRef.current = [...dirs];
+    // no real workspace open ("", server cwd alone) → empty UI, not the
+    // server's cwd contents (which may coincide with the just-closed folder)
+    if (dirs.length === 1 && !dirs[0]) {
+      const prevActiveId = activeRef.current;
+      sessionDirRef.current = new Map();
+      setSessions([]);
+      if (prevActiveId) {
+        try {
+          permissionsRef.current.delete(prevActiveId);
+          questionsRef.current.delete(prevActiveId);
+          clearAttention(prevActiveId);
+          markCompacting(prevActiveId, false);
+          trackerRef.current?.reset(prevActiveId);
+        } catch {}
+        setActiveId("");
+        try { localStorage.removeItem(LAST_KEY); } catch {}
+        store.clearStashes();
+        setMsgs([]);
+        setQuestion(null);
+        setPermission(null);
+      }
+      return [];
+    }
+    const prevMap = new Map(sessionDirRef.current);
+    const prevActiveId = activeRef.current;
+    const prevActiveDir = prevActiveId ? prevMap.get(prevActiveId) : undefined;
     const all: Session[] = [];
     const results = await Promise.all(dirs.map((d) => refreshSessionsFor(d).catch(() => [] as Session[])));
     // rebuild dir map from results (clears stale)
@@ -617,8 +661,44 @@ export function useOpencode() {
     for (const [id, dir] of nextMap) if (!finalMap.has(id) && hasDir(dir ?? "")) finalMap.set(id, dir);
     sessionDirRef.current = finalMap;
     setSessions(out);
+    // workspace closed under the active session (not a transient fetch
+    // failure): drop the stale view so the old chat doesn't linger. The
+    // server keeps the sessions — re-adding the workspace brings them back.
+    if (prevActiveId && !out.some((s) => s.id === prevActiveId)) {
+      const gone = prevActiveDir !== undefined ? !hasDir(prevActiveDir ?? "") : false;
+      // prevActiveDir unknown (e.g. boot) → keep view, fetch may have failed
+      if (gone) {
+        try {
+          permissionsRef.current.delete(prevActiveId);
+          questionsRef.current.delete(prevActiveId);
+          clearAttention(prevActiveId);
+          markCompacting(prevActiveId, false);
+          trackerRef.current?.reset(prevActiveId);
+        } catch {}
+        setActiveId("");
+        try { localStorage.removeItem(LAST_KEY); } catch {}
+        store.clearStashes();
+        setMsgs([]);
+        setQuestion(null);
+        setPermission(null);
+      }
+    }
+    // stale attention for sessions whose workspace is gone (badge would linger)
+    try {
+      for (const [id, dir] of prevMap) {
+        if (!hasDir(dir ?? "") && !finalMap.has(id)) {
+          permissionsRef.current.delete(id);
+          questionsRef.current.delete(id);
+          clearAttention(id);
+        }
+      }
+      if (prevActiveId && !finalMap.has(prevActiveId)) {
+        setQuestion((cur) => (cur && cur.sessionID === prevActiveId ? null : cur));
+        setPermission((cur) => (cur && cur.sessionID === prevActiveId ? null : cur));
+      }
+    } catch {}
     return out;
-  }, [refreshSessionsFor, getAllDirs]);
+  }, [refreshSessionsFor, getAllDirs, clearAttention, markCompacting]);
 
   // TF-04: serialize refreshSessions — double-click Rewind queues one more, drops intermediate
   const refreshingRef = useRef(false);

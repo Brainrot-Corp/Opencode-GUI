@@ -174,6 +174,9 @@ export default function Sidebar({
   }, []);
   const primaryDir = allDirs[0] ?? getDirectory();
   const extraDirs = allDirs.slice(1);
+  // "" alone = no workspace open (server cwd) — show empty, not the
+  // server's cwd tree (which may be the just-closed folder it spawned in)
+  const hasRealWorkspace = allDirs.some((d) => (d ?? "").trim() !== "");
 
   // drag-drop: Tauri payload + HTML fallback — also show dimmed preview on hover
   useEffect(() => {
@@ -636,13 +639,18 @@ export default function Sidebar({
 
               {/* Files tab: one FileTree per workspace with collapsable header */}
               <div style={{ display: loading && sessions.length === 0 ? "none" : tab === "files" ? "block" : "none" }}>
-                {allDirs.map((dir, i) => renderWsSection({
-                  tab: "files",
-                  dir,
-                  index: i,
-                  count: (dir ? "" : ""),
-                  acts: <button className="gp-sact ws-action--large" data-tip="Copy path" onClick={() => void clipboardWrite(dir)}><i className="fa-solid fa-link" /></button>,
-                  body: <div className="ws-body"><FileTree dir={dir} /></div>,
+                {!hasRealWorkspace ? (
+                  <div className="gp-empty">No workspace open</div>
+                ) : (allDirs.map((dir, i) => {
+                  if (!(dir ?? "").trim()) return null;
+                  return renderWsSection({
+                    tab: "files",
+                    dir,
+                    index: i,
+                    count: (dir ? "" : ""),
+                    acts: <button className="gp-sact ws-action--large" data-tip="Copy path" onClick={() => void clipboardWrite(dir)}><i className="fa-solid fa-link" /></button>,
+                    body: <div className="ws-body"><FileTree dir={dir} /></div>,
+                  });
                 }))}
                 {dropHint(extraDirs.length)}
                 {dragOver && dragReorder === null && <div className="ws-drop-zone">Drop folder to add workspace</div>}
@@ -651,7 +659,10 @@ export default function Sidebar({
 
               {/* Chats tab: grouped sessions */}
               <div style={{ display: loading && sessions.length === 0 || tab === "files" ? "none" : "block" }}>
-                {allDirs.map((dir, idx) => {
+                {!hasRealWorkspace ? (
+                  <div className="gp-empty">No workspace open</div>
+                ) : (allDirs.map((dir, idx) => {
+                  if (!(dir ?? "").trim()) return null;
                   const rawList = byDir.get(dir) ?? [];
                   const list = orderedForDir(dir, rawList);
                   const clearArmed = clearConfirm === dir;
@@ -677,7 +688,7 @@ export default function Sidebar({
                       {list.length === 0 ? <div className="gp-empty">No sessions</div> : list.map((s) => renderSessionRow(s, dir))}
                     </div>),
                   });
-                })}
+                }))}
                 {dropHint(extraDirs.length)}
                 {dragOver && dragReorder === null && <div className="ws-drop-zone">Drop folder to add workspace</div>}
                 <button className="gp-sact ws-action--large" data-tip="Add an SSH remote workspace" style={{ margin: "2px 0 4px 6px" }} onClick={() => { playSound("click"); setSshOpen(true); }}><i className="fa-solid fa-server" />SSH</button>

@@ -109,7 +109,7 @@ export function invalidateFileCache(path?: string, dir = "") {
     for (const k of [...next.keys()]) {
       const [d, p] = k.split("\0");
       if (d !== normDir) continue;
-      if (p === normPath || p.startsWith(normPath + "/")) next.delete(k);
+      if (!normPath || p === normPath || p.startsWith(normPath + "/")) next.delete(k);
     }
     kids = next;
   }

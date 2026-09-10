@@ -564,11 +564,26 @@ function GitPanelInner() {
   useEffect(() => {
     refresh();
   }, [refresh]);
+  // workspace switches must refresh even when closed or repo-less —
+  // otherwise closing all workspaces unsubscribes (open && repo gate below)
+  // and coming back never updates.
+  useEffect(() => {
+    const onWs = () => void refresh();
+    window.addEventListener("oc:workspaces-changed", onWs);
+    window.addEventListener("oc:last-workspace-changed", onWs);
+    window.addEventListener("storage", onWs);
+    return () => {
+      window.removeEventListener("oc:workspaces-changed", onWs);
+      window.removeEventListener("oc:last-workspace-changed", onWs);
+      window.removeEventListener("storage", onWs);
+    };
+  }, [refresh]);
   useEffect(() => {
     if (!open || !st.repo) return;
     refresh();
     // watcher push (Rust `.git` notify → `git://changed`) + file-saves +
-    // workspace switches refresh debounced; 4s poll stays as fallback.
+    // 4s poll stays as fallback. Workspace switches are handled by the
+    // always-on effect above (immediate, even when closed/repo-less).
     let tauriUnlisten: (() => void) | undefined;
     listen<string>("git://changed", () => scheduleRefresh())
       .then((off) => { tauriUnlisten = off; })
@@ -577,9 +592,6 @@ function GitPanelInner() {
     const onVis = () => document.visibilityState === "visible" && refresh();
     window.addEventListener("focus", onVis);
     window.addEventListener("oc:file-changed", scheduleRefresh);
-    window.addEventListener("oc:workspaces-changed", scheduleRefresh);
-    window.addEventListener("oc:last-workspace-changed", scheduleRefresh);
-    window.addEventListener("storage", scheduleRefresh);
     return () => {
       clearInterval(t);
       if (refreshTimer.current) {
@@ -588,9 +600,6 @@ function GitPanelInner() {
       }
       window.removeEventListener("focus", onVis);
       window.removeEventListener("oc:file-changed", scheduleRefresh);
-      window.removeEventListener("oc:workspaces-changed", scheduleRefresh);
-      window.removeEventListener("oc:last-workspace-changed", scheduleRefresh);
-      window.removeEventListener("storage", scheduleRefresh);
       tauriUnlisten?.();
     };
   }, [open, st.repo, refresh, scheduleRefresh]);

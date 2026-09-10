@@ -222,12 +222,10 @@ export default function ChatPage() {
 
   // Ctrl+Shift+W close workspace — mirrors the close-session double-press:
   // first press arms (banner shows), second within 1s closes. Only extra
-  // workspaces are removable (primary has no remove button in the sidebar);
-  // with primary active or no extras this is a no-op. Closes the active
-  // session's workspace when it's an extra, else the last extra. Closing the
-  // workspace you're in lands back home via applyWorkspace("") — same as the
-  // "Back to home folder" button in settings. Primary-only and not already
-  // home: closing goes straight home.
+  // workspaces are removable (primary has no remove button in the sidebar).
+  // Closes the active session's workspace when it's an extra, else the last
+  // extra, staying in the primary (stale active clears via refresh).
+  // Primary-only and not already home: closing goes straight home.
   const [wsCloseHint, setWsCloseHint] = useState(false);
   const wsCloseArm = useRef(0);
   const wsCloseTimer = useRef(0);
@@ -246,20 +244,15 @@ export default function ChatPage() {
     return target;
   }, [oc.activeId, oc.getDirForSession]);
   // immediate path — explicit invocations (/close-workspace) skip the arm.
-  // Detaches the extra, then — like "Back to home folder" in settings — goes
-  // back home via applyWorkspace("") when you closed the workspace you're in.
-  // Closing a background extra just detaches it, no reload.
+  // Detaches the extra and stays in the primary workspace; a stale active
+  // session in the closed dir clears via refreshSessions (no home jump, so
+  // the primary is never discarded).
   const closeWorkspaceNow = useCallback(() => {
     const target = resolveWorkspaceCloseTarget();
     if (target) {
-      const activeDir = oc.activeId ? (oc.getDirForSession?.(oc.activeId) ?? "") : "";
       playSound("close");
       removeWorkspace(target);
-      if (activeDir && normWorkspace(activeDir) === normWorkspace(target)) {
-        void applyWorkspace("");
-      } else {
-        void oc.refreshSessions?.();
-      }
+      void oc.refreshSessions?.();
       return;
     }
     // primary-only and not already home — closing means going home
