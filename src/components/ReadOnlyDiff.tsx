@@ -30,6 +30,26 @@ function monoCharWidth(): number {
   return charW;
 }
 
+// smallest single-range edit turning oldStr into newStr (offsets) — the
+// model keeps tokens for unchanged lines instead of retokenizing everything
+// on each streaming delta
+function diffOffsets(
+  oldStr: string,
+  newStr: string,
+): { start: number; end: number; insert: string } | null {
+  if (oldStr === newStr) return null;
+  let start = 0;
+  const maxStart = Math.min(oldStr.length, newStr.length);
+  while (start < maxStart && oldStr[start] === newStr[start]) start++;
+  let oldEnd = oldStr.length;
+  let newEnd = newStr.length;
+  while (oldEnd > start && newEnd > start && oldStr[oldEnd - 1] === newStr[newEnd - 1]) {
+    oldEnd--;
+    newEnd--;
+  }
+  return { start, end: oldEnd, insert: newStr.slice(start, newEnd) };
+}
+
 // same row split as the old DOM version: hunk/file headers stay whole,
 // +/- prefixes are stripped into the sign gutter so token colors stay clean
 function parsePatch(patch: string): Row[] {
@@ -83,6 +103,19 @@ export default function ReadOnlyDiff({ patch, lang }: { patch: string; lang?: st
   // grammars compile on first use per language — run one synchronous pass
   // so colors are ready for first paint instead of popping in a beat later
   const warmLangRef = useRef<string | null>(null);
+  // TEMPORARY perf probe (remove once the slow stage is identified):
+  // mount → module ready → editor created → first token pass
+  const t0 = useRef(0);
+  if (!t0.current) t0.current = performance.now();
+  const perfRef = useRef<{ load?: number; create?: number; colors?: number; rows?: number; settle?: number }>({});
+  const lastChangeRef = useRef(0);
+  const [, setPerfTick] = useState(0);
+  const perfNote = () => {
+    const p = perfRef.current;
+    const f = (v?: number) => (v == null ? "…" : `${Math.round(v)}ms`);
+    const r = (v?: number) => (v == null ? "…" : `${v}`);
+    return `perf: load ${f(p.load)} · create ${f(p.create)} · colors ${f(p.colors)} · rows ${r(p.rows)} · settle ${f(p.settle)}`;
+  };
 
   // grow the block toward the longest line when free stage space allows —
   // capped at MAX_EXPAND past the natural column width and never past the
@@ -128,7 +161,9 @@ export default function ReadOnlyDiff({ patch, lang }: { patch: string; lang?: st
     let dead = false;
     void loadMonaco().then(
       (m) => {
-        if (!dead) setMod(m);
+        if (dead) return;
+        perfRef.current.load = performance.now() - t0.current;
+        setMod(m);
       },
       (e) => {
         if (!dead) setFail(`load: ${e}`);
@@ -205,6 +240,31 @@ export default function ReadOnlyDiff({ patch, lang }: { patch: string; lang?: st
       fitRef.current = fit;
       sizeSub = ed.onDidContentSizeChange(fit);
       fit();
+      perfRef.current.create = performance.now() - t0.current;
+      setPerfTick((x) => x + 1);
+      // TEMPORARY: first background token pass ≈ colors on screen
+      const model0 = ed.getModel() as any;
+      if (model0 && typeof model0.onDidChangeTokens === "function") {
+        const tokSub = model0.onDidChangeTokens(() => {
+          if (perfRef.current.colors == null) {
+            const now = performance.now();
+            perfRef.current.colors = now - t0.current;
+            perfRef.current.rows = rows.length;
+            perfRef.current.settle = now - (lastChangeRef.current || t0.current);
+            try {
+              console.info(`[ro-diff] ${perfNote()} rows=${rows.length}`);
+            } catch {}
+            setPerfTick((x) => x + 1);
+          }
+        });
+        const prevDispose = sizeSub.dispose.bind(sizeSub);
+        sizeSub.dispose = () => {
+          try {
+            tokSub.dispose();
+          } catch {}
+          prevDispose();
+        };
+      }
     } catch (e) {
       try {
         ed?.dispose();
@@ -234,8 +294,18 @@ export default function ReadOnlyDiff({ patch, lang }: { patch: string; lang?: st
     try {
       const model = ed.getModel();
       if (!model) return;
-      if (model.getValue() !== text) {
-        ed.executeEdits("diff-update", [{ range: model.getFullModelRange(), text }]);
+      const cur = model.getValue();
+      if (cur !== text) {
+        lastChangeRef.current = performance.now();
+        const d = diffOffsets(cur, text);
+        if (d) {
+          const s = model.getPositionAt(d.start);
+          const e = model.getPositionAt(d.end);
+          ed.executeEdits("diff-update", [{
+            range: new mod.Range(s.lineNumber, s.column, e.lineNumber, e.column),
+            text: d.insert,
+          }]);
+        }
       }
       const monacoLangId = hlToMonacoLang(lang);
       if (model.getLanguageId() !== monacoLangId) {
@@ -321,5 +391,10 @@ export default function ReadOnlyDiff({ patch, lang }: { patch: string; lang?: st
     );
   }
   if (!patch.trim()) return null;
-  return <div ref={mountRef} className="ro-diff" />;
+  return (
+    <>
+      <div className="ro-fail">TEMP-DIAG {perfNote()}</div>
+      <div ref={mountRef} className="ro-diff" />
+    </>
+  );
 }

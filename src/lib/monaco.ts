@@ -20,6 +20,35 @@ export function loadMonaco(): Promise<typeof Monaco> {
   return monacoPromise;
 }
 
+// boot-time grammar warmup: first tokenize of a language evaluates its
+// (bundled) definition and compiles the Monarch grammar — the slow part
+// behind "colors pop in a second later". Runs idle at startup for the usual
+// suspects so the first diff paints colored; second pass compiles after the
+// async loaders resolve. Fire-and-forget, never blocks UI.
+const WARM_LANGS = [
+  "typescript", "javascript", "json", "python", "rust", "go",
+  "shell", "markdown", "css", "html", "yaml", "powershell",
+];
+const WARM_SAMPLE = "const x = 1;\n// warmup\nfunction f(a) {\n  return a + x;\n}\n";
+export function warmupMonaco(): void {
+  void loadMonaco()
+    .then((m) => {
+      for (const id of WARM_LANGS) {
+        try {
+          m.editor.tokenize(WARM_SAMPLE, id);
+        } catch {}
+      }
+      setTimeout(() => {
+        for (const id of WARM_LANGS) {
+          try {
+            m.editor.tokenize(WARM_SAMPLE, id);
+          } catch {}
+        }
+      }, 0);
+    })
+    .catch(() => {});
+}
+
 let workersSetup = false;
 export function setupMonacoWorkers() {
   if (workersSetup) return;

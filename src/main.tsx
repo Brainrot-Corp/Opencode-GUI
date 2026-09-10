@@ -90,3 +90,15 @@ try {
 hydrateWorkspace().finally(() => {
   ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(<App />);
 });
+
+// idle-time monaco + grammar warmup so the first diff/file paints colored
+// instead of popping in a beat later — never blocks startup
+try {
+  const warm = () =>
+    import("./lib/monaco")
+      .then(({ warmupMonaco }) => warmupMonaco())
+      .catch(() => {});
+  if (typeof (window as any).requestIdleCallback === "function")
+    (window as any).requestIdleCallback(warm, { timeout: 4000 });
+  else setTimeout(warm, 2000);
+} catch {}
