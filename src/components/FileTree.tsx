@@ -52,6 +52,20 @@ export default function FileTree({ dir = "" }: { dir?: string }) {
   const [renaming, setRenaming] = useState<string | null>(null);
   const [renameVal, setRenameVal] = useState("");
   const ctx = (() => { try { return useContextMenu(); } catch { return null; } })();
+  // workspace-header right-click menu (Sidebar) forwards actions here —
+  // the matching tree prompts + creates in its own root, or refreshes it
+  const doCreateRef = useRef<((isDir: boolean, base: Node | null) => Promise<void>) | null>(null);
+  useEffect(() => {
+    const onHeader = (e: Event) => {
+      const d = (e as CustomEvent<{ dir?: string; op?: string }>).detail;
+      if (!d || (d.dir ?? "") !== dir) return;
+      if (d.op === "refresh") void load("", true);
+      else if (d.op === "new-file") void doCreateRef.current?.(false, null);
+      else if (d.op === "new-folder") void doCreateRef.current?.(true, null);
+    };
+    window.addEventListener("oc:ft-header", onHeader as EventListener);
+    return () => window.removeEventListener("oc:ft-header", onHeader as EventListener);
+  }, [dir, load]);
   // file name search — triggered when last click was in file area (positioned at file tree)
   const [filterOpen, setFilterOpen] = useState(false);
   const [filterQuery, setFilterQuery] = useState("");
@@ -196,6 +210,7 @@ export default function FileTree({ dir = "" }: { dir?: string }) {
       if (base && !openDirs.has(norm(base.path))) setOpenDirs((prev) => new Set(prev).add(norm(base.path)));
     } catch (e) { setError(String(e)); }
   }
+  doCreateRef.current = doCreate;
 
   async function doDelete(n: Node) {
     if (!window.confirm(`Delete ${n.type} "${n.name}"?\n${n.path}\n\nThis cannot be undone.`)) return;

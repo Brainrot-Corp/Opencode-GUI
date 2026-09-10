@@ -290,6 +290,26 @@ export default function Sidebar({
     touchWorkspace(dir);
   };
 
+  // workspace header right-click → act on that workspace's root. The
+  // FileTree below owns file ops (prompts + reload), so creation/refresh
+  // forward over oc:ft-header and the matching tree handles them; copying
+  // the path needs no tree at all.
+  const showWsMenu = (e: React.MouseEvent, dir: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!ctx) return;
+    playSound("click");
+    const fire = (op: string) =>
+      window.dispatchEvent(new CustomEvent("oc:ft-header", { detail: { dir, op } }));
+    ctx.show(e.clientX, e.clientY, [
+      { label: tr("fileTree.newFile"), icon: "fa-file-circle-plus", action: () => fire("new-file") },
+      { label: tr("fileTree.newFolder"), icon: "fa-folder-plus", action: () => fire("new-folder") },
+      { separator: true },
+      { label: tr("fileTree.refresh"), icon: "fa-arrows-rotate", action: () => fire("refresh") },
+      { label: tr("fileTree.copyWorkspacePath"), icon: "fa-link", action: () => void clipboardWrite(dir) },
+    ]);
+  };
+
   // session reorder — custom pointer drag vertical, copié des tabs notepad
   // (default_plugins/notepad/main.js): pas de HTML5 DnD natif (curseur OS),
   // seuil 6px, snapshot siblings une fois à l'activation, zéro setState
@@ -558,7 +578,7 @@ export default function Sidebar({
                   return (
                     <div key={`ft-${dir || "__cwd"}`} data-ws-header>
                       {!isPrimary && dropHint(extraIdx)}
-                      <div className="gp-sect ws-head ws-head--large" role="button" tabIndex={0} draggable={!isPrimary} onDragStart={() => { if (!isPrimary) setDragReorder(extraIdx); }} onDragEnd={() => { setDragReorder(null); setDropIndex(null); }} onClick={() => toggleWs(dir)} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggleWs(dir); } }} data-tip={isRemoteDir(dir) ? remoteLabel(dir) : (dir || "Server cwd")} style={!isPrimary ? { cursor: "grab" } : undefined}>
+                      <div className="gp-sect ws-head ws-head--large" role="button" tabIndex={0} draggable={!isPrimary} onDragStart={() => { if (!isPrimary) setDragReorder(extraIdx); }} onDragEnd={() => { setDragReorder(null); setDropIndex(null); }} onClick={() => toggleWs(dir)} onContextMenu={(e) => showWsMenu(e, dir)} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggleWs(dir); } }} data-tip={isRemoteDir(dir) ? remoteLabel(dir) : (dir || "Server cwd")} style={!isPrimary ? { cursor: "grab" } : undefined}>
                         <span className="gp-sect-toggle ws-toggle--large"><i className={`fa-solid fa-chevron-${isCollapsed ? "right" : "down"} gp-sect-chev`} /><i className={`fa-solid ${isRemoteDir(dir) ? "fa-server" : "fa-folder"}`} style={{ fontSize: 13, color: "var(--accent)", opacity: 0.9 }} /><span className="ws-title mono" style={{ maxWidth: 140, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{baseName(dir)}</span><span className="gp-sect-count">{dir ? "" : ""}</span></span>
                         <span className="gp-sect-acts ws-acts--large" onClick={(e) => e.stopPropagation()}>
                           <button className="gp-sact ws-action--large" data-tip="Copy path" onClick={() => void clipboardWrite(dir)}><i className="fa-solid fa-link" /></button>

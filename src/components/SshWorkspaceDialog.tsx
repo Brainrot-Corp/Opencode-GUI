@@ -9,6 +9,46 @@ import "../styles/dialog.css";
 // Auth: system ssh config/keys/agent by default; optional in-app key file
 // (stored path only) or password (memory-only, delivered via our own
 // SSH_ASKPASS helper — no third-party binaries).
+// The last successfully connected form (never the password) is remembered
+// in localStorage and prefilled on open.
+const SSH_LAST_KEY = "oc.ssh.last";
+type AuthMode = "auto" | "key" | "password";
+type SshLast = {
+  host: string;
+  user: string;
+  port: string;
+  path: string;
+  auth: AuthMode;
+  keyFile: string;
+};
+
+function loadLast(): SshLast | null {
+  try {
+    const raw = JSON.parse(localStorage.getItem(SSH_LAST_KEY) ?? "null") as Record<string, unknown> | null;
+    if (!raw || typeof raw !== "object") return null;
+    const str = (v: unknown, max: number) =>
+      typeof v === "string" && v.length <= max ? v : "";
+    const auth = raw.auth === "key" || raw.auth === "password" ? raw.auth : "auto";
+    const host = str(raw.host, 256);
+    if (!host) return null;
+    return {
+      host,
+      user: str(raw.user, 128),
+      port: str(raw.port, 8),
+      path: str(raw.path, 1024),
+      auth,
+      keyFile: auth === "key" ? str(raw.keyFile, 1024) : "",
+    };
+  } catch {
+    return null;
+  }
+}
+
+function saveLast(v: SshLast) {
+  try {
+    localStorage.setItem(SSH_LAST_KEY, JSON.stringify(v));
+  } catch {}
+}
 export default function SshWorkspaceDialog({
   open: isOpen,
   mode,
@@ -22,7 +62,7 @@ export default function SshWorkspaceDialog({
   const [user, setUser] = useState("");
   const [port, setPort] = useState("");
   const [path, setPath] = useState("");
-  const [auth, setAuth] = useState<"auto" | "key" | "password">("auto");
+  const [auth, setAuth] = useState<AuthMode>("auto");
   const [keyFile, setKeyFile] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState<"test" | "save" | null>(null);
@@ -33,9 +73,20 @@ export default function SshWorkspaceDialog({
       setMsg("");
       setBusy(null);
       setPassword("");
+      const last = loadLast();
+      if (last) {
+        setHost(last.host);
+        setUser(last.user);
+        setPort(last.port);
+        setPath(last.path);
+        setAuth(last.auth);
+        setKeyFile(last.keyFile);
+      }
     }
   }, [isOpen]);
   if (!isOpen) return null;
+
+  const currentForm = (): SshLast => ({ host, user, port, path, auth, keyFile });
 
   const buildUri = (): string | null => {
     const h = host.trim();
@@ -72,6 +123,7 @@ export default function SshWorkspaceDialog({
     try {
       const out = await testRemote(uri, auth === "password" ? password : undefined);
       setMsg(out.includes("no-opencode") ? "Connected — path OK, but `opencode` is not on the remote PATH." : "Connected.");
+      saveLast(currentForm());
       return uri;
     } catch (e) {
       setMsg(String(e));
@@ -100,6 +152,7 @@ export default function SshWorkspaceDialog({
     try {
       // validate first (also warms the password into memory for the save)
       await testRemote(uri, auth === "password" ? password : undefined);
+      saveLast(currentForm());
       if (auth === "key") await setRemoteKey(uri, keyFile.trim());
       else await setRemoteKey(uri, "");
       if (auth === "password") await ensureRemote(uri, password);
