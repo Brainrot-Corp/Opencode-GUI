@@ -102,6 +102,16 @@
 .ro-diff .monaco-editor {
   outline: none !important;
 }
+/* same blocky accent scrollbar treatment as the file editor */
+.ro-diff .monaco-editor .scrollbar .slider {
+  border-radius: 0 !important;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) calc(0.12 * 100%), transparent);
+}
+.ro-diff .monaco-editor .scrollbar .slider:hover {
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--accent) calc(0.12 * 100%), transparent),
+    0 0 10px var(--accent-glow);
+}
 /* whole-line row tints (isWholeLine decorations) */
 .ro-row.ro-add {
   background: color-mix(in srgb, var(--accent) calc(0.1 * 100%), transparent);

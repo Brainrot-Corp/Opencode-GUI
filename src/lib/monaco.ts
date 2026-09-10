@@ -133,6 +133,12 @@ export function defineGuiTheme(monaco: typeof Monaco) {
       "focusBorder": "#00000000",
       "editorLineNumber.foreground": `#${faint}`,
       "editorLineNumber.activeForeground": `#${fg}`,
+      // blocky accent scrollbars to match tokens.css ::-webkit-scrollbar
+      // (18% idle / 34% hover / ~50% active — same mixes as the app chrome)
+      "scrollbarSlider.background": `#${accent}2E`,
+      "scrollbarSlider.hoverBackground": `#${accent}57`,
+      "scrollbarSlider.activeBackground": `#${accent}80`,
+      "scrollbar.shadow": "#00000000",
     },
   });
 }
