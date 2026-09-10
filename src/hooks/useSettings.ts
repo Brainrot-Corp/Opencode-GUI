@@ -9,6 +9,7 @@ import {
   applyTheme,
   defaultThemesJson,
   parseThemesConfig,
+  snapshotThemeVars,
   stripComments,
   THEME_CONFIG_VERSION,
   type NormalizedTheme,
@@ -133,6 +134,7 @@ export type AppSettings = {
 };
 
 const KEY = "oc.settings";
+const APPEARANCE_KEY = "oc.appearance";
 const HEX = /^#[0-9a-f]{6}$/i;
 
 function detectLang(): Lang {
@@ -190,6 +192,66 @@ function num(v: unknown, def: number, min: number, max: number) {
   return typeof v === "number" && v >= min && v <= max ? v : def;
 }
 
+// "r, g, b" theme var → #rrggbb (for themes with no DEFAULT_COLOR_SETS row)
+function rgbVarToHex(v: unknown): string | null {
+  if (typeof v !== "string") return null;
+  const m = v.split(",").map((s) => Number(s.trim()));
+  if (m.length !== 3 || m.some((n) => !Number.isFinite(n) || n < 0 || n > 255)) return null;
+  const hex = "#" + m.map((n) => Math.round(n).toString(16).padStart(2, "0")).join("");
+  return HEX.test(hex) ? hex : null;
+}
+
+// base/surface defaults for a theme×mode: the built-in table when present,
+// otherwise the theme definition's own palette (never a foreign theme's —
+// falling back to cyan here is what snapped custom themes back to cyan).
+function themeDefaultCs(tid: string, mode: Mode, def?: NormalizedTheme): ColorSet {
+  const table = DEFAULT_COLOR_SETS[tid]?.[mode];
+  if (table) return table;
+  const vars = def?.modes?.[mode]?.vars;
+  const cyan = DEFAULT_COLOR_SETS.cyan[mode];
+  return {
+    base: rgbVarToHex(vars?.["--base-rgb"]) ?? cyan.base,
+    baseA: cyan.baseA,
+    surface: rgbVarToHex(vars?.["--surf-rgb"]) ?? cyan.surface,
+    surfaceA: cyan.surfaceA,
+  };
+}
+
+function validColorSet(v: unknown): v is ColorSet {
+  if (!v || typeof v !== "object") return false;
+  const c = v as Record<string, unknown>;
+  return (
+    typeof c.base === "string" && HEX.test(c.base) &&
+    typeof c.surface === "string" && HEX.test(c.surface) &&
+    typeof c.baseA === "number" && c.baseA >= 0 && c.baseA <= 1 &&
+    typeof c.surfaceA === "number" && c.surfaceA >= 0 && c.surfaceA <= 1
+  );
+}
+
+// appearance overrides persisted across reloads (workspace switches reload
+// the page — memory-only overrides used to snap back to defaults there).
+// themes.json stays pristine and remains the Reset source of truth.
+function loadAppearance(): Partial<AppColors> {
+  try {
+    const raw = JSON.parse(localStorage.getItem(APPEARANCE_KEY) ?? "{}");
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+    const out: Record<string, Record<string, ColorSet>> = {};
+    for (const [tid, modes] of Object.entries(raw as Record<string, unknown>)) {
+      if (typeof tid !== "string" || !tid || tid.length > 64) continue;
+      if (!modes || typeof modes !== "object") continue;
+      for (const [mode, cs] of Object.entries(modes as Record<string, unknown>)) {
+        if (mode !== "dark" && mode !== "light") continue;
+        if (!validColorSet(cs)) continue;
+        (out[tid] ??= {})[mode] = cs;
+      }
+      if (Object.keys(out).length >= 24) break;
+    }
+    return out as Partial<AppColors>;
+  } catch {
+    return {};
+  }
+}
+
 // migrates legacy shapes:
 //   flat colors ({base,...})            → cyan/dark
 //   theme "midnight"/"dark"/"light"     → theme "cyan" + matching mode
@@ -223,12 +285,6 @@ function loadColors(p: any, legacyTheme: string): AppColors {
 function hexToRgb(hex: string): string {
   const n = parseInt(hex.slice(1), 16);
   return `${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}`;
-}
-
-// per-theme color overrides may not exist for custom/config themes — fall
-// back to cyan's (the palettes' translucent black base is shared anyway)
-function colorsFor(colors: AppColors, theme: string): Record<Mode, ColorSet> {
-  return colors[theme] ?? colors.cyan ?? DEFAULT_COLOR_SETS.cyan;
 }
 
 // load ~/.config/.opencode-gui/themes.json via the Rust side, seeding the
@@ -463,27 +519,103 @@ export function useSettings() {
     setSoundPrefs(settings.sounds);
   }, [settings.sounds]);
 
-  // appearance overrides live entirely in-memory (never written to the
-  // persisted json). The json (DEFAULT_COLOR_SETS / themes.json) stays
-  // pristine and is the source of truth for Reset, while edits are pure
-  // CSS overrides via --base-* / --surf-*.
-  const [appearanceOverrides, setAppearanceOverrides] = useState<Partial<AppColors>>({});
+  // appearance overrides persist in localStorage (workspace switches do a
+  // full page reload — memory-only overrides used to snap back to defaults
+  // there). themes.json stays pristine and remains the Reset source of truth;
+  // edits are still pure CSS overrides via --base-* / --surf-*.
+  const [appearanceOverrides, setAppearanceOverrides] = useState<Partial<AppColors>>(loadAppearance);
+
+  // mirror overrides to localStorage so reloads (workspace switches) keep
+  // them; clearing the last one removes the key. Reset flows through here
+  // too, so a reset entry can never resurrect on the next boot.
+  useEffect(() => {
+    try {
+      if (Object.keys(appearanceOverrides).length === 0) localStorage.removeItem(APPEARANCE_KEY);
+      else localStorage.setItem(APPEARANCE_KEY, JSON.stringify(appearanceOverrides));
+    } catch {}
+  }, [appearanceOverrides]);
+
+  // one-time migration: the legacy `settings.colors` blob was loaded but
+  // never applied to the DOM, so pre-fix customizations sat invisible in
+  // storage. Copy real customizations (anything differing from the stock
+  // table) into the overrides above, then reset the blob to stock so this
+  // can't run twice — and a later Reset can't resurrect migrated values.
+  // Existing oc.appearance entries always win; stock-equal rows are skipped.
+  useEffect(() => {
+    try {
+      const raw = JSON.parse(localStorage.getItem(KEY) ?? "{}");
+      const src = raw?.colors;
+      if (!src || typeof src !== "object" || Array.isArray(src)) return;
+      const srcObj = { ...(src as Record<string, unknown>) };
+      if (typeof srcObj.base === "string" && HEX.test(srcObj.base)) {
+        // very old flat shape → cyan/dark (mirrors loadColors: per-theme
+        // entries win, flat only fills a missing dark mode)
+        const cyanDark = DEFAULT_COLOR_SETS.cyan.dark;
+        const cyanModes = { ...((srcObj.cyan as Record<string, unknown>) ?? {}) };
+        if (cyanModes.dark === undefined) {
+          cyanModes.dark = {
+            base: srcObj.base,
+            baseA: num((srcObj as any).baseA, cyanDark.baseA, 0, 1),
+            surface:
+              typeof srcObj.surface === "string" && HEX.test(srcObj.surface)
+                ? srcObj.surface
+                : cyanDark.surface,
+            surfaceA: num((srcObj as any).surfaceA, cyanDark.surfaceA, 0, 1),
+          };
+        }
+        srcObj.cyan = cyanModes;
+      }
+      const prev = appearanceOverrides as AppColors;
+      const migrated: Record<string, Record<string, ColorSet>> = {};
+      for (const [tid, modes] of Object.entries(srcObj)) {
+        if (typeof tid !== "string" || !tid || tid.length > 64) continue;
+        if (!modes || typeof modes !== "object") continue;
+        for (const mode of ["dark", "light"] as const) {
+          const cs = (modes as Record<string, unknown>)[mode];
+          if (!validColorSet(cs)) continue;
+          if (prev[tid]?.[mode]) continue;
+          const stock = DEFAULT_COLOR_SETS[tid]?.[mode] ?? DEFAULT_COLOR_SETS.cyan[mode];
+          if (cs.base === stock.base && cs.surface === stock.surface && cs.baseA === stock.baseA && cs.surfaceA === stock.surfaceA) continue;
+          (migrated[tid] ??= {})[mode] = cs;
+        }
+      }
+      if (Object.keys(migrated).length === 0) return;
+      setAppearanceOverrides((p) => {
+        const next = { ...(p as AppColors) };
+        for (const [tid, modes] of Object.entries(migrated)) next[tid] = { ...next[tid], ...modes };
+        return next as Partial<AppColors>;
+      });
+      update({ colors: structuredClone(DEFAULT_COLOR_SETS) });
+    } catch {}
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // theme + mode + appearance → DOM (CSS variables drive every surface).
-  // full palette comes from applyTheme; the in-memory appearance overrides
-  // layer on top of it afterwards — no mutation of the persisted colors json.
+  // full palette comes from applyTheme; the appearance overrides layer on
+  // top of it afterwards — no mutation of the persisted colors json.
   useEffect(() => {
     if (activeDef) applyTheme(activeId, activeDef, effectiveMode);
     else document.documentElement.dataset.mode = effectiveMode;
-    const defaultCs =
-      DEFAULT_COLOR_SETS[activeId]?.[effectiveMode] ?? DEFAULT_COLOR_SETS.cyan[effectiveMode];
+    const defaultCs = themeDefaultCs(activeId, effectiveMode, activeDef);
     const overrideCs = (appearanceOverrides as AppColors)[activeId]?.[effectiveMode];
     const cs = overrideCs ?? defaultCs;
     const s = document.documentElement.style;
-    s.setProperty("--base-rgb", hexToRgb(cs.base));
+    const baseRgb = hexToRgb(cs.base);
+    const surfRgb = hexToRgb(cs.surface);
+    s.setProperty("--base-rgb", baseRgb);
     s.setProperty("--base-a", String(cs.baseA));
-    s.setProperty("--surf-rgb", hexToRgb(cs.surface));
+    s.setProperty("--surf-rgb", surfRgb);
     s.setProperty("--surf-a", String(cs.surfaceA));
+    // snapshot the fully-applied palette for next boot's pre-paint restore
+    // (only with a complete theme def — never a partial first-paint state)
+    if (activeDef) {
+      snapshotThemeVars(activeId, effectiveMode, activeDef, {
+        rgb: baseRgb,
+        a: String(cs.baseA),
+        surfRgb,
+        surfA: String(cs.surfaceA),
+      });
+    }
   }, [activeDef, activeId, effectiveMode, appearanceOverrides]);
 
   useEffect(() => {
@@ -564,16 +696,15 @@ export function useSettings() {
     setSettings((s) => ({ ...s, sounds: { ...s.sounds, ...patch } }));
   }, []);
 
-  // Appearance edits are pure in-memory CSS overrides keyed by the
-  // *effective* theme/mode (the actual vars on <html>). They never touch
-  // the persisted json, so the json stays as the reset source.
+  // Appearance edits are persisted CSS overrides keyed by the *effective*
+  // theme/mode (the actual vars on <html>). They never touch themes.json,
+  // so the file stays as the reset source.
   const updateColors = useCallback(
     (patch: Partial<ColorSet>) =>
       setAppearanceOverrides((prev) => {
         const tid = activeId;
         const mode = effectiveMode;
-        const defaultCs =
-          DEFAULT_COLOR_SETS[tid]?.[mode] ?? DEFAULT_COLOR_SETS.cyan[mode];
+        const defaultCs = themeDefaultCs(tid, mode, activeDef);
         const cur = (prev as AppColors)[tid]?.[mode] ?? defaultCs;
         const nextCs = { ...cur, ...patch };
         const themePrev = (prev as AppColors)[tid] ?? {};
@@ -582,7 +713,7 @@ export function useSettings() {
           [tid]: { ...themePrev, [mode]: nextCs },
         } as Partial<AppColors>;
       }),
-    [activeId, effectiveMode],
+    [activeId, effectiveMode, activeDef],
   );
 
   // dynamic reset — clears the override for the *current* effective
@@ -609,11 +740,17 @@ export function useSettings() {
 
   const themeList: ThemeMeta[] = Object.values(themes).map((t) => t.meta);
 
-  // merged view for the drawer: overrides win, otherwise json defaults.
+  // merged view for the drawer: overrides win, otherwise the theme's own
+  // palette (built-in table, else the definition's vars — never cyan for a
+  // non-cyan theme, or the sliders would lie about the live values).
   // kept stable via callback so AppearanceSettings sees live slider values.
   const mergedColorsFor = useCallback(
     (theme: string) => {
-      const defaults = colorsFor(DEFAULT_COLOR_SETS as AppColors, theme);
+      const def = themes[theme];
+      const defaults = {
+        dark: themeDefaultCs(theme, "dark", def),
+        light: themeDefaultCs(theme, "light", def),
+      } as Record<Mode, ColorSet>;
       const overrides = (appearanceOverrides as AppColors)[theme];
       if (!overrides) return defaults;
       return {
@@ -621,7 +758,7 @@ export function useSettings() {
         light: overrides.light ?? defaults.light,
       } as Record<Mode, ColorSet>;
     },
-    [appearanceOverrides],
+    [appearanceOverrides, themes],
   );
 
   // overwrite themes.json on disk with the built-in defaults — file watcher

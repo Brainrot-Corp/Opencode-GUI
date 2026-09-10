@@ -7,7 +7,15 @@ import "./styles/syntax.css";
 import "./styles/layout.css";
 import "./styles/toast.css";
 import { getDirectory, setDirectory } from "./api";
+import { restoreThemeVars } from "./lib/themes";
 import { warmupMonaco } from "./lib/monaco";
+
+// paint the last-applied palette synchronously before first render — without
+// this, skeletons render in static cyan CSS and visibly snap when the async
+// themes.json load lands (every boot, including workspace-switch reloads)
+try {
+  restoreThemeVars();
+} catch {}
 
 // debug local builds use http://localhost:1420 origin — localStorage there is
 // separate from the release tauri://localhost origin, so the last workspace

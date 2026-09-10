@@ -1147,3 +1147,64 @@ export function applyTheme(id: string, def: NormalizedTheme, mode: "dark" | "lig
   el.style.colorScheme = m.colorScheme;
   for (const [k, v] of Object.entries(m.vars)) el.style.setProperty(k, v);
 }
+
+const THEME_SNAPSHOT_KEY = "oc.themeVars";
+
+// Snapshot the fully-applied palette (theme vars + computed base/surface,
+// which already include appearance overrides) so the next boot can paint it
+// synchronously before first render. Kills the boot flicker where skeletons
+// render in static cyan CSS while themes.json is still loading async.
+// Only ever written with a complete palette — never partial.
+export function snapshotThemeVars(
+  tid: string,
+  mode: "dark" | "light",
+  def: NormalizedTheme,
+  base: { rgb: string; a: string; surfRgb: string; surfA: string },
+): void {
+  try {
+    const m = def.modes[mode];
+    const vars: Record<string, string> = {};
+    for (const [k, v] of Object.entries(m.vars)) {
+      if (typeof k === "string" && k.startsWith("--") && typeof v === "string" && v.length < 200) vars[k] = v;
+    }
+    if (Object.keys(vars).length > 160) return;
+    vars["--base-rgb"] = base.rgb;
+    vars["--base-a"] = base.a;
+    vars["--surf-rgb"] = base.surfRgb;
+    vars["--surf-a"] = base.surfA;
+    localStorage.setItem(
+      THEME_SNAPSHOT_KEY,
+      JSON.stringify({ v: 1, tid, mode, scheme: m.colorScheme, vars }),
+    );
+  } catch {}
+}
+
+// Restore the snapshot before first paint (call from main.tsx module scope).
+// Applies only when it matches the stored theme+mode; returns nothing —
+// worst case (missing/corrupt/stale) is today's behavior: static CSS until
+// the async theme load lands.
+export function restoreThemeVars(): void {
+  try {
+    const snap = JSON.parse(localStorage.getItem(THEME_SNAPSHOT_KEY) ?? "null") as {
+      v?: unknown; tid?: unknown; mode?: unknown; scheme?: unknown; vars?: unknown;
+    } | null;
+    const settings = JSON.parse(localStorage.getItem("oc.settings") ?? "{}") as {
+      theme?: unknown; mode?: unknown;
+    };
+    if (!snap || snap.v !== 1 || typeof snap.tid !== "string" || !snap.tid) return;
+    if (snap.tid !== settings.theme) return;
+    const mode = snap.mode === "light" ? "light" : "dark";
+    if ((settings.mode ?? "dark") !== mode) return;
+    if (!snap.vars || typeof snap.vars !== "object" || Array.isArray(snap.vars)) return;
+    const el = document.documentElement;
+    el.dataset.theme = snap.tid;
+    el.dataset.mode = mode;
+    if (snap.scheme === "dark" || snap.scheme === "light") el.style.colorScheme = snap.scheme;
+    let n = 0;
+    for (const [k, v] of Object.entries(snap.vars as Record<string, unknown>)) {
+      if (typeof k !== "string" || !k.startsWith("--") || typeof v !== "string" || v.length > 200) continue;
+      if (++n > 160) break;
+      el.style.setProperty(k, v);
+    }
+  } catch {}
+}
