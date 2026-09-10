@@ -634,14 +634,23 @@ pub async fn git_commit(
         return Err("enter a commit message".to_string());
     }
     let root = repo_root(&dir).ok_or_else(|| "not a git repository".to_string())?;
+    // Commit All = VSCode parity: stage everything first (tracked M/D + staged
+    // A + untracked ??) so A files are included — `commit -a` alone skips
+    // untracked. Staging here (not `-a`) also freezes the index so worktree
+    // edits landing mid-commit aren't swept in.
+    if use_all && !use_amend {
+        run_root(&root, &["add", "-A"], OP_TIMEOUT)?;
+    } else if use_all {
+        // amend + all: stage all but keep --amend semantics
+        let _ = run_root(&root, &["add", "-A"], OP_TIMEOUT);
+    }
     let build_args = |subject: &str, body: Option<&str>| -> Vec<String> {
         let mut a: Vec<String> = vec!["commit".to_string()];
         if use_amend {
             a.push("--amend".to_string());
         }
-        if use_all {
-            a.push("-a".to_string());
-        }
+        // no `-a`: `all` is already staged above (covers untracked, which
+        // `-a` would skip)
         if skip_verify {
             a.push("--no-verify".to_string());
         }

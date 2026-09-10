@@ -113,7 +113,6 @@ const conflictsOf = (files: GitFile[]) => files.filter(isConflict);
 const changedOf = (files: GitFile[]) => files.filter((f) => !isConflict(f) && f.y !== " ");
 const isTracked = (f: GitFile) => !(f.x === "?" && f.y === "?");
 const isUntracked = (f: GitFile) => f.x === "?" && f.y === "?";
-const allTrackedDirtyOf = (files: GitFile[]) => files.filter((f) => isTracked(f) && (f.x !== " " || f.y !== " "));
 
 function dedupFiles(files: GitFile[]): GitFile[] {
   const m = new Map<string, GitFile>();
@@ -293,7 +292,7 @@ function GitPanelInner() {
         if (/has no upstream branch|no upstream branch|set upstream/i.test(raw)) {
           setErr(raw + "\nTip: Push with --set-upstream or set remote via git push -u origin " + (st.branch || "<branch>"));
         } else if (/nothing to commit|no changes added to commit/i.test(raw) && !amend) {
-          setErr(raw + " — try Commit All (includes tracked changes) or Stage first.");
+          setErr(raw + " — try Commit All (includes all changes) or Stage first.");
         } else {
           setErr(raw);
         }
@@ -328,18 +327,19 @@ function GitPanelInner() {
   const changes = changedOf(st.files);
   const conflicts = conflictsOf(st.files);
   const noUpstream = st.repo && !st.detached && !(st.upstream ?? "");
-  const allTrackedDirty = allTrackedDirtyOf(st.files);
+  // Commit All scope: staged + unstaged, tracked + untracked (A), minus
+  // conflicts. Snapshot at click so files appearing mid-commit aren't swept in.
+  const allDirty = dedupFiles([...staged, ...changes]);
   const canCommitStaged = !!msg.trim() && staged.length > 0 && !busy;
-  const canCommitAll = !!msg.trim() && allTrackedDirty.length > 0 && !busy;
+  const canCommitAll = !!msg.trim() && allDirty.length > 0 && !busy;
 
-  // unified commit helper covering VS variants: staged vs all (-a), amend, push, sync
+  // unified commit helper covering VS variants: staged vs all (stage snapshot then commit), amend, push, sync
   const genMessage = async (opts?: { all?: boolean }): Promise<string> => {
     const useAll = !!opts?.all;
-    const allDirty = allTrackedDirtyOf(st.files);
-    const srcFiles = useAll ? dedupFiles(allDirty) : [...staged];
+    const srcFiles = useAll ? [...allDirty] : [...staged];
     const genFiles = srcFiles;
     if (gen || busy || !genFiles.length) {
-      if (!genFiles.length) setErr(useAll ? "Nothing to commit (tracked)." : "Nothing staged to generate from.");
+      if (!genFiles.length) setErr(useAll ? "Nothing to commit." : "Nothing staged to generate from.");
       return "";
     }
     const model = secondaryModel();
@@ -450,6 +450,9 @@ function GitPanelInner() {
     const useAll = !!opts.all;
     const usePush = !!opts.push;
     const useSync = !!opts.sync;
+    // snapshot click-time file set so changes appearing mid-commit (AI gen,
+    // push/sync round-trips) are NOT swept into this commit
+    const snapPaths = useAll ? allDirty.map((f) => f.path) : [];
     let message = (opts.override ?? msg).trim();
     if (!message) {
       const m = await genMessage({ all: useAll });
@@ -461,18 +464,26 @@ function GitPanelInner() {
       return false;
     }
     const hasStaged = staged.length > 0;
-    const hasAll = allTrackedDirty.length > 0;
+    const hasAll = allDirty.length > 0;
     if (!amend) {
-      if (useAll && !hasAll) { setErr("Nothing to commit — working tree clean (tracked files)."); return false; }
+      if (useAll && !hasAll) { setErr("Nothing to commit — working tree clean."); return false; }
       if (!useAll && !hasStaged) { setErr("Nothing staged to commit — Stage files or use Commit All."); return false; }
     }
     if (gen) abortGen();
     const ok = await act(async () => {
-      await invoke("git_commit", { dir: curDir(), message, amend, all: useAll });
+      if (useAll && snapPaths.length) {
+        // stage the click-time snapshot (M + A incl. untracked); commit reads
+        // the index only so later worktree changes stay out
+        await invoke("git_stage", { dir: curDir(), paths: [...new Set(snapPaths)] });
+        await invoke("git_commit", { dir: curDir(), message, amend, all: false });
+      } else {
+        await invoke("git_commit", { dir: curDir(), message, amend, all: useAll });
+      }
       if (useAll) {
+        const snap = new Set(snapPaths);
         setSt((s) => ({
           ...s,
-          files: s.files.filter((f) => isUntracked(f)),
+          files: s.files.filter((f) => !snap.has(f.path)),
         }));
       } else {
         setSt((s) => ({
@@ -488,7 +499,7 @@ function GitPanelInner() {
       }
     });
     return ok;
-  }, [msg, staged, allTrackedDirty, amend, gen, act, abortGen, noUpstream]);
+  }, [msg, staged, allDirty, amend, gen, act, abortGen, noUpstream]);
 
   const [pushed, setPushed] = useState<"idle" | "run" | "ok">("idle");
   const doPush = async () => {
@@ -596,11 +607,11 @@ function GitPanelInner() {
   };
   const primaryHintMap: Record<PrimaryAction, string> = {
     staged: "Commit staged changes",
-    all: "Commit all tracked changes (-a, skip untracked)",
+    all: "Commit all changes (staged + unstaged, incl. untracked)",
     stagedPush: "Commit staged and push",
-    allPush: "Commit all tracked and push",
+    allPush: "Commit all changes and push",
     stagedSync: "Commit staged and sync (pull then push)",
-    allSync: "Commit all tracked and sync",
+    allSync: "Commit all changes and sync",
   };
   const runPrimary = () => {
     switch (primary) {
@@ -614,10 +625,10 @@ function GitPanelInner() {
   };
   const hint = (() => {
     if (busy || gen) return "";
-    if (!msg.trim() && allTrackedDirty.length > 0 && staged.length === 0) return "No staged changes — use Commit All or Stage All.";
-    if (!staged.length && allTrackedDirty.length > 0) return "No staged changes. Commit All will commit tracked changes (−a, skips untracked).";
-    if (!allTrackedDirty.length && !staged.length && st.files.length === 0) return "";
-    if (!allTrackedDirty.length) return "";
+    if (!msg.trim() && allDirty.length > 0 && staged.length === 0) return "No staged changes — use Commit All or Stage All.";
+    if (!staged.length && allDirty.length > 0) return "No staged changes. Commit All will commit all changes (incl. untracked).";
+    if (!allDirty.length && !staged.length && st.files.length === 0) return "";
+    if (!allDirty.length) return "";
     return "";
   })();
 
@@ -637,11 +648,11 @@ function GitPanelInner() {
       return;
     }
     if (busy || gen) return;
-    if (!staged.length && !allTrackedDirty.length) {
+    if (!staged.length && !allDirty.length) {
       setErr("Nothing to commit.");
       return;
     }
-    const useAll = !staged.length && allTrackedDirty.length > 0;
+    const useAll = !staged.length && allDirty.length > 0;
     if (msg.trim()) void doCommit({ all: useAll });
     else void genMessage({ all: useAll }).then((m) => { if (m) void doCommit({ all: useAll, override: m }); });
   };
@@ -748,7 +759,7 @@ function GitPanelInner() {
       </button>
       <button className="gp-menu-item" disabled={busy} onClick={() => { setPrimary("all"); setCommitMenuOpen(false); void doCommit({ all: true }); }}>
         <i className="fa-solid fa-layer-group" /> Commit All
-        <span className="gp-menu-hint">−a, skip untracked</span>
+        <span className="gp-menu-hint">incl. untracked</span>
       </button>
       <div className="gp-menu-sep" />
       <button className="gp-menu-item" disabled={busy} onClick={() => { setPrimary("stagedPush"); setCommitMenuOpen(false); void doCommit({ all: false, push: true }); }}>
@@ -805,7 +816,7 @@ function GitPanelInner() {
       <button className="gp-menu-item" disabled={busy} onClick={() => { setMoreMenuOpen(false); void act(() => invoke("git_stage", { dir: curDir(), paths: changes.filter(isTracked).map(f=>f.path) })); }}>
         <i className="fa-solid fa-plus" /> Stage all tracked
       </button>
-      <button className="gp-menu-item" disabled={busy || !allTrackedDirty.length} onClick={() => { setMoreMenuOpen(false); void genMessage({ all: true }); }}>
+      <button className="gp-menu-item" disabled={busy || !allDirty.length} onClick={() => { setMoreMenuOpen(false); void genMessage({ all: true }); }}>
         <i className="fa-solid fa-wand-magic-sparkles" /> Generate message (All)
       </button>
       <div className="gp-menu-sep" />
@@ -862,8 +873,8 @@ function GitPanelInner() {
               className="gp-msg"
               placeholder={
                 bodyOpt
-                  ? `Message + body (${staged.length} staged, ${allTrackedDirty.length} tracked) — Ctrl+Enter to commit`
-                  : `Message (${staged.length} staged / ${allTrackedDirty.length} tracked)`
+                  ? `Message + body (${staged.length} staged, ${allDirty.length} changed) — Ctrl+Enter to commit`
+                  : `Message (${staged.length} staged / ${allDirty.length} changed)`
               }
               value={msg}
               rows={1}
@@ -890,10 +901,10 @@ function GitPanelInner() {
                 gen
                   ? "Stop generation"
                   : secondaryModel()
-                    ? `Generate message (${secondaryModel()})${bodyOpt ? " + body" : ""} — for ${primary.includes("all") ? "All (−a)" : "Staged"}`
+                    ? `Generate message (${secondaryModel()})${bodyOpt ? " + body" : ""} — for ${primary.includes("all") ? "All" : "Staged"}`
                     : "Heuristic only — pick a Secondary model for AI"
               }
-              disabled={busy || (!gen && !(primary.includes("all") ? allTrackedDirty.length : staged.length))}
+              disabled={busy || (!gen && !(primary.includes("all") ? allDirty.length : staged.length))}
               onMouseEnter={() => gen && setGenHover(true)}
               onMouseLeave={() => setGenHover(false)}
               onClick={() => {
@@ -912,7 +923,7 @@ function GitPanelInner() {
               <button
                 className="gp-commit-main"
                 data-tip={primaryHintMap[primary] + (amend ? " — amend" : "")}
-                disabled={busy || (!amend && (primary.includes("all") ? !allTrackedDirty.length : !staged.length))}
+                disabled={busy || (!amend && (primary.includes("all") ? !allDirty.length : !staged.length))}
                 onClick={runPrimary}
               >
                 <i className={`fa-solid ${primary.includes("Push") ? "fa-cloud-arrow-up" : primary.includes("Sync") ? "fa-rotate" : "fa-check"}`} />
@@ -930,7 +941,7 @@ function GitPanelInner() {
             <button
               className={`push${pushed === "ok" ? " pushed" : ""}`}
               data-tip={noUpstream ? "Publish branch (push -u origin)" : "Push to remote"}
-              disabled={busy || pushed === "run" || (!st.ahead && !staged.length && !allTrackedDirty.length && !noUpstream)}
+              disabled={busy || pushed === "run" || (!st.ahead && !staged.length && !allDirty.length && !noUpstream)}
               onClick={doPush}
             >
               <i
