@@ -538,9 +538,9 @@ export default function SettingsDrawer({
                 </div>
               </div>
               <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
-                <input className="discord-in" style={{ flex: "1 1 90px", minWidth: 0 }} placeholder={t("settings.terminal.customShell.namePlaceholder")} value={customName} onChange={(e) => setCustomName(e.target.value)} spellCheck={false} maxLength={80} />
-                <input className="discord-in" style={{ flex: "2 1 160px", minWidth: 0 }} placeholder={t("settings.terminal.customShell.pathPlaceholder")} value={customPath} onChange={(e) => setCustomPath(e.target.value)} spellCheck={false} />
-                <input className="discord-in" style={{ flex: "1 1 80px", minWidth: 0 }} placeholder={t("settings.terminal.customShell.argsPlaceholder")} value={customArgs} onChange={(e) => setCustomArgs(e.target.value)} spellCheck={false} />
+                <input className="discord-in oc-input" style={{ flex: "1 1 90px", minWidth: 0 }} placeholder={t("settings.terminal.customShell.namePlaceholder")} value={customName} onChange={(e) => setCustomName(e.target.value)} spellCheck={false} maxLength={80} />
+                <input className="discord-in oc-input" style={{ flex: "2 1 160px", minWidth: 0 }} placeholder={t("settings.terminal.customShell.pathPlaceholder")} value={customPath} onChange={(e) => setCustomPath(e.target.value)} spellCheck={false} />
+                <input className="discord-in oc-input" style={{ flex: "1 1 80px", minWidth: 0 }} placeholder={t("settings.terminal.customShell.argsPlaceholder")} value={customArgs} onChange={(e) => setCustomArgs(e.target.value)} spellCheck={false} />
                 <button
                   type="button"
                   className="reset-btn"
@@ -697,7 +697,7 @@ export default function SettingsDrawer({
               </div>
               <div className="color-controls" style={{ display: "flex", gap: "6px", width: "100%" }}>
                 <input
-                  className="discord-in"
+                  className="discord-in oc-input"
                   style={{ flex: 1, minWidth: 0 }}
                   placeholder={t("settings.updates.debugLocal.placeholder")}
                   value={debugLocalPath}
