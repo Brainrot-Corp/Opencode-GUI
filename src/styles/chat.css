@@ -139,6 +139,32 @@
   outline-offset: -1px;
   color: var(--accent);
 }
+/* close-workspace affordance: wrapper keeps the bar full-bleed, the x floats
+   at the right over reserved padding so the ellipsized path never underlaps */
+.stage-head-wrap {
+  display: block;
+  position: relative;
+}
+.stage-head--with-close {
+  padding-right: 34px;
+}
+.stage-head-close {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 24px;
+  height: 22px;
+  margin-right: 0;
+}
+.stage-head-close i {
+  font-size: 11px;
+}
+.stage-head-close.armed {
+  color: var(--danger);
+  background: rgba(224, 143, 143, 0.14);
+  box-shadow: 0 0 10px rgba(224, 143, 143, 0.35);
+}
 
 /* attachment parts inside messages */
 .msg .file-img {

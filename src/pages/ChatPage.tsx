@@ -29,13 +29,14 @@ import { usePluginHotkeys } from "../hooks/usePluginHotkeys";
 import { useVoice, type VdbgKind } from "../hooks/useVoice";
 import { routeVoice, routerInput, type VoiceAct } from "../lib/voiceRouter";
 import { ensureDict } from "../lib/dictWords";
-import { pickWorkspace, getLastWorkspace, getAllWorkspaces } from "../lib/workspace";
+import { pickWorkspace, getLastWorkspace, getAllWorkspaces, removeWorkspace, applyWorkspace } from "../lib/workspace";
 import { normWorkspace } from "../lib/platform";
 import { remoteLabel } from "../lib/remotes";
 import { playSound } from "../lib/sounds";
 import { useSpeech } from "../hooks/useSpeech";
 import { pushToast, dismissToast } from "../hooks/useToast";
 import { matchesEvent } from "../lib/hotkeys";
+import { withHotkey } from "../lib/tip";
 import { releaseTrapFocus } from "../lib/focus";
 import { usePlugins } from "../hooks/usePlugins";
 import { loadPluginsCatalog, fetchPluginFiles, pluginRawUrl, type PluginCatalogEntry } from "../lib/pluginsCatalog";
@@ -221,6 +222,83 @@ export default function ChatPage() {
     }
   }, [oc.activeId, oc.msgs, oc.sessions, oc.removeSession, oc.openSession]);
 
+  // Ctrl+Shift+W close workspace — mirrors the close-session double-press:
+  // first press arms (banner shows), second within 1s closes. Only extra
+  // workspaces are removable (primary has no remove button in the sidebar);
+  // with primary active or no extras this is a no-op. Closes the active
+  // session's workspace when it's an extra, else the last extra. Closing the
+  // workspace you're in lands back home via applyWorkspace("") — same as the
+  // "Back to home folder" button in settings. Primary-only and not already
+  // home: closing goes straight home.
+  const [wsCloseHint, setWsCloseHint] = useState(false);
+  const wsCloseArm = useRef(0);
+  const wsCloseTimer = useRef(0);
+  // removable-extra target: active session's workspace when it's an extra,
+  // else the last extra. "" when nothing removable (primary-only).
+  const resolveWorkspaceCloseTarget = useCallback(() => {
+    const all = getAllWorkspaces();
+    if (all.length <= 1) return "";
+    const primary = all[0] ?? "";
+    const activeDir = oc.activeId ? (oc.getDirForSession?.(oc.activeId) ?? "") : "";
+    const target =
+      activeDir && normWorkspace(activeDir) !== normWorkspace(primary)
+        ? activeDir
+        : (all[all.length - 1] ?? "");
+    if (!target || normWorkspace(target) === normWorkspace(primary)) return "";
+    return target;
+  }, [oc.activeId, oc.getDirForSession]);
+  // immediate path — explicit invocations (/close-workspace) skip the arm.
+  // Detaches the extra, then — like "Back to home folder" in settings — goes
+  // back home via applyWorkspace("") when you closed the workspace you're in.
+  // Closing a background extra just detaches it, no reload.
+  const closeWorkspaceNow = useCallback(() => {
+    const target = resolveWorkspaceCloseTarget();
+    if (target) {
+      const activeDir = oc.activeId ? (oc.getDirForSession?.(oc.activeId) ?? "") : "";
+      playSound("close");
+      removeWorkspace(target);
+      if (activeDir && normWorkspace(activeDir) === normWorkspace(target)) {
+        void applyWorkspace("");
+      } else {
+        void oc.refreshSessions?.();
+      }
+      return;
+    }
+    // primary-only and not already home — closing means going home
+    const primary = getAllWorkspaces()[0] ?? "";
+    if (primary && normWorkspace(primary) !== "") {
+      playSound("close");
+      void applyWorkspace("");
+    }
+  }, [resolveWorkspaceCloseTarget, oc.activeId, oc.getDirForSession, oc.refreshSessions]);
+  const closeActiveWorkspace = useCallback(() => {
+    const target = resolveWorkspaceCloseTarget();
+    const primary = getAllWorkspaces()[0] ?? "";
+    if (!target && !(primary && normWorkspace(primary) !== "")) return;
+    if (Date.now() - wsCloseArm.current < 1000) {
+      clearTimeout(wsCloseTimer.current);
+      wsCloseArm.current = 0;
+      setWsCloseHint(false);
+      closeWorkspaceNow();
+    } else {
+      wsCloseArm.current = Date.now();
+      setWsCloseHint(true);
+      playSound("click");
+      clearTimeout(wsCloseTimer.current);
+      wsCloseTimer.current = window.setTimeout(() => {
+        wsCloseArm.current = 0;
+        setWsCloseHint(false);
+      }, 1000);
+    }
+  }, [resolveWorkspaceCloseTarget, closeWorkspaceNow]);
+
+  // /close-workspace handoff — explicit invocation, no double-press
+  useEffect(() => {
+    const close = () => closeWorkspaceNow();
+    window.addEventListener("oc:close-workspace", close);
+    return () => window.removeEventListener("oc:close-workspace", close);
+  }, [closeWorkspaceNow]);
+
   // browser bar band = titlebar bottom + bar height; the child webview starts
   // right below the bar
   function barTop() {
@@ -258,6 +336,7 @@ export default function ChatPage() {
     activeModes,
     onCycleSessions: cycleSessions,
     onCloseSession: closeActiveSession,
+    onCloseWorkspace: closeActiveWorkspace,
     onToggleTerm: () => setTermOpen((v) => !v),
     onToggleSidebar: toggleSidebar,
     onToggleSettings: toggleSettings,
@@ -1247,12 +1326,35 @@ export default function ChatPage() {
                 {(() => {
                   const activeDir = oc.activeId ? ((oc as any).getDirForSession?.(oc.activeId) ?? settings.workspace) : settings.workspace;
                   if (!activeDir) return null;
+                  // close what you see: an active extra, or a lone non-home
+                  // primary (which goes home). Extras with primary active stay
+                  // on their sidebar rows — the x never closes a background ws.
+                  const allWs = getAllWorkspaces();
+                  const primaryWs = allWs[0] ?? "";
+                  const activeIsExtra =
+                    allWs.length > 1 && normWorkspace(activeDir) !== normWorkspace(primaryWs);
+                  const primaryHomeable =
+                    allWs.length <= 1 && primaryWs !== "" && normWorkspace(primaryWs) !== "";
+                  const removable = activeIsExtra || primaryHomeable;
                   const remote = activeDir.startsWith("ssh://");
                   return (
-                    <button type="button" className="stage-head stage-head--action" data-tip={activeDir} data-tip-cursor="" aria-label="Open workspace" onClick={() => void pickWorkspace()}>
-                      <i className={`fa-solid ${remote ? "fa-server" : "fa-folder-open"}`} aria-hidden="true" />
-                      <span className="mono">{remote ? remoteLabel(activeDir) : activeDir}</span>
-                    </button>
+                    <span className="stage-head-wrap">
+                      <button type="button" className={`stage-head stage-head--action${removable ? " stage-head--with-close" : ""}`} data-tip={activeDir} data-tip-cursor="" aria-label="Open workspace" onClick={() => void pickWorkspace()}>
+                        <i className={`fa-solid ${remote ? "fa-server" : "fa-folder-open"}`} aria-hidden="true" />
+                        <span className="mono">{remote ? remoteLabel(activeDir) : activeDir}</span>
+                      </button>
+                      {removable && (
+                        <button
+                          type="button"
+                          className={`icon-btn close stage-head-close${wsCloseHint ? " armed" : ""}`}
+                          data-tip={withHotkey(wsCloseHint ? (activeIsExtra ? t("sidebar.workspace.removeConfirm") : t("chat.closeWorkspaceConfirm")) : (activeIsExtra ? t("sidebar.workspace.remove") : t("settings.project.workspace.back")), settings.hotkeys.closeWorkspace)}
+                          aria-label="Close workspace"
+                          onClick={closeActiveWorkspace}
+                        >
+                          <i className={`fa-solid ${wsCloseHint ? "fa-check" : "fa-xmark"}`} aria-hidden="true" />
+                        </button>
+                      )}
+                    </span>
                   );
                 })()}
                 <MessageList
@@ -1298,6 +1400,12 @@ export default function ChatPage() {
                   <div className="revert-banner close-confirm">
                     <i className="fa-solid fa-trash-can" />
                     {t("chat.closeConfirm")}
+                  </div>
+                )}
+                {wsCloseHint && (
+                  <div className="revert-banner close-confirm">
+                    <i className="fa-solid fa-folder-open" />
+                    {t("chat.closeWorkspaceConfirm")}
                   </div>
                 )}
                 {oc.permission && ((oc as any).securityMode ?? "user") === "user" && (

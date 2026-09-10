@@ -31,6 +31,7 @@ export function useGlobalShortcuts({
   activeModes,
   onCycleSessions,
   onCloseSession,
+  onCloseWorkspace,
   onToggleTerm,
   onToggleSidebar,
   onToggleSettings,
@@ -55,6 +56,8 @@ export function useGlobalShortcuts({
   onCycleSessions?: (dir: 1 | -1) => void;
   // Ctrl+W close active session — ChatPage owns empty-vs-confirm logic
   onCloseSession?: () => void;
+  // Ctrl+Shift+W close active workspace — ChatPage owns primary-guard + confirm logic
+  onCloseWorkspace?: () => void;
   // Ctrl+` toggles the terminal dock
   onToggleTerm?: () => void;
   // Ctrl+B toggles the session sidebar (VS Code parity, global)
@@ -281,6 +284,20 @@ export function useGlobalShortcuts({
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
   }, [onCloseSession, settings.hotkeys.closeSession]);
+
+  // Close workspace — rebindable (default Ctrl+Shift+W)
+  useEffect(() => {
+    if (!onCloseWorkspace) return;
+    const b = settings.hotkeys.closeWorkspace;
+    if (!b) return;
+    const key = (e: KeyboardEvent) => {
+      if (!matchesEvent(e, b)) return;
+      e.preventDefault();
+      onCloseWorkspace();
+    };
+    window.addEventListener("keydown", key);
+    return () => window.removeEventListener("keydown", key);
+  }, [onCloseWorkspace, settings.hotkeys.closeWorkspace]);
 
   // Toggle terminal — rebindable (default Ctrl+`)
   useEffect(() => {

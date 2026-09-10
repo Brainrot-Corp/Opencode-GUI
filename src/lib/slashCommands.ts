@@ -92,6 +92,11 @@ export async function handleSlash(text: string, ctx: SlashCtx): Promise<boolean>
       playSound("click");
       window.dispatchEvent(new Event(`oc:${name}`));
       return true;
+    case "close-workspace":
+      // explicit invocation skips the hotkey double-press confirm
+      playSound("click");
+      window.dispatchEvent(new Event("oc:close-workspace"));
+      return true;
   }
 
   // plugin slash — client-side, no session required (Tuya etc. works globally)
@@ -259,6 +264,7 @@ export function buildCmdList(
     { name: "diff", description: "Toggle files changed in this session", source: "built-in", takesArgs: false, builtin: true },
     { name: "debrief", description: "Spoken 2-paragraph debrief of last changes (uses commit model)", source: "built-in", takesArgs: false, builtin: true },
     { name: "settings", description: "Open settings", source: "built-in", takesArgs: false, builtin: true },
+    { name: "close-workspace", description: "Close the active workspace", source: "built-in", takesArgs: false, builtin: true },
     { name: "help", description: "Show all available commands", source: "built-in", takesArgs: false, builtin: true },
     { name: "exit", description: "Close OpenCode", source: "built-in", takesArgs: false, builtin: true },
   ];

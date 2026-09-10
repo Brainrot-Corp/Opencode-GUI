@@ -6,6 +6,7 @@ export type HotkeyId =
   | "openSettings"
   | "micToggle"
   | "openWorkspace"
+  | "closeWorkspace"
   | "newWindow"
   | "pinOnTop"
   | "newSession"
@@ -54,6 +55,7 @@ export const DEFAULT_HOTKEYS: HotkeysMap = {
   openSettings: "Ctrl+,",
   micToggle: "Ctrl+M",
   openWorkspace: "Ctrl+O",
+  closeWorkspace: "Ctrl+Shift+W",
   newWindow: "Ctrl+Shift+N",
   pinOnTop: "Ctrl+P",
   newSession: "Ctrl+N",
@@ -84,6 +86,7 @@ export const HOTKEY_META: Record<HotkeyId, { group: string; desc: string }> = {
   openSettings: { group: "In the app", desc: "open settings" },
   micToggle: { group: "In the app", desc: "mic on/off" },
   openWorkspace: { group: "In the app", desc: "open workspace" },
+  closeWorkspace: { group: "In the app", desc: "close workspace" },
   newWindow: { group: "In the app", desc: "open new window" },
   pinOnTop: { group: "In the app", desc: "pin window on top" },
   toggleTerm: { group: "In the app", desc: "toggle terminal" },
@@ -115,6 +118,7 @@ export const HOTKEY_ORDER: HotkeyId[] = [
   "openSettings",
   "micToggle",
   "openWorkspace",
+  "closeWorkspace",
   "newWindow",
   "pinOnTop",
   "toggleTerm",
