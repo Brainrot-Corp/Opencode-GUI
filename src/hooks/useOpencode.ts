@@ -31,8 +31,8 @@ import {
 } from "../lib/slashCommands";
 import { getPluginSlash } from "../lib/plugins";
 import { ensureServerGroups, useProviders } from "./useProviders";
-import { clearDraft, setDraft } from "../lib/drafts";
-import { clearAttachmentDraft } from "./useAttachments";
+import { clearDraft, getDraft, setDraft } from "../lib/drafts";
+import { clearAttachmentDraft, restoreAttachmentDraft } from "./useAttachments";
 import { invalidateFileCache } from "./useFileCache";
 import { pushToast } from "./useToast";
 import type { Msg, OpenCodeEvent, PermAsk, ProviderGroup, Attachment, QuestionAsk, Cmd } from "../types";
@@ -292,6 +292,27 @@ export function useOpencode() {
     });
   }
   const tracker = trackerRef.current;
+
+  // last outbound prompt per session — restored into the composer when the
+  // send fails (promptAsync throw) or the turn errors (session.error event).
+  // Kept until restored/overwritten so a late session.error still finds it.
+  const lastSentRef = useRef(new Map<string, { text: string; files?: Attachment[] }>());
+  const restoreFailedInput = useCallback((sid: string) => {
+    const last = lastSentRef.current.get(sid);
+    if (!last) return;
+    lastSentRef.current.delete(sid);
+    // never clobber new typing: only fill a draft the user hasn't touched
+    // since the send (live box is guarded the same way in the composer).
+    if (last.text) {
+      try { if (!getDraft(sid)) setDraft(sid, last.text); } catch {}
+    }
+    if (last.files?.length) restoreAttachmentDraft(sid, last.files);
+    // background session: draft/cache only, live input untouched. Active
+    // session: guarded restore path (composer skips when box non-empty).
+    if (sid === activeRef.current && last.text) {
+      window.dispatchEvent(new CustomEvent("oc:restore-input", { detail: last.text }));
+    }
+  }, []);
 
   // ---- per-session agent memory (mirrors useProviders model logic) ----
   // per-window last hand-picked agent — windowKey() namespaces it per OS
@@ -1075,6 +1096,19 @@ export function useOpencode() {
           if (sid) {
             store.addError(sid, msg);
             tracker.settle(sid);
+            // put the failed prompt back in the composer (text + pictures).
+            // Guarded: new typing since the send wins over the failed text.
+            const last = lastSentRef.current.get(sid);
+            if (last) {
+              lastSentRef.current.delete(sid);
+              if (last.text) {
+                try { if (!getDraft(sid)) setDraft(sid, last.text); } catch {}
+              }
+              if (last.files?.length) restoreAttachmentDraft(sid, last.files);
+              if (sid === activeRef.current && last.text) {
+                window.dispatchEvent(new CustomEvent("oc:restore-input", { detail: last.text }));
+              }
+            }
           }
           pushToast(msg);
           break;
@@ -1551,6 +1585,8 @@ export function useOpencode() {
         store.addCommand(sid, text.trim());
         return;
       }
+      // stash for restore if promptAsync throws or session.error arrives later
+      lastSentRef.current.set(sid, { text, files });
       tracker.markBusy(sid, true);
       try {
         const dirFor = sessionDirRef.current.get(sid) ?? getDirectory();
@@ -1591,9 +1627,10 @@ export function useOpencode() {
         // surface it in the history (synthetic error bubble) + toast
         store.addError(sid, String(e));
         pushToast(String(e));
+        restoreFailedInput(sid);
       }
     },
-    [prov.modelSel, prov.variantSel, prov.isModelOn, agentSel],
+    [prov.modelSel, prov.variantSel, prov.isModelOn, agentSel, restoreFailedInput],
   );
 
   // public entry: while the session is streaming, queue instead of dropping

@@ -572,6 +572,26 @@ export default function Composer({
     return () => window.removeEventListener("oc:rewind-input", onRewind);
   }, []);
 
+  // failed-send restore: only fills an empty box — new typing made after
+  // the error wins. (Rewind above intentionally overwrites.)
+  useEffect(() => {
+    const onRestore = (e: Event) => {
+      const text = (e as CustomEvent<string>).detail ?? "";
+      if (!text) return;
+      if (inputRef2.current.trim() !== "") return;
+      setInput(text);
+      playSound("type");
+      requestAnimationFrame(() => {
+        const el = inputRef.current;
+        if (!el) return;
+        el.focus();
+        const len = text.length;
+        try { el.selectionStart = el.selectionEnd = len; } catch {}
+      });
+    };
+    window.addEventListener("oc:restore-input", onRestore);
+    return () => window.removeEventListener("oc:restore-input", onRestore);
+  }, []);
   // ONE keyboard brain for the composer: a fresh closure every render, so
   // every surface (model menu, slash suggestions, agent Tab-cycle, send)
   // routes off the same state — no per-handler desync.

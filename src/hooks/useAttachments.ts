@@ -17,6 +17,22 @@ export function clearAttachmentDraft(sid: string) {
   noteCache.delete(sid);
 }
 
+// failed send — put the staged files back so the composer can repopulate.
+// Merges with whatever is currently staged (user may have typed/attached
+// more since the send) instead of overwriting. Dispatches
+// oc:restore-attachments for the live hook instance to pick up.
+export function restoreAttachmentDraft(sid: string, files: Attachment[]) {
+  if (!sid || !files.length) return;
+  const cur = fileCache.get(sid) ?? [];
+  const merged = [...cur];
+  for (const f of files) {
+    if (merged.some((x) => x.id === f.id || (f.hash && x.hash === f.hash))) continue;
+    merged.push(f);
+  }
+  fileCache.set(sid, merged);
+  window.dispatchEvent(new CustomEvent("oc:restore-attachments", { detail: { sid, files: merged } }));
+}
+
 export function useAttachments(sessionId?: string) {
   const [files, setFiles] = useState<Attachment[]>(() => (sessionId ? (fileCache.get(sessionId) ?? []) : []));
   // inline warning line (size/dup/read rejects)
@@ -42,6 +58,26 @@ export function useAttachments(sessionId?: string) {
     if (note) noteCache.set(sid, note);
     else noteCache.delete(sid);
   }, [note]);
+
+  // failed-send restore: cache already merged by restoreAttachmentDraft,
+  // merge into live state too (user may have attached more since the send)
+  useEffect(() => {
+    const onRestore = (e: Event) => {
+      const d = (e as CustomEvent<{ sid: string; files: Attachment[] }>).detail;
+      if (!d || d.sid !== sidRef.current || !d.files?.length) return;
+      setFiles((prev) => {
+        if (!prev.length) return d.files;
+        const merged = [...prev];
+        for (const f of d.files) {
+          if (merged.some((x) => x.id === f.id || (f.hash && x.hash === f.hash))) continue;
+          merged.push(f);
+        }
+        return merged.length === prev.length ? prev : merged;
+      });
+    };
+    window.addEventListener("oc:restore-attachments", onRestore);
+    return () => window.removeEventListener("oc:restore-attachments", onRestore);
+  }, []);
 
   // switch session: stash current, restore target (mirrors lib/drafts text behavior)
   useEffect(() => {
