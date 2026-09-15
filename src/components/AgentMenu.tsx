@@ -26,6 +26,27 @@ export default function AgentMenu({
 
   const cur = agentSel || agents[0]?.name || "build";
   const enabledCount = agents.filter((a) => !disabled.has(a.name)).length;
+  // wheel over the chip cycles values for quick access (accumulates small
+  // trackpad deltas; skipped while the dropdown is open so the list scrolls)
+  const wheelAcc = useRef(0);
+  const stepAgent = (dir: 1 | -1) => {
+    const pool = agents.filter((a) => !disabled.has(a.name));
+    if (pool.length < 2) return;
+    const idx = pool.findIndex((a) => a.name === cur);
+    const next =
+      pool[idx < 0 ? (dir > 0 ? 0 : pool.length - 1) : (idx + dir + pool.length) % pool.length];
+    if (next && next.name !== cur) onSelect(next.name);
+  };
+  const onWheel = (e: React.WheelEvent) => {
+    if (open || agents.length < 2) return;
+    e.preventDefault();
+    e.stopPropagation();
+    wheelAcc.current += e.deltaY;
+    if (Math.abs(wheelAcc.current) < 30) return;
+    const dir = wheelAcc.current > 0 ? 1 : -1;
+    wheelAcc.current = 0;
+    stepAgent(dir);
+  };
 
   useEffect(() => {
     if (!open) return;
@@ -102,12 +123,13 @@ export default function AgentMenu({
         className="agent-chip"
         data-tip={
           agents.length
-            ? `Agent — ${cur} — click to pick, ${formatBinding(cycleHotkey ?? "Tab")} to cycle (${enabledCount}/${agents.length} enabled) · right-click a row to disable from Tab`
+            ? `Agent — ${cur} — click to pick, ${formatBinding(cycleHotkey ?? "Tab")} to cycle, scroll to switch (${enabledCount}/${agents.length} enabled) · right-click a row to disable from Tab`
             : "No agents"
         }
         aria-haspopup="listbox"
         aria-expanded={open}
         onClick={toggle}
+        onWheel={onWheel}
       >
         <i className="fa-solid fa-robot" />
         {cur}

@@ -24,6 +24,25 @@ export default function SecurityMenu({
   const cur = securityMode ?? "user";
   const curMeta = MODES.find((m) => m.id === cur) ?? MODES[0];
 
+  // wheel over the chip cycles permission mode for quick access (accumulates
+  // small trackpad deltas; skipped while the dropdown is open so it scrolls)
+  const wheelAcc = useRef(0);
+  const stepSec = (dir: 1 | -1) => {
+    const idx = MODES.findIndex((m) => m.id === cur);
+    const next = MODES[(idx < 0 ? 0 : idx + dir + MODES.length) % MODES.length];
+    if (next && next.id !== cur) onSelect(next.id);
+  };
+  const onWheel = (e: React.WheelEvent) => {
+    if (open) return;
+    e.preventDefault();
+    e.stopPropagation();
+    wheelAcc.current += e.deltaY;
+    if (Math.abs(wheelAcc.current) < 30) return;
+    const dir = wheelAcc.current > 0 ? 1 : -1;
+    wheelAcc.current = 0;
+    stepSec(dir);
+  };
+
   useEffect(() => {
     if (!open) return;
     const onDoc = (e: Event) => {
@@ -76,13 +95,14 @@ export default function SecurityMenu({
         type="button"
         className={`agent-chip security-chip sec-${cur}`}
         data-tip={
-          cur === "full" ? "Full control — no permission prompts (auto-allow) — click to pick"
-          : cur === "block" ? "Block — auto-deny permission requests — click to pick"
-          : "User mode — classic allow once / always prompts — click to pick"
+          cur === "full" ? "Full control — no permission prompts (auto-allow) — click to pick, scroll to switch"
+          : cur === "block" ? "Block — auto-deny permission requests — click to pick, scroll to switch"
+          : "User mode — classic allow once / always prompts — click to pick, scroll to switch"
         }
         aria-haspopup="listbox"
         aria-expanded={open}
         onClick={toggle}
+        onWheel={onWheel}
       >
         <i className={`fa-solid ${curMeta.icon}`} />
         {curMeta.label}

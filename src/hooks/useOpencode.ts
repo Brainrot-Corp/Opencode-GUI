@@ -118,9 +118,9 @@ export function useOpencode() {
     if (target) rememberSecuritySession(target, m);
     playSound("click");
   }, [rememberSecuritySession]);
-  const cycleSecurityMode = useCallback(() => {
-    const cur = securityModeRef.current;
-    const next: SecurityMode = cur === "user" ? "block" : cur === "block" ? "full" : "user";
+  const cycleSecurityMode = useCallback((dir: 1 | -1 = 1) => {
+    const order: SecurityMode[] = ["user", "block", "full"];
+    const next = order[(order.indexOf(securityModeRef.current) + dir + order.length) % order.length];
     const target = activeRef.current;
     _setSecurityMode(next);
     if (target) rememberSecuritySession(target, next);

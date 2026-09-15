@@ -158,13 +158,13 @@ export default function Composer({
   onSelectAgent?: (name: string) => void;
   onToggleDisabled?: (name: string) => void;
   onRefreshAgents?: () => void;
-  onCycleVariant?: () => void;
+  onCycleVariant?: (dir?: 1 | -1) => void;
   hasVariants?: boolean;
   variantSel?: string;
   modelVariants?: string[];
   onSelectVariant?: (v: string) => void;
   securityMode?: "full" | "user" | "block";
-  onCycleSecurity?: () => void;
+  onCycleSecurity?: (dir?: 1 | -1) => void;
   onSelectSecurity?: (m: "full" | "user" | "block") => void;
   caps?: { attachment?: boolean; input?: string[] };
   usage?: { cost: number; tokens: number };
@@ -194,6 +194,16 @@ export default function Composer({
   const isUndoRedoRef = useRef(false);
   const inputRef2 = useRef(input);
   inputRef2.current = input;
+  // wheel-cycle accumulator for the fallback chips (dropdown Menus own
+  // theirs) — one notch = one step, small trackpad deltas accumulate
+  const wheelAccRef = useRef(0);
+  const wheelDir = (e: React.WheelEvent): 1 | -1 | 0 => {
+    wheelAccRef.current += e.deltaY;
+    if (Math.abs(wheelAccRef.current) < 30) return 0;
+    const d = wheelAccRef.current > 0 ? 1 : -1;
+    wheelAccRef.current = 0;
+    return d;
+  };
 
   // find state — overlay highlights all matches, active one opaque
   const [findOpen, setFindOpen] = useState(false);
@@ -934,8 +944,15 @@ export default function Composer({
             <button
               type="button"
               className="agent-chip"
-              data-tip={`Thinking effort: ${variantSel || "default"} — click to cycle`}
+              data-tip={`Thinking effort: ${variantSel || "default"} — click to cycle, scroll to switch`}
               onClick={() => onCycleVariant?.()}
+              onWheel={(e) => {
+                if (!onCycleVariant) return;
+                e.preventDefault();
+                e.stopPropagation();
+                const d = wheelDir(e);
+                if (d) onCycleVariant(d);
+              }}
             >
               <i className="fa-solid fa-gauge-high" />
               {variantSel || "default"}
@@ -950,12 +967,19 @@ export default function Composer({
             className={`agent-chip security-chip sec-${securityMode ?? "user"}`}
             data-tip={
               securityMode === "full"
-                ? "Full control — no permission prompts (auto-allow)"
+                ? "Full control — no permission prompts (auto-allow) — click to cycle, scroll to switch"
                 : securityMode === "block"
-                  ? "Block — auto-deny permission requests"
-                  : "User mode — classic allow once / always prompts — click to cycle"
+                  ? "Block — auto-deny permission requests — click to cycle, scroll to switch"
+                  : "User mode — classic allow once / always prompts — click to cycle, scroll to switch"
             }
             onClick={() => onCycleSecurity?.()}
+            onWheel={(e) => {
+              if (!onCycleSecurity) return;
+              e.preventDefault();
+              e.stopPropagation();
+              const d = wheelDir(e);
+              if (d) onCycleSecurity(d);
+            }}
           >
             <i
               className={`fa-solid ${

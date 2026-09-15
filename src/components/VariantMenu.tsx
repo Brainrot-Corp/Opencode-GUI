@@ -18,6 +18,26 @@ export default function VariantMenu({
   const cur = variantSel || "";
   const opts = ["", ...variants];
 
+  // wheel over the chip cycles effort for quick access (accumulates small
+  // trackpad deltas; skipped while the dropdown is open so the list scrolls)
+  const wheelAcc = useRef(0);
+  const stepVariant = (dir: 1 | -1) => {
+    if (opts.length < 2) return;
+    const idx = opts.indexOf(cur);
+    const next = opts[idx < 0 ? 0 : (idx + dir + opts.length) % opts.length];
+    if (next !== undefined && next !== cur) onSelect(next);
+  };
+  const onWheel = (e: React.WheelEvent) => {
+    if (open || opts.length < 2) return;
+    e.preventDefault();
+    e.stopPropagation();
+    wheelAcc.current += e.deltaY;
+    if (Math.abs(wheelAcc.current) < 30) return;
+    const dir = wheelAcc.current > 0 ? 1 : -1;
+    wheelAcc.current = 0;
+    stepVariant(dir);
+  };
+
   useEffect(() => {
     if (!open) return;
     const onDoc = (e: Event) => {
@@ -78,10 +98,11 @@ export default function VariantMenu({
         ref={chipRef}
         type="button"
         className="agent-chip"
-        data-tip={`Thinking effort: ${cur || "default"} — click to pick`}
+        data-tip={`Thinking effort: ${cur || "default"} — click to pick, scroll to switch`}
         aria-haspopup="listbox"
         aria-expanded={open}
         onClick={toggle}
+        onWheel={onWheel}
       >
         <i className="fa-solid fa-gauge-high" />
         {cur || "default"}

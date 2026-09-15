@@ -20,7 +20,7 @@ const SettingsDrawer = lazy(() => import("../components/SettingsDrawer"));
 const Onboarding = lazy(() => import("../components/Onboarding"));
 const FileEditorHost = lazy(() => import("../components/FileEditorHost"));
 const TerminalPanel = lazy(() => import("../components/Terminal"));
-import { HelpDialog, ShareDialog, VariantsDialog } from "../components/CommandDialog";
+import { HelpDialog, McpDialog, ShareDialog, VariantsDialog } from "../components/CommandDialog";
 import AgentBoard from "../components/AgentBoard";
 import { useOpencode } from "../hooks/useOpencode";
 import { useSettings } from "../hooks/useSettings";
@@ -1464,6 +1464,7 @@ export default function ChatPage() {
             onClose={oc.closeDialog}
           />
         )}
+        {oc.dialog?.kind === "mcp" && <McpDialog onClose={oc.closeDialog} />}
         {diffOpen && oc.activeId && <DiffPanel sessionId={oc.activeId} dir={(oc as any).getDirForSession?.(oc.activeId) ?? settings.workspace} onClose={() => setDiffOpen(false)} />}
         <AgentBoard
           open={agentsOpen}

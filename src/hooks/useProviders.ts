@@ -545,6 +545,7 @@ export function useProviders(activeId: string) {
         if (prev[target] === v) return prev;
         return { ...prev, [target]: v };
       });
+      playSound("click");
     },
     [modelSel],
   );
@@ -597,12 +598,12 @@ export function useProviders(activeId: string) {
     return () => window.removeEventListener("oc:workspaces-changed", onWs);
   }, [providers, rememberModelVariant, LAST_MODEL_KEY]);
 
-  // chip click: effort cycles default -> low -> ... -> default
-  const cycleVariant = useCallback(() => {
+  // chip click/wheel: effort cycles default -> low -> ... -> default (dir=-1 reverses)
+  const cycleVariant = useCallback((dir: 1 | -1 = 1) => {
     if (!modelVariants.length) return;
     const opts = ["", ...modelVariants];
-    setVariantSel(opts[(opts.indexOf(variantSel) + 1) % opts.length]);
-    playSound("click");
+    // setVariantSel already clicks — no second sound here
+    setVariantSel(opts[(opts.indexOf(variantSel) + dir + opts.length) % opts.length]);
   }, [modelVariants, variantSel, setVariantSel]);
 
   // watcher for variant (covers Tab/future shortcuts) — B: skip restoring and global fallback

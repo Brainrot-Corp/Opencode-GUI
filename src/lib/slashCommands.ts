@@ -20,6 +20,7 @@ export type DialogState =
   | { kind: "help" }
   | { kind: "share"; url: string }
   | { kind: "variants" }
+  | { kind: "mcp" }
   | null;
 
 export type SlashCtx = {
@@ -70,6 +71,10 @@ export async function handleSlash(text: string, ctx: SlashCtx): Promise<boolean>
       return true;
     case "variants":
       ctx.openDialog({ kind: "variants" });
+      return true;
+    case "mcp":
+      playSound("click");
+      ctx.openDialog({ kind: "mcp" });
       return true;
     case "thinking":
     case "collapse":
@@ -265,6 +270,7 @@ export function buildCmdList(
     { name: "debrief", description: "Spoken 2-paragraph debrief of last changes (uses commit model)", source: "built-in", takesArgs: false, builtin: true },
     { name: "settings", description: "Open settings", source: "built-in", takesArgs: false, builtin: true },
     { name: "close-workspace", description: "Close the active workspace", source: "built-in", takesArgs: false, builtin: true },
+    { name: "mcp", description: "Show loaded MCP servers for this window's workspaces", source: "built-in", takesArgs: false, builtin: true },
     { name: "help", description: "Show all available commands", source: "built-in", takesArgs: false, builtin: true },
     { name: "exit", description: "Close OpenCode", source: "built-in", takesArgs: false, builtin: true },
   ];
