@@ -3,6 +3,8 @@ import { playSound } from "../lib/sounds";
 import { splitModel } from "../lib/models";
 import { pushToast } from "./useToast";
 import { windowKey } from "../lib/windowScope";
+import { getDirectory } from "../api";
+import { getWorkspacePref, recordSelection } from "../lib/workspacePrefs";
 import type { ProviderGroup } from "../types";
 
 type OcClient = Awaited<ReturnType<typeof import("../api").opencode>>["client"];
@@ -149,10 +151,13 @@ export function useProviders(activeId: string) {
   // if not, the reply reveals the server's true default
   const sentExplicitModel = useRef(false);
   // thinking-effort variant per model ("provider/model" -> effort), remembered
-  // across model switches, workspaces and relaunches ("" = model default)
+  // across model switches, workspaces and relaunches ("" = model default).
+  // Per-window namespaced like the model pick: secondaries seed a copy at
+  // boot (workspacePrefs) then diverge independently.
+  const VARIANTS_KEY = windowKey("oc.variants");
   const [variantMap, setVariantMap] = useState<Record<string, string>>(() => {
     try {
-      const raw = JSON.parse(localStorage.getItem("oc.variants") ?? "{}");
+      const raw = JSON.parse(localStorage.getItem(VARIANTS_KEY) ?? "{}");
       return raw && typeof raw === "object" ? raw : {};
     } catch {
       return {};
@@ -181,7 +186,8 @@ export function useProviders(activeId: string) {
   // per-window last hand-picked model — windowKey() namespaces it per OS
   // window (cross-window "storage" events can no longer leak a pick into a
   // window working in another project). only real selections persist — never
-  // wipe the stored one with ""
+  // wipe the stored one with "". Every pick is also recorded into
+  // per-workspace memory + shared last-used (workspacePrefs).
   useEffect(() => {
     if (modelSel) {
       try {
@@ -191,6 +197,7 @@ export function useProviders(activeId: string) {
       try {
         sessionStorage.removeItem(LAST_MODEL_KEY);
       } catch {}
+      recordSelection({ model: modelSel });
     }
   }, [modelSel]);
 
@@ -265,9 +272,56 @@ export function useProviders(activeId: string) {
     });
   }, []);
 
+  // merge one workspace-remembered effort into the per-model map (used by
+  // the workspace-switch adapter and boot recovery below — setVariantSel
+  // can't do it because it keys off the *current* modelSel, which may still
+  // be the old model at apply time).
+  const rememberModelVariant = useCallback(
+    (model: string, value: string) => {
+      if (!model) return;
+      setVariantMap((prev) => {
+        const next = { ...prev };
+        if (value) next[model] = value;
+        else delete next[model];
+        try {
+          localStorage.setItem(VARIANTS_KEY, JSON.stringify(next));
+        } catch {}
+        return next;
+      });
+    },
+    [VARIANTS_KEY],
+  );
+
+  // first-window boot recovery when no session is active yet (fresh project,
+  // empty workspace view): apply the current workspace's last-used model +
+  // effort once providers arrive. Skipped when the pending session has its
+  // own pin — the restore effect below outranks workspace memory. Workspace
+  // switches later go through the oc:workspaces-changed listener above.
+  const wsBootDone = useRef(false);
+  useEffect(() => {
+    if (wsBootDone.current || !providers.length) return;
+    wsBootDone.current = true;
+    const sid = activeIdRef.current;
+    const pin = sid ? sessionModelsRef.current[sid] : undefined;
+    if (pin && isReachable(pin, providers)) return;
+    const pref = getWorkspacePref(getDirectory());
+    if (!pref.model || !isReachable(pref.model, providers)) return;
+    const m = pref.model;
+    restoringRef.current = true;
+    try {
+      localStorage.setItem(LAST_MODEL_KEY, m);
+    } catch {}
+    setModelSel((cur) => (cur === m ? cur : m));
+    queueMicrotask(() => {
+      restoringRef.current = false;
+    });
+    if (pref.variant !== undefined) rememberModelVariant(m, pref.variant);
+  }, [providers, rememberModelVariant, LAST_MODEL_KEY]);
+
   // session switch (or providers arriving late): re-apply the active
   // session's remembered model when it exists and is still reachable;
-  // otherwise fall back to the per-window global last model. The global is the
+  // otherwise the current workspace's last-used model; otherwise the
+  // per-window global last model. The global is the
   // "last used model in this window" and is required on app launch
   // when the active session has no model. Unreachable remembered entries are
   // pruned so the session correctly follows the global from then on.
@@ -288,6 +342,19 @@ export function useProviders(activeId: string) {
         delete next[activeId];
         return next;
       });
+    }
+    // no valid per-session model — the workspace's last-used model wins over
+    // the window global, so returning to a project restores its setup
+    // (first-window boot recovery + secondary adapting to a known workspace).
+    const wsModel = getWorkspacePref(getDirectory()).model;
+    if (wsModel && isReachable(wsModel, providers)) {
+      restoringRef.current = true;
+      setModelSel((cur) => (cur === wsModel ? cur : wsModel));
+      try {
+        localStorage.setItem(LAST_MODEL_KEY, wsModel);
+      } catch {}
+      queueMicrotask(() => { restoringRef.current = false; });
+      return;
     }
     // no valid per-session model — apply the shared global last model if
     // it exists and is still reachable (app-launch fallback + inter-session
@@ -459,12 +526,13 @@ export function useProviders(activeId: string) {
         if (v) next[modelSel] = v;
         else delete next[modelSel];
         try {
-          localStorage.setItem("oc.variants", JSON.stringify(next));
+          localStorage.setItem(VARIANTS_KEY, JSON.stringify(next));
         } catch {
           // storage full/blocked — in-session map still works
         }
         return next;
       });
+      recordSelection({ model: modelSel, variant: v });
       const target = sid ?? activeIdRef.current;
       if (!target) return;
       setSessionVariants((prev) => {
@@ -504,6 +572,30 @@ export function useProviders(activeId: string) {
       return { ...prev, [sid]: value };
     });
   }, []);
+
+  // workspace switch → adapt the pickers to the newly-opened workspace's
+  // last-used model + effort (when known and reachable on this window's
+  // servers). Same-window custom event only — each window adapts
+  // independently. Unreachable entries are skipped, never applied blind.
+  useEffect(() => {
+    const onWs = () => {
+      if (!providers.length) return;
+      const pref = getWorkspacePref(getDirectory());
+      if (!pref.model || !isReachable(pref.model, providers)) return;
+      const m = pref.model;
+      restoringRef.current = true;
+      try {
+        localStorage.setItem(LAST_MODEL_KEY, m);
+      } catch {}
+      setModelSel((cur) => (cur === m ? cur : m));
+      queueMicrotask(() => {
+        restoringRef.current = false;
+      });
+      if (pref.variant !== undefined) rememberModelVariant(m, pref.variant);
+    };
+    window.addEventListener("oc:workspaces-changed", onWs);
+    return () => window.removeEventListener("oc:workspaces-changed", onWs);
+  }, [providers, rememberModelVariant, LAST_MODEL_KEY]);
 
   // chip click: effort cycles default -> low -> ... -> default
   const cycleVariant = useCallback(() => {

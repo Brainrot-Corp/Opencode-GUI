@@ -9,6 +9,7 @@ import "./styles/layout.css";
 import "./styles/toast.css";
 import { getDirectory, setDirectory } from "./api";
 import { initWindowScope, isSecondary, gcWindowScopes } from "./lib/windowScope";
+import { seedSecondaryGlobals } from "./lib/workspacePrefs";
 import { restoreThemeVars } from "./lib/themes";
 import { warmupMonaco } from "./lib/monaco";
 
@@ -31,6 +32,10 @@ async function hydrateWorkspace() {
   await initWindowScope();
   if (isSecondary()) {
     gcWindowScopes();
+    // blank workspace, but pickers start at the last-used model / agent /
+    // effort / security (whichever window used them last) — then live
+    // independently. Hook initializers read the seeded namespaced keys below.
+    seedSecondaryGlobals();
     try {
       const mem = (await invoke<string>("workspace_get").catch(() => ""))?.trim() ?? "";
       if (mem && getDirectory().trim() !== mem) setDirectory(mem);
@@ -64,6 +69,12 @@ async function hydrateWorkspace() {
       // push to Rust so next debug launch is consistent
       invoke("workspace_set", { path: lsWs }).catch(() => {});
     }
+    // the in-memory api dir starts empty (it must not read the shared blob
+    // at import time, or secondaries would adopt the primary's workspace) —
+    // so reconcile it here on every primary boot, including the
+    // already-agreeing case above which intentionally sets nothing else.
+    const effective = lsWs || saved;
+    if (effective && getDirectory().trim() !== effective) setDirectory(effective);
   } catch {}
 }
 

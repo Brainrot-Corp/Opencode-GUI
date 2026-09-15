@@ -21,6 +21,7 @@ import { splitModel } from "../lib/models";
 import { touchWorkspace, getExtraWorkspaces } from "../lib/workspace";
 import { normWorkspace } from "../lib/platform";
 import { windowKey } from "../lib/windowScope";
+import { getWorkspacePref, recordSelection } from "../lib/workspacePrefs";
 import { createBusyTracker } from "../lib/busyTracker";
 import {
   buildCmdList,
@@ -86,7 +87,8 @@ export function useOpencode() {
   });
   const securityModeRef = useRef<SecurityMode>(securityMode);
   useEffect(() => { securityModeRef.current = securityMode; }, [securityMode]);
-  useEffect(() => { try { localStorage.setItem(SECURITY_KEY, securityMode); } catch {} }, [securityMode]);
+  // (persisted below, after the restore effect — declaration order matters:
+  // the restore must read workspace memory before any write-back)
   const [sessionSecurity, setSessionSecurity] = useState<Record<string, SecurityMode>>(() => {
     try {
       const raw = JSON.parse(localStorage.getItem(SESSION_SECURITY_KEY) ?? "{}");
@@ -124,12 +126,44 @@ export function useOpencode() {
     if (target) rememberSecuritySession(target, next);
     playSound("click");
   }, [rememberSecuritySession]);
+  // first-window boot recovery with no active session yet: apply the
+  // workspace's last-used security mode on mount (no async data needed).
+  // Skipped when the pending session has its own pin — restore below wins.
+  const wsSecBootDone = useRef(false);
+  useEffect(() => {
+    if (wsSecBootDone.current) return;
+    wsSecBootDone.current = true;
+    const sid = activeRef.current;
+    const pin = sid ? sessionSecurityRef.current[sid] : undefined;
+    if (pin === "full" || pin === "block" || pin === "user") return;
+    const s = getWorkspacePref(getDirectory()).security;
+    if (s !== "full" && s !== "block" && s !== "user") return;
+    restoringSecRef.current = true;
+    try {
+      localStorage.setItem(SECURITY_KEY, s);
+    } catch {}
+    _setSecurityMode((cur) => (cur === s ? cur : (s as SecurityMode)));
+    queueMicrotask(() => {
+      restoringSecRef.current = false;
+    });
+  }, []);
+
   useEffect(() => {
     if (!activeId) return;
     const remembered = sessionSecurity[activeId];
     if (remembered === "full" || remembered === "block" || remembered === "user") {
       restoringSecRef.current = true;
       _setSecurityMode((cur) => (cur === remembered ? cur : remembered));
+      queueMicrotask(() => { restoringSecRef.current = false; });
+      return;
+    }
+    // no per-session pin — the workspace's last-used mode wins over the
+    // window global, so returning to a project restores its setup.
+    const wsSecurity = getWorkspacePref(getDirectory()).security;
+    if (wsSecurity === "full" || wsSecurity === "block" || wsSecurity === "user") {
+      restoringSecRef.current = true;
+      _setSecurityMode((cur) => (cur === wsSecurity ? cur : (wsSecurity as SecurityMode)));
+      try { localStorage.setItem(SECURITY_KEY, wsSecurity); } catch {}
       queueMicrotask(() => { restoringSecRef.current = false; });
       return;
     }
@@ -142,6 +176,13 @@ export function useOpencode() {
       queueMicrotask(() => { restoringSecRef.current = false; });
     }
   }, [activeId, sessionSecurity]);
+
+  // persist after the restore above (declaration order): the restore must
+  // read workspace memory before this writes anything back.
+  useEffect(() => {
+    try { localStorage.setItem(SECURITY_KEY, securityMode); } catch {}
+    recordSelection({ security: securityMode });
+  }, [securityMode]);
 
   // generic watcher: any security value change auto-pins per-session (covers future shortcuts)
   useEffect(() => {
@@ -255,13 +296,16 @@ export function useOpencode() {
   // ---- per-session agent memory (mirrors useProviders model logic) ----
   // per-window last hand-picked agent — windowKey() namespaces it per OS
   // window so two windows never steal each other's selection.
-  // only real selections persist — never wipe the stored one with ""
+  // only real selections persist — never wipe the stored one with "".
+  // Every pick is also recorded into per-workspace memory + shared
+  // last-used (workspacePrefs).
   const LAST_AGENT_KEY = windowKey(LAST_AGENT_BASE);
   useEffect(() => {
     if (agentSel) {
       try {
         localStorage.setItem(LAST_AGENT_KEY, agentSel);
       } catch {}
+      recordSelection({ agent: agentSel });
     }
   }, [agentSel]);
 
@@ -323,8 +367,31 @@ export function useOpencode() {
   const restoringAgentRef = useRef(false);
   const restoringSecRef = useRef(false);
 
+  // first-window boot recovery with no active session yet: apply the
+  // workspace's last-used agent once the agent list arrives. Skipped when
+  // the pending session has its own pin — the restore below outranks it.
+  const wsAgentBootDone = useRef(false);
+  useEffect(() => {
+    if (wsAgentBootDone.current || !agents.length) return;
+    wsAgentBootDone.current = true;
+    const sid = activeRef.current;
+    const pin = sid ? sessionAgentsRef.current[sid] : undefined;
+    if (pin && isAgentReachable(pin, agents)) return;
+    const a = getWorkspacePref(getDirectory()).agent;
+    if (!a || !isAgentReachable(a, agents)) return;
+    restoringAgentRef.current = true;
+    try {
+      localStorage.setItem(LAST_AGENT_KEY, a);
+    } catch {}
+    setAgentSel((cur) => (cur === a ? cur : a));
+    queueMicrotask(() => {
+      restoringAgentRef.current = false;
+    });
+  }, [agents, LAST_AGENT_KEY]);
+
   // session switch (or agents arriving late): re-apply the active session's remembered agent
-  // when it exists and is still reachable; otherwise fall back to shared global last agent
+  // when it exists and is still reachable; otherwise the workspace's last-used
+  // agent; otherwise the per-window global last agent.
   useEffect(() => {
     if (!activeId) return;
     if (!agents.length) return;
@@ -344,6 +411,16 @@ export function useOpencode() {
         return next;
       });
     }
+    const wsAgent = getWorkspacePref(getDirectory()).agent;
+    if (wsAgent && isAgentReachable(wsAgent, agents)) {
+      restoringAgentRef.current = true;
+      try {
+        localStorage.setItem(LAST_AGENT_KEY, wsAgent);
+      } catch {}
+      setAgentSel((cur) => (cur === wsAgent ? cur : wsAgent));
+      queueMicrotask(() => { restoringAgentRef.current = false; });
+      return;
+    }
     let global: string | null = null;
     try {
       global = localStorage.getItem(LAST_AGENT_KEY);
@@ -354,6 +431,40 @@ export function useOpencode() {
       queueMicrotask(() => { restoringAgentRef.current = false; });
     }
   }, [activeId, agents, sessionAgents]);
+
+  // workspace switch → adapt agent + security to the newly-opened
+  // workspace's last-used values (when known). Model + effort are handled by
+  // useProviders' own listener. Same-window custom event only — each window
+  // adapts independently; unreachable agents are skipped, never applied blind.
+  useEffect(() => {
+    const onWs = () => {
+      const pref = getWorkspacePref(getDirectory());
+      if (pref.agent && agents.length && isAgentReachable(pref.agent, agents)) {
+        const a = pref.agent;
+        restoringAgentRef.current = true;
+        try {
+          localStorage.setItem(LAST_AGENT_KEY, a);
+        } catch {}
+        setAgentSel((cur) => (cur === a ? cur : a));
+        queueMicrotask(() => {
+          restoringAgentRef.current = false;
+        });
+      }
+      const s = pref.security;
+      if (s === "full" || s === "block" || s === "user") {
+        restoringSecRef.current = true;
+        try {
+          localStorage.setItem(SECURITY_KEY, s);
+        } catch {}
+        _setSecurityMode((cur) => (cur === s ? cur : (s as SecurityMode)));
+        queueMicrotask(() => {
+          restoringSecRef.current = false;
+        });
+      }
+    };
+    window.addEventListener("oc:workspaces-changed", onWs);
+    return () => window.removeEventListener("oc:workspaces-changed", onWs);
+  }, [agents, LAST_AGENT_KEY, SECURITY_KEY]);
 
   // generic watcher: any agent value change (dropdown, Tab, future shortcut) auto-pins per-session
   useEffect(() => {

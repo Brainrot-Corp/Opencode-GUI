@@ -77,6 +77,7 @@ Rule: new server talk → `hooks/`; new visuals → `components/` + `styles/`; n
 ## Gotchas
 
 - **Workspace dir:** always `getDirectory()` / `opencodeFor(dir)` — never hardcode paths; empty string is valid. Dedup via `src/lib/platform.ts:normWorkspace()`, not `toLowerCase()`.
+- **Multi-window:** each OS window is its own process (`--new-instance` = secondary). Window-local keys go through `src/lib/windowScope.ts:windowKey()` (primary keeps legacy keys, secondaries get `key::scope`); secondaries persist workspace only via the Rust per-process var, never the shared `oc.settings` blob/file. Never adopt workspace/model/agent/security from `storage` events — same-window `oc:workspaces-changed` only. Last-used picks live in `src/lib/workspacePrefs.ts` (per-workspace memory + shared `oc.lastGlobal` seed for fresh secondaries).
 - **Hidden sessions:** `tempSession()` creates `title="__temp__"` + `hiddenSessions` Set (`src/api.ts:110-127`); `refreshSessions` drops them and `parentID` sessions.
 - **Deadlines:** sync prompts hang forever on stalled provider — wrap with `withDeadline()` (`src/api.ts:131-145`).
 - **File watcher:** `file.watcher.updated` → `oc:file-changed` event; command/agent registries refetched throttled (1s), but **new** command files need sidecar restart (server scans once at boot). `lib.rs` watches both `platform::themes_dir()`/`plugins_dir()` and legacy `USERPROFILE/.config` for migration.

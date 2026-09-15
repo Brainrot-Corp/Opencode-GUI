@@ -85,7 +85,7 @@ function commitBodyEnabled(): boolean {
 }
 function cachedVariant(sel: string): string | undefined {
   try {
-    const m = JSON.parse(localStorage.getItem("oc.variants") ?? "{}");
+    const m = JSON.parse(localStorage.getItem(windowKey("oc.variants")) ?? "{}");
     const v = m?.[sel];
     if (typeof v === "string" && v) return v;
   } catch {}
