@@ -116,15 +116,83 @@ pub(crate) mod job {
     pub(crate) fn assign(_: &Child) {}
 }
 
+// multi-window isolation: each OS window is its own process (spawned with
+// --new-instance), but localStorage + the workspace file are shared across
+// processes. Secondary windows therefore keep their workspace in a
+// per-process variable (never the shared file) and namespace every
+// window-local frontend key by the per-process scope id below — otherwise a
+// workspace switch in one window leaks into the other (wrong repo in git,
+// wrong sessions, dead terminal ids).
+static BOOT_ID: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+fn boot_id() -> String {
+    BOOT_ID
+        .get_or_init(|| {
+            // pid + nanos: unique across live processes, no extra dep for uuid
+            let pid = std::process::id();
+            let nanos = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0);
+            format!("{pid:x}-{nanos:x}")
+        })
+        .clone()
+}
+
+fn is_secondary() -> bool {
+    std::env::args().any(|a| a == "--new-instance")
+}
+
+/// Post-update relaunch passes --restore-workspace (on top of
+/// --new-instance): the old process is dead, so this window is effectively
+/// the primary and may adopt the persisted workspace. Plain secondary
+/// windows (tray/JumpList "Open new window") boot blank instead.
+fn restore_ws_arg() -> bool {
+    std::env::args().any(|a| a == "--restore-workspace")
+}
+
+/// Per-process workspace override for secondary windows — the shared file
+/// stays owned by the primary window so secondaries can neither adopt nor
+/// clobber it. Survives frontend reloads (the process persists).
+static WINDOW_WS: Mutex<Option<String>> = Mutex::new(None);
+
+/// True when this process owns the shared workspace file (primary, or the
+/// sole post-update window). Secondaries use WINDOW_WS above.
+fn file_backed_workspace() -> bool {
+    !is_secondary() || restore_ws_arg()
+}
+
+#[derive(serde::Serialize)]
+struct WindowScope {
+    scope: String,
+    primary: bool,
+}
+
+#[tauri::command]
+fn window_scope() -> WindowScope {
+    WindowScope {
+        scope: boot_id(),
+        primary: file_backed_workspace(),
+    }
+}
+
 // workspace persistence — saved per local dev build so debug restarts reopen
 // the same project without relying on WebView localStorage (devUrl origin
 // differs from release, so localStorage would appear empty).
+// NOTE: primary-window only (see file_backed_workspace); secondaries resolve
+// through WINDOW_WS so concurrent windows stay independent.
 fn workspace_file(app: &tauri::AppHandle) -> Option<PathBuf> {
     app.path().app_config_dir().ok().map(|d| d.join("workspace"))
 }
 
 #[tauri::command]
 fn workspace_get(app: tauri::AppHandle) -> String {
+    if !file_backed_workspace() {
+        return WINDOW_WS
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+            .unwrap_or_default();
+    }
     workspace_file(&app)
         .and_then(|p| std::fs::read_to_string(p).ok())
         .unwrap_or_default()
@@ -134,10 +202,14 @@ fn workspace_get(app: tauri::AppHandle) -> String {
 
 #[tauri::command]
 fn workspace_set(app: tauri::AppHandle, path: String) -> Result<(), String> {
+    let t = path.trim().to_string();
+    if !file_backed_workspace() {
+        *WINDOW_WS.lock().unwrap_or_else(|e| e.into_inner()) = Some(t);
+        return Ok(());
+    }
     let Some(file) = workspace_file(&app) else {
         return Err("no config dir".into());
     };
-    let t = path.trim();
     if t.is_empty() {
         let _ = std::fs::remove_file(&file);
         return Ok(());
@@ -149,6 +221,12 @@ fn workspace_set(app: tauri::AppHandle, path: String) -> Result<(), String> {
 }
 
 fn read_saved_workspace(app: &tauri::AppHandle) -> Option<PathBuf> {
+    // secondary windows boot blank (server cwd = home); the per-window
+    // ?directory= carries the real workspace. The post-update window restores
+    // via --restore-workspace instead.
+    if !file_backed_workspace() {
+        return None;
+    }
     let raw = workspace_get(app.clone());
     if raw.is_empty() {
         return None;
@@ -1919,6 +1997,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             server_url,
             os_glass,
+            window_scope,
             workspace_get,
             workspace_set,
             set_close_on_x,

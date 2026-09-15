@@ -2,17 +2,19 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { playSound } from "../lib/sounds";
 import { splitModel } from "../lib/models";
 import { pushToast } from "./useToast";
+import { windowKey } from "../lib/windowScope";
 import type { ProviderGroup } from "../types";
 
 type OcClient = Awaited<ReturnType<typeof import("../api").opencode>>["client"];
 
 // provider/model selection: boot-time loading + capability enrichment,
-// shared hand-picked model (localStorage oc.lastModel — synced across all
-// windows), server-default learning, per-session model memory
+// per-window hand-picked model (windowKey("oc.lastModel") — each OS window
+// keeps its own so two windows never steal each other's selection),
+// server-default learning, per-session model memory
 // (oc.sessionModels — explicit picks only), and thinking-effort variants
 // (oc.variants global per-model + oc.sessionVariants per-session, like model/agent)
 const SESSION_MODELS_KEY = "oc.sessionModels";
-const LAST_MODEL_KEY = "oc.lastModel";
+const LAST_MODEL_BASE = "oc.lastModel";
 const SESSION_VARIANTS_KEY = "oc.sessionVariants";
 
 function isReachable(model: string, groups: ProviderGroup[]): boolean {
@@ -124,6 +126,8 @@ function mergeGroups(all: ProviderGroup[][]): ProviderGroup[] {
 export function useProviders(activeId: string) {
   const activeIdRef = useRef(activeId);
   useEffect(() => { activeIdRef.current = activeId; }, [activeId]);
+  // per-window global model (primary: legacy key, secondaries: own namespace)
+  const LAST_MODEL_KEY = windowKey(LAST_MODEL_BASE);
   const [providers, setProviders] = useState<ProviderGroup[]>([]);
   const [modelSel, setModelSel] = useState("");
   // per-session model memory: only entries that were EXPLICITLY picked for
@@ -174,9 +178,10 @@ export function useProviders(activeId: string) {
   const restoringRef = useRef(false);
 
 
-  // shared last hand-picked model — visible to every window/instance via
-  // localStorage (cross-window "storage" events keep live windows in sync).
-  // only real selections persist — never wipe the stored one with ""
+  // per-window last hand-picked model — windowKey() namespaces it per OS
+  // window (cross-window "storage" events can no longer leak a pick into a
+  // window working in another project). only real selections persist — never
+  // wipe the stored one with ""
   useEffect(() => {
     if (modelSel) {
       try {
@@ -189,8 +194,9 @@ export function useProviders(activeId: string) {
     }
   }, [modelSel]);
 
-  // live sync: another window picked a model -> reflect it here unless the
-  // active session has its own remembered model (which outranks the global)
+  // live sync: same-window writers (picker + settings drawer share the key)
+  // stay consistent; other OS windows use their own namespaced key and never
+  // match here. sessions with a remembered model still outrank the global.
   useEffect(() => {
     const onStorage = (e: StorageEvent) => {
       if (e.key !== LAST_MODEL_KEY || !e.newValue) return;
@@ -261,8 +267,8 @@ export function useProviders(activeId: string) {
 
   // session switch (or providers arriving late): re-apply the active
   // session's remembered model when it exists and is still reachable;
-  // otherwise fall back to the shared global last model. The global is the
-  // "last used model between all instances" and is required on app launch
+  // otherwise fall back to the per-window global last model. The global is the
+  // "last used model in this window" and is required on app launch
   // when the active session has no model. Unreachable remembered entries are
   // pruned so the session correctly follows the global from then on.
   useEffect(() => {
@@ -333,9 +339,9 @@ export function useProviders(activeId: string) {
       return changed ? next : prev;
     });
 
-    // restore the *shared* last hand-picked model (localStorage so every
-    // window/instance sees the same value). Migrate a legacy per-window
-    // sessionStorage entry if it exists — the app used to be per-instance.
+    // restore the per-window last hand-picked model. Migrate a legacy
+    // per-window sessionStorage entry if it exists — the app used to be
+    // per-instance.
     let saved: string | null = null;
     try {
       saved = localStorage.getItem(LAST_MODEL_KEY);

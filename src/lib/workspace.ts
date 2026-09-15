@@ -2,13 +2,25 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
 import { getDirectory, setDirectory } from "../api";
 import { normWorkspace } from "./platform";
+import { isSecondary, windowKey } from "./windowScope";
 
 const MAX_EXTRA = 5;
-const LAST_WS_KEY = "oc.lastWorkspace";
+const LAST_WS_BASE = "oc.lastWorkspace";
+// secondary windows keep extras outside the shared settings blob (which stays
+// owned by the primary window) — standalone scoped key, no cross-talk.
+const SECONDARY_WS_KEY = "oc.workspaces";
+
+export function lastWsKey(): string {
+  return windowKey(LAST_WS_BASE);
+}
+
+function extrasKey(): string {
+  return windowKey(SECONDARY_WS_KEY);
+}
 
 export function getLastWorkspace(): string | null {
   try {
-    const v = localStorage.getItem(LAST_WS_KEY);
+    const v = localStorage.getItem(lastWsKey());
     if (typeof v === "string" && v) return v;
     return null;
   } catch { return null; }
@@ -18,9 +30,9 @@ export function touchWorkspace(dir: string) {
   const t = dir.trim();
   try {
     if (!t) {
-      localStorage.removeItem(LAST_WS_KEY);
+      localStorage.removeItem(lastWsKey());
     } else {
-      localStorage.setItem(LAST_WS_KEY, t);
+      localStorage.setItem(lastWsKey(), t);
     }
     window.dispatchEvent(new CustomEvent("oc:last-workspace-changed", { detail: t }));
   } catch {}
@@ -28,27 +40,39 @@ export function touchWorkspace(dir: string) {
 
 function readExtras(): string[] {
   try {
+    if (isSecondary()) {
+      const raw = JSON.parse(localStorage.getItem(extrasKey()) ?? "[]");
+      return Array.isArray(raw) ? raw.filter((x: unknown) => typeof x === "string") : [];
+    }
     const raw = JSON.parse(localStorage.getItem("oc.settings") ?? "{}");
     return Array.isArray(raw.workspaces) ? raw.workspaces.filter((x: unknown) => typeof x === "string") : [];
   } catch { return []; }
 }
-// ponytail: re-reads localStorage immediately before write to minimize cross-tab
-// lost-update race; if contention grows use BroadcastChannel lock (global lock, per-tab merge)
-function writeExtras(list: string[]) {
+function setExtras(list: string[]) {
+  const next = list.slice(0, MAX_EXTRA);
   try {
-    const raw = JSON.parse(localStorage.getItem("oc.settings") ?? "{}");
-    raw.workspaces = list.slice(0, MAX_EXTRA);
-    localStorage.setItem("oc.settings", JSON.stringify(raw));
+    if (isSecondary()) {
+      localStorage.setItem(extrasKey(), JSON.stringify(next));
+    } else {
+      const raw = JSON.parse(localStorage.getItem("oc.settings") ?? "{}");
+      raw.workspaces = next;
+      localStorage.setItem("oc.settings", JSON.stringify(raw));
+    }
   } catch {}
   window.dispatchEvent(new CustomEvent("oc:workspaces-changed"));
+}
+// ponytail: re-reads localStorage immediately before write to minimize cross-tab
+// lost-update race; if contention grows use BroadcastChannel lock (global lock, per-tab merge)
+// (multi-window: each window owns its extras key — primary the blob field,
+// secondaries their scoped key — so concurrent windows no longer clobber.)
+function writeExtras(list: string[]) {
+  setExtras(list);
 }
 // transaction helper that re-reads before write and merges via updater — mitigates RC-05
 function safeWriteExtras(updater: (prev: string[]) => string[]) {
   try {
-    const raw = JSON.parse(localStorage.getItem("oc.settings") ?? "{}");
-    const prev: string[] = Array.isArray(raw.workspaces) ? raw.workspaces.filter((x: unknown) => typeof x === "string") : [];
-    raw.workspaces = updater(prev).slice(0, MAX_EXTRA);
-    localStorage.setItem("oc.settings", JSON.stringify(raw));
+    setExtras(updater(readExtras()));
+    return;
   } catch {}
   window.dispatchEvent(new CustomEvent("oc:workspaces-changed"));
 }
@@ -90,14 +114,12 @@ export async function addWorkspace(path: string, atIndex?: number): Promise<bool
   const norm = (s: string) => normWorkspace(s);
   if (norm(p) === norm(primary)) return false;
   try {
-    const raw = JSON.parse(localStorage.getItem("oc.settings") ?? "{}");
-    let extras: string[] = Array.isArray(raw.workspaces) ? raw.workspaces.filter((x: unknown) => typeof x === "string") : [];
+    const extras = readExtras();
     if (extras.some((e) => norm(e) === norm(p))) return false;
     if (extras.length >= MAX_EXTRA) return false;
     if (typeof atIndex === "number" && atIndex >= 0 && atIndex <= extras.length) extras.splice(atIndex, 0, p);
     else extras.push(p);
-    raw.workspaces = extras.slice(0, MAX_EXTRA);
-    localStorage.setItem("oc.settings", JSON.stringify(raw));
+    setExtras(extras);
   } catch { return false; }
   window.dispatchEvent(new CustomEvent("oc:workspaces-changed"));
   return true;
@@ -122,14 +144,12 @@ export async function replaceWorkspace(oldPath: string, newPath: string): Promis
   const primary = getDirectory().trim();
   if (norm(p) === norm(primary)) return false;
   try {
-    const raw = JSON.parse(localStorage.getItem("oc.settings") ?? "{}");
-    const extras: string[] = Array.isArray(raw.workspaces) ? raw.workspaces.filter((x: unknown) => typeof x === "string") : [];
+    const extras = readExtras();
     const idx = extras.findIndex((e) => norm(e) === norm(oldP));
     if (idx < 0) return false;
     if (extras.some((e, i) => i !== idx && norm(e) === norm(p))) return false;
     extras[idx] = p;
-    raw.workspaces = extras.slice(0, MAX_EXTRA);
-    localStorage.setItem("oc.settings", JSON.stringify(raw));
+    setExtras(extras);
   } catch { return false; }
   window.dispatchEvent(new CustomEvent("oc:workspaces-changed"));
   return true;
@@ -152,15 +172,19 @@ export async function pickExtraWorkspace(atIndex?: number) {
 // persist + apply a workspace switch live (no reload): Sidebar, Terminal,
 // GitPanel and sessions converge via oc:workspaces-changed + the 2s SSE
 // tick, so busy sessions on untouched workspaces keep streaming.
+// Multi-window: secondaries persist to the Rust per-process var only — the
+// shared settings blob + file stay owned by the primary window.
 export async function applyWorkspace(path: string) {
   touchWorkspace(path);
   setDirectory(path);
-  try {
-    const raw = JSON.parse(localStorage.getItem("oc.settings") ?? "{}");
-    raw.workspace = path;
-    localStorage.setItem("oc.settings", JSON.stringify(raw));
-  } catch {
-    // unreadable settings blob — sessions still follow the api dir
+  if (!isSecondary()) {
+    try {
+      const raw = JSON.parse(localStorage.getItem("oc.settings") ?? "{}");
+      raw.workspace = path;
+      localStorage.setItem("oc.settings", JSON.stringify(raw));
+    } catch {
+      // unreadable settings blob — sessions still follow the api dir
+    }
   }
   // debug local builds survive devUrl origin changes via Rust file
   try {
@@ -176,13 +200,17 @@ export async function applyWorkspace(path: string) {
 export async function closeAllWorkspaces() {
   touchWorkspace("");
   setDirectory("");
-  try {
-    const raw = JSON.parse(localStorage.getItem("oc.settings") ?? "{}");
-    raw.workspace = "";
-    raw.workspaces = [];
-    localStorage.setItem("oc.settings", JSON.stringify(raw));
-  } catch {
-    // unreadable settings blob — sessions still follow the api dir
+  if (!isSecondary()) {
+    try {
+      const raw = JSON.parse(localStorage.getItem("oc.settings") ?? "{}");
+      raw.workspace = "";
+      raw.workspaces = [];
+      localStorage.setItem("oc.settings", JSON.stringify(raw));
+    } catch {
+      // unreadable settings blob — sessions still follow the api dir
+    }
+  } else {
+    setExtras([]);
   }
   // debug local builds survive devUrl origin changes via Rust file
   try {

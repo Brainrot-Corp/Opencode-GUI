@@ -18,6 +18,8 @@ import {
 import { DEFAULT_HOTKEYS, normalizeBinding, type HotkeysMap, type PluginHotkeysMap } from "../lib/hotkeys";
 import { pushToast } from "./useToast";
 import { normWorkspace } from "../lib/platform";
+import { isSecondary } from "../lib/windowScope";
+import { getExtraWorkspaces } from "../lib/workspace";
 
 export type ThemeName = string;
 export type Mode = "dark" | "light";
@@ -347,12 +349,14 @@ export function useSettings() {
           volume: num(p.sounds?.volume, DEFAULTS.sounds.volume, 0, 1),
         },
         colors: loadColors(p, legacy ? "light" : theme),
-        workspace: typeof p.workspace === "string" ? p.workspace : "",
+        // multi-window: secondaries own their workspace in memory + the Rust
+        // per-process var — never adopt the primary window's blob fields.
+        workspace: isSecondary() ? getDirectory() : (typeof p.workspace === "string" ? p.workspace : ""),
         workspaces: (() => {
-          const arr = Array.isArray(p.workspaces) ? p.workspaces : [];
+          const arr = isSecondary() ? getExtraWorkspaces() : (Array.isArray(p.workspaces) ? p.workspaces : []);
           const out: string[] = [];
           const seen = new Set<string>();
-          const primary = typeof p.workspace === "string" ? p.workspace.trim() : "";
+          const primary = isSecondary() ? getDirectory().trim() : (typeof p.workspace === "string" ? p.workspace.trim() : "");
           const norm = (s: string) => normWorkspace(s);
           for (const v of arr) {
             if (typeof v !== "string") continue;
@@ -492,7 +496,21 @@ export function useSettings() {
 
   useEffect(() => {
     try {
-      localStorage.setItem(KEY, JSON.stringify(settings));
+      // multi-window: the shared blob's workspace/workspaces fields are owned
+      // by the primary window — secondaries read-merge them so a prefs save
+      // (theme, sounds, …) can never clobber the primary's workspace.
+      let toSave = settings;
+      if (isSecondary()) {
+        try {
+          const cur = JSON.parse(localStorage.getItem(KEY) ?? "{}");
+          toSave = {
+            ...settings,
+            workspace: typeof cur.workspace === "string" ? cur.workspace : "",
+            workspaces: Array.isArray(cur.workspaces) ? cur.workspaces : [],
+          };
+        } catch {}
+      }
+      localStorage.setItem(KEY, JSON.stringify(toSave));
     } catch (e) {
       try { pushToast(`Failed to save settings: ${e}`); } catch {}
     }
@@ -510,47 +528,37 @@ export function useSettings() {
     if (getDirectory() !== settings.workspace) setDirectory(settings.workspace);
   }, [settings.workspace]);
 
-  // live workspace switch (FileTree "Set as workspace" writes localStorage +
-  // api dir directly, no reload) — adopt workspace/workspaces so Terminal,
-  // stage-head and drawers follow without tearing down busy sessions
+  // live workspace switch (FileTree "Set as workspace", sidebar add/remove —
+  // same-window only via oc:workspaces-changed): adopt getDirectory() + extras
+  // so Terminal, stage-head and drawers follow without tearing down busy
+  // sessions. Deliberately NOT synced from "storage" events — the blob's
+  // workspace fields belong to the primary window; adopting them is what used
+  // to drag every window into the same folder (wrong repo in git).
   useEffect(() => {
     const sync = () => {
-      let ws: string | null = null;
-      let wss: string[] | null = null;
-      try {
-        const raw = JSON.parse(localStorage.getItem(KEY) ?? "{}");
-        if (typeof raw.workspace === "string") ws = raw.workspace;
-        if (Array.isArray(raw.workspaces)) wss = raw.workspaces.filter((x: unknown) => typeof x === "string");
-      } catch { return; }
-      if (ws === null && wss === null) return;
+      const ws = getDirectory();
+      const wss = getExtraWorkspaces();
       setSettings((s) => {
-        const wsChanged = ws !== null && ws !== s.workspace;
-        let nextWss = s.workspaces;
-        let wssChanged = false;
-        if (wss !== null) {
-          const primary = ws ?? s.workspace;
-          const out: string[] = [];
-          const seen = new Set<string>();
-          for (const v of wss) {
-            const t = v.trim();
-            if (!t || normWorkspace(t) === normWorkspace(primary)) continue;
-            const key = normWorkspace(t);
-            if (seen.has(key)) continue;
-            seen.add(key);
-            out.push(t);
-            if (out.length >= 5) break;
-          }
-          wssChanged = out.length !== s.workspaces.length || out.some((v, i) => v !== s.workspaces[i]);
-          nextWss = out;
+        const wsChanged = ws !== s.workspace;
+        const primary = ws;
+        const out: string[] = [];
+        const seen = new Set<string>();
+        for (const v of wss) {
+          const t = v.trim();
+          if (!t || normWorkspace(t) === normWorkspace(primary)) continue;
+          const key = normWorkspace(t);
+          if (seen.has(key)) continue;
+          seen.add(key);
+          out.push(t);
+          if (out.length >= 5) break;
         }
+        const wssChanged = out.length !== s.workspaces.length || out.some((v, i) => v !== s.workspaces[i]);
         if (!wsChanged && !wssChanged) return s;
-        return { ...s, ...(wsChanged ? { workspace: ws as string } : {}), ...(wssChanged ? { workspaces: nextWss } : {}) };
+        return { ...s, ...(wsChanged ? { workspace: ws } : {}), ...(wssChanged ? { workspaces: out } : {}) };
       });
     };
-    window.addEventListener("storage", sync);
     window.addEventListener("oc:workspaces-changed", sync as EventListener);
     return () => {
-      window.removeEventListener("storage", sync);
       window.removeEventListener("oc:workspaces-changed", sync as EventListener);
     };
   }, []);

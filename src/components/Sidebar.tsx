@@ -5,7 +5,7 @@ import { playSound } from "../lib/sounds";
 import { useContextMenu } from "../hooks/useContextMenu";
 import { clipboardWrite } from "../lib/clipboard";
 import { getDirectory, opencodeFor } from "../api";
-import { addWorkspace, removeWorkspace, reorderWorkspaces, touchWorkspace } from "../lib/workspace";
+import { addWorkspace, getAllWorkspaces, removeWorkspace, reorderWorkspaces, touchWorkspace } from "../lib/workspace";
 import { normWorkspace } from "../lib/platform";
 import { isRemoteDir, remoteLabel } from "../lib/remotes";
 import SshWorkspaceDialog from "./SshWorkspaceDialog";
@@ -143,34 +143,24 @@ export default function Sidebar({
     localStorage.setItem("oc.sb.tab", t);
   };
 
-  // workspaces derived from settings + primary — live sync via storage + custom event
+  // workspaces for this window — live sync via the same-window
+  // oc:workspaces-changed event. Deliberately not synced from "storage"
+  // events: the shared blob's workspace fields belong to the primary window;
+  // adopting them dragged every window into the same folder.
   const [allDirs, setAllDirs] = useState<string[]>(() => {
     try {
-      const p = JSON.parse(localStorage.getItem("oc.settings") ?? "{}");
-      const primary = typeof p.workspace === "string" ? p.workspace : getDirectory();
-      const extras = Array.isArray(p.workspaces) ? p.workspaces : [];
-      const seen = new Set<string>();
-      const out: string[] = [];
-      for (const d of [primary, ...extras]) { const k = normWorkspace(d ?? ""); if (seen.has(k)) continue; seen.add(k); out.push(d ?? ""); }
-      return out;
+      return getAllWorkspaces();
     } catch { return [getDirectory()]; }
   });
   useEffect(() => {
     const sync = () => {
       try {
-        const p = JSON.parse(localStorage.getItem("oc.settings") ?? "{}");
-        const primary = typeof p.workspace === "string" ? p.workspace : getDirectory();
-        const extras = Array.isArray(p.workspaces) ? p.workspaces : [];
-        const seen = new Set<string>();
-        const out: string[] = [];
-      for (const d of [primary, ...extras]) { const k = normWorkspace(d ?? ""); if (seen.has(k)) continue; seen.add(k); out.push(d ?? ""); }
-        setAllDirs(out);
+        setAllDirs(getAllWorkspaces());
       } catch {}
     };
-    window.addEventListener("storage", sync);
     window.addEventListener("oc:workspaces-changed", sync as any);
     window.addEventListener("focus", sync);
-    return () => { window.removeEventListener("storage", sync); window.removeEventListener("oc:workspaces-changed", sync as any); window.removeEventListener("focus", sync); };
+    return () => { window.removeEventListener("oc:workspaces-changed", sync as any); window.removeEventListener("focus", sync); };
   }, []);
   const primaryDir = allDirs[0] ?? getDirectory();
   const extraDirs = allDirs.slice(1);

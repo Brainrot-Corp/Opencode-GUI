@@ -43,6 +43,7 @@ import { ContextMenuProvider } from "../hooks/useContextMenu";
 import SelectionMenu from "../components/SelectionMenu";
 import { getFindTarget, setFindTarget, targetFromElement } from "../lib/findContext";
 import { useTranslation } from "../lib/i18n";
+import { windowKey } from "../lib/windowScope";
 
 const SB_W_KEY = "oc.sb.w";
 const SB_C_KEY = "oc.sb.c";
@@ -131,9 +132,10 @@ export default function ChatPage() {
       isTyping: composerHasText,
     };
   }, [settings.workspace, oc.modelSel, oc.defaultModel, oc.busy, oc.activeId, oc.sessions, editingFile, diffOpen, diffFiles, oc.permission, oc.question, oc.compacting, composerHasText]);
-  // terminal dock visibility — restored if it was open on close, height persists via oc.term.h; PTY warms in background via idle so open is instant
+  // terminal dock visibility — per window (PTYs are per-process, so sharing
+  // this flag would open a dock over another window's dead terminals)
   const [termOpen, setTermOpen] = useState(
-    () => localStorage.getItem("oc.term.open") === "1",
+    () => localStorage.getItem(windowKey("oc.term.open")) === "1",
   );
   // first-launch setup wizard — any close records the flag so it shows once
   const [onboardOpen, setOnboardOpen] = useState(
@@ -864,7 +866,7 @@ export default function ChatPage() {
     localStorage.setItem(SB_C_KEY, sbClosed ? "1" : "0");
   }, [sbClosed]);
   useEffect(() => {
-    localStorage.setItem("oc.term.open", termOpen ? "1" : "0");
+    localStorage.setItem(windowKey("oc.term.open"), termOpen ? "1" : "0");
   }, [termOpen]);
   // closing the last session unmounts the composer — if it owned focus the
   // keyboard is stranded on a detached node and window shortcuts stop firing.

@@ -7,6 +7,7 @@ import { isModelOnServer } from "../hooks/useProviders";
 import { splitModel } from "../lib/models";
 import { extLang } from "../lib/syntax";
 import { playSound } from "../lib/sounds";
+import { windowKey } from "../lib/windowScope";
 import { heuristicCommit } from "../lib/commitHeuristic";
 import { buildCommitPrompt, cleanCommitMessage } from "../lib/commitPrompt";
 import Dialog from "./Dialog";
@@ -15,11 +16,14 @@ import DropdownPortal from "./DropdownPortal";
 import { useTranslation } from "../lib/i18n";
 import "../styles/git.css";
 
-const GH_KEY = "oc.git.h";
+const GH_KEY = () => windowKey("oc.git.h");
 const GH_MIN = 120;
 const GH_DEFAULT = 220;
-const PRIMARY_KEY = "oc.git.primary";
-const AMEND_KEY = "oc.git.amend";
+const PRIMARY_KEY = () => windowKey("oc.git.primary");
+const AMEND_KEY = () => windowKey("oc.git.amend");
+const OPEN_KEY = () => windowKey("oc.git.open");
+const STAGED_COLLAPSED_KEY = () => windowKey("oc.git.stagedCollapsed");
+const CHANGES_COLLAPSED_KEY = () => windowKey("oc.git.changesCollapsed");
 const clampH = (h: number) =>
   Math.min(Math.max(GH_MIN, Math.floor(h)), Math.floor(window.innerHeight * 0.6));
 
@@ -58,7 +62,7 @@ type PrimaryAction =
   | "stagedSync"
   | "allSync";
 function loadPrimary(): PrimaryAction {
-  const v = localStorage.getItem(PRIMARY_KEY);
+  const v = localStorage.getItem(PRIMARY_KEY());
   if (v === "all" || v === "stagedPush" || v === "allPush" || v === "stagedSync" || v === "allSync") return v as PrimaryAction;
   return "staged";
 }
@@ -152,7 +156,7 @@ const xcls = (l: string) =>
 
 function GitPanelInner() {
   const [st, setSt] = useState<GitStatus>(CLEAN);
-  const [open, setOpen] = useState(() => localStorage.getItem("oc.git.open") === "1");
+  const [open, setOpen] = useState(() => localStorage.getItem(OPEN_KEY()) === "1");
   const [msg, setMsg] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
@@ -177,22 +181,22 @@ function GitPanelInner() {
     el.style.height = `${el.scrollHeight}px`;
   }, []);
   useEffect(() => { autosizeMsg(); }, [msg, bodyOpt, open, autosizeMsg]);
-  const [gh, setGh] = useState(() => clampH(Number(localStorage.getItem(GH_KEY)) || GH_DEFAULT));
+  const [gh, setGh] = useState(() => clampH(Number(localStorage.getItem(GH_KEY())) || GH_DEFAULT));
   const [dragging, setDragging] = useState(false);
-  useEffect(() => { localStorage.setItem(GH_KEY, String(gh)); }, [gh]);
-  const [stagedCollapsed, setStagedCollapsed] = useState(() => localStorage.getItem("oc.git.stagedCollapsed") === "1");
-  const [changesCollapsed, setChangesCollapsed] = useState(() => localStorage.getItem("oc.git.changesCollapsed") === "1");
-  useEffect(() => { localStorage.setItem("oc.git.stagedCollapsed", stagedCollapsed ? "1" : "0"); }, [stagedCollapsed]);
-  useEffect(() => { localStorage.setItem("oc.git.changesCollapsed", changesCollapsed ? "1" : "0"); }, [changesCollapsed]);
+  useEffect(() => { localStorage.setItem(GH_KEY(), String(gh)); }, [gh]);
+  const [stagedCollapsed, setStagedCollapsed] = useState(() => localStorage.getItem(STAGED_COLLAPSED_KEY()) === "1");
+  const [changesCollapsed, setChangesCollapsed] = useState(() => localStorage.getItem(CHANGES_COLLAPSED_KEY()) === "1");
+  useEffect(() => { localStorage.setItem(STAGED_COLLAPSED_KEY(), stagedCollapsed ? "1" : "0"); }, [stagedCollapsed]);
+  useEffect(() => { localStorage.setItem(CHANGES_COLLAPSED_KEY(), changesCollapsed ? "1" : "0"); }, [changesCollapsed]);
   const [commitMenuOpen, setCommitMenuOpen] = useState(false);
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
   const [stashBusy, setStashBusy] = useState(false);
-  const [amend, setAmend] = useState(() => localStorage.getItem(AMEND_KEY) === "1");
+  const [amend, setAmend] = useState(() => localStorage.getItem(AMEND_KEY()) === "1");
   const [primary, setPrimary] = useState<PrimaryAction>(() => loadPrimary());
   const commitAnchorRef = useRef<HTMLDivElement>(null);
   const moreAnchorRef = useRef<HTMLButtonElement>(null);
-  useEffect(() => { localStorage.setItem(AMEND_KEY, amend ? "1" : "0"); }, [amend]);
-  useEffect(() => { localStorage.setItem(PRIMARY_KEY, primary); }, [primary]);
+  useEffect(() => { localStorage.setItem(AMEND_KEY(), amend ? "1" : "0"); }, [amend]);
+  useEffect(() => { localStorage.setItem(PRIMARY_KEY(), primary); }, [primary]);
   useEffect(() => {
     if (!commitMenuOpen && !moreMenuOpen) return;
     const onDown = (e: MouseEvent) => {
@@ -566,16 +570,16 @@ function GitPanelInner() {
   }, [refresh]);
   // workspace switches must refresh even when closed or repo-less —
   // otherwise closing all workspaces unsubscribes (open && repo gate below)
-  // and coming back never updates.
+  // and coming back never updates. Same-window custom events only — never
+  // "storage": the shared blob's workspace fields belong to the primary
+  // window and must not retarget this panel (wrong repo).
   useEffect(() => {
     const onWs = () => void refresh();
     window.addEventListener("oc:workspaces-changed", onWs);
     window.addEventListener("oc:last-workspace-changed", onWs);
-    window.addEventListener("storage", onWs);
     return () => {
       window.removeEventListener("oc:workspaces-changed", onWs);
       window.removeEventListener("oc:last-workspace-changed", onWs);
-      window.removeEventListener("storage", onWs);
     };
   }, [refresh]);
   useEffect(() => {
@@ -584,8 +588,14 @@ function GitPanelInner() {
     // watcher push (Rust `.git` notify → `git://changed`) + file-saves +
     // 4s poll stays as fallback. Workspace switches are handled by the
     // always-on effect above (immediate, even when closed/repo-less).
+    // The watcher payload is the changed repo root — ignore events for other
+    // roots (stale watcher from a previous workspace, or another window's
+    // repo resolving through a shared parent).
     let tauriUnlisten: (() => void) | undefined;
-    listen<string>("git://changed", () => scheduleRefresh())
+    listen<string>("git://changed", (ev) => {
+      const root = typeof ev?.payload === "string" ? ev.payload : "";
+      if (!root || !watchRootRef.current || root === watchRootRef.current) scheduleRefresh();
+    })
       .then((off) => { tauriUnlisten = off; })
       .catch(() => {});
     const t = setInterval(refresh, 4000);
@@ -683,7 +693,7 @@ function GitPanelInner() {
 
   const toggleOpen = () => {
     setOpen((o) => {
-      localStorage.setItem("oc.git.open", o ? "0" : "1");
+      localStorage.setItem(OPEN_KEY(), o ? "0" : "1");
       return !o;
     });
   };

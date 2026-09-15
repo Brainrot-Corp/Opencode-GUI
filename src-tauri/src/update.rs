@@ -293,9 +293,11 @@ pub fn apply_on_exit() {
         // locale-dependent `tasklist`/`find` failures). Fixed-delay batch avoids
         // all of that: ~2.5s ping delay then `start --new-instance` bypasses the
         // mutex entirely. Matches 1.5.5's direct spawn semantics but survives Win10.
+        // --restore-workspace: the old process is dead, so this window adopts the
+        // persisted primary workspace instead of booting blank like a secondary.
         let batch_path = std::env::temp_dir().join("oc-relaunch.bat");
         let batch = format!(
-            "@echo off\r\nping -n 4 127.0.0.1 >nul\r\nstart \"\" {} --new-instance\r\n(goto) 2>nul & del \"%~f0\"\r\n",
+            "@echo off\r\nping -n 4 127.0.0.1 >nul\r\nstart \"\" {} --new-instance --restore-workspace\r\n(goto) 2>nul & del \"%~f0\"\r\n",
             exe_quoted
         );
         trace(&format!("batch_path: {} batch_len={}", batch_path.display(), batch.len()));
@@ -317,7 +319,7 @@ pub fn apply_on_exit() {
             // Fallback: fixed 2s sleep then Start-Process --new-instance (same semantics as batch)
             let exe_str = exe_path.to_string_lossy().replace('\'', "''");
             let ps_cmd = format!(
-                "Start-Sleep -Seconds 2; Start-Process -FilePath '{}' -ArgumentList '--new-instance'",
+                "Start-Sleep -Seconds 2; Start-Process -FilePath '{}' -ArgumentList '--new-instance','--restore-workspace'",
                 exe_str
             );
             trace(&format!("ps_cmd: {ps_cmd}"));
@@ -356,6 +358,7 @@ pub fn apply_on_exit() {
                             // Last resort: direct detached launch (no delay)
                             let mut fallback = std::process::Command::new(&exe_path);
                             fallback.arg("--new-instance");
+                            fallback.arg("--restore-workspace");
                             fallback.creation_flags(
                                 CREATE_NO_WINDOW | DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_BREAKAWAY_FROM_JOB,
                             );

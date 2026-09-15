@@ -7,13 +7,11 @@ let cached: Promise<{ base: string; client: ReturnType<typeof createOpencodeClie
 
 // workspace directory sent as ?directory= on every request ("" = server cwd).
 // Lets the UI switch projects without respawning the sidecar.
+// Per-process memory: each OS window is its own process, so this is already
+// window-local. Seeded by main.tsx during boot (primary: restored workspace,
+// secondary: blank / Rust per-process var) — never read the shared blob here,
+// a secondary window would otherwise adopt the primary's workspace.
 let directory = "";
-try {
-  const p = JSON.parse(localStorage.getItem("oc.settings") ?? "{}");
-  if (typeof p.workspace === "string") directory = p.workspace;
-} catch {
-  // no stored settings — default
-}
 
 export function setDirectory(dir: string) {
   directory = dir;

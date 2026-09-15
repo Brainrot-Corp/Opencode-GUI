@@ -133,13 +133,10 @@ export default function FileTree({ dir = "" }: { dir?: string }) {
 
   function workspaceRootAbs(): string {
     if (dir) return dir;
-    try {
-      const raw = localStorage.getItem("oc.settings");
-      if (raw) {
-        const j = JSON.parse(raw);
-        if (typeof j.workspace === "string" && j.workspace) return j.workspace;
-      }
-    } catch {}
+    // window-local directory — never the shared blob (it holds the primary
+    // window's workspace, which is a different folder in a second window).
+    const gd = getDirectory().trim();
+    if (gd) return gd;
     const root = kids.get("")?.[0];
     if (root?.absolute && root?.path) {
       const rel = root.path;

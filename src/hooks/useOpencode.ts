@@ -18,8 +18,9 @@ import { isRemoteDir, remoteStatus, serverDir } from "../lib/remotes";
 import { playSound } from "../lib/sounds";
 import { createSessionStore } from "../lib/sessionStore";
 import { splitModel } from "../lib/models";
-import { touchWorkspace } from "../lib/workspace";
+import { touchWorkspace, getExtraWorkspaces } from "../lib/workspace";
 import { normWorkspace } from "../lib/platform";
+import { windowKey } from "../lib/windowScope";
 import { createBusyTracker } from "../lib/busyTracker";
 import {
   buildCmdList,
@@ -35,9 +36,9 @@ import { invalidateFileCache } from "./useFileCache";
 import { pushToast } from "./useToast";
 import type { Msg, OpenCodeEvent, PermAsk, ProviderGroup, Attachment, QuestionAsk, Cmd } from "../types";
 
-// per-session agent memory + shared global agent (mirrors useProviders model logic)
+// per-session agent memory + per-window global agent (mirrors useProviders model logic)
 const SESSION_AGENTS_KEY = "oc.sessionAgents";
-const LAST_AGENT_KEY = "oc.lastAgent";
+const LAST_AGENT_BASE = "oc.lastAgent";
 const DISABLED_AGENTS_KEY = "oc.disabledAgents";
 function isAgentReachable(name: string, list: { name: string }[]): boolean {
   return !!name && list.some((a) => a.name === name);
@@ -73,7 +74,7 @@ export function useOpencode() {
   const [attentionKinds, setAttentionKinds] = useState<Record<string, "permission" | "question" | "both">>({});
   // security mode: per-session override + global last (mirrors model/agent)
   type SecurityMode = "full" | "user" | "block";
-  const SECURITY_KEY = "oc.securityMode";
+  const SECURITY_KEY = windowKey("oc.securityMode");
   const SESSION_SECURITY_KEY = "oc.sessionSecurityMode";
   const [securityMode, _setSecurityMode] = useState<SecurityMode>(() => {
     try {
@@ -252,8 +253,10 @@ export function useOpencode() {
   const tracker = trackerRef.current;
 
   // ---- per-session agent memory (mirrors useProviders model logic) ----
-  // shared last hand-picked agent — visible to every window/instance via localStorage
-  // only real selections persist — never wipe stored one with ""
+  // per-window last hand-picked agent — windowKey() namespaces it per OS
+  // window so two windows never steal each other's selection.
+  // only real selections persist — never wipe the stored one with ""
+  const LAST_AGENT_KEY = windowKey(LAST_AGENT_BASE);
   useEffect(() => {
     if (agentSel) {
       try {
@@ -263,6 +266,8 @@ export function useOpencode() {
   }, [agentSel]);
 
   // live sync: another window picked an agent -> reflect here unless active session has its own remembered agent
+  // (per-window keys now — this only fires for same-window writes, e.g. the
+  // settings drawer + picker writing the same key; harmless by design)
   useEffect(() => {
     const onStorage = (e: StorageEvent) => {
       if (e.key !== LAST_AGENT_KEY || !e.newValue) return;
@@ -510,7 +515,7 @@ export function useOpencode() {
     });
   }, []);
 
-  const LAST_KEY = "oc.lastSes";
+  const LAST_KEY = windowKey("oc.lastSes");
   const PINNED_KEY = "oc.pinnedSessions";
   const TITLE_OVERRIDES_KEY = "oc.sessionTitles";
 
@@ -551,9 +556,7 @@ export function useOpencode() {
   const prevDirsRef = useRef<string[]>([]);
   const getWorkspaces = useCallback((): string[] => {
     try {
-      const raw = JSON.parse(localStorage.getItem("oc.settings") ?? "{}");
-      const arr = Array.isArray(raw.workspaces) ? raw.workspaces : [];
-      return arr.filter((x: unknown) => typeof x === "string" && (x as string).trim()).slice(0, 5);
+      return getExtraWorkspaces();
     } catch { return []; }
   }, []);
   const getAllDirs = useCallback((): string[] => {
@@ -1320,7 +1323,7 @@ export function useOpencode() {
       // server default so a new session is always pinned even before
       // providers finish loading (prevents following later global picks)
       let m = prov.modelSel;
-      if (!m) try { m = localStorage.getItem("oc.lastModel") || ""; } catch {}
+      if (!m) try { m = localStorage.getItem(windowKey("oc.lastModel")) || ""; } catch {}
       if (!m) m = prov.defaultModel || "";
       if (m) prov.rememberSession(s.id, m);
       if (agentSel) rememberAgentSession(s.id, agentSel);
@@ -1897,7 +1900,7 @@ export function useOpencode() {
       if (srcModel) prov.rememberSession(s.id, srcModel);
       else {
         let m: string = prov.modelSel || "";
-        if (!m) try { m = localStorage.getItem("oc.lastModel") || ""; } catch {}
+        if (!m) try { m = localStorage.getItem(windowKey("oc.lastModel")) || ""; } catch {}
         if (!m) m = prov.defaultModel || "";
         if (m) prov.rememberSession(s.id, m);
       }
@@ -1943,7 +1946,7 @@ export function useOpencode() {
       if (srcModel) prov.rememberSession(s.id, srcModel);
       else {
         let m: string = prov.modelSel || "";
-        if (!m) try { m = localStorage.getItem("oc.lastModel") || ""; } catch {}
+        if (!m) try { m = localStorage.getItem(windowKey("oc.lastModel")) || ""; } catch {}
         if (!m) m = prov.defaultModel || "";
         if (m) prov.rememberSession(s.id, m);
       }

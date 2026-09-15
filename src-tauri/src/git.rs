@@ -1138,11 +1138,24 @@ pub async fn git_reset(dir: String, target: String, mode: Option<String>) -> Res
 /// listens to `oc:file-changed` + focus + keeps the 4s poll as fallback, so
 /// worktree edits are covered even though only `.git` is watched here
 /// (watching the whole worktree recursive would storm on node_modules/target).
+///
+/// One watcher per repo root per process: workspace switches re-invoke this
+/// with a new root and must not leak a thread per switch.
+static WATCHED_ROOTS: std::sync::LazyLock<std::sync::Mutex<std::collections::HashSet<String>>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashSet::new()));
+
 #[tauri::command]
 pub async fn git_watch(app: tauri::AppHandle, dir: String) -> Result<(), String> {
     let Some(root) = repo_root(&dir) else {
         return Ok(());
     };
+    let root_key = root.to_string_lossy().into_owned();
+    {
+        let mut seen = WATCHED_ROOTS.lock().unwrap_or_else(|e| e.into_inner());
+        if !seen.insert(root_key.clone()) {
+            return Ok(()); // already watched — no duplicate thread
+        }
+    }
     let gd = git_dir_of(&root);
     if !path_is_dir(&gd) {
         return Ok(());

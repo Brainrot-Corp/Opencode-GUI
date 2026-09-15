@@ -9,21 +9,22 @@ import { isLiveFocusTarget, releaseTrapFocus } from "../lib/focus";
 import { useTerminalProfilesFor, type TerminalProfile } from "../hooks/useTerminalProfiles";
 import { getAllWorkspaces } from "../lib/workspace";
 import { normWorkspace } from "../lib/platform";
+import { windowKey } from "../lib/windowScope";
 import { isRemoteDir, remoteLabel } from "../lib/remotes";
 import TermInstanceView from "./TermInstanceView";
 import DropdownPortal from "./DropdownPortal";
 import "../styles/terminal.css";
 
-const H_KEY = "oc.term.h";
+const H_KEY = () => windowKey("oc.term.h");
 const H_MIN = 160;
 const H_DEFAULT = 240;
-const SIDE_KEY = "oc.term.sideCollapsed";
-const SIDE_W_KEY = "oc.term.sideW";
+const SIDE_KEY = () => windowKey("oc.term.sideCollapsed");
+const SIDE_W_KEY = () => windowKey("oc.term.sideW");
 const SIDE_W_DEFAULT = 176;
 const SIDE_W_MIN = 132;
 const SIDE_W_MAX = 360;
-const ACTIVE_KEY = "oc.term.active";
-const INST_KEY = "oc.term.instances";
+const ACTIVE_KEY = () => windowKey("oc.term.active");
+const INST_KEY = () => windowKey("oc.term.instances");
 
 // persisted shape for instances — cwd remembered at spawn, title may update from shell, per-terminal shell
 type PersistedInst = { id: number; gen: number; cwd: string; title: string; shell?: string; args?: string[]; shellName?: string };
@@ -166,11 +167,11 @@ export default function TerminalPanel({
   terminal?: { defaultProfileId: string | null; customShells: CustomShell[] };
   onSetDefault?: (id: string | null) => void;
 }) {
-  const [h, setH] = useState(() => clampH(Number(localStorage.getItem(H_KEY)) || 240));
+  const [h, setH] = useState(() => clampH(Number(localStorage.getItem(H_KEY())) || 240));
   const [dragging, setDragging] = useState(false);
-  const [sideCollapsed, setSideCollapsed] = useState(() => localStorage.getItem(SIDE_KEY) === "1");
+  const [sideCollapsed, setSideCollapsed] = useState(() => localStorage.getItem(SIDE_KEY()) === "1");
   const [sideW, setSideW] = useState(() => {
-    const v = Number(localStorage.getItem(SIDE_W_KEY)) || SIDE_W_DEFAULT;
+    const v = Number(localStorage.getItem(SIDE_W_KEY())) || SIDE_W_DEFAULT;
     return Math.min(Math.max(SIDE_W_MIN, v), SIDE_W_MAX);
   });
   const [sideResizing, setSideResizing] = useState(false);
@@ -178,7 +179,7 @@ export default function TerminalPanel({
   // auto-collapse side on narrow viewports on first mount so cols stay readable
   // CSS @media (max-width:720px) is the runtime safety net for resizes
   useEffect(() => {
-    if (window.innerWidth < 720 && localStorage.getItem(SIDE_KEY) !== "1") {
+    if (window.innerWidth < 720 && localStorage.getItem(SIDE_KEY()) !== "1") {
       setSideCollapsed(true);
     }
   }, []);
@@ -212,11 +213,11 @@ export default function TerminalPanel({
         setAllDirs(getAllWorkspaces());
       } catch {}
     };
+    // same-window events only — never "storage": the shared blob's workspace
+    // fields belong to the primary window and must not retarget this dock.
     window.addEventListener("oc:workspaces-changed", sync as EventListener);
-    window.addEventListener("storage", sync);
     return () => {
       window.removeEventListener("oc:workspaces-changed", sync as EventListener);
-      window.removeEventListener("storage", sync);
     };
   }, []);
 
@@ -225,7 +226,7 @@ export default function TerminalPanel({
 
   const [terms, setTerms] = useState<TermEntry[]>(() => {
     try {
-      const raw = localStorage.getItem(INST_KEY);
+      const raw = localStorage.getItem(INST_KEY());
       if (raw) {
         const arr = JSON.parse(raw) as PersistedInst[];
         if (Array.isArray(arr) && arr.length > 0 && arr.length <= 8) {
@@ -285,7 +286,7 @@ export default function TerminalPanel({
   });
 
   const [activeId, setActiveId] = useState<number>(() => {
-    const raw = localStorage.getItem(ACTIVE_KEY) || "";
+    const raw = localStorage.getItem(ACTIVE_KEY()) || "";
     const n = Number(raw);
     if (Number.isInteger(n) && n > 0) return n;
     return terms[0]?.id ?? 1;
@@ -387,18 +388,18 @@ export default function TerminalPanel({
   }, [open]);
 
   // persist side + active + instances (lightweight)
-  useEffect(() => { localStorage.setItem(SIDE_KEY, sideCollapsed ? "1" : "0"); }, [sideCollapsed]);
-  useEffect(() => { localStorage.setItem(SIDE_W_KEY, String(sideW)); }, [sideW]);
-  useEffect(() => { localStorage.setItem(ACTIVE_KEY, String(activeId)); }, [activeId]);
+  useEffect(() => { localStorage.setItem(SIDE_KEY(), sideCollapsed ? "1" : "0"); }, [sideCollapsed]);
+  useEffect(() => { localStorage.setItem(SIDE_W_KEY(), String(sideW)); }, [sideW]);
+  useEffect(() => { localStorage.setItem(ACTIVE_KEY(), String(activeId)); }, [activeId]);
   useEffect(() => {
     try {
       const arr: PersistedInst[] = terms.map((t) => ({ id: t.id, gen: t.gen, cwd: t.cwd, title: t.title, shell: t.shell, args: t.args, shellName: t.shellName }));
-      localStorage.setItem(INST_KEY, JSON.stringify(arr));
+      localStorage.setItem(INST_KEY(), JSON.stringify(arr));
     } catch (e) {
       console.warn("[term] failed to persist instances (quota?)", e);
     }
   }, [terms]);
-  useEffect(() => { localStorage.setItem(H_KEY, String(h)); }, [h]);
+  useEffect(() => { localStorage.setItem(H_KEY(), String(h)); }, [h]);
 
   const workspaceRef = useRef(workspace);
   useEffect(() => { workspaceRef.current = workspace; }, [workspace]);

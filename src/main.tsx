@@ -8,6 +8,7 @@ import "./styles/syntax.css";
 import "./styles/layout.css";
 import "./styles/toast.css";
 import { getDirectory, setDirectory } from "./api";
+import { initWindowScope, isSecondary, gcWindowScopes } from "./lib/windowScope";
 import { restoreThemeVars } from "./lib/themes";
 import { warmupMonaco } from "./lib/monaco";
 
@@ -22,7 +23,21 @@ try {
 // separate from the release tauri://localhost origin, so the last workspace
 // would appear lost after a dev rebuild. Rust's app_config_dir file survives
 // both origins and seeds the frontend before first paint.
+// Multi-window: only the primary window restores from shared state.
+// Secondary windows (tray/JumpList "Open new window") boot blank into their
+// own per-process Rust var (reload-safe) and never touch the shared blob —
+// otherwise they'd adopt the primary window's workspace (wrong repo in git).
 async function hydrateWorkspace() {
+  await initWindowScope();
+  if (isSecondary()) {
+    gcWindowScopes();
+    try {
+      const mem = (await invoke<string>("workspace_get").catch(() => ""))?.trim() ?? "";
+      if (mem && getDirectory().trim() !== mem) setDirectory(mem);
+    } catch {}
+    return;
+  }
+  gcWindowScopes();
   try {
     const saved = (await invoke<string>("workspace_get").catch(() => ""))?.trim() ?? "";
     let lsWs = "";
