@@ -4,7 +4,7 @@ import { opencode, opencodeFor, getDirectory } from "../api";
 import { applyWorkspace, replaceWorkspace } from "../lib/workspace";
 import { normWorkspace } from "../lib/platform";
 import { useContextMenu } from "../hooks/useContextMenu";
-import { invalidateFileCache, normalizeFilePath, useFileCache } from "../hooks/useFileCache";
+import { invalidateFileCache, normalizeFilePath, refreshWorkspaceFiles, useFileCache } from "../hooks/useFileCache";
 import { clipboardWrite } from "../lib/clipboard";
 import { useTranslation } from "../lib/i18n";
 import "../styles/files.css";
@@ -60,7 +60,7 @@ export default function FileTree({ dir = "" }: { dir?: string }) {
     const onHeader = (e: Event) => {
       const d = (e as CustomEvent<{ dir?: string; op?: string }>).detail;
       if (!d || (d.dir ?? "") !== dir) return;
-      if (d.op === "refresh") void load("", true);
+      if (d.op === "refresh") void refreshWorkspaceFiles(dir);
       else if (d.op === "new-file") void doCreateRef.current?.(false, null);
       else if (d.op === "new-folder") void doCreateRef.current?.(true, null);
     };
@@ -304,7 +304,7 @@ export default function FileTree({ dir = "" }: { dir?: string }) {
       { label: t("fileTree.newFile"), icon: "fa-file-circle-plus", action: () => void doCreate(false, null) },
       { label: t("fileTree.newFolder"), icon: "fa-folder-plus", action: () => void doCreate(true, null) },
       { separator: true },
-      { label: t("fileTree.refresh"), icon: "fa-arrows-rotate", action: () => void load("", true) },
+      { label: t("fileTree.refresh"), icon: "fa-arrows-rotate", action: () => void refreshWorkspaceFiles(dir) },
       { label: t("fileTree.copyWorkspacePath"), icon: "fa-link", action: () => {
         const root = workspaceRootAbs();
         if (root) void clipboardWrite(root);
