@@ -888,7 +888,7 @@ export default function MessageList({
   // loading→ready flip too, not just the head-message signature
   const wasLoading = useRef(false);
   // stream end while pinned — late layout (monaco editors, images) grows
-  // content after the last chase frame, so land exactly instead of hovering
+  // content after the last snap, so land exactly instead of hovering
   const wasBusy = useRef(false);
   // pinned = reader is at the exact tail: follow every growth until they
   // scroll away (any distance). only real user input moves the pin —

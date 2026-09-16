@@ -47,3 +47,15 @@
   opacity: 0.55;
   font-size: 11px;
 }
+
+/* question popup docked in-flow at the top of the transcript — undoes the
+   fixed bottom-center overlay positioning used in the main chat */
+.subagent-q .permission-bar {
+  position: static;
+  bottom: auto;
+  left: auto;
+  transform: none;
+  width: auto;
+  z-index: auto;
+  margin-bottom: 6px;
+}

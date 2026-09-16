@@ -15,6 +15,7 @@ type Props = {
   agents?: { name: string; mode: string }[];
   getDirForSession?: (id: string) => string;
   onOpenSession?: (id: string) => void;
+  onOpenSubagent?: (id: string | null, part?: any) => void;
   activeId?: string;
   msgs?: Msg[];
   activeChildren?: Session[];
@@ -83,7 +84,7 @@ function statusFor(progress: number): SimStatus {
   return "done";
 }
 
-export default function AgentBoard({ open, onClose, sessions, busyIds, compactingIds, attentionIds, agents, getDirForSession, onOpenSession, activeId, msgs, activeChildren, childTaskCosts, toggleAgentsHotkey }: Props) {
+export default function AgentBoard({ open, onClose, sessions, busyIds, compactingIds, attentionIds, agents, getDirForSession, onOpenSession, onOpenSubagent, activeId, msgs, activeChildren, childTaskCosts, toggleAgentsHotkey }: Props) {
   const [geom, setGeom] = useState<Geom>(() => loadGeom());
   const panelRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{ startX: number; startY: number; g0: Geom } | null>(null);
@@ -209,7 +210,7 @@ export default function AgentBoard({ open, onClose, sessions, busyIds, compactin
   // render win and coalesces rescans — one per quiet frame, not one per delta
   const deferredMsgs = useDeferredValue(msgs);
   const taskLanes = useMemo(() => {
-    type Lane = { id: string; label: string; details: string; status: SimStatus; agent: string; cost?: number; tokens?: number; duration?: string; rawId: string };
+    type Lane = { id: string; label: string; details: string; status: SimStatus; agent: string; cost?: number; tokens?: number; duration?: string; rawId: string; part?: any };
     const out: Lane[] = [];
     // closed board: skip the full-conversation part scan entirely — msgs churn
     // per streaming delta and this memo re-runs each time even when unmounted-
@@ -243,7 +244,7 @@ export default function AgentBoard({ open, onClose, sessions, busyIds, compactin
           const ci = (tid && childTaskCosts?.[tid]) || (pid && childTaskCosts?.[pid]) || null;
           const label = desc.length > 42 ? desc.slice(0, 42) + "…" : desc;
           const details = pid ? pid.slice(0, 8) : agent;
-          out.push({ id: pid || tid || `task-${out.length}`, label, details, status: rawStatus === "pending" ? "queued" : "working", agent, cost: ci?.cost, tokens: ci?.tokens, duration, rawId: tid ?? pid ?? "" });
+          out.push({ id: pid || tid || `task-${out.length}`, label, details, status: rawStatus === "pending" ? "queued" : "working", agent, cost: ci?.cost, tokens: ci?.tokens, duration, rawId: tid ?? pid ?? "", part: p });
         }
       }
     }
@@ -634,12 +635,32 @@ export default function AgentBoard({ open, onClose, sessions, busyIds, compactin
                     <div
                       className={`agent-block ${t.status} real`}
                       style={{ transform: `translate3d(${leftPx}px,0,0)` }}
-                      data-tip={`${t.label}${t.details ? ` · ${t.details}` : ""}${t.duration ? ` · ${t.duration}` : ""}${t.tokens ? ` · ${fmtTok(t.tokens)} tok` : ""}${t.cost ? ` · $${t.cost.toFixed(4)}` : ""}`}
+                      data-tip={`${t.label}${t.details ? ` · ${t.details}` : ""}${t.duration ? ` · ${t.duration}` : ""}${t.tokens ? ` · ${fmtTok(t.tokens)} tok` : ""}${t.cost ? ` · $${t.cost.toFixed(4)}` : ""} — click to open transcript`}
+                      onClick={() => {
+                        if (!onOpenSubagent) return;
+                        playSound("click");
+                        // ses_ id when known (completed/output or child fallback),
+                        // else the task part for description/chronological resolve
+                        const rid = /^ses_/.test(t.rawId) ? t.rawId : null;
+                        onOpenSubagent(rid, rid ? undefined : (t as any).part);
+                      }}
+                      role={onOpenSubagent ? "button" : undefined}
+                      tabIndex={onOpenSubagent ? 0 : -1}
+                      onKeyDown={e => {
+                        if (!onOpenSubagent) return;
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          playSound("click");
+                          const rid = /^ses_/.test(t.rawId) ? t.rawId : null;
+                          onOpenSubagent(rid, rid ? undefined : (t as any).part);
+                        }
+                      }}
                     >
                       <div className="agent-block-head">
                         <span className="agent-block-dot" aria-hidden />
                         <span className="agent-block-name" title={t.label}>{t.label}</span>
                         <span className="agent-block-status">{t.status}</span>
+                        <i className="fa-solid fa-arrow-up-right-from-square" style={{ marginLeft: 6, opacity: 0.55 }} aria-hidden />
                       </div>
                       <div className="agent-block-session" title={t.details || t.rawId}>
                         <i className="fa-solid fa-diagram-project" />

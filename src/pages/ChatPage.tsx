@@ -1421,17 +1421,6 @@ export default function ChatPage() {
                     ask={oc.question}
                     onAnswer={oc.answerQuestion}
                     onReject={oc.rejectQuestion}
-                    originTitle={
-                      oc.question.sessionID !== oc.activeId
-                        ? ((oc.activeChildren as any[])?.find((c: any) => c.id === oc.question?.sessionID)?.title ??
-                          oc.question.sessionID)
-                        : undefined
-                    }
-                    onViewTranscript={
-                      oc.question.sessionID !== oc.activeId
-                        ? () => setSubViewer({ id: oc.question!.sessionID })
-                        : undefined
-                    }
                   />
                 )}
                 {vnote && (
@@ -1533,6 +1522,13 @@ export default function ChatPage() {
             peekSession={oc.peekSession}
             subscribeSession={oc.subscribeSession}
             primeSession={oc.primeSession}
+            peekQuestion={oc.peekQuestion}
+            subscribeQuestion={oc.subscribeQuestion}
+            answerQuestionFor={oc.answerQuestionFor}
+            rejectQuestionFor={oc.rejectQuestionFor}
+            peekPermission={oc.peekPermission}
+            subscribePermission={oc.subscribePermission}
+            respondToPermissionFor={oc.respondToPermissionFor}
             onPick={(id) => setSubViewer({ id })}
             onClose={() => setSubViewer(null)}
           />
@@ -1547,6 +1543,7 @@ export default function ChatPage() {
           agents={oc.agents}
           getDirForSession={(id: string) => (oc as any).getDirForSession?.(id) ?? ""}
           onOpenSession={(id) => void oc.openSession(id)}
+          onOpenSubagent={openSubagent}
           activeId={oc.activeId}
           msgs={oc.msgs as any}
           activeChildren={oc.activeChildren as any}

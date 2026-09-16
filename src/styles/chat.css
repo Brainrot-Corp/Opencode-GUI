@@ -6,6 +6,11 @@
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  /* we manage scroll position explicitly (tail pin, skeleton-upgrade
+     anchoring, window-slide compensation) — the browser's own scroll
+     anchoring would double-compensate the same growth, overshoot our
+     recorded position, and read as a user scroll that unpins the tail */
+  overflow-anchor: none;
   display: flex;
   flex-direction: column;
   gap: 16px;

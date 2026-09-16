@@ -577,16 +577,60 @@ export function useOpencode() {
     }
     return false;
   }, []);
-  // pending ask to show for a visible session: its own first, else the
-  // oldest descendant (subagent) ask so it pops in the main session
-  const findRolledUpAsk = useCallback((sid: string): QuestionAsk | null => {
-    const own = questionsRef.current.get(sid);
-    if (own) return own;
-    for (const [csid, ask] of questionsRef.current) {
-      if (csid !== sid && isDescendantOf(csid, sid)) return ask;
+  // transient question subscribers (subagent viewer shows its own session's
+  // ask — child asks never surface in the parent popup, only the badge does)
+  const questionListeners = useRef(new Map<string, Set<() => void>>());
+  const emitQuestion = useCallback((sid: string) => {
+    const subs = questionListeners.current.get(sid);
+    if (!subs) return;
+    for (const cb of [...subs]) {
+      try { cb(); } catch {}
     }
-    return null;
-  }, [isDescendantOf]);
+  }, []);
+  const subscribeQuestion = useCallback((sid: string, cb: () => void): (() => void) => {
+    let set = questionListeners.current.get(sid);
+    if (!set) {
+      set = new Set();
+      questionListeners.current.set(sid, set);
+    }
+    set.add(cb);
+    return () => {
+      const s = questionListeners.current.get(sid);
+      if (!s) return;
+      s.delete(cb);
+      if (!s.size) questionListeners.current.delete(sid);
+    };
+  }, []);
+  const peekQuestion = useCallback((sid: string): QuestionAsk | null => {
+    return questionsRef.current.get(sid) ?? null;
+  }, []);
+  // same for permission asks — the subagent viewer approves its own
+  // session's prompts; the parent only ever shows the badge
+  const permissionListeners = useRef(new Map<string, Set<() => void>>());
+  const emitPermission = useCallback((sid: string) => {
+    const subs = permissionListeners.current.get(sid);
+    if (!subs) return;
+    for (const cb of [...subs]) {
+      try { cb(); } catch {}
+    }
+  }, []);
+  const subscribePermission = useCallback((sid: string, cb: () => void): (() => void) => {
+    let set = permissionListeners.current.get(sid);
+    if (!set) {
+      set = new Set();
+      permissionListeners.current.set(sid, set);
+    }
+    set.add(cb);
+    return () => {
+      const s = permissionListeners.current.get(sid);
+      if (!s) return;
+      s.delete(cb);
+      if (!s.size) permissionListeners.current.delete(sid);
+    };
+  }, []);
+  const peekPermission = useCallback((sid: string): PermAsk | null => {
+    return permissionsRef.current.get(sid) ?? null;
+  }, []);
 
   const setAttentionFor = useCallback((sid: string, kind: "permission" | "question" | "both" | null) => {
     setAttentionIds((prev) => {
@@ -608,20 +652,25 @@ export function useOpencode() {
     });
   }, []);
 
-  // badge the visible parent for a descendant's pending question — the child
-  // row itself is filtered from the sidebar so its own badge is invisible
-  const syncTopQuestionBadge = useCallback((topId: string) => {
+  // badge the visible parent for a descendant's pending ask — the child
+  // row itself is filtered from the sidebar so its own badge is invisible.
+  // Covers both question and permission asks (a child's approval surfaces
+  // in the subagent viewer, like its questions).
+  const syncTopBadge = useCallback((topId: string) => {
     if (!topId) return;
     let hasQ = questionsRef.current.has(topId);
-    if (!hasQ)
-      for (const csid of questionsRef.current.keys()) {
-        if (csid !== topId && isDescendantOf(csid, topId)) { hasQ = true; break; }
+    let hasPerm = permissionsRef.current.has(topId);
+    if (!hasQ || !hasPerm)
+      for (const csid of new Set([...questionsRef.current.keys(), ...permissionsRef.current.keys()])) {
+        if (csid === topId || !isDescendantOf(csid, topId)) continue;
+        if (!hasQ && questionsRef.current.has(csid)) hasQ = true;
+        if (!hasPerm && permissionsRef.current.has(csid)) hasPerm = true;
+        if (hasQ && hasPerm) break;
       }
-    const hasPerm = permissionsRef.current.has(topId);
     setAttentionFor(topId, hasPerm && hasQ ? "both" : hasPerm ? "permission" : hasQ ? "question" : null);
   }, [isDescendantOf, setAttentionFor]);
 
-  // learn a question-asker's parent once (unknown child id) then re-route
+  // learn an asker's parent once (unknown child id) then badge the parent
   const resolveParent = useCallback(async (sid: string, dirHint?: string) => {
     if (!sid || childParentRef.current.has(sid)) return;
     try {
@@ -632,16 +681,14 @@ export function useOpencode() {
       if (typeof parent !== "string" || !parent) return;
       childParentRef.current.set(sid, parent);
       const top = topOfSession(sid);
-      syncTopQuestionBadge(top);
-      if (top === activeRef.current && questionsRef.current.has(sid) && !questionsRef.current.has(top))
-        setQuestion(questionsRef.current.get(sid) ?? null);
+      syncTopBadge(top);
     } catch {}
-  }, [syncTopQuestionBadge, topOfSession]);
+  }, [syncTopBadge, topOfSession]);
 
   // mirror the active session's pending asks (if any) into state
   const showQuestion = (sid: string) => {
     if (sid !== activeRef.current) return;
-    setQuestion(findRolledUpAsk(sid));
+    setQuestion(questionsRef.current.get(sid) ?? null);
   };
   const showPermission = (sid: string) => {
     if (sid !== activeRef.current) return;
@@ -1041,7 +1088,7 @@ export function useOpencode() {
     activeRef.current = id;
     setActiveId(id);
     setPermission(permissionsRef.current.get(id) ?? null);
-    setQuestion(findRolledUpAsk(id));
+    setQuestion(questionsRef.current.get(id) ?? null);
     // drop any coalesced SSE mirror — it belongs to the previous view and
     // must not clobber the fresh cached paint below
     cancelAnimationFrame(mirrorRaf.current);
@@ -1168,8 +1215,15 @@ export function useOpencode() {
           }
           permissionsRef.current.set(p.sessionID, ask);
           syncAttention(p.sessionID);
+          emitPermission(p.sessionID);
           playSound("attention");
-          if (p.sessionID === activeRef.current) setPermission(ask);
+          // subagent approvals stay in the subagent viewer — the visible
+          // parent only gets the sidebar badge
+          const ptop = topOfSession(p.sessionID);
+          if (ptop !== p.sessionID) {
+            syncTopBadge(ptop);
+            if (!childParentRef.current.has(p.sessionID)) void resolveParent(p.sessionID, dirHint);
+          } else if (p.sessionID === activeRef.current) setPermission(ask);
           break;
         }
         case "permission.updated": {
@@ -1191,7 +1245,12 @@ export function useOpencode() {
           }
           permissionsRef.current.set(ask.sessionID, ask);
           syncAttention(ask.sessionID);
-          if (ask.sessionID === activeRef.current) setPermission(ask);
+          emitPermission(ask.sessionID);
+          const utop = topOfSession(ask.sessionID);
+          if (utop !== ask.sessionID) {
+            syncTopBadge(utop);
+            if (!childParentRef.current.has(ask.sessionID)) void resolveParent(ask.sessionID, dirHint);
+          } else if (ask.sessionID === activeRef.current) setPermission(ask);
           break;
         }
         case "permission.replied":
@@ -1206,8 +1265,18 @@ export function useOpencode() {
             if (permissionsRef.current.has(sid)) affected.add(sid);
             permissionsRef.current.delete(sid);
           }
-          for (const s of affected) syncAttention(s);
-          if (!affected.size && sid) syncAttention(sid);
+          for (const s of affected) {
+            syncAttention(s);
+            emitPermission(s);
+            const rtop = topOfSession(s);
+            if (rtop !== s) syncTopBadge(rtop);
+          }
+          if (!affected.size && sid) {
+            syncAttention(sid);
+            emitPermission(sid);
+            const rtop2 = topOfSession(sid);
+            if (rtop2 !== sid) syncTopBadge(rtop2);
+          }
           setPermission((cur) =>
             cur && (cur.id === pid || (sid && cur.sessionID === sid)) ? null : cur,
           );
@@ -1224,19 +1293,15 @@ export function useOpencode() {
           if (!ask.sessionID || !ask.id) break;
           questionsRef.current.set(p.sessionID, ask);
           syncAttention(p.sessionID);
+          emitQuestion(p.sessionID);
           playSound("attention");
-          // subagent asks roll up: a child's question pops in the visible
-          // parent when it is active, otherwise it badges the parent row
-          // (the child itself is filtered from the sidebar)
+          // subagent asks stay in the subagent's history — never popped into
+          // the parent chat. The visible parent only gets the sidebar badge
+          // (the child row itself is filtered from the sidebar).
           const top = topOfSession(p.sessionID);
           if (top !== p.sessionID) {
-            if (childParentRef.current.has(p.sessionID)) {
-              syncTopQuestionBadge(top);
-              if (top === activeRef.current && !questionsRef.current.has(top)) setQuestion(ask);
-            } else {
-              // unknown lineage — learn the parent, then re-route
-              void resolveParent(p.sessionID, dirHint);
-            }
+            syncTopBadge(top);
+            if (!childParentRef.current.has(p.sessionID)) void resolveParent(p.sessionID, dirHint);
           } else if (p.sessionID === activeRef.current) setQuestion(ask);
           break;
         }
@@ -1257,23 +1322,15 @@ export function useOpencode() {
           }
           for (const s of affected) {
             syncAttention(s);
+            emitQuestion(s);
             const top = topOfSession(s);
-            if (top !== s) syncTopQuestionBadge(top);
+            if (top !== s) syncTopBadge(top);
           }
           if (!affected.size && p.sessionID) {
             syncAttention(p.sessionID);
+            emitQuestion(p.sessionID);
             const top = topOfSession(p.sessionID);
-            if (top !== p.sessionID) syncTopQuestionBadge(top);
-          }
-          // a cleared ask may uncover a queued sibling (parent's own wins):
-          // re-promote whatever is pending for the visible parent
-          for (const s of affected.size ? affected : p.sessionID ? [p.sessionID] : []) {
-            const top = topOfSession(s);
-            if (top === activeRef.current) {
-              const next = findRolledUpAsk(top);
-              setQuestion((cur) => (cur ? cur : next));
-              break;
-            }
+            if (top !== p.sessionID) syncTopBadge(top);
           }
           break;
         }
@@ -1561,9 +1618,10 @@ export function useOpencode() {
             for (const q of list ?? []) if (q.sessionID) { questionsRef.current.set(q.sessionID, q); touched.add(q.sessionID); }
             for (const sid of touched) {
               syncAttention(sid);
+              emitQuestion(sid);
               const top = topOfSession(sid);
               if (top !== sid) {
-                syncTopQuestionBadge(top);
+                syncTopBadge(top);
                 if (!childParentRef.current.has(sid)) void resolveParent(sid);
               }
             }
@@ -1595,7 +1653,15 @@ export function useOpencode() {
             };
             permissionsRef.current.set(ask.sessionID, ask); touched.add(ask.sessionID);
           }
-          for (const sid of touched) syncAttention(sid);
+          for (const sid of touched) {
+            syncAttention(sid);
+            emitPermission(sid);
+            const top = topOfSession(sid);
+            if (top !== sid) {
+              syncTopBadge(top);
+              if (!childParentRef.current.has(sid)) void resolveParent(sid);
+            }
+          }
           showPermission(activeRef.current);
         };
         serverFetch("/permission")
@@ -1732,13 +1798,9 @@ export function useOpencode() {
         childrenSigRef.current = sig;
         setActiveChildren(list);
       }
-      // lineage just learned — re-route any pending descendant asks that
-      // arrived before we knew the parent (badge the parent, pop if active)
-      syncTopQuestionBadge(sid);
-      if (sid === activeRef.current) {
-        const next = findRolledUpAsk(sid);
-        if (next) setQuestion((cur) => cur ?? next);
-      }
+      // lineage just learned — badge the parent for any pending descendant
+      // asks that arrived before we knew it (popups stay session-local)
+      syncTopBadge(sid);
     } catch {
       // keep previous on error (transient)
     }
@@ -1902,13 +1964,16 @@ export function useOpencode() {
     await (client.session as any).abort({ path: { id: activeId } }).catch(() => {});
   }, [activeId, markCompacting, clearAttention]);
 
-  const respondToPermission = useCallback(
-    async (response: "once" | "always" | "reject") => {
-      if (!permission) return;
-      const perm = permission;
+  // respond to a specific ask — the main bar uses the active session's, the
+  // subagent viewer its own child's
+  const respondToPermissionFor = useCallback(
+    async (perm: PermAsk, response: "once" | "always" | "reject") => {
       permissionsRef.current.delete(perm.sessionID);
-      setPermission(null);
+      setPermission((cur) => (cur && cur.id === perm.id ? null : cur));
       syncAttention(perm.sessionID);
+      emitPermission(perm.sessionID);
+      const top = topOfSession(perm.sessionID);
+      if (top !== perm.sessionID) syncTopBadge(top);
       const dirFor = sessionDirRef.current.get(perm.sessionID) ?? getDirectory();
       const { client } = dirFor ? await opencodeFor(dirFor) : await opencode();
       await (client as any)
@@ -1918,41 +1983,63 @@ export function useOpencode() {
         })
         .catch((e) => pushToast(String(e)));
     },
-    [permission, syncAttention],
+    [emitPermission, syncAttention, syncTopBadge, topOfSession],
   );
+
+  const respondToPermission = useCallback(
+    async (response: "once" | "always" | "reject") => {
+      if (!permission) return;
+      await respondToPermissionFor(permission, response);
+    },
+    [permission, respondToPermissionFor],
+  );
+
+  // answer/reject a specific ask — the main popup uses the active session's,
+  // the subagent viewer its own child's (stays in subagent history)
+  const answerQuestionFor = useCallback(async (ask: QuestionAsk, answers: string[][]) => {
+    setQuestion((cur) => (cur && cur.id === ask.id ? null : cur));
+    questionsRef.current.delete(ask.sessionID);
+    syncAttention(ask.sessionID);
+    emitQuestion(ask.sessionID);
+    const top = topOfSession(ask.sessionID);
+    if (top !== ask.sessionID) syncTopBadge(top);
+    playSound("send");
+    try {
+      const dirFor = sessionDirRef.current.get(ask.sessionID) ?? getDirectory();
+      const r = await serverFetchFor(dirFor, `/question/${ask.id}/reply`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ answers }),
+      });
+      if (!r.ok) pushToast(`Failed to send answer (${r.status})`);
+    } catch (e) {
+      pushToast(String(e));
+    }
+  }, [emitQuestion, syncAttention, syncTopBadge, topOfSession]);
 
   const answerQuestion = useCallback(
     async (answers: string[][]) => {
       if (!question) return;
-      const ask = question;
-      setQuestion(null);
-      questionsRef.current.delete(ask.sessionID);
-      syncAttention(ask.sessionID);
-      playSound("send");
-      try {
-        const dirFor = sessionDirRef.current.get(ask.sessionID) ?? getDirectory();
-        const r = await serverFetchFor(dirFor, `/question/${ask.id}/reply`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ answers }),
-        });
-        if (!r.ok) pushToast(`Failed to send answer (${r.status})`);
-      } catch (e) {
-        pushToast(String(e));
-      }
+      await answerQuestionFor(question, answers);
     },
-    [question, syncAttention],
+    [question, answerQuestionFor],
   );
+
+  const rejectQuestionFor = useCallback(async (ask: QuestionAsk) => {
+    setQuestion((cur) => (cur && cur.id === ask.id ? null : cur));
+    questionsRef.current.delete(ask.sessionID);
+    syncAttention(ask.sessionID);
+    emitQuestion(ask.sessionID);
+    const top = topOfSession(ask.sessionID);
+    if (top !== ask.sessionID) syncTopBadge(top);
+    const dirFor = sessionDirRef.current.get(ask.sessionID) ?? getDirectory();
+    await serverFetchFor(dirFor, `/question/${ask.id}/reject`, { method: "POST" }).catch(() => {});
+  }, [emitQuestion, syncAttention, syncTopBadge, topOfSession]);
 
   const rejectQuestion = useCallback(async () => {
     if (!question) return;
-    const ask = question;
-    setQuestion(null);
-    questionsRef.current.delete(ask.sessionID);
-    syncAttention(ask.sessionID);
-    const dirFor = sessionDirRef.current.get(ask.sessionID) ?? getDirectory();
-    await serverFetchFor(dirFor, `/question/${ask.id}/reject`, { method: "POST" }).catch(() => {});
-  }, [question, syncAttention]);
+    await rejectQuestionFor(question);
+  }, [question, rejectQuestionFor]);
 
   // session.revert cuts the conversation after the given message;
   // the active session's revert marker tells us where (and that) we rewound
@@ -2503,6 +2590,10 @@ export function useOpencode() {
     question,
     answerQuestion,
     rejectQuestion,
+    answerQuestionFor,
+    rejectQuestionFor,
+    peekQuestion,
+    subscribeQuestion,
     newSession,
     openSession,
     subscribeSession,
@@ -2534,6 +2625,9 @@ export function useOpencode() {
     refreshActiveChildren,
     abort,
     respondToPermission,
+    respondToPermissionFor,
+    peekPermission,
+    subscribePermission,
     securityMode,
     setSecurityMode,
     cycleSecurityMode,

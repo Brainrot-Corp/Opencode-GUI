@@ -7,8 +7,6 @@ type Props = {
   ask: QuestionAsk;
   onAnswer: (answers: string[][]) => void;
   onReject: () => void;
-  originTitle?: string;
-  onViewTranscript?: () => void;
 };
 
 // floating ask card — rides the permission popup's shell for identical
@@ -16,7 +14,7 @@ type Props = {
 // ↑/↓ + Enter, Esc dismisses. Single-choice single-question forms answer
 // straight from the option; anything else accumulates picks behind Answer.
 // "Other…" is always offered for a typed custom answer.
-export default function QuestionPopup({ ask, onAnswer, onReject, originTitle, onViewTranscript }: Props) {
+export default function QuestionPopup({ ask, onAnswer, onReject }: Props) {
   const { t } = useTranslation();
   const qs = ask.questions;
   const instant = qs.length === 1 && !qs[0].multiple;
@@ -117,19 +115,6 @@ export default function QuestionPopup({ ask, onAnswer, onReject, originTitle, on
   return (
     <div className="permission-bar question-pop" role="dialog">
       <div className="title">{t("question.title")}</div>
-      {originTitle && (
-        <button
-          type="button"
-          className="q-origin mono"
-          data-tip={t("question.viewTranscript")}
-          onClick={onViewTranscript}
-          disabled={!onViewTranscript}
-        >
-          <i className="fa-solid fa-diagram-project" />
-          <span>{t("question.fromSubagent", { title: originTitle })}</span>
-          {onViewTranscript && <i className="fa-solid fa-arrow-up-right-from-square" />}
-        </button>
-      )}
       <div ref={listRef} className="q-body">
         {qs.map((q, qi) => (
           <div className="q-section" key={qi}>

@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from "react";
-import type { Msg } from "../types";
+import type { Msg, PermAsk, QuestionAsk } from "../types";
 import { opencode, opencodeFor } from "../api";
 import { pushToast } from "../hooks/useToast";
 import { resolveSubagentTarget } from "../lib/subagents";
 import Dialog from "./Dialog";
 import MessageList from "./MessageList";
+import PermissionBar from "./PermissionBar";
+import QuestionPopup from "./QuestionPopup";
 import "../styles/subagent.css";
 
 export type SubagentChildInfo = {
@@ -30,6 +32,13 @@ export default function SubagentViewer({
   peekSession,
   subscribeSession,
   primeSession,
+  peekQuestion,
+  subscribeQuestion,
+  answerQuestionFor,
+  rejectQuestionFor,
+  peekPermission,
+  subscribePermission,
+  respondToPermissionFor,
   onPick,
   onClose,
 }: {
@@ -43,10 +52,19 @@ export default function SubagentViewer({
   peekSession: (sid: string) => Msg[] | undefined;
   subscribeSession: (sid: string, cb: () => void) => () => void;
   primeSession: (sid: string, dir: string) => Promise<Msg[]>;
+  peekQuestion: (sid: string) => QuestionAsk | null;
+  subscribeQuestion: (sid: string, cb: () => void) => () => void;
+  answerQuestionFor: (ask: QuestionAsk, answers: string[][]) => Promise<void>;
+  rejectQuestionFor: (ask: QuestionAsk) => Promise<void>;
+  peekPermission: (sid: string) => PermAsk | null;
+  subscribePermission: (sid: string, cb: () => void) => () => void;
+  respondToPermissionFor: (perm: PermAsk, response: "once" | "always" | "reject") => Promise<void>;
   onPick: (id: string) => void;
   onClose: () => void;
 }) {
   const [msgs, setMsgs] = useState<Msg[] | null>(null);
+  const [ask, setAsk] = useState<QuestionAsk | null>(null);
+  const [perm, setPerm] = useState<PermAsk | null>(null);
   const [kids, setKids] = useState<SubagentChildInfo[]>([]);
   const [error, setError] = useState("");
   const genRef = useRef(0);
@@ -59,9 +77,13 @@ export default function SubagentViewer({
     if (!sessionId) return;
     const gen = ++genRef.current;
     setMsgs(peekSession(sessionId) ?? null);
+    setAsk(peekQuestion(sessionId));
+    setPerm(peekPermission(sessionId));
     setKids([]);
     setError("");
     let unsub: (() => void) | undefined;
+    let unsubQ: (() => void) | undefined;
+    let unsubP: (() => void) | undefined;
     const queueMirror = () => {
       cancelAnimationFrame(raf.current);
       raf.current = requestAnimationFrame(() => {
@@ -75,7 +97,18 @@ export default function SubagentViewer({
         const list = await primeSession(sessionId, dir ?? "");
         if (genRef.current !== gen) return;
         setMsgs([...list]);
+        // re-peek: an ask may have landed while priming, before subscribing
+        setAsk(peekQuestion(sessionId));
+        setPerm(peekPermission(sessionId));
         unsub = subscribeSession(sessionId, queueMirror);
+        unsubQ = subscribeQuestion(sessionId, () => {
+          if (genRef.current !== gen) return;
+          setAsk(peekQuestion(sessionId));
+        });
+        unsubP = subscribePermission(sessionId, () => {
+          if (genRef.current !== gen) return;
+          setPerm(peekPermission(sessionId));
+        });
         try {
           const { client } = dir ? await opencodeFor(dir) : await opencode();
           const cr = await (client.session as any).children?.({ path: { id: sessionId } });
@@ -91,8 +124,10 @@ export default function SubagentViewer({
     return () => {
       genRef.current++;
       unsub?.();
+      unsubQ?.();
+      unsubP?.();
     };
-  }, [sessionId, dir, peekSession, subscribeSession, primeSession]);
+  }, [sessionId, dir, peekSession, subscribeSession, primeSession, peekQuestion, subscribeQuestion, peekPermission, subscribePermission]);
 
   // nested subagents inside the transcript navigate the viewer itself —
   // explicit ids switch directly, id-less subtask parts resolve against
@@ -125,6 +160,23 @@ export default function SubagentViewer({
       ) : (
         <>
           {error && <p className="empty">{error}</p>}
+          {!error && perm && perm.sessionID === sessionId && (
+            <div className="subagent-q">
+              <PermissionBar
+                permission={perm}
+                onRespond={(response) => void respondToPermissionFor(perm, response)}
+              />
+            </div>
+          )}
+          {!error && ask && ask.sessionID === sessionId && (
+            <div className="subagent-q">
+              <QuestionPopup
+                ask={ask}
+                onAnswer={(answers) => void answerQuestionFor(ask, answers)}
+                onReject={() => void rejectQuestionFor(ask)}
+              />
+            </div>
+          )}
           {!error && msgs === null && <p className="empty">Loading…</p>}
           {!error && msgs !== null && (
             <div className="subagent-view">
