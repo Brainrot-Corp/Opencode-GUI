@@ -1,4 +1,4 @@
-import { Children, isValidElement, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Children, isValidElement, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { createPortal } from "react-dom";
 import Markdown from "react-markdown";
@@ -604,6 +604,59 @@ function rowVisible(m: Msg): boolean {
   });
 }
 
+// history rows beyond the initial tail mount as a 44px skeleton and upgrade to
+// real content only once they near the viewport — prepending a big batch stays
+// a cheap frame (no markdown/highlight/monaco work for rows nobody sees yet).
+// Upgrades above the viewport change the row's height, so onShift lets the
+// list shift scrollTop by the delta and keep the reader's view anchored.
+function LazyRow({
+  eager,
+  onShift,
+  children,
+}: {
+  eager: boolean;
+  onShift: (dh: number, el: HTMLDivElement) => void;
+  children: ReactNode;
+}) {
+  const [on, setOn] = useState(eager);
+  const ref = useRef<HTMLDivElement>(null);
+  const prevH = useRef(0);
+  const startedEager = useRef(eager);
+  useEffect(() => {
+    if (on) return;
+    const el = ref.current;
+    if (!el) return;
+    if (typeof IntersectionObserver === "undefined") {
+      setOn(true);
+      return;
+    }
+    const io = new IntersectionObserver(
+      (es) => {
+        if (!es.some((e) => e.isIntersecting)) return;
+        prevH.current = el.offsetHeight;
+        setOn(true);
+        io.disconnect();
+      },
+      // upgrade ahead of the viewport so real content is ready on arrival
+      { rootMargin: "900px 0px" },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [on]);
+  useLayoutEffect(() => {
+    if (!on || startedEager.current) return;
+    const el = ref.current;
+    if (!el) return;
+    const dh = el.offsetHeight - prevH.current;
+    if (dh !== 0) onShift(dh, el);
+  }, [on]);
+  return (
+    <div ref={ref} className="lzy-row">
+      {on ? children : <div className="msg skel" />}
+    </div>
+  );
+}
+
 // one conversation row — memoized so a streaming delta re-renders ONLY the
 // message that grew; every other row skips its markdown/highlight pipeline
 // (store swaps msg identity for touched messages, keeps others stable)
@@ -674,13 +727,13 @@ const MsgRow = memo(function MsgRow({
   );
 });
 
-// tail window: huge histories mount only the newest N messages. Scrolling
-// near the top seamlessly prepends older ones (store already holds the full
-// list, so this is synchronous — no fetch, no spinner). Batches stay small
-// (25) and trigger early (1600px margin) so each prepend is a fast frame and
-// the next one is already mounting before the reader arrives.
+// tail window: huge histories mount only the newest N messages as real
+// content; older rows come in as cheap LazyRow skeletons. The load chain
+// grows its batch (25→50→…→TAIL_MAX) so a far jump to the top counts down in
+// a handful of frames, and readers drifting up get one batch per trigger.
 const TAIL_FIRST = 50;
 const TAIL_STEP = 25;
+const TAIL_MAX = 400;
 
 export default function MessageList({
   msgs,
@@ -786,26 +839,14 @@ export default function MessageList({
   const lastTail = useRef<string | undefined>(undefined);
   // bottom scrolled out of view → show the floating "back to tail" pill
   const [showJump, setShowJump] = useState(false);
-  // true while the pill's smooth ride is in flight — suppresses pill
-  // refreshes from content growth so it can't blink back mid-glide
-  const riding = useRef(false);
-  // finish callback for the active ride — stored in a ref (not follow's
-  // onDone) because re-renders restart the glide loop without its original
-  // callback; whichever loop arrives first completes the ride exactly once
-  const rideDoneRef = useRef<(() => void) | null>(null);
 
   // tail window into msgs — sig/snap above keep using msgs[0] (full-list
   // head), so prepending older rows never looks like replaced content
   const [visibleCount, setVisibleCount] = useState(TAIL_FIRST);
-  // true while the jump-to-bottom pill's ride is running — skeleton rows
-  // mask the travel; cleared on arrival, session switch, or manual scroll
-  const [jumping, setJumping] = useState(false);
   useEffect(() => {
     setVisibleCount(TAIL_FIRST);
-    setJumping(false);
-    rideDoneRef.current = null;
+    stepRef.current = TAIL_STEP;
     cancelAnimationFrame(raf.current);
-    riding.current = false;
   }, [sessionId]);
   const shown = useMemo(
     () => (msgs.length > visibleCount ? msgs.slice(msgs.length - visibleCount) : msgs),
@@ -818,31 +859,39 @@ export default function MessageList({
   visRef.current = visibleCount;
   const lenRef = useRef(msgs.length);
   lenRef.current = msgs.length;
-  // true briefly after older rows are prepended — drives the sentinel's
-  // loading spinner (loads chain across frames while the reader holds the
-  // top, so a trailing timeout keeps it lit instead of flickering)
+  // true while older rows are prepending — drives the sentinel's spinner with
+  // a live "loading N older messages…" count. The chain clears it when it
+  // stops (post-paint else branch), so it stays lit through the whole run.
   const [olderBusy, setOlderBusy] = useState(false);
   const olderTimer = useRef(0);
   useEffect(() => () => clearTimeout(olderTimer.current), []);
+  // batch step for the load chain — doubles per chained batch, reset per
+  // session; adaptive so far jumps land in a handful of frames
+  const stepRef = useRef(TAIL_STEP);
   // prepend older rows keeping the viewport anchored (no jump): measure
-  // before, grow, then shift scrollTop by the added height.
+  // before, grow, then shift scrollTop by the added height — unless the
+  // reader is pinned at the very top (dragged there on purpose: they want
+  // the oldest rows, and staying at scrollTop 0 keeps the sentinel in reach
+  // so the chain can finish). LazyRow skeletons make big batches cheap.
   // Seamless chain: IntersectionObserver only fires on intersection *change*,
   // so holding the top would stall after one batch — the post-paint check
-  // keeps loading one small batch per frame while the sentinel stays within
-  // reach (breathable for the streaming chase, invisible to the reader).
+  // keeps loading while the sentinel stays within reach (breathable for the
+  // streaming chase, invisible to the reader).
   const loadOlder = useCallback(() => {
     const el = listRef.current;
     setOlderBusy(true);
     clearTimeout(olderTimer.current);
-    olderTimer.current = window.setTimeout(() => setOlderBusy(false), 500);
     const prevH = el?.scrollHeight ?? 0;
     const prevTop = el?.scrollTop ?? 0;
-    setVisibleCount((c) => c + TAIL_STEP);
+    const atTop = prevTop < 4;
+    const step = stepRef.current;
+    stepRef.current = Math.min(step * 2, TAIL_MAX);
+    setVisibleCount((c) => c + step);
     requestAnimationFrame(() => {
       const e2 = listRef.current;
       if (e2 && el) {
         const dh = e2.scrollHeight - prevH;
-        if (dh > 0) {
+        if (dh > 0 && !atTop) {
           e2.scrollTop = prevTop + dh;
           expected.current = e2.scrollTop;
         }
@@ -852,12 +901,24 @@ export default function MessageList({
       if (t && root && lenRef.current > visRef.current) {
         const rr = root.getBoundingClientRect();
         if (t.getBoundingClientRect().bottom > rr.top - 1600) loadOlderRef.current();
+        else olderTimer.current = window.setTimeout(() => setOlderBusy(false), 400);
+      } else {
+        olderTimer.current = window.setTimeout(() => setOlderBusy(false), 400);
       }
     });
   }, []);
   const loadOlderRef = useRef(loadOlder);
   loadOlderRef.current = loadOlder;
   const topRef = useRef<HTMLDivElement>(null);
+  // LazyRow upgrade above the viewport would shove visible content down —
+  // shift by the height delta so the reader's view stays put
+  const shiftForGrowth = useCallback((dh: number, el: HTMLElement) => {
+    const root = listRef.current;
+    if (!root || dh === 0) return;
+    if (el.getBoundingClientRect().top >= root.getBoundingClientRect().top) return;
+    root.scrollTop += dh;
+    expected.current = root.scrollTop;
+  }, []);
   useEffect(() => {
     if (!hiddenCount) return;
     const root = listRef.current;
@@ -885,66 +946,44 @@ export default function MessageList({
   }, []);
 
   // eased chase toward the tail — text grows in place instead of snapping.
-  // onDone lets callers react to the arrival (the jump pill hides itself
-  // there: its own scrolls are invisible to the scroll listener).
-  // A pending ride finish (rideDoneRef) fires on ANY loop's arrival, so a
-  // restarted glide still completes the pill ride instead of stranding it.
-  const follow = useCallback(
-    (onDone?: () => void) => {
-      cancelAnimationFrame(raf.current);
-      const step = () => {
-        const el = listRef.current;
-        if (!el) return;
-        const target = el.scrollHeight - el.clientHeight;
-        const d = target - el.scrollTop;
-        if (Math.abs(d) < 2) {
-          expected.current = target;
-          el.scrollTop = target;
-          const done = rideDoneRef.current;
-          rideDoneRef.current = null;
-          onDone?.();
-          done?.();
-          return;
-        }
-        expected.current = el.scrollTop + d * 0.22;
-        el.scrollTop += d * 0.22;
-        raf.current = requestAnimationFrame(step);
-      };
+  // Used by the streaming-pinned reader (the pill click lands instantly now —
+  // an eased ride can never catch a tail that recedes while placeholder rows
+  // below the viewport upgrade and grow).
+  const follow = useCallback(() => {
+    cancelAnimationFrame(raf.current);
+    const step = () => {
+      const el = listRef.current;
+      if (!el) return;
+      const target = el.scrollHeight - el.clientHeight;
+      const d = target - el.scrollTop;
+      if (Math.abs(d) < 2) {
+        expected.current = target;
+        el.scrollTop = target;
+        return;
+      }
+      expected.current = el.scrollTop + d * 0.22;
+      el.scrollTop += d * 0.22;
       raf.current = requestAnimationFrame(step);
-    },
-    [],
-  );
+    };
+    raf.current = requestAnimationFrame(step);
+  }, []);
 
-  // pill ride arrival: collapse prepended history offscreen and land exactly
-  // on the tail — idempotent (ref nulls on first run)
+  // pill click arrival: collapse prepended history offscreen and land exactly
+  // on the tail
   const finishRide = useCallback(() => {
-    rideDoneRef.current = null;
-    riding.current = false;
     setVisibleCount(TAIL_FIRST);
-    setJumping(false);
     requestAnimationFrame(() => snap());
   }, [snap]);
 
-  // pill click: get back to the tail. Close enough → land instantly
-  // (skeletons + spinner for a 200px hop look broken, not smooth). Far away
-  // while idle → eased ride with skeleton rows masking the travel, collapse
-  // onto the tail on arrival. Far away while live → pin + chase with no
-  // theatre: fresh rows keep arriving under you and skeletons would linger
-  // for the whole turn; arrival still collapses onto the tail.
+  // pill click: get back to the tail. Instant collapse + snap — an eased ride
+  // would chase a tail that recedes while placeholder rows upgrade below the
+  // viewport (each 44px skeleton grows to full height) and never land,
+  // stranding the spinner. Collapse first, then snap onto the fresh tail.
   const goBottom = useCallback(() => {
-    const el = listRef.current;
-    const dist = el ? el.scrollHeight - el.clientHeight - el.scrollTop : 0;
     stick.current = true;
-    riding.current = true;
     setShowJump(false);
-    rideDoneRef.current = finishRide;
-    if (dist < 400) {
-      finishRide();
-      return;
-    }
-    setJumping(!busy && !compacting);
-    follow();
-  }, [follow, finishRide, busy, compacting]);
+    finishRide();
+  }, [finishRide]);
 
   useEffect(() => {
     const el = listRef.current;
@@ -968,8 +1007,6 @@ export default function MessageList({
       lastSig.current = sig;
       stick.current = true;
       setShowJump(false);
-      rideDoneRef.current = null;
-      setJumping(false);
       snap();
       // late layout (monaco editors, images, fonts) grows content after
       // paint — re-land next frame so the tail stays the tail
@@ -977,32 +1014,22 @@ export default function MessageList({
       return;
     }
     // stream settled while pinned: chase may have arrived early against
-    // still-growing rows — land exactly onto the finished tail. A pending
-    // pill ride finishes here too, or its skeletons would strand (no more
-    // chase frames will arrive to complete it).
+    // still-growing rows — land exactly onto the finished tail
     if (settled && stick.current) {
       setShowJump(false);
-      if (riding.current || rideDoneRef.current) finishRide();
-      else {
-        snap();
-        requestAnimationFrame(() => snap());
-      }
+      snap();
+      requestAnimationFrame(() => snap());
       return;
     }
     // refresh the pill while the reader is scrolled away and the bottom
-    // drifts further out (streaming growth happens without scroll events) —
-    // unless the jump ride is in flight, which owns the pill until it lands
+    // drifts further out (streaming growth happens without scroll events)
     const dist = el.scrollHeight - el.clientHeight - el.scrollTop;
-    if (!riding.current) setShowJump((v) => (v ? dist > 40 : dist > 80));
-    // a stream that starts under a pill ride drops the skeleton theatre
-    // (fresh rows keep arriving; it would linger) — the ride itself keeps
-    // chasing so arrival still collapses onto the tail
-    if (riding.current && (busy || compacting)) setJumping(false);
+    setShowJump((v) => (v ? dist > 40 : dist > 80));
     // pinned readers chase the tail; unpinned readers are never touched
     if ((!busy && !compacting) || !stick.current) return;
     if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) snap();
     else follow();
-  }, [msgs, busy, compacting, sessionId, loading, snap, follow, finishRide]);
+  }, [msgs, busy, compacting, sessionId, loading, snap, follow]);
 
   // stick/unstick + pill visibility on scroll. Our eased chase and snaps
   // record their scrollTop in `expected` first, so their scroll events are
@@ -1014,11 +1041,8 @@ export default function MessageList({
     const scroll = () => {
       if (Math.abs(el.scrollTop - expected.current) <= 2) return;
       // genuine user input — a running chase would otherwise drag the view
-      // back down and mask the unpin; it also aborts any jump ride
+      // back down and mask the unpin
       cancelAnimationFrame(raf.current);
-      riding.current = false;
-      rideDoneRef.current = null;
-      setJumping(false);
       const dist = el.scrollHeight - el.clientHeight - el.scrollTop;
       // epsilon pin: fractional DPR/zoom can leave dist at 0.4-1.2px
       stick.current = dist <= 4;
@@ -1162,19 +1186,23 @@ export default function MessageList({
         {!loading && hiddenCount > 0 && (
           <div ref={topRef} className="history-sentinel mono" onClick={() => loadOlderRef.current()}>
             <i className={`fa-solid ${olderBusy ? "fa-circle-notch fa-spin" : "fa-chevron-up"}`} />
-            {olderBusy
-              ? "loading older messages…"
-              : `${hiddenCount} older message${hiddenCount === 1 ? "" : "s"} — scroll up to load`}
+            <span>
+              {olderBusy
+                ? `loading ${hiddenCount.toLocaleString()} older message${hiddenCount === 1 ? "" : "s"}…`
+                : `${hiddenCount.toLocaleString()} older message${hiddenCount === 1 ? "" : "s"} — scroll up to load`}
+            </span>
           </div>
         )}
-        {shown.filter(rowVisible).map((m) => (
-          <MsgRow key={m.info.id} m={m} collapsed={collapsed} onRevert={onRevert} onFork={onFork} onImage={setLightbox} taskCosts={taskCosts} dir={dir} />
-        ))}
-        {jumping && (
-          <>
-            <div className="msg skel" style={{ width: "60%" }} />
-            <div className="msg skel" style={{ width: "42%" }} />
-          </>
+        {shown.map((m, i) =>
+          rowVisible(m) ? (
+            <LazyRow
+              key={m.info.id}
+              eager={msgs.length - shown.length + i >= msgs.length - TAIL_FIRST}
+              onShift={shiftForGrowth}
+            >
+              <MsgRow m={m} collapsed={collapsed} onRevert={onRevert} onFork={onFork} onImage={setLightbox} taskCosts={taskCosts} dir={dir} />
+            </LazyRow>
+          ) : null,
         )}
         {compacting && (
           <div className="compacting">
@@ -1189,12 +1217,12 @@ export default function MessageList({
       </div>
       <button
         type="button"
-        className={`jump-bottom${showJump || jumping ? " show" : ""}`}
-        data-tip={jumping ? "Going to latest…" : "Back to tail"}
-        aria-label={jumping ? "Going to latest messages" : "Scroll to bottom"}
-        onClick={jumping ? undefined : goBottom}
+        className={`jump-bottom${showJump ? " show" : ""}`}
+        data-tip="Back to tail"
+        aria-label="Scroll to bottom"
+        onClick={goBottom}
       >
-        <i className={`fa-solid ${jumping ? "fa-circle-notch fa-spin" : "fa-arrow-down"}`} />
+        <i className="fa-solid fa-arrow-down" />
       </button>
       {lightbox &&
         createPortal(

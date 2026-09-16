@@ -18,6 +18,7 @@ import { isRemoteDir, remoteStatus, serverDir } from "../lib/remotes";
 import { playSound } from "../lib/sounds";
 import { createSessionStore } from "../lib/sessionStore";
 import { splitModel } from "../lib/models";
+import { DEBUG_PREFIX, fakeSession, makeFakeMessages, parseDebugCount } from "../lib/debugSession";
 import { touchWorkspace, getExtraWorkspaces } from "../lib/workspace";
 import { normWorkspace } from "../lib/platform";
 import { windowKey } from "../lib/windowScope";
@@ -36,6 +37,10 @@ import { clearAttachmentDraft, restoreAttachmentDraft } from "./useAttachments";
 import { invalidateFileCache } from "./useFileCache";
 import { pushToast } from "./useToast";
 import type { Msg, OpenCodeEvent, PermAsk, ProviderGroup, Attachment, QuestionAsk, Cmd } from "../types";
+
+// fake filler sessions created by /debug-long-session — client-side only,
+// re-added to the sidebar on refreshes while their workspace stays open
+const debugSessions = new Map<string, { session: Session; dir: string }>();
 
 // per-session agent memory + per-window global agent (mirrors useProviders model logic)
 const SESSION_AGENTS_KEY = "oc.sessionAgents";
@@ -801,6 +806,11 @@ export function useOpencode() {
     const hasDir = (dir: string) => dirSet.has(dir ? norm(dir) : "__EMPTY__");
     for (const [id, dir] of sessionDirRef.current) if (!nextMap.has(id) && hasDir(dir ?? "")) nextMap.set(id, dir);
     sessionDirRef.current = nextMap;
+    // debug filler sessions never exist server-side — re-add while their
+    // workspace is still open so refreshes keep the sidebar entry
+    for (const [id, e] of debugSessions) {
+      if (hasDir(e.dir) && !all.some((s) => s.id === id)) all.push(e.session);
+    }
     const out = applyOverrides(all);
     const finalMap = new Map<string, string>();
     for (const s of out) {
@@ -908,6 +918,18 @@ export function useOpencode() {
     // must not clobber the fresh cached paint below
     cancelAnimationFrame(mirrorRaf.current);
     mirrorPending.current = null;
+    // debug filler sessions exist only client-side — synthesize once, then
+    // serve from the store; never touch the server for them
+    if (id.startsWith(DEBUG_PREFIX)) {
+      let list = store.cached(id);
+      if (!list?.length) {
+        const n = Number(id.slice(DEBUG_PREFIX.length).split("-")[0]) || 3000;
+        list = makeFakeMessages(id, n);
+        store.setFetched(id, list);
+      }
+      setMsgs([...list]);
+      return;
+    }
     const cached = store.cached(id);
     setMsgs(cached ? [...cached] : []);
     const seq = store.beginFetch(id);
@@ -940,6 +962,19 @@ export function useOpencode() {
     // session's store but never clobber another session's view
     if (activeRef.current === id) setMsgs(list);
   }, []);
+
+  // /debug-long-session [count] — build a fake session full of filler and
+  // open it, purely for exercising the history-loading systems
+  const createDebugSession = useCallback(async (args: string) => {
+    const n = parseDebugCount(args);
+    const id = `${DEBUG_PREFIX}${n}-${Date.now()}`;
+    const dir = getDirectory();
+    const sess = { ...fakeSession(id, n), _dir: dir } as Session;
+    debugSessions.set(id, { session: sess, dir });
+    sessionDirRef.current.set(id, dir);
+    setSessions((prev) => [...prev, sess]);
+    await openSession(id);
+  }, [openSession]);
 
   useEffect(() => {
     const esMap = new Map<string, EventSource>();
@@ -1949,6 +1984,7 @@ export function useOpencode() {
         refreshSessions,
         openSession,
         getDirForSession,
+        debugLongSession: createDebugSession,
       });
       if (!handled) {
         // any slash input stays local — display as command trace, never hit the model
@@ -1975,6 +2011,7 @@ export function useOpencode() {
       prov.defaultModel,
       prov.modelVariants,
       prov.variantSel,
+      createDebugSession,
     ],
   );
 
@@ -1995,6 +2032,7 @@ export function useOpencode() {
       const { client } = dirFor ? await opencodeFor(dirFor) : await opencode();
       await (client.session as any).delete({ path: { id } }).catch(() => {});
       sessionDirRef.current.delete(id);
+      debugSessions.delete(id);
       setSessions((prev) => prev.filter((s) => s.id !== id));
       store.remove(id);
       questionsRef.current.delete(id);

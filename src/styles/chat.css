@@ -267,6 +267,12 @@
   color: var(--accent-bright);
   border-color: color-mix(in srgb, var(--accent) calc(0.35 * 100%), transparent);
 }
+/* lazy history row wrapper — flex column so the inner .msg keeps its
+   user/assistant alignment while the wrapper itself stretches full-width */
+.lzy-row {
+  display: flex;
+  flex-direction: column;
+}
 @keyframes msg-in {
   from {
     opacity: 0;

@@ -51,6 +51,8 @@ export type SlashCtx = {
   cycleAgent(): void;
   refreshSessions(): Promise<Session[]>;
   openSession(id: string): Promise<void>;
+  // /debug-long-session — fake filler session for history-loading tests
+  debugLongSession?: (args: string) => Promise<void>;
   // session → workspace dir (SSH sessions live on their tunnel server)
   getDirForSession?: (id: string) => string;
 };
@@ -101,6 +103,9 @@ export async function handleSlash(text: string, ctx: SlashCtx): Promise<boolean>
       // explicit invocation skips the hotkey double-press confirm
       playSound("click");
       window.dispatchEvent(new Event("oc:close-workspace"));
+      return true;
+    case "debug-long-session":
+      await ctx.debugLongSession?.(args ?? "");
       return true;
   }
 
@@ -271,6 +276,7 @@ export function buildCmdList(
     { name: "settings", description: "Open settings", source: "built-in", takesArgs: false, builtin: true },
     { name: "close-workspace", description: "Close the active workspace", source: "built-in", takesArgs: false, builtin: true },
     { name: "mcp", description: "Show loaded MCP servers for this window's workspaces", source: "built-in", takesArgs: false, builtin: true },
+    { name: "debug-long-session", description: "Fill a throwaway fake session with N junk messages to test history loading (default 3000)", source: "built-in", takesArgs: true, builtin: true },
     { name: "help", description: "Show all available commands", source: "built-in", takesArgs: false, builtin: true },
     { name: "exit", description: "Close OpenCode", source: "built-in", takesArgs: false, builtin: true },
   ];
