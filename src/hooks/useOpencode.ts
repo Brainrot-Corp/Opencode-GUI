@@ -1957,6 +1957,12 @@ export function useOpencode() {
         return;
       }
       const sidBefore = activeRef.current;
+      // fake debug sessions live only in this window — sending would 404,
+      // so hint instead (slash commands still work; they're local too)
+      if (sidBefore.startsWith(DEBUG_PREFIX) && (files?.length || !trimmed.startsWith("/"))) {
+        pushToast("This is a fake debug session — nothing is sent anywhere. Open a real session to prompt.");
+        return;
+      }
       const handled = await handleSlash(trimmed, {
         activeId: activeRef.current,
         sessions,
