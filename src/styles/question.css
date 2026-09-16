@@ -9,6 +9,32 @@
 .question-pop .title {
   margin-bottom: 4px;
 }
+
+/* subagent origin — jumps to the read-only transcript viewer */
+.question-pop .q-origin {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 2px 0 6px;
+  background: transparent;
+  border: 0;
+  color: var(--accent-bright);
+  font-size: 11px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.question-pop .q-origin:disabled {
+  cursor: default;
+}
+
+.question-pop .q-origin span {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .question-pop .what {
   font-size: 12.5px;
   margin-bottom: 6px;

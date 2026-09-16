@@ -1,0 +1,49 @@
+/* SubagentViewer — read-only transcript modal + child picker. Inherits the
+   Dialog shell; the transcript reuses MessageList in a bounded scroll area. */
+.subagent-view {
+  max-height: 68vh;
+  min-height: 30vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.subagent-view .messages {
+  overflow-y: auto;
+  max-height: 68vh;
+}
+
+.subagent-pick {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.subagent-pick-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: transparent;
+  border: 1px solid transparent;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.subagent-pick-row:hover {
+  border-color: var(--accent);
+  box-shadow: var(--accent-glow);
+}
+
+.subagent-pick-title {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.subagent-pick-id {
+  opacity: 0.55;
+  font-size: 11px;
+}

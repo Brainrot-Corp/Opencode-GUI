@@ -545,22 +545,42 @@ export function useOpencode() {
     } catch {}
   }, [agents]);
 
-  // mirror the active session's pending asks (if any) into state
-  const showQuestion = (sid: string) => {
-    if (sid !== activeRef.current) return;
-    setQuestion(questionsRef.current.get(sid) ?? null);
-  };
-  const showPermission = (sid: string) => {
-    if (sid !== activeRef.current) return;
-    setPermission(permissionsRef.current.get(sid) ?? null);
-  };
+  // child -> parent session links. Children never reach the sidebar, so
+  // badges + popups for them roll up to the visible top-level session.
+  const childParentRef = useRef(new Map<string, string>());
+  const topOfSession = useCallback((sid: string): string => {
+    let cur = sid;
+    const seen = new Set([cur]);
+    for (;;) {
+      const p = childParentRef.current.get(cur);
+      if (!p || seen.has(p)) return cur;
+      seen.add(p);
+      cur = p;
+    }
+  }, []);
+  const isDescendantOf = useCallback((sid: string, anc: string): boolean => {
+    if (sid === anc) return true;
+    let cur = childParentRef.current.get(sid);
+    const seen = new Set([sid]);
+    while (cur && !seen.has(cur)) {
+      if (cur === anc) return true;
+      seen.add(cur);
+      cur = childParentRef.current.get(cur);
+    }
+    return false;
+  }, []);
+  // pending ask to show for a visible session: its own first, else the
+  // oldest descendant (subagent) ask so it pops in the main session
+  const findRolledUpAsk = useCallback((sid: string): QuestionAsk | null => {
+    const own = questionsRef.current.get(sid);
+    if (own) return own;
+    for (const [csid, ask] of questionsRef.current) {
+      if (csid !== sid && isDescendantOf(csid, sid)) return ask;
+    }
+    return null;
+  }, [isDescendantOf]);
 
-  // sidebar attention sync — drives per-session icon + collapsed badge
-  const syncAttention = useCallback((sid: string) => {
-    if (!sid) return;
-    const hasPerm = permissionsRef.current.has(sid);
-    const hasQ = questionsRef.current.has(sid);
-    const kind = hasPerm && hasQ ? ("both" as const) : hasPerm ? ("permission" as const) : hasQ ? ("question" as const) : null;
+  const setAttentionFor = useCallback((sid: string, kind: "permission" | "question" | "both" | null) => {
     setAttentionIds((prev) => {
       const has = prev.has(sid);
       if (!!kind === has) return prev;
@@ -579,6 +599,55 @@ export function useOpencode() {
       return { ...prev, [sid]: kind };
     });
   }, []);
+
+  // badge the visible parent for a descendant's pending question — the child
+  // row itself is filtered from the sidebar so its own badge is invisible
+  const syncTopQuestionBadge = useCallback((topId: string) => {
+    if (!topId) return;
+    let hasQ = questionsRef.current.has(topId);
+    if (!hasQ)
+      for (const csid of questionsRef.current.keys()) {
+        if (csid !== topId && isDescendantOf(csid, topId)) { hasQ = true; break; }
+      }
+    const hasPerm = permissionsRef.current.has(topId);
+    setAttentionFor(topId, hasPerm && hasQ ? "both" : hasPerm ? "permission" : hasQ ? "question" : null);
+  }, [isDescendantOf, setAttentionFor]);
+
+  // learn a question-asker's parent once (unknown child id) then re-route
+  const resolveParent = useCallback(async (sid: string, dirHint?: string) => {
+    if (!sid || childParentRef.current.has(sid)) return;
+    try {
+      const dir = dirHint ?? getDirectory();
+      const { client } = dir ? await opencodeFor(dir) : await opencode();
+      const r = await (client.session as any).get({ path: { id: sid } });
+      const parent = (r as any)?.data?.parentID ?? (r as any)?.parentID;
+      if (typeof parent !== "string" || !parent) return;
+      childParentRef.current.set(sid, parent);
+      const top = topOfSession(sid);
+      syncTopQuestionBadge(top);
+      if (top === activeRef.current && questionsRef.current.has(sid) && !questionsRef.current.has(top))
+        setQuestion(questionsRef.current.get(sid) ?? null);
+    } catch {}
+  }, [syncTopQuestionBadge, topOfSession]);
+
+  // mirror the active session's pending asks (if any) into state
+  const showQuestion = (sid: string) => {
+    if (sid !== activeRef.current) return;
+    setQuestion(findRolledUpAsk(sid));
+  };
+  const showPermission = (sid: string) => {
+    if (sid !== activeRef.current) return;
+    setPermission(permissionsRef.current.get(sid) ?? null);
+  };
+
+  // sidebar attention sync — drives per-session icon + collapsed badge
+  const syncAttention = useCallback((sid: string) => {
+    if (!sid) return;
+    const hasPerm = permissionsRef.current.has(sid);
+    const hasQ = questionsRef.current.has(sid);
+    const kind = hasPerm && hasQ ? ("both" as const) : hasPerm ? ("permission" as const) : hasQ ? ("question" as const) : null;
+    setAttentionFor(sid, kind);
+  }, [setAttentionFor]);
   const clearAttention = useCallback((sid: string) => {
     if (!sid) return;
     setAttentionIds((prev) => {
@@ -913,7 +982,7 @@ export function useOpencode() {
     activeRef.current = id;
     setActiveId(id);
     setPermission(permissionsRef.current.get(id) ?? null);
-    setQuestion(questionsRef.current.get(id) ?? null);
+    setQuestion(findRolledUpAsk(id));
     // drop any coalesced SSE mirror — it belongs to the previous view and
     // must not clobber the fresh cached paint below
     cancelAnimationFrame(mirrorRaf.current);
@@ -1115,7 +1184,19 @@ export function useOpencode() {
           questionsRef.current.set(p.sessionID, ask);
           syncAttention(p.sessionID);
           playSound("attention");
-          if (p.sessionID === activeRef.current) setQuestion(ask);
+          // subagent asks roll up: a child's question pops in the visible
+          // parent when it is active, otherwise it badges the parent row
+          // (the child itself is filtered from the sidebar)
+          const top = topOfSession(p.sessionID);
+          if (top !== p.sessionID) {
+            if (childParentRef.current.has(p.sessionID)) {
+              syncTopQuestionBadge(top);
+              if (top === activeRef.current && !questionsRef.current.has(top)) setQuestion(ask);
+            } else {
+              // unknown lineage — learn the parent, then re-route
+              void resolveParent(p.sessionID, dirHint);
+            }
+          } else if (p.sessionID === activeRef.current) setQuestion(ask);
           break;
         }
         case "question.replied":
@@ -1133,8 +1214,26 @@ export function useOpencode() {
             questionsRef.current.delete(p.sessionID);
             setQuestion((cur) => (cur && cur.sessionID === p.sessionID ? null : cur));
           }
-          for (const s of affected) syncAttention(s);
-          if (!affected.size && p.sessionID) syncAttention(p.sessionID);
+          for (const s of affected) {
+            syncAttention(s);
+            const top = topOfSession(s);
+            if (top !== s) syncTopQuestionBadge(top);
+          }
+          if (!affected.size && p.sessionID) {
+            syncAttention(p.sessionID);
+            const top = topOfSession(p.sessionID);
+            if (top !== p.sessionID) syncTopQuestionBadge(top);
+          }
+          // a cleared ask may uncover a queued sibling (parent's own wins):
+          // re-promote whatever is pending for the visible parent
+          for (const s of affected.size ? affected : p.sessionID ? [p.sessionID] : []) {
+            const top = topOfSession(s);
+            if (top === activeRef.current) {
+              const next = findRolledUpAsk(top);
+              setQuestion((cur) => (cur ? cur : next));
+              break;
+            }
+          }
           break;
         }
         case "session.idle":
@@ -1192,6 +1291,7 @@ export function useOpencode() {
           if (!s?.id) break;
           const parent = (s as any).parentID;
           if (parent) {
+            childParentRef.current.set(s.id, parent);
             if (parent === activeRef.current) void refreshChildrenRef.current(activeRef.current);
             break;
           }
@@ -1418,7 +1518,14 @@ export function useOpencode() {
             if (disposed) return;
             const touched = new Set<string>();
             for (const q of list ?? []) if (q.sessionID) { questionsRef.current.set(q.sessionID, q); touched.add(q.sessionID); }
-            for (const sid of touched) syncAttention(sid);
+            for (const sid of touched) {
+              syncAttention(sid);
+              const top = topOfSession(sid);
+              if (top !== sid) {
+                syncTopQuestionBadge(top);
+                if (!childParentRef.current.has(sid)) void resolveParent(sid);
+              }
+            }
             showQuestion(activeRef.current);
           })
           .catch(() => {});
@@ -1559,6 +1666,7 @@ export function useOpencode() {
       const r = await (client.session as any).children({ path: { id: sid } });
       const raw = (r as any)?.data ?? (r as any)?.value ?? r;
       const list: Session[] = Array.isArray(raw) ? raw : Array.isArray((r as any)?.data) ? (r as any).data : [];
+      for (const c of list) if ((c as any)?.id) childParentRef.current.set((c as any).id, (c as any).parentID ?? sid);
       // ponytail: one-level fetch; recurse if nesting matters (rare)
       // fetch grandchildren best-effort so nested sub-agents are not missed
       if (list.length) {
@@ -1567,7 +1675,9 @@ export function useOpencode() {
             try {
               const rr = await (client.session as any).children({ path: { id: c.id } });
               const dd = (rr as any)?.data ?? (rr as any)?.value ?? [];
-              return Array.isArray(dd) ? dd : [];
+              const arr = Array.isArray(dd) ? dd : [];
+              for (const g of arr) if ((g as any)?.id) childParentRef.current.set((g as any).id, c.id);
+              return arr;
             } catch { return []; }
           }));
           const extra = deeper.flat() as Session[];
@@ -1580,6 +1690,13 @@ export function useOpencode() {
       if (sig !== childrenSigRef.current) {
         childrenSigRef.current = sig;
         setActiveChildren(list);
+      }
+      // lineage just learned — re-route any pending descendant asks that
+      // arrived before we knew the parent (badge the parent, pop if active)
+      syncTopQuestionBadge(sid);
+      if (sid === activeRef.current) {
+        const next = findRolledUpAsk(sid);
+        if (next) setQuestion((cur) => cur ?? next);
       }
     } catch {
       // keep previous on error (transient)

@@ -12,6 +12,8 @@ import UpdatePrompt from "../components/UpdatePrompt";
 import { useUpdater } from "../hooks/useUpdater";
 import TooltipLayer from "../components/TooltipLayer";
 import DiffPanel from "../components/DiffPanel";
+import SubagentViewer from "../components/SubagentViewer";
+import { resolveSubagentTarget } from "../lib/subagents";
 import PluginsDialog from "../components/PluginsDialog";
 
 // heavy panels → code-split: only fetched when opened (DiffPanel is NOT lazy:
@@ -78,6 +80,8 @@ export default function ChatPage() {
   const [catalogError, setCatalogError] = useState("");
   const [autoUpdateEnabled, setAutoUpdateEnabledState] = useState(() => getAutoUpdateEnabled());
   const [diffOpen, setDiffOpen] = useState(false);
+  // read-only subagent transcript (parent session stays active underneath)
+  const [subViewer, setSubViewer] = useState<{ id: string } | { picker: true } | null>(null);
   // discord plugin reads this for {status} — file > diff > permission/question > compacting > busy > typing > working > idle
   const [editingFile, setEditingFile] = useState("");
   const [composerHasText, setComposerHasText] = useState(false);
@@ -182,6 +186,20 @@ export default function ChatPage() {
   const sbOnToggle = useCallback(() => setSbClosed((v) => !v), []);
   const sbOnNew = useCallback((dir?: string) => { void oc.newSession(dir); }, [oc.newSession]);
   const sbOnOpen = useCallback((id: string) => { void oc.openSession(id); }, [oc.openSession]);
+  // open a subagent transcript from chat history: explicit child id when the
+  // block carries one, else resolve the id-less agent/subtask part against
+  // the active children (single child = direct, several = picker)
+  const openSubagent = useCallback((id: string | null, part?: any) => {
+    if (id) { setSubViewer({ id }); return; }
+    const kids = ((oc.activeChildren as any[]) ?? []) as { id: string; title?: string; time?: { created?: number } }[];
+    const target = part
+      ? resolveSubagentTarget(part, oc.msgs as any, kids.map((k) => ({ id: k.id, title: k.title, timeCreated: k.time?.created })))
+      : null;
+    if (target) { setSubViewer({ id: target.id }); return; }
+    if (kids.length === 1) { setSubViewer({ id: kids[0].id }); return; }
+    if (kids.length > 1) { setSubViewer({ picker: true }); return; }
+    pushToast("Subagent transcript not available yet");
+  }, [oc.msgs, oc.activeChildren]);
   const sbOnDelete = useCallback((id: string) => { void oc.removeSession(id); }, [oc.removeSession]);
   const sbOnClearAll = useCallback(() => { void oc.clearSessions(); }, [oc.clearSessions]);
   const sbOnClearForDir = useCallback((dir: string) => { void oc.clearSessionsFor(dir); }, [oc.clearSessionsFor]);
@@ -1354,6 +1372,7 @@ export default function ChatPage() {
                   sessionId={oc.activeId}
                   dir={oc.activeId ? ((oc as any).getDirForSession?.(oc.activeId) ?? settings.workspace) : settings.workspace}
                   taskCosts={(oc as any).childTaskCosts}
+                  onOpenSubagent={openSubagent}
                   findOpen={chatFindOpen}
                   findQuery={chatFindQuery}
                   findCase={chatFindCase}
@@ -1402,6 +1421,17 @@ export default function ChatPage() {
                     ask={oc.question}
                     onAnswer={oc.answerQuestion}
                     onReject={oc.rejectQuestion}
+                    originTitle={
+                      oc.question.sessionID !== oc.activeId
+                        ? ((oc.activeChildren as any[])?.find((c: any) => c.id === oc.question?.sessionID)?.title ??
+                          oc.question.sessionID)
+                        : undefined
+                    }
+                    onViewTranscript={
+                      oc.question.sessionID !== oc.activeId
+                        ? () => setSubViewer({ id: oc.question!.sessionID })
+                        : undefined
+                    }
                   />
                 )}
                 {vnote && (
@@ -1492,6 +1522,17 @@ export default function ChatPage() {
         )}
         {oc.dialog?.kind === "mcp" && <McpDialog onClose={oc.closeDialog} />}
         {diffOpen && oc.activeId && <DiffPanel sessionId={oc.activeId} dir={(oc as any).getDirForSession?.(oc.activeId) ?? settings.workspace} onClose={() => setDiffOpen(false)} />}
+        {subViewer && (
+          <SubagentViewer
+            sessionId={"id" in subViewer ? subViewer.id : null}
+            dir={oc.activeId ? ((oc as any).getDirForSession?.(oc.activeId) ?? settings.workspace) : settings.workspace}
+            children={(oc.activeChildren as any[]) ?? []}
+            taskCosts={(oc as any).childTaskCosts}
+            collapsed={settings.collapsed}
+            onPick={(id) => setSubViewer({ id })}
+            onClose={() => setSubViewer(null)}
+          />
+        )}
         <AgentBoard
           open={agentsOpen}
           onClose={() => setAgentsOpen(false)}

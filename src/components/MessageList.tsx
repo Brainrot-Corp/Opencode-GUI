@@ -83,12 +83,14 @@ function TaskResultBlock({
   result,
   collapsedDefault,
   taskCosts,
+  onOpenSubagent,
 }: {
   id?: string;
   state?: string;
   result: string;
   collapsedDefault?: boolean;
   taskCosts?: Record<string, { cost: number; tokens: number }>;
+  onOpenSubagent?: (id: string | null, part?: any) => void;
 }) {
   const [manual, setManual] = useState<boolean | null>(null);
   const isErr = state === "failed" || state === "error";
@@ -123,11 +125,26 @@ function TaskResultBlock({
           className={`fa-solid ${isErr ? "fa-triangle-exclamation" : state === "completed" ? "fa-circle-check" : "fa-diagram-project"} tool-ico`}
         />
         <span className="tool-name">task</span>
-        {shortId && (
-          <span className="tool-title" data-tip={id}>
-            {shortId}
-          </span>
-        )}
+        {shortId &&
+          (id && onOpenSubagent ? (
+            <button
+              type="button"
+              className="tool-title link"
+              data-tip={`Open subagent transcript ${id}`}
+              aria-label="Open subagent transcript"
+              onClick={(e) => {
+                e.stopPropagation();
+                onOpenSubagent(id);
+              }}
+            >
+              {shortId}
+              <i className="fa-solid fa-arrow-up-right-from-square" style={{ marginLeft: 6 }} />
+            </button>
+          ) : (
+            <span className="tool-title" data-tip={id}>
+              {shortId}
+            </span>
+          ))}
         {state && (
           <span className="tool-stat mono">
             <em className={isErr ? "del" : ""}>{state}</em>
@@ -192,7 +209,7 @@ function TaskResultBlock({
   );
 }
 
-function TaskMixed({ text, collapsedDefault, taskCosts }: { text: string; collapsedDefault: boolean; taskCosts?: Record<string, { cost: number; tokens: number }> }) {
+function TaskMixed({ text, collapsedDefault, taskCosts, onOpenSubagent }: { text: string; collapsedDefault: boolean; taskCosts?: Record<string, { cost: number; tokens: number }>; onOpenSubagent?: (id: string | null, part?: any) => void }) {
   const parts: React.ReactNode[] = [];
   let last = 0;
   let idx = 0;
@@ -226,6 +243,7 @@ function TaskMixed({ text, collapsedDefault, taskCosts }: { text: string; collap
         result={result}
         collapsedDefault={collapsedDefault}
         taskCosts={taskCosts}
+        onOpenSubagent={onOpenSubagent}
       />,
     );
     last = re.lastIndex;
@@ -246,7 +264,7 @@ function TaskMixed({ text, collapsedDefault, taskCosts }: { text: string; collap
   return <>{parts}</>;
 }
 
-function SubtaskBlock({ part, collapsedDefault }: { part: any; collapsedDefault: boolean }) {
+function SubtaskBlock({ part, collapsedDefault, onOpenSubagent }: { part: any; collapsedDefault: boolean; onOpenSubagent?: (id: string | null, part?: any) => void }) {
   const [manual, setManual] = useState<boolean | null>(null);
   const prompt: string = typeof part.prompt === "string" ? part.prompt : "";
   const desc: string = typeof part.description === "string" ? part.description : "";
@@ -277,6 +295,20 @@ function SubtaskBlock({ part, collapsedDefault }: { part: any; collapsedDefault:
           <span className="tool-title" style={{ opacity: 0.65 }}>
             — {desc}
           </span>
+        )}
+        {onOpenSubagent && (
+          <button
+            type="button"
+            className="tool-eye"
+            data-tip="Open subagent transcript"
+            aria-label="Open subagent transcript"
+            onClick={(e) => {
+              e.stopPropagation();
+              onOpenSubagent(null, part);
+            }}
+          >
+            <i className="fa-solid fa-arrow-up-right-from-square" />
+          </button>
         )}
         {hasBody && (
           <button
@@ -480,6 +512,7 @@ function renderPart(
   taskCosts?: Record<string, { cost: number; tokens: number }>,
   partDir?: string,
   streaming?: boolean,
+  onOpenSubagent?: (id: string | null, part?: any) => void,
 ) {
   if (part.type === "text") {
     const t = (part as any).text ?? "";
@@ -498,7 +531,7 @@ function renderPart(
     // agent final reports land as fenced <task> XML — render them in the
     // same collapsible tool-block chrome instead of raw code dump
     if (/<task\b/i.test(t) && extractTaskEntries(t)) {
-      return <TaskMixed key={key} text={t} collapsedDefault={!!collapsedDefault} taskCosts={taskCosts} />;
+      return <TaskMixed key={key} text={t} collapsedDefault={!!collapsedDefault} taskCosts={taskCosts} onOpenSubagent={onOpenSubagent} />;
     }
     return (
       <Markdown key={key} remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]} components={mdComponents}>
@@ -510,7 +543,7 @@ function renderPart(
     return <Reasoning key={(part as any).id || key} part={part} defaultOpen={!collapsedDefault} streaming={streaming} />;
   }
   if (part.type === "tool") {
-    return <ToolBlock key={(part as any).id || key} part={part} collapsedDefault={!!collapsedDefault} taskCosts={taskCosts} dir={partDir} />;
+    return <ToolBlock key={(part as any).id || key} part={part} collapsedDefault={!!collapsedDefault} taskCosts={taskCosts} dir={partDir} onOpenSubagent={onOpenSubagent} />;
   }
   if (part.type === "step-finish") {
     const sf = part as any;
@@ -562,7 +595,7 @@ function renderPart(
     );
   }
   if (part.type === "agent" || part.type === "subtask") {
-    return <SubtaskBlock key={(part as any).id || key} part={part as any} collapsedDefault={!!collapsedDefault} />;
+    return <SubtaskBlock key={(part as any).id || key} part={part as any} collapsedDefault={!!collapsedDefault} onOpenSubagent={onOpenSubagent} />;
   }
   if (part.type === "file") {
     const f = part as any;
@@ -641,6 +674,8 @@ const LazyMsgRow = memo(function LazyMsgRow({
   onImage,
   taskCosts,
   dir,
+  readOnly,
+  onOpenSubagent,
 }: {
   m: Msg;
   eager: boolean;
@@ -651,6 +686,8 @@ const LazyMsgRow = memo(function LazyMsgRow({
   onImage?: (url: string) => void;
   taskCosts?: Record<string, { cost: number; tokens: number }>;
   dir?: string;
+  readOnly?: boolean;
+  onOpenSubagent?: (id: string | null, part?: any) => void;
 }) {
   const [on, setOn] = useState(eager);
   const ref = useRef<HTMLDivElement>(null);
@@ -697,7 +734,7 @@ const LazyMsgRow = memo(function LazyMsgRow({
     <div ref={ref} className="lzy-row" data-mid={m.info.id}>
       {on ? (
         <div className={`msg ${m.info.role}${showErr ? " msg-error" : ""}${isCmd ? " msg-command" : ""}${isQueued ? " msg-queued" : ""}`}>
-          {m.info.role === "user" && !isCmd && !isQueued && (onRevert || onFork) && (
+          {m.info.role === "user" && !isCmd && !isQueued && !readOnly && (onRevert || onFork) && (
             <span className="msg-actions">
               {onFork && (
                 <button
@@ -725,7 +762,7 @@ const LazyMsgRow = memo(function LazyMsgRow({
               <span>{errText(err)}</span>
             </div>
           )}
-          {m.parts.map((part, i) => renderPart(part, i, collapsed, onImage, taskCosts, dir, streaming))}
+          {m.parts.map((part, i) => renderPart(part, i, collapsed, onImage, taskCosts, dir, streaming, onOpenSubagent))}
           {short && (
             <div className="msg-time" data-tip={full} data-tip-cursor="">
               <i className="fa-solid fa-clock" />
@@ -776,6 +813,8 @@ export default function MessageList({
   onFindPrev,
   taskCosts,
   dir,
+  readOnly,
+  onOpenSubagent,
 }: {
   msgs: Msg[];
   busy: boolean;
@@ -799,6 +838,8 @@ export default function MessageList({
   onFindPrev?: () => void;
   taskCosts?: Record<string, { cost: number; tokens: number }>;
   dir?: string;
+  readOnly?: boolean;
+  onOpenSubagent?: (id: string | null, part?: any) => void;
 }) {
   const [lightbox, setLightbox] = useState<string | null>(null);
   useEffect(() => {
@@ -876,6 +917,7 @@ export default function MessageList({
     setWin(start, msgs.length);
     prevMsgsLenRef.current = msgs.length;
     cancelAnimationFrame(raf.current);
+    raf.current = 0;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId]);
   const shown = useMemo(() => msgs.slice(winStart, winEnd), [msgs, winStart, winEnd]);
@@ -1068,28 +1110,28 @@ export default function MessageList({
     const el = listRef.current;
     if (!el) return;
     cancelAnimationFrame(raf.current);
+    raf.current = 0;
     expected.current = el.scrollHeight - el.clientHeight;
     el.scrollTop = el.scrollHeight;
   }, []);
 
-  // eased chase toward the tail — text grows in place instead of snapping.
-  // Used by the streaming-pinned reader (the pill click lands instantly now —
-  // an eased ride can never catch a tail that recedes while placeholder rows
-  // below the viewport upgrade and grow).
+  // pinned while streaming: glue to the tail every frame. The old eased chase
+  // (22% of the distance per frame) fell behind when a burst landed at once —
+  // and rAF starves under markdown/highlight/monaco work — stranding the
+  // reader above the bottom. An instant snap per frame catches growth from any
+  // source (deltas, monaco upgrades, images) until unpinned or settled.
+  // Guarded restart: rapid deltas must not cancel the running loop.
   const follow = useCallback(() => {
-    cancelAnimationFrame(raf.current);
+    if (raf.current) return;
     const step = () => {
       const el = listRef.current;
-      if (!el) return;
-      const target = el.scrollHeight - el.clientHeight;
-      const d = target - el.scrollTop;
-      if (Math.abs(d) < 2) {
-        expected.current = target;
-        el.scrollTop = target;
+      if (!el || !stick.current) {
+        raf.current = 0;
         return;
       }
-      expected.current = el.scrollTop + d * 0.22;
-      el.scrollTop += d * 0.22;
+      const target = el.scrollHeight - el.clientHeight;
+      expected.current = target;
+      if (el.scrollTop !== target) el.scrollTop = target;
       raf.current = requestAnimationFrame(step);
     };
     raf.current = requestAnimationFrame(step);
@@ -1186,8 +1228,9 @@ export default function MessageList({
       gotoTail();
       return;
     }
-    // stream settled while pinned: chase may have arrived early against
-    // still-growing rows — land exactly onto the finished tail
+    // stream settled while pinned: the loop stopped on the busy flip, so late
+    // layout (monaco editors, images) may have grown rows after its last
+    // frame — land exactly onto the finished tail
     if (settled && stick.current) {
       setShowJump(false);
       snap();
@@ -1198,24 +1241,29 @@ export default function MessageList({
     // drifts further out (streaming growth happens without scroll events)
     const dist = el.scrollHeight - el.clientHeight - el.scrollTop;
     setShowJump((v) => (v ? dist > 40 : dist > 80));
-    // pinned readers chase the tail; unpinned readers are never touched
-    if ((!busy && !compacting) || !stick.current) return;
+    // pinned readers stay glued to the tail; unpinned readers are never touched
+    if ((!busy && !compacting) || !stick.current) {
+      cancelAnimationFrame(raf.current);
+      raf.current = 0;
+      return;
+    }
     if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) snap();
     else follow();
   }, [msgs, busy, compacting, sessionId, loading, snap, follow, gotoTail, setWin]);
 
-  // stick/unstick + pill visibility on scroll. Our eased chase and snaps
+  // stick/unstick + pill visibility on scroll. Our pin loop and snaps
   // record their scrollTop in `expected` first, so their scroll events are
   // recognized and ignored — only genuine user scrolling moves the pin,
-  // and it kills any chase in flight so it can never fight the reader.
+  // and it kills any loop in flight so it can never fight the reader.
   useEffect(() => {
     const el = listRef.current;
     if (!el) return;
     const scroll = () => {
       if (Math.abs(el.scrollTop - expected.current) <= 2) return;
-      // genuine user input — a running chase would otherwise drag the view
+      // genuine user input — a running loop would otherwise drag the view
       // back down and mask the unpin
       cancelAnimationFrame(raf.current);
+      raf.current = 0;
       const dist = el.scrollHeight - el.clientHeight - el.scrollTop;
       // epsilon pin: fractional DPR/zoom can leave dist at 0.4-1.2px
       stick.current = dist <= 4;
@@ -1378,11 +1426,13 @@ export default function MessageList({
               eager={winStart + i >= msgs.length - TAIL_FIRST}
               onShift={shiftForGrowth}
               collapsed={collapsed}
-              onRevert={onRevert}
-              onFork={onFork}
+              onRevert={readOnly ? undefined : onRevert}
+              onFork={readOnly ? undefined : onFork}
               onImage={setLightbox}
               taskCosts={taskCosts}
               dir={dir}
+              readOnly={readOnly}
+              onOpenSubagent={onOpenSubagent}
             />
           ) : null,
         )}

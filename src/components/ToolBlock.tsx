@@ -281,11 +281,13 @@ export default function ToolBlock({
   collapsedDefault,
   taskCosts,
   dir,
+  onOpenSubagent,
 }: {
   part: Part;
   collapsedDefault: boolean;
   taskCosts?: Record<string, { cost: number; tokens: number }>;
   dir?: string;
+  onOpenSubagent?: (id: string | null, part?: any) => void;
 }) {
   const t = part as any;
   const st = t.state ?? {};
@@ -403,15 +405,33 @@ export default function ToolBlock({
         {(() => {
           if (toolName !== "task") return null;
           const tid = taskIdFromOutput(out);
-          const tc = tid ? taskCosts?.[tid] : null;
-          if (!tc || (!tc.cost && !tc.tokens)) return null;
-          const tok = tc.tokens ? fmtTok(tc.tokens) : "";
+          if (!tid) return null;
+          const tc = taskCosts?.[tid];
+          const tok = tc?.tokens ? fmtTok(tc.tokens) : "";
           return (
-            <span className="tool-cost mono" data-tip={`${tc.tokens.toLocaleString()} tokens${tc.cost ? ` · $${tc.cost.toFixed(4)}` : ""}`}>
-              {tok && `${tok} tok`}
-              {tok && tc.cost ? " · " : ""}
-              {tc.cost ? `$${tc.cost.toFixed(4)}` : ""}
-            </span>
+            <>
+              {tc && (!!tc.cost || !!tc.tokens) && (
+                <span className="tool-cost mono" data-tip={`${tc.tokens.toLocaleString()} tokens${tc.cost ? ` · $${tc.cost.toFixed(4)}` : ""}`}>
+                  {tok && `${tok} tok`}
+                  {tok && tc.cost ? " · " : ""}
+                  {tc.cost ? `$${tc.cost.toFixed(4)}` : ""}
+                </span>
+              )}
+              {onOpenSubagent && (
+                <button
+                  type="button"
+                  className="tool-eye"
+                  data-tip="Open subagent transcript"
+                  aria-label="Open subagent transcript"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onOpenSubagent(tid);
+                  }}
+                >
+                  <i className="fa-solid fa-arrow-up-right-from-square" />
+                </button>
+              )}
+            </>
           );
         })()}
         {copyText && (
