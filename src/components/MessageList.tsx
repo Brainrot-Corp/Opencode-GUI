@@ -1125,32 +1125,40 @@ export default function MessageList({
     // leaves the window past the end parks it back on the tail.
     const prevLen = prevMsgsLenRef.current;
     if (msgs.length !== prevLen) {
-      if (winRef.current.start >= msgs.length) {
-        const start = Math.max(0, msgs.length - TAIL_FIRST);
-        setWin(start, msgs.length);
-      } else if (winRef.current.end >= prevLen) {
-        const size = Math.max(winRef.current.end - winRef.current.start, TAIL_FIRST);
+      const parked = winRef.current.start >= msgs.length;
+      const atTail = winRef.current.end >= prevLen;
+      if (parked || atTail) {
+        const size = parked ? TAIL_FIRST : Math.max(winRef.current.end - winRef.current.start, TAIL_FIRST);
         const start = Math.max(0, msgs.length - Math.min(size, MAX_WIN));
-        if (start !== winRef.current.start || msgs.length !== winRef.current.end) {
-          // rows slide out above the viewport — compensate so the reader's
-          // anchor doesn't jump while the window follows growth
-          let anchorId: string | undefined;
-          for (let k = start; k < winRef.current.end && k < msgs.length; k++) {
-            if (rowVisible(msgs[k])) {
-              anchorId = msgs[k].info.id;
-              break;
-            }
-          }
-          const before = posOf(anchorId);
-          setWin(start, msgs.length);
-          if (before != null) {
-            requestAnimationFrame(() => {
-              const after = posOf(anchorId);
-              if (after != null && after !== before) {
-                el.scrollTop -= before - after;
-                expected.current = el.scrollTop;
+        if (parked || start !== winRef.current.start || msgs.length !== winRef.current.end) {
+          if (stick.current) {
+            // glued to the tail — land on the REAL newest message, don't
+            // anchor: returning to a session whose fetch brought newer
+            // messages must not strand the reader at the previous tail
+            setWin(start, msgs.length);
+            snap();
+            requestAnimationFrame(() => snap());
+          } else {
+            // reading above the tail — keep the reader's anchor while the
+            // window slides out rows above the viewport
+            let anchorId: string | undefined;
+            for (let k = start; k < winRef.current.end && k < msgs.length; k++) {
+              if (rowVisible(msgs[k])) {
+                anchorId = msgs[k].info.id;
+                break;
               }
-            });
+            }
+            const before = posOf(anchorId);
+            setWin(start, msgs.length);
+            if (before != null) {
+              requestAnimationFrame(() => {
+                const after = posOf(anchorId);
+                if (after != null && after !== before) {
+                  el.scrollTop -= before - after;
+                  expected.current = el.scrollTop;
+                }
+              });
+            }
           }
         }
       }
