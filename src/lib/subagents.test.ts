@@ -27,4 +27,19 @@ check("chrono first", resolveSubagentTarget(pOther, [{ parts: [pOther] }], kids)
 // no children -> null (caller shows toast, never guesses)
 check("no kids", resolveSubagentTarget(pExplore, msgs, []), null);
 
+// still-running task tool part (no output id yet) resolves via input description
+const pTask = {
+  type: "tool",
+  tool: "task",
+  state: { status: "running", input: { description: "explore repo", subagentType: "explore" } },
+};
+check("task desc match", resolveSubagentTarget(pTask, [{ parts: [pTask] }], kids)?.id, "ses_first");
+// completed task part resolves via output id
+const pTaskDone = {
+  type: "tool",
+  tool: "task",
+  state: { status: "completed", output: "finished, see ses_second", input: { description: "other" } },
+};
+check("task output id", resolveSubagentTarget(pTaskDone, [{ parts: [pTaskDone] }], kids)?.id, "ses_second");
+
 console.log(`subagents: ${n} checks passed`);

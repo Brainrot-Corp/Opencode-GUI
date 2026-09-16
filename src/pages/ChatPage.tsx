@@ -1529,6 +1529,10 @@ export default function ChatPage() {
             children={(oc.activeChildren as any[]) ?? []}
             taskCosts={(oc as any).childTaskCosts}
             collapsed={settings.collapsed}
+            busy={"id" in subViewer ? oc.busyIds.has(subViewer.id) : false}
+            peekSession={oc.peekSession}
+            subscribeSession={oc.subscribeSession}
+            primeSession={oc.primeSession}
             onPick={(id) => setSubViewer({ id })}
             onClose={() => setSubViewer(null)}
           />

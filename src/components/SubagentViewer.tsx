@@ -16,7 +16,9 @@ export type SubagentChildInfo = {
 };
 
 // read-only subagent transcript — the parent session stays active underneath;
-// answering a subagent question still happens in the main QuestionPopup
+// answering a subagent question still happens in the main QuestionPopup.
+// Live: paints from the shared session store (SSE already mutates it for
+// every session) so a still-running subagent streams deltas into the modal.
 export default function SubagentViewer({
   sessionId,
   dir,
@@ -24,6 +26,10 @@ export default function SubagentViewer({
   children,
   taskCosts,
   collapsed,
+  busy,
+  peekSession,
+  subscribeSession,
+  primeSession,
   onPick,
   onClose,
 }: {
@@ -33,6 +39,10 @@ export default function SubagentViewer({
   children: SubagentChildInfo[];
   taskCosts?: Record<string, { cost: number; tokens: number }>;
   collapsed?: boolean;
+  busy?: boolean;
+  peekSession: (sid: string) => Msg[] | undefined;
+  subscribeSession: (sid: string, cb: () => void) => () => void;
+  primeSession: (sid: string, dir: string) => Promise<Msg[]>;
   onPick: (id: string) => void;
   onClose: () => void;
 }) {
@@ -40,20 +50,34 @@ export default function SubagentViewer({
   const [kids, setKids] = useState<SubagentChildInfo[]>([]);
   const [error, setError] = useState("");
   const genRef = useRef(0);
+  // deltas arrive in bursts — coalesce mirrors into one paint per frame,
+  // same rule as the main session mirror
+  const raf = useRef(0);
+  useEffect(() => () => cancelAnimationFrame(raf.current), []);
 
   useEffect(() => {
     if (!sessionId) return;
     const gen = ++genRef.current;
-    setMsgs(null);
+    setMsgs(peekSession(sessionId) ?? null);
     setKids([]);
     setError("");
+    let unsub: (() => void) | undefined;
+    const queueMirror = () => {
+      cancelAnimationFrame(raf.current);
+      raf.current = requestAnimationFrame(() => {
+        if (genRef.current !== gen) return;
+        const next = peekSession(sessionId);
+        if (next) setMsgs(next);
+      });
+    };
     (async () => {
       try {
-        const { client } = dir ? await opencodeFor(dir) : await opencode();
-        const r = (await (client.session as any).messages({ path: { id: sessionId } })) as { data?: Msg[] };
+        const list = await primeSession(sessionId, dir ?? "");
         if (genRef.current !== gen) return;
-        setMsgs((r.data ?? []) as Msg[]);
+        setMsgs([...list]);
+        unsub = subscribeSession(sessionId, queueMirror);
         try {
+          const { client } = dir ? await opencodeFor(dir) : await opencode();
           const cr = await (client.session as any).children?.({ path: { id: sessionId } });
           const raw = (cr as any)?.data ?? (cr as any)?.value ?? [];
           if (genRef.current !== gen) return;
@@ -64,7 +88,11 @@ export default function SubagentViewer({
         setError(String(e));
       }
     })();
-  }, [sessionId, dir]);
+    return () => {
+      genRef.current++;
+      unsub?.();
+    };
+  }, [sessionId, dir, peekSession, subscribeSession, primeSession]);
 
   // nested subagents inside the transcript navigate the viewer itself —
   // explicit ids switch directly, id-less subtask parts resolve against
@@ -102,7 +130,7 @@ export default function SubagentViewer({
             <div className="subagent-view">
               <MessageList
                 msgs={msgs}
-                busy={false}
+                busy={!!busy}
                 collapsed={collapsed}
                 sessionId={sessionId}
                 taskCosts={taskCosts}

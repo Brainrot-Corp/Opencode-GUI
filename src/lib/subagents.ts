@@ -15,9 +15,10 @@ function norm(s: string | undefined): string {
   return (s ?? "").toLowerCase().trim();
 }
 
-// resolve an agent/subtask part (no id of its own) to a child session:
-// description/title match first, then chronological position among the
-// part kinds, else null (= caller shows the child picker instead of guessing)
+// resolve an agent/subtask part — or a still-running task tool part, which
+// has no output id yet — to a child session: output id first, then
+// description/title match, then chronological position among the part kinds,
+// else null (= caller shows the child picker instead of guessing)
 // ponytail: chronological fallback, exact server linkage if it ever ships
 export function resolveSubagentTarget(
   part: any,
@@ -25,22 +26,35 @@ export function resolveSubagentTarget(
   children: SubagentChild[],
 ): { id: string } | null {
   if (!part || !children.length) return null;
-  const desc = norm(part.description);
-  const prompt = norm(part.prompt);
-  const name = norm(part.name ?? part.agent);
-  if (desc || prompt || name) {
+  const isTask = part?.type === "tool" && String(part.tool ?? "").toLowerCase() === "task";
+  if (isTask) {
+    const outId = extractTaskId(String(part.state?.output ?? ""));
+    if (outId) return { id: outId };
+  }
+  const st = part.state ?? {};
+  const needles = [
+    part.description,
+    part.name ?? part.agent,
+    st.input?.description,
+    st.input?.prompt,
+    st.input?.subagentType ?? st.input?.agent,
+  ]
+    .map(norm)
+    .filter(Boolean);
+  if (needles.length) {
     const hit = children.find((c) => {
       const t = norm(c.title);
       if (!t) return false;
-      return (!!desc && (t.includes(desc) || desc.includes(t))) || (!!name && t.includes(name));
+      return needles.some((nd) => t.includes(nd) || nd.includes(t));
     });
     if (hit) return { id: hit.id };
   }
-  void prompt;
-  // chronological: nth agent|subtask part -> nth child by creation order
+  // chronological: nth agent|subtask|task part -> nth child by creation order
   const order: unknown[] = [];
   for (const m of msgs)
-    for (const p of m.parts ?? []) if (p?.type === "agent" || p?.type === "subtask") order.push(p);
+    for (const p of m.parts ?? [])
+      if (p?.type === "agent" || p?.type === "subtask" || (p?.type === "tool" && String(p.tool ?? "").toLowerCase() === "task"))
+        order.push(p);
   const idx = order.indexOf(part);
   const byTime = (c: SubagentChild) => c.timeCreated ?? 0;
   const sorted = [...children].sort((a, b) => byTime(a) - byTime(b) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));

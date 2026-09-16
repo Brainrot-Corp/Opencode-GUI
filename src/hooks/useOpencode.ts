@@ -259,8 +259,16 @@ export function useOpencode() {
   const mirrorPending = useRef<string | null>(null);
   useEffect(() => () => cancelAnimationFrame(mirrorRaf.current), []);
   const storeRef = useRef<ReturnType<typeof createSessionStore> | undefined>(undefined);
+  // transient subscribers for non-active sessions (subagent viewer) — the
+  // store already mutates for every sid, only the React mirror is
+  // active-gated, so fan those updates out here instead of polling
+  const storeListeners = useRef(new Map<string, Set<() => void>>());
   if (!storeRef.current) {
     storeRef.current = createSessionStore((sid) => {
+      const subs = storeListeners.current.get(sid);
+      if (subs) for (const cb of [...subs]) {
+        try { cb(); } catch {}
+      }
       if (sid !== activeRef.current) return;
       if (mirrorPending.current === sid) return;
       mirrorPending.current = sid;
@@ -975,6 +983,57 @@ export function useOpencode() {
     );
   }, []);
 
+  // fetch a session's history into the store — shared by openSession and
+  // the subagent viewer. Mid-stream the SSE-mutated store is NEWER than any
+  // fetch snapshot (opencode persists part text only at milestones), so a
+  // busy session keeps its live store and seeds from fetch only if empty.
+  const loadMessagesIntoStore = useCallback(async (sid: string, dirFor: string): Promise<Msg[]> => {
+    const seq = store.beginFetch(sid);
+    const { client } = dirFor ? await opencodeFor(dirFor) : await opencode();
+    const r = (await (client.session as any).messages({ path: { id: sid } })) as { data?: Msg[] };
+    if (store.isStale(sid, seq)) return store.cached(sid) ?? [];
+    if (busyRef.current.has(sid)) {
+      if (!store.cached(sid)?.length) {
+        const list = (r.data ?? []) as Msg[];
+        store.setFetched(sid, list);
+        return list;
+      }
+      return store.snapshot(sid);
+    }
+    const list = (r.data ?? []) as Msg[];
+    store.setFetched(sid, list);
+    return list;
+  }, []);
+
+  // transient live view of a non-active session (subagent viewer): snapshot
+  // for paint, subscription for per-delta streaming, prime for baseline
+  const subscribeSession = useCallback((sid: string, cb: () => void): (() => void) => {
+    let set = storeListeners.current.get(sid);
+    if (!set) {
+      set = new Set();
+      storeListeners.current.set(sid, set);
+    }
+    set.add(cb);
+    return () => {
+      const s = storeListeners.current.get(sid);
+      if (!s) return;
+      s.delete(cb);
+      if (!s.size) storeListeners.current.delete(sid);
+    };
+  }, []);
+  const peekSession = useCallback((sid: string): Msg[] | undefined => {
+    const cached = store.cached(sid);
+    return cached ? [...cached] : undefined;
+  }, []);
+  const primeSession = useCallback(async (sid: string, dir: string): Promise<Msg[]> => {
+    try {
+      return await loadMessagesIntoStore(sid, dir);
+    } catch {
+      // offline: whatever SSE already delivered (possibly nothing yet)
+      return store.cached(sid) ?? [];
+    }
+  }, [loadMessagesIntoStore]);
+
   const openSession = useCallback(async (id: string) => {
     localStorage.setItem(LAST_KEY, id);
     const dirForOpen = sessionDirRef.current.get(id);
@@ -1001,36 +1060,18 @@ export function useOpencode() {
     }
     const cached = store.cached(id);
     setMsgs(cached ? [...cached] : []);
-    const seq = store.beginFetch(id);
-    let r: { data?: Msg[] };
+    let list: Msg[];
     try {
-      const dirFor = dirForOpen ?? getDirectory();
-      const { client } = dirFor ? await opencodeFor(dirFor) : await opencode();
-      r = (await (client.session as any).messages({ path: { id } })) as { data?: Msg[] };
+      list = await loadMessagesIntoStore(id, dirForOpen ?? getDirectory());
     } catch {
       // offline / failed fetch: keep the cached paint, a later SSE delta or
       // revisit will fill the store (never leave a rejected openSession)
       return;
     }
-    if (store.isStale(id, seq)) return;
-    // mid-stream the SSE-mutated store is NEWER than any fetch snapshot
-    // (opencode persists part text only at milestones) — don't reset it
-    if (busyRef.current.has(id)) {
-      // became busy after fetch started — preserve streaming store
-      // seed only if store was empty (prevents forever-empty view)
-      if (!store.cached(id)?.length) {
-        const list = (r.data ?? []) as Msg[];
-        store.setFetched(id, list);
-        if (activeRef.current === id) setMsgs(list);
-      }
-      return;
-    }
-    const list = (r.data ?? []) as Msg[];
-    store.setFetched(id, list);
     // user may have switched away while we were fetching — update the
     // session's store but never clobber another session's view
     if (activeRef.current === id) setMsgs(list);
-  }, []);
+  }, [loadMessagesIntoStore]);
 
   // /debug-long-session [count] — build a fake session full of filler and
   // open it, purely for exercising the history-loading systems
@@ -2464,6 +2505,9 @@ export function useOpencode() {
     rejectQuestion,
     newSession,
     openSession,
+    subscribeSession,
+    peekSession,
+    primeSession,
     clearSessions,
     send,
     submit,

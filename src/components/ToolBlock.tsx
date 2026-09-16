@@ -403,9 +403,26 @@ export default function ToolBlock({
         )}
         {dur && <span className="tool-dur">{dur}</span>}
         {(() => {
-          if (toolName !== "task") return null;
+          if (toolName !== "task" || !onOpenSubagent) return null;
           const tid = taskIdFromOutput(out);
-          if (!tid) return null;
+          // still running (no output id yet) — resolve via the active
+          // children (description match / picker) instead of hiding open
+          if (!tid) {
+            return (
+              <button
+                type="button"
+                className="tool-eye"
+                data-tip="Open subagent transcript (live)"
+                aria-label="Open subagent transcript"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onOpenSubagent(null, t);
+                }}
+              >
+                <i className="fa-solid fa-arrow-up-right-from-square" />
+              </button>
+            );
+          }
           const tc = taskCosts?.[tid];
           const tok = tc?.tokens ? fmtTok(tc.tokens) : "";
           return (
@@ -417,20 +434,18 @@ export default function ToolBlock({
                   {tc.cost ? `$${tc.cost.toFixed(4)}` : ""}
                 </span>
               )}
-              {onOpenSubagent && (
-                <button
-                  type="button"
-                  className="tool-eye"
-                  data-tip="Open subagent transcript"
-                  aria-label="Open subagent transcript"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onOpenSubagent(tid);
-                  }}
-                >
-                  <i className="fa-solid fa-arrow-up-right-from-square" />
-                </button>
-              )}
+              <button
+                type="button"
+                className="tool-eye"
+                data-tip="Open subagent transcript"
+                aria-label="Open subagent transcript"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onOpenSubagent(tid);
+                }}
+              >
+                <i className="fa-solid fa-arrow-up-right-from-square" />
+              </button>
             </>
           );
         })()}
