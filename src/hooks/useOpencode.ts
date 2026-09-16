@@ -1608,16 +1608,11 @@ export function useOpencode() {
     if (was && !isBusy && activeId) void refreshActiveChildren(activeId);
   }, [busyIds, activeId, refreshActiveChildren]);
   const sessionUsage = useMemo(() => {
-    const s = activeId ? store.cached(activeId) : null;
-    let cost = 0;
-    let tokens = 0;
-    for (const m of s ?? []) {
-      const info = m.info as any;
-      if (info.role !== "assistant") continue;
-      cost += info.cost ?? 0;
-      const t = info.tokens ?? {};
-      tokens += (t.input ?? 0) + (t.output ?? 0) + (t.reasoning ?? 0);
-    }
+    // store keeps per-session totals incrementally — no full-history scan
+    // per streaming frame (20k messages would make the footer O(N)/frame)
+    const s = activeId ? store.usageOf(activeId) : null;
+    let cost = s?.cost ?? 0;
+    let tokens = s?.tokens ?? 0;
     for (const ch of activeChildren) {
       const c = ch as any;
       cost += c.cost ?? 0;
@@ -1626,6 +1621,12 @@ export function useOpencode() {
     }
     return { cost, tokens };
   }, [msgs, activeId, activeChildren]);
+  // stable object identity while totals are unchanged — streaming deltas
+  // don't move tokens, so consumers (composer chip) don't re-render per frame
+  const usageStable = useMemo(
+    () => ({ cost: sessionUsage.cost, tokens: sessionUsage.tokens }),
+    [sessionUsage.cost, sessionUsage.tokens],
+  );
   const childTaskCosts = useMemo(() => {
     const m: Record<string, { cost: number; tokens: number; title?: string }> = {};
     for (const ch of activeChildren) {
@@ -1939,12 +1940,35 @@ export function useOpencode() {
   // /undo target: the user message to rewind TO — one before the last
   // exchange normally, one before the rewind point when already viewing an
   // earlier version. "" when there is nothing left to undo.
+  // tail-walk: only the last couple of user messages are ever relevant, so
+  // a 20k-message session costs O(tail) per frame, not a full-history filter
   const undoTarget = useMemo(() => {
     if (!activeId) return "";
-    const users = msgs.filter((m) => m.info.role === "user" && !(m as any)._isCommand).map((m) => m.info.id);
-    const pos = revertId ? users.indexOf(revertId) : users.length;
-    const t = revertId ? pos - 1 : pos - 2;
-    return t >= 0 ? users[t] : "";
+    const isUser = (m: Msg) => m.info.role === "user" && !(m as any)._isCommand;
+    if (!revertId) {
+      let first = "";
+      for (let i = msgs.length - 1; i >= 0; i--) {
+        const m = msgs[i];
+        if (!isUser(m)) continue;
+        if (!first) {
+          first = m.info.id;
+          continue;
+        }
+        return m.info.id;
+      }
+      return "";
+    }
+    let seenRevert = false;
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      const m = msgs[i];
+      if (m.info.id === revertId) {
+        if (isUser(m)) seenRevert = true;
+        continue;
+      }
+      if (!seenRevert) continue;
+      if (isUser(m)) return m.info.id;
+    }
+    return "";
   }, [msgs, revertId, activeId]);
 
   const submit = useCallback(
@@ -2021,15 +2045,21 @@ export function useOpencode() {
     ],
   );
 
-  // recompute every render — pluginSlash is external mutable state, so memo
-  // deps would be fragile (event race). List is small, no perf concern.
-  const cmdList = buildCmdList(commands, {
-    agents,
-    agentSel,
-    modelVariants: prov.modelVariants,
-    variantSel: prov.variantSel,
-    pluginSlash: getPluginSlash(),
-  });
+  // memoized so the composer (its consumer) can stay memoized across
+  // streaming frames — all deps are stable during a turn. pluginSlash's
+  // identity is REPLACED (not mutated) by setSlashFrom, so it's a reliable dep.
+  const pluginSlash = getPluginSlash();
+  const cmdList = useMemo(
+    () =>
+      buildCmdList(commands, {
+        agents,
+        agentSel,
+        modelVariants: prov.modelVariants,
+        variantSel: prov.variantSel,
+        pluginSlash,
+      }),
+    [commands, agents, agentSel, prov.modelVariants, prov.variantSel, pluginSlash],
+  );
 
   const removeSession = useCallback(
     async (id: string) => {
@@ -2337,7 +2367,7 @@ export function useOpencode() {
     modelVariants: prov.modelVariants,
     modelCaps: prov.modelCaps,
     queueCounts,
-    sessionUsage,
+    sessionUsage: usageStable,
     activeChildren,
     childTaskCosts,
     refreshActiveChildren,

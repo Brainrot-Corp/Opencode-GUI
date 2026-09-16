@@ -5,6 +5,8 @@ import type { Msg } from "../types";
 // apply here synchronously (regardless of which session is open), then the
 // owner mirrors into React state only for the active session (via onChange)
 export function createSessionStore(onChange: (sid: string) => void) {
+  // shared zero-usage constant — stable identity so memos never churn on it
+  const EMPTY_USAGE = { cost: 0, tokens: 0 };
   const stores = new Map<string, Msg[]>();
   // parts that arrived before their parent message entry — flushed on creation
   const orphanParts = new Map<string, { sid: string; parts: Part[] }>(new Map());
@@ -12,6 +14,9 @@ export function createSessionStore(onChange: (sid: string) => void) {
   const pendingDeltas = new Map<string, { sid: string; text: string }>(new Map());
   // guards against a stale fetch overwriting a newer one (fast session hops)
   const fetchSeq = new Map<string, number>();
+  // per-session token/cost totals, maintained incrementally so the footer
+  // never rescans 20k messages per streaming frame
+  const usage = new Map<string, { cost: number; tokens: number }>();
 
   const storeFor = (sid: string) => {
     let s = stores.get(sid);
@@ -24,9 +29,33 @@ export function createSessionStore(onChange: (sid: string) => void) {
 
   const snapshot = (sid: string) => [...storeFor(sid)];
 
+  // streaming mutations almost always target the tail message — scan from
+  // the end so a 20k-message history costs O(1) per delta, not O(N)
+  function findMsgIdx(store: Msg[], id: string): number {
+    for (let i = store.length - 1; i >= 0; i--) if (store[i].info.id === id) return i;
+    return -1;
+  }
+
+  const tokTotal = (info: any): number => {
+    const t = info?.tokens ?? {};
+    return (t.input ?? 0) + (t.output ?? 0) + (t.reasoning ?? 0);
+  };
+  const usageAdd = (sid: string, info: any, sign: 1 | -1) => {
+    const cost = info?.cost ?? 0;
+    const tok = tokTotal(info);
+    if (!cost && !tok) return;
+    const cur = usage.get(sid);
+    const next = cur
+      ? { cost: cur.cost + sign * cost, tokens: cur.tokens + sign * tok }
+      : sign > 0
+        ? { cost, tokens: tok }
+        : { cost: 0, tokens: 0 };
+    usage.set(sid, next);
+  };
+
   function upsertPart(part: Part): boolean {
     const store = storeFor(part.sessionID);
-    const mi = store.findIndex((x) => x.info.id === part.messageID);
+    const mi = findMsgIdx(store, part.messageID);
     if (mi < 0) return false;
     const m = store[mi];
     const pi = m.parts.findIndex((x) => x.id === part.id);
@@ -51,7 +80,7 @@ export function createSessionStore(onChange: (sid: string) => void) {
       const mid = key.slice(0, cut);
       const pid = key.slice(cut + 1);
       const store = stores.get(entry.sid);
-      const mi = store?.findIndex((x) => x.info.id === mid) ?? -1;
+      const mi = store ? findMsgIdx(store, mid) : -1;
       const m = mi >= 0 ? store![mi] : undefined;
       const pi = m?.parts.findIndex((x) => x.id === pid) ?? -1;
       const pt = pi >= 0 ? (m!.parts[pi] as { type?: string; text?: string }) : undefined;
@@ -82,14 +111,17 @@ export function createSessionStore(onChange: (sid: string) => void) {
   function applyMessage(info: Message) {
     const sid = info.sessionID;
     const store = storeFor(sid);
-    const i = store.findIndex((m) => m.info.id === info.id);
+    const i = findMsgIdx(store, info.id);
     if (i < 0) {
       const queued = orphanParts.get(info.id);
       orphanParts.delete(info.id);
       for (const pt of queued?.parts ?? [])
         pendingDeltas.delete(`${info.id}:${(pt as any).id}`);
       store.push({ info, parts: queued?.parts ?? [] });
+      usageAdd(sid, info, 1);
     } else {
+      usageAdd(sid, store[i].info, -1);
+      usageAdd(sid, info, 1);
       store[i] = { ...store[i], info };
     }
     onChange(sid);
@@ -113,7 +145,7 @@ export function createSessionStore(onChange: (sid: string) => void) {
     const key = `${p.messageID}:${p.partID}`;
     const store = stores.get(sid);
     if (store) {
-      const mi = store.findIndex((x) => x.info.id === p.messageID);
+      const mi = findMsgIdx(store, p.messageID);
       const m = mi >= 0 ? store[mi] : undefined;
       const pt = m?.parts.find(
         (x) => x.id === p.partID,
@@ -155,7 +187,17 @@ export function createSessionStore(onChange: (sid: string) => void) {
     const cmds = existing ? existing.filter((m) => (m as any)._isCommand) : [];
     const ids = new Set(list.map((m) => m.info.id));
     const keep = cmds.filter((c) => !ids.has(c.info.id));
-    stores.set(sid, keep.length ? [...list, ...keep].sort((a, b) => (a.info.time?.created ?? 0) - (b.info.time?.created ?? 0)) : list);
+    const next = keep.length ? [...list, ...keep].sort((a, b) => (a.info.time?.created ?? 0) - (b.info.time?.created ?? 0)) : list;
+    stores.set(sid, next);
+    let cost = 0;
+    let tokens = 0;
+    for (const m of next) {
+      const info = m.info as any;
+      if (info.role !== "assistant") continue;
+      cost += info.cost ?? 0;
+      tokens += tokTotal(info);
+    }
+    usage.set(sid, { cost, tokens });
     dropStashes(sid);
   }
 
@@ -168,6 +210,7 @@ export function createSessionStore(onChange: (sid: string) => void) {
     dropStashes(sid);
     stores.delete(sid);
     fetchSeq.delete(sid);
+    usage.delete(sid);
   }
 
   // fresh session / active-session delete: nothing stashed can matter anymore
@@ -244,6 +287,7 @@ export function createSessionStore(onChange: (sid: string) => void) {
     addError,
     addCommand,
     cached: (sid: string) => stores.get(sid),
+    usageOf: (sid: string) => usage.get(sid) ?? EMPTY_USAGE,
   };
 }
 

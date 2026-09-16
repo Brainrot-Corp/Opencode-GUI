@@ -1,4 +1,4 @@
-import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { Attachment, ProviderGroup } from "../types";
 import { prettySize, iconFor } from "../lib/attachments";
@@ -91,7 +91,7 @@ function draftHtml(src: string): string {
   return out.join("");
 }
 
-export default function Composer({
+export default memo(function Composer({
   busy,
   escHint,
   clearEscHint,
@@ -1311,5 +1311,5 @@ export default function Composer({
         )}
     </div>
   );
-}
+});
 

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import type { Session } from "@opencode-ai/sdk/client";
 import { listen } from "@tauri-apps/api/event";
 import { playSound } from "../lib/sounds";
@@ -62,7 +62,7 @@ function baseName(p: string): string {
   return idx >= 0 ? t.slice(idx + 1) : t;
 }
 
-export default function Sidebar({
+export default memo(function Sidebar({
   sessions,
   activeId,
   busyIds,
@@ -693,4 +693,4 @@ export default function Sidebar({
       <SshWorkspaceDialog open={sshOpen} mode="extra" onClose={(added) => { setSshOpen(false); if (added) refreshSessions?.(); }} />
     </>
   );
-}
+});

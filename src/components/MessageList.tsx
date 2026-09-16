@@ -407,7 +407,7 @@ const mdComponents = { pre: CodePre };
 
 // one reasoning block — per-message visibility: the brain icon toggles THIS
 // block only; /collapse flips the default for blocks not manually toggled
-function Reasoning({ part, defaultOpen }: { part: Part; defaultOpen: boolean }) {
+function Reasoning({ part, defaultOpen, streaming }: { part: Part; defaultOpen: boolean; streaming?: boolean }) {
   const [manual, setManual] = useState<boolean | null>(null);
   const open = manual ?? defaultOpen;
   const t = (part as any).text ?? "";
@@ -427,14 +427,22 @@ function Reasoning({ part, defaultOpen }: { part: Part; defaultOpen: boolean }) 
           thinking stream gets colored instead of flat grey */}
       {open && (
         <div className="reasoning-body">
-          <Markdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]} components={mdComponents}>
-            {t}
-          </Markdown>
+          {streaming && t.length > STREAM_RAW_LIMIT ? (
+            <pre className="stream-raw">{t}</pre>
+          ) : (
+            <Markdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]} components={mdComponents}>
+              {t}
+            </Markdown>
+          )}
         </div>
       )}
     </div>
   );
 }
+
+// past this length a still-streaming part renders as plain text instead of
+// re-running markdown+highlight every delta (final render on completion)
+const STREAM_RAW_LIMIT = 12000;
 
 function fmtTok(n: number) {
   return n >= 1000 ? `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k` : `${n}`;
@@ -471,10 +479,21 @@ function renderPart(
   onImage?: (url: string) => void,
   taskCosts?: Record<string, { cost: number; tokens: number }>,
   partDir?: string,
+  streaming?: boolean,
 ) {
   if (part.type === "text") {
     const t = (part as any).text ?? "";
     if (!t.trim()) return null;
+    // a still-growing giant document re-parses markdown + highlight every
+    // delta — swap to plain text past the cap (final markdown renders once
+    // the message completes)
+    if (streaming && t.length > STREAM_RAW_LIMIT) {
+      return (
+        <pre key={key} className="stream-raw">
+          {t}
+        </pre>
+      );
+    }
     if (parseAnsweredSummary(t)) return <AnsweredSummary key={key} text={t} />;
     // agent final reports land as fenced <task> XML — render them in the
     // same collapsible tool-block chrome instead of raw code dump
@@ -488,7 +507,7 @@ function renderPart(
     );
   }
   if (part.type === "reasoning") {
-    return <Reasoning key={(part as any).id || key} part={part} defaultOpen={!collapsedDefault} />;
+    return <Reasoning key={(part as any).id || key} part={part} defaultOpen={!collapsedDefault} streaming={streaming} />;
   }
   if (part.type === "tool") {
     return <ToolBlock key={(part as any).id || key} part={part} collapsedDefault={!!collapsedDefault} taskCosts={taskCosts} dir={partDir} />;
@@ -609,14 +628,29 @@ function rowVisible(m: Msg): boolean {
 // a cheap frame (no markdown/highlight/monaco work for rows nobody sees yet).
 // Upgrades above the viewport change the row's height, so onShift lets the
 // list shift scrollTop by the delta and keep the reader's view anchored.
-function LazyRow({
+// One memoized component: a streaming delta swaps only the touched message's
+// identity, so this memo re-renders ONE row per frame instead of every row
+// in the tail window (the old LazyRow wrapper was not memoized).
+const LazyMsgRow = memo(function LazyMsgRow({
+  m,
   eager,
   onShift,
-  children,
+  collapsed,
+  onRevert,
+  onFork,
+  onImage,
+  taskCosts,
+  dir,
 }: {
+  m: Msg;
   eager: boolean;
   onShift: (dh: number, el: HTMLDivElement) => void;
-  children: ReactNode;
+  collapsed?: boolean;
+  onRevert?: (messageID: string) => void;
+  onFork?: (messageID: string) => void;
+  onImage?: (url: string) => void;
+  taskCosts?: Record<string, { cost: number; tokens: number }>;
+  dir?: string;
 }) {
   const [on, setOn] = useState(eager);
   const ref = useRef<HTMLDivElement>(null);
@@ -650,90 +684,75 @@ function LazyRow({
     const dh = el.offsetHeight - prevH.current;
     if (dh !== 0) onShift(dh, el);
   }, [on]);
-  return (
-    <div ref={ref} className="lzy-row">
-      {on ? children : <div className="msg skel" />}
-    </div>
-  );
-}
 
-// one conversation row — memoized so a streaming delta re-renders ONLY the
-// message that grew; every other row skips its markdown/highlight pipeline
-// (store swaps msg identity for touched messages, keeps others stable)
-const MsgRow = memo(function MsgRow({
-  m,
-  collapsed,
-  onRevert,
-  onFork,
-  onImage,
-  taskCosts,
-  dir,
-}: {
-  m: Msg;
-  collapsed?: boolean;
-  onRevert?: (messageID: string) => void;
-  onFork?: (messageID: string) => void;
-  onImage?: (url: string) => void;
-  taskCosts?: Record<string, { cost: number; tokens: number }>;
-  dir?: string;
-}) {
   const err = m.info.role === "assistant" ? (m.info as any).error : null;
   const showErr = err && err.name !== "MessageAbortedError";
   const isCmd = !!(m as any)._isCommand;
   const isQueued = !!(m as any)._isQueued;
   const rawTs = (m.info as any).time?.completed ?? (m.info as any).time?.created;
+  const streaming = m.info.role === "assistant" && !(m.info as any).time?.completed;
   const short = fmtTime(rawTs);
   const full = fmtFull(rawTs);
   return (
-    <div className={`msg ${m.info.role}${showErr ? " msg-error" : ""}${isCmd ? " msg-command" : ""}${isQueued ? " msg-queued" : ""}`}>
-      {m.info.role === "user" && !isCmd && !isQueued && (onRevert || onFork) && (
-        <span className="msg-actions">
-          {onFork && (
-            <button
-              className="fork"
-              data-tip="Fork conversation from here"
-              onClick={() => onFork(m.info.id)}
-            >
-              <i className="fa-solid fa-code-branch" />
-            </button>
+    <div ref={ref} className="lzy-row" data-mid={m.info.id}>
+      {on ? (
+        <div className={`msg ${m.info.role}${showErr ? " msg-error" : ""}${isCmd ? " msg-command" : ""}${isQueued ? " msg-queued" : ""}`}>
+          {m.info.role === "user" && !isCmd && !isQueued && (onRevert || onFork) && (
+            <span className="msg-actions">
+              {onFork && (
+                <button
+                  className="fork"
+                  data-tip="Fork conversation from here"
+                  onClick={() => onFork(m.info.id)}
+                >
+                  <i className="fa-solid fa-code-branch" />
+                </button>
+              )}
+              {onRevert && (
+                <button
+                  className="rewind"
+                  data-tip="Rewind conversation to here"
+                  onClick={() => onRevert(m.info.id)}
+                >
+                  <i className="fa-solid fa-clock-rotate-left" />
+                </button>
+              )}
+            </span>
           )}
-          {onRevert && (
-            <button
-              className="rewind"
-              data-tip="Rewind conversation to here"
-              onClick={() => onRevert(m.info.id)}
-            >
-              <i className="fa-solid fa-clock-rotate-left" />
-            </button>
+          {showErr && (
+            <div className="msg-err-line">
+              <i className="fa-solid fa-triangle-exclamation" />
+              <span>{errText(err)}</span>
+            </div>
           )}
-        </span>
-      )}
-      {showErr && (
-        <div className="msg-err-line">
-          <i className="fa-solid fa-triangle-exclamation" />
-          <span>{errText(err)}</span>
+          {m.parts.map((part, i) => renderPart(part, i, collapsed, onImage, taskCosts, dir, streaming))}
+          {short && (
+            <div className="msg-time" data-tip={full} data-tip-cursor="">
+              <i className="fa-solid fa-clock" />
+              {short}
+              {isCmd && <span className="msg-cmd-label">· command not sent</span>}
+              {isQueued && <span className="msg-cmd-label">· queued</span>}
+            </div>
+          )}
         </div>
-      )}
-      {m.parts.map((part, i) => renderPart(part, i, collapsed, onImage, taskCosts, dir))}
-      {short && (
-        <div className="msg-time" data-tip={full} data-tip-cursor="">
-          <i className="fa-solid fa-clock" />
-          {short}
-          {isCmd && <span className="msg-cmd-label">· command not sent</span>}
-          {isQueued && <span className="msg-cmd-label">· queued</span>}
-        </div>
+      ) : (
+        <div className="msg skel" />
       )}
     </div>
   );
 });
 
 // tail window: huge histories mount only the newest N messages as real
-// content; older rows come in as cheap LazyRow skeletons. The load chain
-// grows its batch (25→50→…→TAIL_MAX) so a far jump to the top counts down in
-// a handful of frames, and readers drifting up get one batch per trigger.
+// content; older rows come in as cheap LazyMsgRow skeletons. The window
+// SLIDES both directions — rows evicted at the far end unmount, so browsing
+// the top of a 20k session keeps the DOM and RAM bounded (unload up/down).
+// Batches are a fixed size and paced: triggers that arrive inside the pause
+// are DROPPED, never buffered — middle-click autoscroll can't queue a runaway
+// load chain, it gets one portion per pause while a sentinel stays in reach.
 const TAIL_FIRST = 50;
-const TAIL_STEP = 25;
-const TAIL_MAX = 400;
+const WIN_STEP = 50;
+const MAX_WIN = 600;
+const LOAD_PAUSE_MS = 100;
 
 export default function MessageList({
   msgs,
@@ -840,77 +859,169 @@ export default function MessageList({
   // bottom scrolled out of view → show the floating "back to tail" pill
   const [showJump, setShowJump] = useState(false);
 
-  // tail window into msgs — sig/snap above keep using msgs[0] (full-list
-  // head), so prepending older rows never looks like replaced content
-  const [visibleCount, setVisibleCount] = useState(TAIL_FIRST);
+  // sliding history window [winStart, winEnd) into msgs — the tail mounts on
+  // open; older/newer batches slide it on demand and rows outside unmount
+  // (unload both directions). Set together in one commit so anchor
+  // compensation measures exactly one window move.
+  const [winStart, setWinStart] = useState(0);
+  const [winEnd, setWinEnd] = useState(0);
+  const setWin = useCallback((start: number, end: number) => {
+    setWinStart(start);
+    setWinEnd(end);
+  }, []);
   useEffect(() => {
-    setVisibleCount(TAIL_FIRST);
-    stepRef.current = TAIL_STEP;
+    // session switch / boot: park the window on the tail
+    const start = Math.max(0, msgs.length - TAIL_FIRST);
+    winRef.current = { start, end: msgs.length };
+    setWin(start, msgs.length);
+    prevMsgsLenRef.current = msgs.length;
     cancelAnimationFrame(raf.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId]);
-  const shown = useMemo(
-    () => (msgs.length > visibleCount ? msgs.slice(msgs.length - visibleCount) : msgs),
-    [msgs, visibleCount],
-  );
-  const hiddenCount = msgs.length - shown.length;
-  // fresh reads for the load-chain's post-paint check (closure values are
-  // stale by the time the frame runs)
-  const visRef = useRef(visibleCount);
-  visRef.current = visibleCount;
-  const lenRef = useRef(msgs.length);
-  lenRef.current = msgs.length;
-  // true while older rows are prepending — drives the sentinel's spinner with
-  // a live "loading N older messages…" count. The chain clears it when it
-  // stops (post-paint else branch), so it stays lit through the whole run.
+  const shown = useMemo(() => msgs.slice(winStart, winEnd), [msgs, winStart, winEnd]);
+  const olderCount = winStart;
+  const newerCount = msgs.length - winEnd;
+  // fresh reads for the paced load loop (closure values are stale by the
+  // time the next frame runs)
+  const winRef = useRef({ start: 0, end: 0 });
+  winRef.current = { start: winStart, end: winEnd };
+  const msgsRef = useRef(msgs);
+  msgsRef.current = msgs;
+  const prevMsgsLenRef = useRef(0);
+  // one batch per pause, BOTH directions share the gate — a trigger inside
+  // the pause is dropped (not queued); the post-paint continuation keeps
+  // feeding portions only while the sentinel stays within reach
+  const lastLoadAt = useRef(0);
+  // true while rows are loading at either end — drives the sentinel spinner
   const [olderBusy, setOlderBusy] = useState(false);
   const olderTimer = useRef(0);
-  useEffect(() => () => clearTimeout(olderTimer.current), []);
-  // batch step for the load chain — doubles per chained batch, reset per
-  // session; adaptive so far jumps land in a handful of frames
-  const stepRef = useRef(TAIL_STEP);
-  // prepend older rows keeping the viewport anchored (no jump): measure
-  // before, grow, then shift scrollTop by the added height — unless the
-  // reader is pinned at the very top (dragged there on purpose: they want
-  // the oldest rows, and staying at scrollTop 0 keeps the sentinel in reach
-  // so the chain can finish). LazyRow skeletons make big batches cheap.
-  // Seamless chain: IntersectionObserver only fires on intersection *change*,
-  // so holding the top would stall after one batch — the post-paint check
-  // keeps loading while the sentinel stays within reach (breathable for the
-  // streaming chase, invisible to the reader).
+  const [newerBusy, setNewerBusy] = useState(false);
+  const newerTimer = useRef(0);
+  useEffect(
+    () => () => {
+      clearTimeout(olderTimer.current);
+      clearTimeout(newerTimer.current);
+    },
+    [],
+  );
+
+  // scroll-content position of a row — measures exactly how far the view
+  // moved when the window shifts (skeleton heights vary, so raw scrollHeight
+  // deltas would mis-anchor by the evicted rows' height)
+  const posOf = (id: string | undefined): number | null => {
+    const root = listRef.current;
+    if (!root || !id) return null;
+    const el = root.querySelector(`[data-mid="${CSS.escape(id)}"]`) as HTMLElement | null;
+    if (!el) return null;
+    const rr = root.getBoundingClientRect();
+    return el.getBoundingClientRect().top - rr.top + root.scrollTop;
+  };
+
+  // prepend one older batch, evicting from the BOTTOM when the window is at
+  // cap (rows below the viewport unmount without shifting the reader). The
+  // anchor row's measured shift is the exact prepend height — scrollTop is
+  // compensated by it unless the reader sits at the very top on purpose.
   const loadOlder = useCallback(() => {
-    const el = listRef.current;
+    const root = listRef.current;
+    const win = winRef.current;
+    if (!root || win.start <= 0) return;
+    if (performance.now() - lastLoadAt.current < LOAD_PAUSE_MS) return;
+    lastLoadAt.current = performance.now();
     setOlderBusy(true);
     clearTimeout(olderTimer.current);
-    const prevH = el?.scrollHeight ?? 0;
-    const prevTop = el?.scrollTop ?? 0;
-    const atTop = prevTop < 4;
-    const step = stepRef.current;
-    stepRef.current = Math.min(step * 2, TAIL_MAX);
-    setVisibleCount((c) => c + step);
-    requestAnimationFrame(() => {
-      const e2 = listRef.current;
-      if (e2 && el) {
-        const dh = e2.scrollHeight - prevH;
-        if (dh > 0 && !atTop) {
-          e2.scrollTop = prevTop + dh;
-          expected.current = e2.scrollTop;
-        }
+    const start = Math.max(0, win.start - WIN_STEP);
+    let end = win.end;
+    if (end - start > MAX_WIN) end = start + MAX_WIN;
+    // anchor = first rendered row that survives the move (stays mounted)
+    let anchorId: string | undefined;
+    for (let k = win.start; k < win.end; k++) {
+      if (rowVisible(msgsRef.current[k])) {
+        anchorId = msgsRef.current[k].info.id;
+        break;
       }
+    }
+    const before = posOf(anchorId);
+    const prevH = root.scrollHeight;
+    const prevTop = root.scrollTop;
+    const atTop = prevTop < 4;
+    setWin(start, end);
+    requestAnimationFrame(() => {
+      if (!atTop) {
+        const after = posOf(anchorId);
+        if (before != null && after != null && after !== before) {
+          root.scrollTop += after - before;
+        } else if (before == null && after == null) {
+          // anchor row not rendered (filtered) — fall back to net delta
+          const dh = root.scrollHeight - prevH;
+          if (dh > 0) root.scrollTop = prevTop + dh;
+        }
+        expected.current = root.scrollTop;
+      }
+      // paced continuation: one more portion later, only while in reach —
+      // a far jump keeps counting down instead of trying to drain at once
       const t = topRef.current;
-      const root = listRef.current;
-      if (t && root && lenRef.current > visRef.current) {
-        const rr = root.getBoundingClientRect();
-        if (t.getBoundingClientRect().bottom > rr.top - 1600) loadOlderRef.current();
-        else olderTimer.current = window.setTimeout(() => setOlderBusy(false), 400);
+      const rr = root.getBoundingClientRect();
+      if (t && winRef.current.start > 0 && t.getBoundingClientRect().bottom > rr.top - 1600) {
+        olderTimer.current = window.setTimeout(() => loadOlderRef.current(), LOAD_PAUSE_MS);
       } else {
         olderTimer.current = window.setTimeout(() => setOlderBusy(false), 400);
       }
     });
-  }, []);
+  }, [setWin]);
   const loadOlderRef = useRef(loadOlder);
   loadOlderRef.current = loadOlder;
+
+  // append one newer batch, evicting from the TOP when at cap — evicted rows
+  // sit above the viewport, so scrollTop is compensated by their measured
+  // height (the anchor row shifts up by exactly that much)
+  const loadNewer = useCallback(() => {
+    const root = listRef.current;
+    const win = winRef.current;
+    const len = msgsRef.current.length;
+    if (!root || win.end >= len) return;
+    if (performance.now() - lastLoadAt.current < LOAD_PAUSE_MS) return;
+    lastLoadAt.current = performance.now();
+    setNewerBusy(true);
+    clearTimeout(newerTimer.current);
+    let start = win.start;
+    const end = Math.min(len, win.end + WIN_STEP);
+    if (end - start > MAX_WIN) start = end - MAX_WIN;
+    // anchor = first rendered row of the NEW window that is already mounted
+    // (lies inside the old window) — its shift up is the evicted height
+    let anchorId: string | undefined;
+    for (let k = start; k < win.end; k++) {
+      if (rowVisible(msgsRef.current[k])) {
+        anchorId = msgsRef.current[k].info.id;
+        break;
+      }
+    }
+    const before = posOf(anchorId);
+    const prevH = root.scrollHeight;
+    setWin(start, end);
+    requestAnimationFrame(() => {
+      const after = posOf(anchorId);
+      if (before != null && after != null && after !== before) {
+        root.scrollTop -= before - after;
+        expected.current = root.scrollTop;
+      } else if (before == null && start > win.start) {
+        // anchor not rendered — approximate by the net height change
+        root.scrollTop -= prevH - root.scrollHeight;
+        expected.current = root.scrollTop;
+      }
+      const t = newerRef.current;
+      const rr = root.getBoundingClientRect();
+      if (t && winRef.current.end < msgsRef.current.length && t.getBoundingClientRect().top < rr.bottom + 1600) {
+        newerTimer.current = window.setTimeout(() => loadNewerRef.current(), LOAD_PAUSE_MS);
+      } else {
+        newerTimer.current = window.setTimeout(() => setNewerBusy(false), 400);
+      }
+    });
+  }, [setWin]);
+  const loadNewerRef = useRef(loadNewer);
+  loadNewerRef.current = loadNewer;
   const topRef = useRef<HTMLDivElement>(null);
-  // LazyRow upgrade above the viewport would shove visible content down —
+  const newerRef = useRef<HTMLDivElement>(null);
+  // LazyMsgRow upgrade above the viewport would shove visible content down —
   // shift by the height delta so the reader's view stays put
   const shiftForGrowth = useCallback((dh: number, el: HTMLElement) => {
     const root = listRef.current;
@@ -920,7 +1031,7 @@ export default function MessageList({
     expected.current = root.scrollTop;
   }, []);
   useEffect(() => {
-    if (!hiddenCount) return;
+    if (!olderCount) return;
     const root = listRef.current;
     const target = topRef.current;
     if (!root || !target || typeof IntersectionObserver === "undefined") return;
@@ -934,7 +1045,23 @@ export default function MessageList({
     );
     io.observe(target);
     return () => io.disconnect();
-  }, [hiddenCount, sessionId]);
+  }, [olderCount, sessionId]);
+  useEffect(() => {
+    if (!newerCount) return;
+    const root = listRef.current;
+    const target = newerRef.current;
+    if (!root || !target || typeof IntersectionObserver === "undefined") return;
+    const io = new IntersectionObserver(
+      (es) => {
+        if (es.some((e) => e.isIntersecting)) loadNewerRef.current();
+      },
+      // fire before the reader reaches the bottom sentinel — the next batch
+      // mounts in the background while they keep scrolling down
+      { root, rootMargin: "0px 0px 0px 1600px" },
+    );
+    io.observe(target);
+    return () => io.disconnect();
+  }, [newerCount, sessionId]);
 
   // jump straight to the tail, no animation
   const snap = useCallback(() => {
@@ -968,12 +1095,15 @@ export default function MessageList({
     raf.current = requestAnimationFrame(step);
   }, []);
 
-  // pill click arrival: collapse prepended history offscreen and land exactly
-  // on the tail
-  const finishRide = useCallback(() => {
-    setVisibleCount(TAIL_FIRST);
+  // park the window on the tail and land exactly on it — evicts everything
+  // above (unload), then snap + re-snap next frame for late layout growth
+  const gotoTail = useCallback(() => {
+    const len = msgsRef.current.length;
+    winRef.current = { start: Math.max(0, len - TAIL_FIRST), end: len };
+    setWin(Math.max(0, len - TAIL_FIRST), len);
+    snap();
     requestAnimationFrame(() => snap());
-  }, [snap]);
+  }, [setWin, snap]);
 
   // pill click: get back to the tail. Instant collapse + snap — an eased ride
   // would chase a tail that recedes while placeholder rows upgrade below the
@@ -982,12 +1112,50 @@ export default function MessageList({
   const goBottom = useCallback(() => {
     stick.current = true;
     setShowJump(false);
-    finishRide();
-  }, [finishRide]);
+    gotoTail();
+  }, [gotoTail]);
 
   useEffect(() => {
     const el = listRef.current;
     if (!el) return;
+
+    // keep the window glued to the tail when it was there (streaming, fills):
+    // follow list growth with the same size so rows slide out above the
+    // viewport (unload up) instead of accumulating. A shrink (revert) that
+    // leaves the window past the end parks it back on the tail.
+    const prevLen = prevMsgsLenRef.current;
+    if (msgs.length !== prevLen) {
+      if (winRef.current.start >= msgs.length) {
+        const start = Math.max(0, msgs.length - TAIL_FIRST);
+        setWin(start, msgs.length);
+      } else if (winRef.current.end >= prevLen) {
+        const size = Math.max(winRef.current.end - winRef.current.start, TAIL_FIRST);
+        const start = Math.max(0, msgs.length - Math.min(size, MAX_WIN));
+        if (start !== winRef.current.start || msgs.length !== winRef.current.end) {
+          // rows slide out above the viewport — compensate so the reader's
+          // anchor doesn't jump while the window follows growth
+          let anchorId: string | undefined;
+          for (let k = start; k < winRef.current.end && k < msgs.length; k++) {
+            if (rowVisible(msgs[k])) {
+              anchorId = msgs[k].info.id;
+              break;
+            }
+          }
+          const before = posOf(anchorId);
+          setWin(start, msgs.length);
+          if (before != null) {
+            requestAnimationFrame(() => {
+              const after = posOf(anchorId);
+              if (after != null && after !== before) {
+                el.scrollTop -= before - after;
+                expected.current = el.scrollTop;
+              }
+            });
+          }
+        }
+      }
+    }
+    prevMsgsLenRef.current = msgs.length;
 
     // replaced content (session switch / history fill): land at the bottom.
     // detected via the head message id so stream-end and trailing updates
@@ -1007,10 +1175,7 @@ export default function MessageList({
       lastSig.current = sig;
       stick.current = true;
       setShowJump(false);
-      snap();
-      // late layout (monaco editors, images, fonts) grows content after
-      // paint — re-land next frame so the tail stays the tail
-      requestAnimationFrame(() => snap());
+      gotoTail();
       return;
     }
     // stream settled while pinned: chase may have arrived early against
@@ -1029,7 +1194,7 @@ export default function MessageList({
     if ((!busy && !compacting) || !stick.current) return;
     if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) snap();
     else follow();
-  }, [msgs, busy, compacting, sessionId, loading, snap, follow]);
+  }, [msgs, busy, compacting, sessionId, loading, snap, follow, gotoTail, setWin]);
 
   // stick/unstick + pill visibility on scroll. Our eased chase and snaps
   // record their scrollTop in `expected` first, so their scroll events are
@@ -1056,10 +1221,14 @@ export default function MessageList({
     };
   }, []);
 
-  // chat history find — highlight all matches, active is opaque
+  // chat history find — highlight all matches, active is opaque.
+  // Gated on findOpen: while closed, msgs churn would still make the clear
+  // pass scan the whole message DOM every streaming frame. Close cleans up
+  // via oc:chat-find-clear instead.
   useEffect(() => {
     const root = listRef.current;
     if (!root) return;
+    if (!findOpen) return;
     // clear previous highlights
     root.querySelectorAll(".find-hit").forEach((el) => {
       const p = el.parentNode as HTMLElement | null;
@@ -1183,26 +1352,41 @@ export default function MessageList({
           </>
         )}
         {!loading && msgs.length === 0 && !busy && <p className="empty">Say something…</p>}
-        {!loading && hiddenCount > 0 && (
+        {!loading && olderCount > 0 && (
           <div ref={topRef} className="history-sentinel mono" onClick={() => loadOlderRef.current()}>
             <i className={`fa-solid ${olderBusy ? "fa-circle-notch fa-spin" : "fa-chevron-up"}`} />
             <span>
               {olderBusy
-                ? `loading ${hiddenCount.toLocaleString()} older message${hiddenCount === 1 ? "" : "s"}…`
-                : `${hiddenCount.toLocaleString()} older message${hiddenCount === 1 ? "" : "s"} — scroll up to load`}
+                ? `loading ${olderCount.toLocaleString()} older message${olderCount === 1 ? "" : "s"}…`
+                : `${olderCount.toLocaleString()} older message${olderCount === 1 ? "" : "s"} — scroll up to load`}
             </span>
           </div>
         )}
         {shown.map((m, i) =>
           rowVisible(m) ? (
-            <LazyRow
+            <LazyMsgRow
               key={m.info.id}
-              eager={msgs.length - shown.length + i >= msgs.length - TAIL_FIRST}
+              m={m}
+              eager={winStart + i >= msgs.length - TAIL_FIRST}
               onShift={shiftForGrowth}
-            >
-              <MsgRow m={m} collapsed={collapsed} onRevert={onRevert} onFork={onFork} onImage={setLightbox} taskCosts={taskCosts} dir={dir} />
-            </LazyRow>
+              collapsed={collapsed}
+              onRevert={onRevert}
+              onFork={onFork}
+              onImage={setLightbox}
+              taskCosts={taskCosts}
+              dir={dir}
+            />
           ) : null,
+        )}
+        {!loading && newerCount > 0 && (
+          <div ref={newerRef} className="history-sentinel newer mono" onClick={() => loadNewerRef.current()}>
+            <i className={`fa-solid ${newerBusy ? "fa-circle-notch fa-spin" : "fa-chevron-down"}`} />
+            <span>
+              {newerBusy
+                ? `loading ${newerCount.toLocaleString()} newer message${newerCount === 1 ? "" : "s"}…`
+                : `${newerCount.toLocaleString()} newer message${newerCount === 1 ? "" : "s"} — scroll down to load`}
+            </span>
+          </div>
         )}
         {compacting && (
           <div className="compacting">

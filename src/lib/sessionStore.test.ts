@@ -1,0 +1,73 @@
+// runnable self-check: node --experimental-strip-types src/lib/sessionStore.test.ts
+import { createSessionStore } from "./sessionStore.ts";
+
+let n = 0;
+function check(name: string, got: unknown, want: unknown) {
+  n++;
+  if (JSON.stringify(got) !== JSON.stringify(want))
+    throw new Error(`FAIL ${name}: got ${JSON.stringify(got)}, want ${JSON.stringify(want)}`);
+}
+function msg(id: string, role: string, tokens?: any, cost?: number): any {
+  const info: any = {
+    id,
+    sessionID: "s1",
+    role,
+    time: { created: 1, completed: 1 },
+    modelID: "",
+    providerID: "",
+    mode: "",
+    path: { cwd: "", root: "" },
+  };
+  if (role === "assistant") {
+    info.cost = cost ?? 0;
+    info.tokens = tokens ?? { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } };
+  }
+  return { info, parts: [] };
+}
+
+const store = createSessionStore(() => {});
+const S = "s1";
+
+// fetch installs the list + computes usage
+store.setFetched(S, [
+  msg("a", "assistant", { input: 100, output: 20, reasoning: 5 }, 0.01),
+  msg("u", "user"),
+  msg("b", "assistant", { input: 50, output: 0, reasoning: 0 }, 0.002),
+]);
+check("fetch usage", store.usageOf(S), { cost: 0.012, tokens: 175 });
+
+// completion update replaces the header — delta must apply, not double-add
+store.applyMessage(msg("b", "assistant", { input: 50, output: 40, reasoning: 10 }, 0.004).info);
+check("replace usage delta", store.usageOf(S), { cost: 0.014, tokens: 225 });
+
+// new message insert
+store.applyMessage(msg("c", "assistant", { input: 10, output: 0, reasoning: 0 }).info);
+check("insert usage", store.usageOf(S), { cost: 0.014, tokens: 235 });
+
+// a later fetch is authoritative — recomputed from scratch, no drift
+store.setFetched(S, [msg("a", "assistant", { input: 1, output: 0, reasoning: 0 }, 0.1)]);
+check("fetch recompute", store.usageOf(S), { cost: 0.1, tokens: 1 });
+
+// unknown session → stable zero object
+check("empty usage", store.usageOf("nope"), { cost: 0, tokens: 0 });
+
+// remove clears
+store.remove(S);
+check("remove clears", store.usageOf(S), { cost: 0, tokens: 0 });
+
+// tail-scan lookup: a 5k-message store resolves deltas against the last msg
+const big = createSessionStore(() => {});
+const list: any[] = [];
+for (let i = 0; i < 5000; i++) list.push(msg(`m${i}`, "user"));
+list.push(msg("last", "assistant"));
+big.setFetched(S, list);
+let changes = 0;
+big.applyDelta({ sessionID: S, messageID: "last", partID: "p", delta: "hi" });
+check("delta targets tail", (big.cached(S) as any[])[5000].parts[0]?.text, undefined); // part unknown → stashed
+const on = createSessionStore(() => { changes++; });
+on.setFetched(S, [msg("m1", "user"), msg("m2", "assistant", undefined, 0)]);
+on.applyPart({ id: "p1", sessionID: S, messageID: "m2", type: "text", text: "hello" } as any);
+check("applyPart hits tail msg", (on.cached(S) as any[])[1].parts[0].text, "hello");
+check("onChange fired", changes > 0, true);
+
+console.log(`sessionStore: ${n} checks passed`);

@@ -273,6 +273,17 @@
   display: flex;
   flex-direction: column;
 }
+/* giant still-streaming parts render as plain text (markdown re-parses on
+   completion) — same rhythm as .msg prose, no layout jump on the swap */
+.stream-raw {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.7;
+  color: var(--text);
+}
 @keyframes msg-in {
   from {
     opacity: 0;

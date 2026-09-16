@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { memo, useEffect } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { invoke } from "@tauri-apps/api/core";
 import { isMac } from "../lib/platform";
@@ -9,7 +9,9 @@ import { useTranslation } from "../lib/i18n";
 // titlebar height — keep in sync with layout.css
 const TB_H = 42;
 
-export default function Titlebar({
+// memoized: ChatPage re-renders every streaming delta; the titlebar doesn't
+// consume msgs so it skips all those re-renders when its props are stable
+export default memo(function Titlebar({
   pinned,
   onTogglePin,
   closeOnX,
@@ -192,4 +194,4 @@ export default function Titlebar({
       </div>
     </header>
   );
-}
+});

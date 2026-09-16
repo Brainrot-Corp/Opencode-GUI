@@ -163,6 +163,34 @@ export default function ChatPage() {
   const toggleDiff = useCallback(() => setDiffOpen((v) => !v), []);
   const openSettingsDrawer = useCallback(() => setSettingsOpen(true), []);
   const toggleSettings = useCallback(() => setSettingsOpen((v) => !v), []);
+  const openSettings = useCallback(() => {
+    playSound("expand");
+    setSettingsOpen(true);
+  }, []);
+  const closeSettings = useCallback(() => {
+    playSound("collapse");
+    setSettingsOpen(false);
+  }, []);
+
+  // stable handlers for the memoized chrome (Titlebar/Sidebar/Composer) — the
+  // inline arrows they used to receive recreated every render, which would
+  // defeat memo() during streaming deltas. These pin identity across frames.
+  const togglePin = useCallback(() => update({ alwaysOnTop: !settings.alwaysOnTop }), [update, settings.alwaysOnTop]);
+  const openPlugins = useCallback(() => setPluginsOpen(true), []);
+  const toggleTermCb = useCallback(() => setTermOpen((v) => !v), []);
+  const pickWorkspaceCb = useCallback(() => { pickWorkspace(); }, []);
+  const sbOnToggle = useCallback(() => setSbClosed((v) => !v), []);
+  const sbOnNew = useCallback((dir?: string) => { void oc.newSession(dir); }, [oc.newSession]);
+  const sbOnOpen = useCallback((id: string) => { void oc.openSession(id); }, [oc.openSession]);
+  const sbOnDelete = useCallback((id: string) => { void oc.removeSession(id); }, [oc.removeSession]);
+  const sbOnClearAll = useCallback(() => { void oc.clearSessions(); }, [oc.clearSessions]);
+  const sbOnClearForDir = useCallback((dir: string) => { void oc.clearSessionsFor(dir); }, [oc.clearSessionsFor]);
+  const sbOnRename = useCallback((id: string, title: string) => { void oc.renameSession(id, title); }, [oc.renameSession]);
+  const sbOnDuplicate = useCallback((id: string) => { void oc.duplicateSession(id); }, [oc.duplicateSession]);
+  const sbOnTogglePin = useCallback((id: string) => { oc.togglePin(id); }, [oc.togglePin]);
+  const sbIsPinned = useCallback((id: string) => oc.isPinned(id), [oc.isPinned]);
+  const sbGetDir = useCallback((id: string) => oc.getDirForSession(id) ?? "", [oc.getDirForSession]);
+  const sbRefresh = useCallback(() => { void oc.refreshSessions(); }, [oc.refreshSessions]);
 
   // Ctrl(+Shift+)Tab — walk the sidebar list (recency order), looping at both ends
   const cycleSessions = useCallback(
@@ -897,13 +925,21 @@ export default function ChatPage() {
     };
     observe();
     window.addEventListener("resize", update);
+    // rAF-coalesced: markdown stream updates mutate the DOM every frame and
+    // each burst would otherwise disconnect/re-observe + relayout here
+    let moRaf = 0;
     const mo = new MutationObserver(() => {
-      ro.disconnect();
-      observe();
-      update();
+      if (moRaf) return;
+      moRaf = requestAnimationFrame(() => {
+        moRaf = 0;
+        ro.disconnect();
+        observe();
+        update();
+      });
     });
     mo.observe(document.body, { childList: true, subtree: true });
     return () => {
+      if (moRaf) cancelAnimationFrame(moRaf);
       ro.disconnect();
       mo.disconnect();
       window.removeEventListener("resize", update);
@@ -994,16 +1030,6 @@ export default function ChatPage() {
       document.removeEventListener("mousemove", onMove, true);
     };
   }, []);
-
-  function openSettings() {
-    playSound("expand");
-    setSettingsOpen(true);
-  }
-
-  function closeSettings() {
-    playSound("collapse");
-    setSettingsOpen(false);
-  }
 
   const showUpdatePrompt =
     !onboardOpen &&
@@ -1174,10 +1200,10 @@ export default function ChatPage() {
       <div className="app">
         <Titlebar
           pinned={settings.alwaysOnTop}
-          onTogglePin={() => update({ alwaysOnTop: !settings.alwaysOnTop })}
+          onTogglePin={togglePin}
           closeOnX={settings.closeOnX}
           onOpenSettings={openSettings}
-          onOpenPlugins={() => setPluginsOpen(true)}
+          onOpenPlugins={openPlugins}
           hasPluginUpdate={hasPluginUpdate}
           talking={talking}
           debriefing={debriefing}
@@ -1279,19 +1305,19 @@ export default function ChatPage() {
             collapsed={sbClosed}
             loading={oc.booting}
             resizing={resizing}
-            onToggle={() => setSbClosed((v) => !v)}
+            onToggle={sbOnToggle}
             onStartResize={startResize}
-            onNew={(dir) => void (oc as any).newSession(dir)}
-            onOpen={(id) => oc.openSession(id)}
-            onDelete={(id) => oc.removeSession(id)}
-            onClearAll={() => void oc.clearSessions()}
-            onClearForDir={(dir) => void (oc as any).clearSessionsFor?.(dir)}
-            onRename={(id, t) => void oc.renameSession(id, t)}
-            onDuplicate={(id) => void oc.duplicateSession(id)}
-            onTogglePin={(id) => oc.togglePin(id)}
-            isPinned={(id) => oc.isPinned(id)}
-            getDirForSession={(id) => (oc as any).getDirForSession?.(id) ?? ""}
-            refreshSessions={() => void (oc as any).refreshSessions?.()}
+            onNew={sbOnNew}
+            onOpen={sbOnOpen}
+            onDelete={sbOnDelete}
+            onClearAll={sbOnClearAll}
+            onClearForDir={sbOnClearForDir}
+            onRename={sbOnRename}
+            onDuplicate={sbOnDuplicate}
+            onTogglePin={sbOnTogglePin}
+            isPinned={sbIsPinned}
+            getDirForSession={sbGetDir}
+            refreshSessions={sbRefresh}
             toggleSidebarHotkey={settings.hotkeys.toggleSidebar}
             sidebarExtras={
               sidebarWidgets.length ? (
@@ -1404,9 +1430,9 @@ export default function ChatPage() {
                   onModelSelect={oc.setModelSel}
                   onSend={oc.submit}
                   onAbort={oc.abort}
-                  onToggleDiff={() => setDiffOpen((v) => !v)}
-                  onToggleTerm={() => setTermOpen((v) => !v)}
-                  onPickWorkspace={() => pickWorkspace()}
+                  onToggleDiff={toggleDiff}
+                  onToggleTerm={toggleTermCb}
+                  onPickWorkspace={pickWorkspaceCb}
                   workspace={settings.workspace}
                   commands={oc.cmdList}
                   cycleAgentHotkey={settings.hotkeys.cycleAgent}
