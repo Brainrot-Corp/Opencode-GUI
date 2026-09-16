@@ -52,8 +52,31 @@ let prefs: SoundPrefs = {
 };
 
 export function setSoundPrefs(p: Partial<SoundPrefs>) {
-  prefs = { ...prefs, ...p };
+  const clean = { ...p };
+  if (clean.volume !== undefined) {
+    clean.volume =
+      typeof clean.volume === "number" && Number.isFinite(clean.volume)
+        ? Math.min(1, Math.max(0, clean.volume))
+        : prefs.volume;
+  }
+  prefs = { ...prefs, ...clean };
 }
+
+// hydrate synchronously so a playSound() before useSettings' effect still
+// honors saved toggles (module default is all-on until the effect runs)
+try {
+  const raw = (JSON.parse(localStorage.getItem("oc.settings") ?? "{}") as any)?.sounds;
+  if (raw && typeof raw === "object") {
+    const clean: Partial<SoundPrefs> = {};
+    for (const k of ["show", "hide", "send", "reply", "type", "resize", "panels", "maximize", "close", "click", "working", "attention"] as const) {
+      if (typeof raw[k] === "boolean") clean[k] = raw[k];
+    }
+    if (typeof raw.volume === "number" && Number.isFinite(raw.volume)) {
+      clean.volume = Math.min(1, Math.max(0, raw.volume));
+    }
+    prefs = { ...prefs, ...clean };
+  }
+} catch {}
 
 let ctx: AudioContext | null = null;
 
@@ -113,7 +136,8 @@ const KIND_TOGGLE: Record<SoundKind, Exclude<keyof SoundPrefs, "volume">> = {
 
 export function playSound(kind: SoundKind) {
   if (!prefs[KIND_TOGGLE[kind]]) return;
-  const v = Math.min(1, prefs.volume) * 0.22; // master ceiling stays subtle
+  const rawV = prefs.volume;
+  const v = (typeof rawV === "number" && Number.isFinite(rawV) && rawV > 0 ? Math.min(1, rawV) : 0) * 0.22; // master ceiling stays subtle
   if (v <= 0) return;
   switch (kind) {
     case "show":

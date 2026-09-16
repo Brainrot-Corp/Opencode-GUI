@@ -51,7 +51,10 @@ export function useVoiceInstall(
   // live volume: sliders retune a running preview via oc:tts-vol
   useEffect(() => {
     const set = (e: Event) => {
-      if (previewRef.current) previewRef.current.volume = (e as CustomEvent<number>).detail;
+      const v = (e as CustomEvent<number>).detail;
+      if (previewRef.current && typeof v === "number" && Number.isFinite(v)) {
+        try { previewRef.current.volume = Math.min(1, Math.max(0, v)); } catch {}
+      }
     };
     window.addEventListener("oc:tts-vol", set);
     return () => window.removeEventListener("oc:tts-vol", set);

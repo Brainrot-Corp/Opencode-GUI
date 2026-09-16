@@ -7,7 +7,7 @@ export function playWav(bytes: number[], volume: number): HTMLAudioElement {
   );
   const a = new Audio(url);
   a.loop = false;
-  a.volume = volume;
+  a.volume = typeof volume === "number" && Number.isFinite(volume) ? Math.min(1, Math.max(0, volume)) : 1;
   a.onended = () => URL.revokeObjectURL(url);
   // tell the voice hook piper is audible so hands-free VAD gates its echo
   a.addEventListener("play", () => {
@@ -46,7 +46,7 @@ function getCtx(): AudioContext | null {
     return sharedCtx;
   } catch { return null; }
 }
-export function playPcm(bytes: number[], volume: number): { stop: () => void; ended: Promise<void> } {
+export function playPcm(bytes: number[], volume: number): { stop: () => void; setVolume: (v: number) => void; ended: Promise<void> } {
   const ctx = getCtx();
   // fallback to WAV if AudioContext unavailable, closed, or not running (suspended/interrupted)
   // ponytail: playing on a suspended context would hang pump until timeout (6-8s) — fallback immediately so cut speech recovers without gap
@@ -57,7 +57,7 @@ export function playPcm(bytes: number[], volume: number): { stop: () => void; en
       if ((ctx.state as string) !== "running") {
         const a = playWav(pcmToWavBytes(bytes), volume);
         return {
-          stop: () => a.pause(),
+          stop: () => a.pause(), setVolume: (v: number) => { try { a.volume = Math.min(1, Math.max(0, v)); } catch {} },
           ended: new Promise<void>((res, rej) => {
             a.addEventListener("ended", () => res(), { once: true });
             a.addEventListener("pause", () => res(), { once: true });
@@ -68,7 +68,7 @@ export function playPcm(bytes: number[], volume: number): { stop: () => void; en
     } else {
       const a = playWav(pcmToWavBytes(bytes), volume);
       return {
-        stop: () => a.pause(),
+        stop: () => a.pause(), setVolume: (v: number) => { try { a.volume = Math.min(1, Math.max(0, v)); } catch {} },
         ended: new Promise<void>((res, rej) => {
           a.addEventListener("ended", () => res(), { once: true });
           a.addEventListener("pause", () => res(), { once: true });
@@ -83,7 +83,7 @@ export function playPcm(bytes: number[], volume: number): { stop: () => void; en
   if (samples === 0) {
     const a = playWav(pcmToWavBytes(bytes), volume);
     return {
-      stop: () => a.pause(),
+      stop: () => a.pause(), setVolume: (v: number) => { try { a.volume = Math.min(1, Math.max(0, v)); } catch {} },
       ended: new Promise<void>((res, rej) => {
         a.addEventListener("ended", () => res(), { once: true });
         a.addEventListener("pause", () => res(), { once: true });
@@ -97,7 +97,7 @@ export function playPcm(bytes: number[], volume: number): { stop: () => void; en
   } catch {
     const a = playWav(pcmToWavBytes(bytes), volume);
     return {
-      stop: () => a.pause(),
+      stop: () => a.pause(), setVolume: (v: number) => { try { a.volume = Math.min(1, Math.max(0, v)); } catch {} },
       ended: new Promise<void>((res, rej) => {
         a.addEventListener("ended", () => res(), { once: true });
         a.addEventListener("pause", () => res(), { once: true });
@@ -112,11 +112,11 @@ export function playPcm(bytes: number[], volume: number): { stop: () => void; en
   src.loop = false;
   src.buffer = buf;
   const gain = ctx.createGain();
-  gain.gain.value = volume;
+  gain.gain.value = typeof volume === "number" && Number.isFinite(volume) ? Math.min(1, Math.max(0, volume)) : 1;
   try { src.connect(gain).connect(ctx.destination); } catch {
     const a = playWav(pcmToWavBytes(bytes), volume);
     return {
-      stop: () => a.pause(),
+      stop: () => a.pause(), setVolume: (v: number) => { try { a.volume = Math.min(1, Math.max(0, v)); } catch {} },
       ended: new Promise<void>((res, rej) => {
         a.addEventListener("ended", () => res(), { once: true });
         a.addEventListener("pause", () => res(), { once: true });
@@ -147,7 +147,7 @@ export function playPcm(bytes: number[], volume: number): { stop: () => void; en
     // fallback to WAV if start throws (e.g. closed context)
     const a = playWav(pcmToWavBytes(bytes), volume);
     return {
-      stop: () => a.pause(),
+      stop: () => a.pause(), setVolume: (v: number) => { try { a.volume = Math.min(1, Math.max(0, v)); } catch {} },
       ended: new Promise<void>((res, rej) => {
         a.addEventListener("ended", () => res(), { once: true });
         a.addEventListener("pause", () => res(), { once: true });
@@ -157,6 +157,7 @@ export function playPcm(bytes: number[], volume: number): { stop: () => void; en
   }
   return {
     stop: () => { if (timeout !== undefined) { clearTimeout(timeout); timeout = undefined; } try { src.stop(); } catch {} resolveEnded(); },
+    setVolume: (v: number) => { try { gain.gain.value = Math.min(1, Math.max(0, v)); } catch {} },
     // allow caller to await ended or detect pause
     ended,
   };

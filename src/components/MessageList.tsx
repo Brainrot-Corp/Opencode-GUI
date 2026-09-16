@@ -879,7 +879,7 @@ export default function MessageList({
   const listRef = useRef<HTMLDivElement>(null);
   const raf = useRef(0);
   // last scrollTop we set ourselves — lets the scroll listener tell our own
-  // programmatic scrolls (snap / eased chase) apart from the user's
+  // programmatic scrolls (snap / queued re-pin) apart from the user's
   const expected = useRef(0);
   // "session:head-message" signature of the last render — a change means
   // content was replaced (switch/fill), not streamed onto
@@ -1115,36 +1115,14 @@ export default function MessageList({
     el.scrollTop = el.scrollHeight;
   }, []);
 
-  // pinned while streaming: glue to the tail every frame. The old eased chase
-  // (22% of the distance per frame) fell behind when a burst landed at once —
-  // and rAF starves under markdown/highlight/monaco work — stranding the
-  // reader above the bottom. An instant snap per frame catches growth from any
-  // source (deltas, monaco upgrades, images) until unpinned or settled.
-  // Guarded restart: rapid deltas must not cancel the running loop.
-  const follow = useCallback(() => {
-    if (raf.current) return;
-    const step = () => {
-      const el = listRef.current;
-      if (!el || !stick.current) {
-        raf.current = 0;
-        return;
-      }
-      const target = el.scrollHeight - el.clientHeight;
-      expected.current = target;
-      if (el.scrollTop !== target) el.scrollTop = target;
-      raf.current = requestAnimationFrame(step);
-    };
-    raf.current = requestAnimationFrame(step);
-  }, []);
-
   // park the window on the tail and land exactly on it — evicts everything
-  // above (unload), then snap + re-snap next frame for late layout growth
+  // above (unload), then snap. Later growth (monaco/images upgrading after
+  // paint) is re-pinned by the mutation/load observer below, not here.
   const gotoTail = useCallback(() => {
     const len = msgsRef.current.length;
     winRef.current = { start: Math.max(0, len - TAIL_FIRST), end: len };
     setWin(Math.max(0, len - TAIL_FIRST), len);
     snap();
-    requestAnimationFrame(() => snap());
   }, [setWin, snap]);
 
   // pill click: get back to the tail. Instant collapse + snap — an eased ride
@@ -1176,10 +1154,10 @@ export default function MessageList({
           if (stick.current) {
             // glued to the tail — land on the REAL newest message, don't
             // anchor: returning to a session whose fetch brought newer
-            // messages must not strand the reader at the previous tail
+            // messages must not strand the reader at the previous tail.
+            // Post-commit + late growth is re-pinned by the observer below.
             setWin(start, msgs.length);
             snap();
-            requestAnimationFrame(() => snap());
           } else {
             // reading above the tail — keep the reader's anchor while the
             // window slides out rows above the viewport
@@ -1228,39 +1206,68 @@ export default function MessageList({
       gotoTail();
       return;
     }
-    // stream settled while pinned: the loop stopped on the busy flip, so late
-    // layout (monaco editors, images) may have grown rows after its last
-    // frame — land exactly onto the finished tail
+    // stream settled while pinned: land exactly onto the finished tail —
+    // any later layout growth (monaco editors, images) re-pins via the
+    // observer below
     if (settled && stick.current) {
       setShowJump(false);
       snap();
-      requestAnimationFrame(() => snap());
       return;
     }
-    // refresh the pill while the reader is scrolled away and the bottom
-    // drifts further out (streaming growth happens without scroll events)
-    const dist = el.scrollHeight - el.clientHeight - el.scrollTop;
-    setShowJump((v) => (v ? dist > 40 : dist > 80));
-    // pinned readers stay glued to the tail; unpinned readers are never touched
-    if ((!busy && !compacting) || !stick.current) {
+  }, [msgs, busy, compacting, sessionId, loading, snap, gotoTail, setWin]);
+
+  // event-driven tail pin: any content growth (streaming deltas, monaco
+  // mounts/resizes, images, skeleton swaps, highlight) fires the observer or
+  // a capture-phase load, which re-pins while the reader is glued — no
+  // timers, no heuristics. Snaps coalesce to one per frame; genuine user
+  // scrolls unpin via the scroll listener and cancel the queued snap.
+  // We never mutate the DOM ourselves (scrollTop only), so this can't loop.
+  useEffect(() => {
+    const el = listRef.current;
+    if (!el) return;
+    const refreshPill = () => {
+      const dist = el.scrollHeight - el.clientHeight - el.scrollTop;
+      // hysteresis so the pill can't flicker at one threshold
+      setShowJump((v) => (v ? dist > 40 : dist > 80));
+    };
+    const queueSnap = () => {
+      if (raf.current) return;
+      raf.current = requestAnimationFrame(() => {
+        raf.current = 0;
+        const root = listRef.current;
+        if (!root || !stick.current) return;
+        const target = root.scrollHeight - root.clientHeight;
+        expected.current = target;
+        if (root.scrollTop !== target) root.scrollTop = target;
+        setShowJump(false);
+      });
+    };
+    const onChange = () => {
+      if (!stick.current) refreshPill();
+      else queueSnap();
+    };
+    const mo = new MutationObserver(onChange);
+    mo.observe(el, { childList: true, subtree: true, characterData: true, attributes: true });
+    // img/video decode changes layout without a DOM mutation
+    el.addEventListener("load", onChange, true);
+    return () => {
+      mo.disconnect();
+      el.removeEventListener("load", onChange, true);
       cancelAnimationFrame(raf.current);
       raf.current = 0;
-      return;
-    }
-    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) snap();
-    else follow();
-  }, [msgs, busy, compacting, sessionId, loading, snap, follow, gotoTail, setWin]);
+    };
+  }, []);
 
-  // stick/unstick + pill visibility on scroll. Our pin loop and snaps
-  // record their scrollTop in `expected` first, so their scroll events are
-  // recognized and ignored — only genuine user scrolling moves the pin,
-  // and it kills any loop in flight so it can never fight the reader.
+  // stick/unstick + pill visibility on scroll. Our snaps record their
+  // scrollTop in `expected` first, so their scroll events are recognized
+  // and ignored — only genuine user scrolling moves the pin, and it kills
+  // any queued snap so it can never fight the reader.
   useEffect(() => {
     const el = listRef.current;
     if (!el) return;
     const scroll = () => {
       if (Math.abs(el.scrollTop - expected.current) <= 2) return;
-      // genuine user input — a running loop would otherwise drag the view
+      // genuine user input — a queued snap would otherwise drag the view
       // back down and mask the unpin
       cancelAnimationFrame(raf.current);
       raf.current = 0;

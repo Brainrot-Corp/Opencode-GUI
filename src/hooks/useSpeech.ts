@@ -49,7 +49,7 @@ export function useSpeech(oc: SpeechOc, settings: AppSettings) {
   // the fallback may read; restored/session history never qualifies
   const seenLive = useRef<Set<string>>(new Set());
   const replyAudio = useRef<HTMLAudioElement | null>(null);
-  const pcmStop = useRef<(() => void) | null>(null);
+  const pcmHandle = useRef<{ stop: () => void; setVolume: (v: number) => void } | null>(null);
 
   // queued speech — sentences awaiting piper playback
   const ttsQ = useRef<string[]>([]);
@@ -210,8 +210,8 @@ export function useSpeech(oc: SpeechOc, settings: AppSettings) {
     ttsPumping.current = false;
     pumpGen.current++;
     setTalking(false);
-    try { pcmStop.current?.(); } catch {}
-    pcmStop.current = null;
+    try { pcmHandle.current?.stop(); } catch {}
+    pcmHandle.current = null;
     try { replyAudio.current?.pause(); } catch {}
     replyAudio.current = null;
     try { replyAudio.current = null as any; } catch {}
@@ -267,10 +267,10 @@ export function useSpeech(oc: SpeechOc, settings: AppSettings) {
             let h: ReturnType<typeof playPcm> | null = null;
             try { h = playPcm(bytes, st.ttsVol); } catch (e) { pushToast(String(e)); continue; }
             if (!h) continue;
-            pcmStop.current = h.stop;
+            pcmHandle.current = h;
             const pcmTimeoutMs = Math.max((bytes.length / 2 / 24000) * 1000 + 5000, 8000);
             try { await Promise.race([h.ended, new Promise<void>((r) => setTimeout(r, pcmTimeoutMs))]); } catch (e) { pushToast(String(e)); }
-            finally { if (pumpGen.current === myGen) pcmStop.current = null; }
+            finally { if (pumpGen.current === myGen) pcmHandle.current = null; }
             // also allow pause to break
             if (ttsHushed.current) { try { h.stop(); } catch {} }
           } else {
@@ -412,11 +412,14 @@ export function useSpeech(oc: SpeechOc, settings: AppSettings) {
       lastStreamIdRef.current = "";
       lastStreamTextRef.current = "";
       replyAudio.current?.pause();
-      try { pcmStop.current?.(); } catch {}
-      pcmStop.current = null;
+      try { pcmHandle.current?.stop(); } catch {}
+      pcmHandle.current = null;
     };
     const vol = (e: Event) => {
-      if (replyAudio.current) replyAudio.current.volume = (e as CustomEvent<number>).detail;
+      const v = (e as CustomEvent<number>).detail;
+      const n = typeof v === "number" && Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : 1;
+      try { if (replyAudio.current) replyAudio.current.volume = n; } catch {}
+      try { pcmHandle.current?.setVolume(n); } catch {}
     };
     const reset = () => { forceResetTTS(); };
     window.addEventListener("oc:tts-stop", stop);
@@ -437,7 +440,7 @@ export function useSpeech(oc: SpeechOc, settings: AppSettings) {
   useEffect(() => {
     if (!oc.busy || !settings.speakReplies) return;
     const beat = () => {
-      if (!replyAudio.current || replyAudio.current.paused) playSound("working");
+      if ((!replyAudio.current || replyAudio.current.paused) && !pcmHandle.current) playSound("working");
       wait = window.setTimeout(beat, 20000);
     };
     let wait = window.setTimeout(beat, 15000);
@@ -698,7 +701,7 @@ export function useSpeech(oc: SpeechOc, settings: AppSettings) {
         pendingEnum.current = null;
         pendingAnswers.current = [];
         replyAudio.current?.pause();
-        try { pcmStop.current?.(); } catch {}
+        try { pcmHandle.current?.stop(); } catch {}
         {
           const c = cleanSpeech("Debriefing...");
           if (c) { ttsQ.current.push(c); capQueue(); pumpTTS(); }
@@ -843,7 +846,7 @@ export function useSpeech(oc: SpeechOc, settings: AppSettings) {
   // voice "quiet" command — pause current playback without clearing the queue
   const pauseSpeech = useCallback(() => {
     replyAudio.current?.pause();
-    try { pcmStop.current?.(); } catch {}
+    try { pcmHandle.current?.stop(); } catch {}
   }, []);
 
   return { talking, debriefing, announce, pauseSpeech };

@@ -746,7 +746,14 @@ export function useSettings() {
   }, [themes, settings.theme, update]);
 
   const updateSounds = useCallback((patch: Partial<SoundPrefs>) => {
-    setSettings((s) => ({ ...s, sounds: { ...s.sounds, ...patch } }));
+    const clean = { ...patch };
+    if (clean.volume !== undefined) {
+      clean.volume =
+        typeof clean.volume === "number" && Number.isFinite(clean.volume)
+          ? Math.min(1, Math.max(0, clean.volume))
+          : DEFAULTS.sounds.volume;
+    }
+    setSettings((s) => ({ ...s, sounds: { ...s.sounds, ...clean } }));
   }, []);
 
   // Appearance edits are persisted CSS overrides keyed by the *effective*
