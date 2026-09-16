@@ -244,11 +244,10 @@ function shortDir(dir: string): string {
   return parts.length ? parts[parts.length - 1] : t;
 }
 export function McpDialog({ onClose }: { onClose: () => void }) {
-  const { dirs, loading, busy, refresh, refreshOne, setEnabled, beginAuth, submitCode, signOut, rowKey } = useMcp();
+  const { dirs, loading, busy, refreshLive, refresh, refreshOne, setEnabled, beginAuth, submitCode, signOut, rowKey } = useMcp();
   const [q, setQ] = useState("");
   const [err, setErr] = useState("");
   const [notice, setNotice] = useState("");
-  const [refreshing, setRefreshing] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [authBusy, setAuthBusy] = useState<Set<string>>(new Set());
   const [authUrls, setAuthUrls] = useState<Record<string, string>>({});
@@ -258,6 +257,10 @@ export function McpDialog({ onClose }: { onClose: () => void }) {
   const polls = useRef(new Map<string, number>());
   const needle = q.trim().toLowerCase();
   const total = dirs.reduce((n, d) => n + Object.keys(d.servers).length, 0);
+  // every server mutation locks while any refresh paints (manual, auto, or
+  // workspace-change) — no spam-clicking a toggle mid-paint into stale state
+  const locked = loading || refreshLive;
+  const rowLocked = (key: string) => locked || busy.has(key) || authBusy.has(key);
 
   // stop browser-sign-in polling on unmount
   useEffect(() => {
@@ -290,13 +293,12 @@ export function McpDialog({ onClose }: { onClose: () => void }) {
     });
 
   const doRefresh = () => {
-    setRefreshing(true);
+    if (refreshLive || loading || busy.size > 0) return;
     setErr("");
-    refresh()
-      .catch((e) => setErr(e instanceof Error ? e.message : String(e)))
-      .finally(() => setRefreshing(false));
+    refresh().catch((e) => setErr(e instanceof Error ? e.message : String(e)));
   };
   const doToggle = (dir: string, name: string, enabled: boolean) => {
+    if (rowLocked(rowKey(dir, name))) return;
     setErr("");
     setNotice("");
     setEnabled(dir, name, enabled).then(
@@ -318,6 +320,7 @@ export function McpDialog({ onClose }: { onClose: () => void }) {
   // the status (or ~90s passes — the pasted-code path still works after that)
   const doSignIn = async (dir: string, name: string) => {
     const key = rowKey(dir, name);
+    if (rowLocked(key)) return;
     setErr("");
     markBusy(key, true);
     try {
@@ -355,6 +358,7 @@ export function McpDialog({ onClose }: { onClose: () => void }) {
   };
   const doSubmitCode = async (dir: string, name: string) => {
     const key = rowKey(dir, name);
+    if (rowLocked(key)) return;
     const code = (codes[key] ?? "").trim();
     if (!code) return;
     setErr("");
@@ -379,6 +383,7 @@ export function McpDialog({ onClose }: { onClose: () => void }) {
     }
   };
   const doSignOut = async (dir: string, name: string) => {
+    if (rowLocked(rowKey(dir, name))) return;
     setErr("");
     markBusy(rowKey(dir, name), true);
     try {
@@ -408,11 +413,11 @@ export function McpDialog({ onClose }: { onClose: () => void }) {
         <button
           type="button"
           className="icon-btn"
-          data-tip="Refresh"
-          disabled={refreshing || loading}
+          data-tip={refreshLive || busy.size > 0 ? "Working…" : "Refresh"}
+          disabled={refreshLive || loading || busy.size > 0}
           onClick={doRefresh}
         >
-          <i className={`fa-solid fa-arrows-rotate${refreshing ? " fa-spin" : ""}`} />
+          <i className={`fa-solid fa-arrows-rotate${refreshLive ? " fa-spin" : ""}`} />
         </button>
       }
     >
@@ -488,7 +493,9 @@ export function McpDialog({ onClose }: { onClose: () => void }) {
                       const on = s.status === "connected";
                       const needsAuth = s.status === "needs_auth" || s.status === "needs_client_registration";
                       const key = rowKey(d.dir, n);
-                      const isBusy = busy.has(key) || authBusy.has(key);
+                      const toggling = busy.has(key);
+                      const authWorking = authBusy.has(key);
+                      const isBusy = toggling || authWorking || locked;
                       const info = mcpInfo(s);
                       const tools = toolsForServer(d.tools, n);
                       const isOpen = expanded.has(key);
@@ -522,8 +529,8 @@ export function McpDialog({ onClose }: { onClose: () => void }) {
                                 disabled={isBusy}
                                 onClick={() => void doSignIn(d.dir, n)}
                               >
-                                <i className="fa-solid fa-key" />
-                                Sign in
+                                <i className={`fa-solid ${authWorking ? "fa-spinner fa-spin" : "fa-key"}`} />
+                                {authWorking ? "Working…" : "Sign in"}
                               </button>
                             )}
                             {on && s.config?.type === "remote" && (
@@ -534,18 +541,23 @@ export function McpDialog({ onClose }: { onClose: () => void }) {
                                 disabled={isBusy}
                                 onClick={() => void doSignOut(d.dir, n)}
                               >
-                                <i className="fa-solid fa-right-from-bracket" />
+                                <i className={`fa-solid ${authWorking ? "fa-spinner fa-spin" : "fa-right-from-bracket"}`} />
                               </button>
                             )}
                             <button
                               type="button"
                               className={`toggle${on ? " on" : ""}`}
                               aria-pressed={on}
-                              data-tip={on ? `Disable ${n} in this workspace` : `Enable ${n} in this workspace`}
+                              data-tip={toggling ? "Applying…" : locked ? "Refresh in progress…" : on ? `Disable ${n} in this workspace` : `Enable ${n} in this workspace`}
                               disabled={isBusy}
                               onClick={() => doToggle(d.dir, n, !on)}
+                              style={toggling ? { display: "flex", alignItems: "center", justifyContent: "center" } : undefined}
                             >
-                              <span className="knob" />
+                              {toggling ? (
+                                <i className="fa-solid fa-spinner fa-spin" style={{ fontSize: 12, color: "var(--accent)" }} />
+                              ) : (
+                                <span className="knob" />
+                              )}
                             </button>
                           </div>
                           {isOpen && (
@@ -584,7 +596,7 @@ export function McpDialog({ onClose }: { onClose: () => void }) {
                                       }}
                                     />
                                     <button type="button" className="reset-btn" disabled={!(codes[key] ?? "").trim() || isBusy} onClick={() => void doSubmitCode(d.dir, n)} data-tip="Submit code">
-                                      <i className="fa-solid fa-arrow-right" />
+                                      <i className={`fa-solid ${authWorking ? "fa-spinner fa-spin" : "fa-arrow-right"}`} />
                                     </button>
                                   </label>
                                 </div>

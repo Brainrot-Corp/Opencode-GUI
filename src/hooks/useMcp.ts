@@ -139,6 +139,18 @@ export function useMcp() {
       alive.current = false;
     };
   }, []);
+  // refresh generations in flight (manual + workspace-change ticks can
+  // overlap) — rows lock while any is live so a toggle can't race a paint
+  const [refreshLive, setRefreshLive] = useState(false);
+  const refreshCount = useRef(0);
+  const refreshBegin = useCallback(() => {
+    refreshCount.current += 1;
+    setRefreshLive(true);
+  }, []);
+  const refreshEnd = useCallback(() => {
+    refreshCount.current = Math.max(0, refreshCount.current - 1);
+    if (refreshCount.current === 0 && alive.current) setRefreshLive(false);
+  }, []);
   const patchDir = useCallback((dir: string, next: McpDirState) => {
     if (!alive.current) return;
     setDirs((prev) => {
@@ -159,15 +171,20 @@ export function useMcp() {
     setLoading(true);
     setDirs(all.map((dir) => ({ dir, servers: {}, tools: [], error: "", pending: true })));
     setLoading(false);
-    await Promise.all(
-      all.map(async (dir) => {
-        patchDir(dir, await fetchCore(dir));
-        const tools = await fetchTools(dir);
-        if (!alive.current) return;
-        setDirs((prev) => prev.map((d) => (d.dir === dir ? { ...d, tools } : d)));
-      }),
-    );
-  }, [patchDir]);
+    refreshBegin();
+    try {
+      await Promise.all(
+        all.map(async (dir) => {
+          patchDir(dir, await fetchCore(dir));
+          const tools = await fetchTools(dir);
+          if (!alive.current) return;
+          setDirs((prev) => prev.map((d) => (d.dir === dir ? { ...d, tools } : d)));
+        }),
+      );
+    } finally {
+      refreshEnd();
+    }
+  }, [patchDir, refreshBegin, refreshEnd]);
 
   useEffect(() => {
     void refresh();
@@ -296,5 +313,5 @@ export function useMcp() {
     [refreshOne],
   );
 
-  return { dirs, loading, busy, refresh, refreshOne, setEnabled, beginAuth, submitCode, signOut, rowKey };
+  return { dirs, loading, busy, refreshLive, refresh, refreshOne, setEnabled, beginAuth, submitCode, signOut, rowKey };
 }
