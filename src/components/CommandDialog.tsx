@@ -247,6 +247,7 @@ export function McpDialog({ onClose }: { onClose: () => void }) {
   const { dirs, loading, busy, refresh, refreshOne, setEnabled, beginAuth, submitCode, signOut, rowKey } = useMcp();
   const [q, setQ] = useState("");
   const [err, setErr] = useState("");
+  const [notice, setNotice] = useState("");
   const [refreshing, setRefreshing] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [authBusy, setAuthBusy] = useState<Set<string>>(new Set());
@@ -297,8 +298,12 @@ export function McpDialog({ onClose }: { onClose: () => void }) {
   };
   const doToggle = (dir: string, name: string, enabled: boolean) => {
     setErr("");
-    setEnabled(dir, name, enabled).catch((e) =>
-      setErr(e instanceof Error ? e.message : String(e)),
+    setNotice("");
+    setEnabled(dir, name, enabled).then(
+      ({ note }) => {
+        if (note) setNotice(note);
+      },
+      (e) => setErr(e instanceof Error ? e.message : String(e)),
     );
   };
   const toggleExpand = (key: string) =>
@@ -441,6 +446,12 @@ export function McpDialog({ onClose }: { onClose: () => void }) {
         </label>
       </div>
       {err && <div className="voice-err">{err}</div>}
+      {notice && (
+        <div className="vc-tip">
+          <i className="fa-solid fa-circle-info" />
+          <span>{notice}</span>
+        </div>
+      )}
       {loading ? (
         <div className="vc-empty">Loading MCP servers…</div>
       ) : dirs.length === 0 ? (
@@ -590,7 +601,7 @@ export function McpDialog({ onClose }: { onClose: () => void }) {
           })}
         </div>
       )}
-      {!loading && <p className="cmd-note">Disabling writes <span className="mono">enabled: false</span> to that workspace’s config and disconnects immediately. Tools are matched by the <span className="mono">{"<server>_<tool>"}</span> prefix; sign-in opens the provider in your browser.</p>}
+      {!loading && <p className="cmd-note">Toggles apply instantly and are written to that workspace’s <span className="mono">opencode.jsonc</span> so they survive restarts. Tools are matched by the <span className="mono">{"<server>_<tool>"}</span> prefix; sign-in opens the provider in your browser.</p>}
     </Dialog>
   );
 }

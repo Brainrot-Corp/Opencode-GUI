@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { opencodeFor, withDeadline } from "../api";
 import { getAllWorkspaces } from "../lib/workspace";
+import { setMcpEnabled } from "../lib/mcpConfig";
 
 export type McpServerState = {
   status: string;
@@ -97,6 +98,36 @@ async function fetchDir(dir: string): Promise<McpDirState> {
   return { ...core, tools: await fetchTools(dir) };
 }
 
+function apiErr(r: unknown, fallback: string): string {
+  const e = (r as any)?.error;
+  if (!e) return "";
+  if (typeof e === "string") return e;
+  try {
+    return (e as any)?.message ?? (e as any)?.data?.message ?? JSON.stringify(e);
+  } catch {
+    return fallback;
+  }
+}
+
+// persist the flag in <workspace>/opencode.jsonc — the server only honors
+// the file at boot (no hot-reload), so without this the toggle reverts on
+// restart. write_file covers ssh:// paths too; file.read is relative to ?directory=.
+async function persistMcpEnabled(client: any, dir: string, name: string, enabled: boolean, entry: unknown): Promise<void> {
+  const base = dir.replace(/[/\\]+$/, "");
+  let raw = "";
+  let file = `${base}/opencode.jsonc`;
+  for (const rel of ["opencode.jsonc", "opencode.json"]) {
+    const r = await withDeadline(client.file.read({ query: { path: rel } }), 10_000, "mcp config file").catch(() => null);
+    const content = (r as any)?.data?.content;
+    if (typeof content === "string" && content.trim()) {
+      raw = content;
+      file = `${base}/${rel}`;
+      break;
+    }
+  }
+  await invoke("write_file", { path: file, content: setMcpEnabled(raw, name, enabled, entry) });
+}
+
 export function useMcp() {
   const [dirs, setDirs] = useState<McpDirState[]>([]);
   const [loading, setLoading] = useState(true);
@@ -108,11 +139,6 @@ export function useMcp() {
       alive.current = false;
     };
   }, []);
-  // read-only mirror so async flows (toggle settle polling) see the status
-  // that is actually on screen, not the render closure they started in
-  const dirsRef = useRef<McpDirState[]>([]);
-  dirsRef.current = dirs;
-
   const patchDir = useCallback((dir: string, next: McpDirState) => {
     if (!alive.current) return;
     setDirs((prev) => {
@@ -164,46 +190,63 @@ export function useMcp() {
     [patchDir],
   );
 
-  // persistent per-workspace toggle: flip enabled in that dir's config, then
-  // connect/disconnect for immediate effect. config.update makes the server
-  // reload MCP async, so a single immediate re-read usually returns the
-  // PRE-toggle status (the "sometimes works, never refreshes" bug) — poll
-  // until the on-screen status actually changes, then paint. Throws so the
-  // dialog can show real failures (e.g. rejected config update).
+  // toggle in two proven steps (verified live against the sidecar):
+  // 1. disconnect/connect — applied synchronously, status flips on the next
+  //    read. (config.update is a no-op echo on this server version, and
+  //    mcp.add throws when enabling a broken server, so neither is used.)
+  // 2. write the flag to <workspace>/opencode.jsonc — the server honors the
+  //    file at boot with no hot-reload, so this is what survives restarts.
+  // Returns a non-fatal note (e.g. file out of reach) for the dialog to show.
   const setEnabled = useCallback(
-    async (dir: string, name: string, enabled: boolean) => {
+    async (dir: string, name: string, enabled: boolean): Promise<{ note: string }> => {
       const key = rowKey(dir, name);
       setBusy((p) => new Set(p).add(key));
       try {
-        const prevStatus = dirsRef.current.find((d) => d.dir === dir)?.servers[name]?.status;
         const client = await getClient(dir);
+        // entry is only needed as the insert template when the server block is
+        // missing from the workspace file — the live toggle needs no config
         const cur = await withDeadline((client.config as any).get(), 10_000, "mcp config");
-        const cfg = ((cur as any)?.data ?? {}) as any;
-        const entry = cfg?.mcp?.[name];
-        if (entry && typeof entry === "object") {
-          await withDeadline(
-            (client.config as any).update({
-              body: { ...cfg, mcp: { ...(cfg.mcp ?? {}), [name]: { ...entry, enabled } } },
-            }),
-            10_000,
-            "mcp config update",
-          );
+        const entry = ((cur as any)?.data?.mcp ?? {})[name];
+        if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+          throw new Error(`No stored config for "${name}" — add it to opencode.jsonc first.`);
         }
-        try {
-          if (enabled) await (client.mcp as any).connect({ path: { name } });
-          else await (client.mcp as any).disconnect({ path: { name } });
-        } catch {}
-        // settle: any status change counts (enable may land on failed when
-        // the server itself is broken — that is still the truth to show)
-        let settled: McpDirState | null = null;
-        for (let i = 0; i < 12; i++) {
-          settled = await fetchCore(dir);
-          if (settled.error || settled.servers[name]?.status !== prevStatus) break;
-          if (i < 11) await sleep(1000);
+        // the SDK never throws on API errors (ThrowOnError=false) — check .error
+        const tr = await withDeadline(
+          enabled ? (client.mcp as any).connect({ path: { name } }) : (client.mcp as any).disconnect({ path: { name } }),
+          15_000,
+          "mcp toggle",
+        );
+        const toggleErr = apiErr(tr, "toggle rejected");
+        if (toggleErr) throw new Error(toggleErr);
+        let note = "";
+        if (!dir.trim()) {
+          note = "No workspace folder — applies until the sidecar restarts.";
+        } else {
+          try {
+            await persistMcpEnabled(client, dir, name, enabled, { ...(entry as Record<string, unknown>), enabled });
+          } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            note = `Applied now, but the config file could not be written (${msg}) — reverts on restart.`;
+          }
         }
-        const full: McpDirState = settled ?? (await fetchCore(dir));
+        // the flip is synchronous: re-read until it shows (or 3 tries), then paint
+        let snap: McpDirState | null = null;
+        for (let i = 0; i < 3; i++) {
+          snap = await fetchCore(dir);
+          if (snap.error) break;
+          const st = snap.servers[name]?.status;
+          if (!enabled ? st === "disabled" : st !== "disabled" && st !== "unknown") break;
+          if (i < 2) await sleep(1000);
+        }
+        const full = snap ?? (await fetchCore(dir));
         full.tools = await fetchTools(dir);
         patchDir(dir, full);
+        if (full.error) throw new Error(full.error);
+        const st = full.servers[name]?.status ?? "unknown";
+        if (!enabled ? st !== "disabled" : st === "disabled" || st === "unknown") {
+          throw new Error(`Server did not ${enabled ? "enable" : "disable"} (still ${st}) — try refresh.`);
+        }
+        return { note };
       } finally {
         if (alive.current)
           setBusy((p) => {
