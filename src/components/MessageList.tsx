@@ -925,18 +925,26 @@ export default function MessageList({
     requestAnimationFrame(() => snap());
   }, [snap]);
 
-  // pill click: smooth eased ride back to the tail (old feel) with
-  // skeleton rows masking the travel — the bottom rows are always mounted,
-  // so once the ride lands, prepended history collapses away offscreen and
-  // the view snaps exactly onto the tail
+  // pill click: get back to the tail. Close enough → land instantly
+  // (skeletons + spinner for a 200px hop look broken, not smooth). Far away
+  // while idle → eased ride with skeleton rows masking the travel, collapse
+  // onto the tail on arrival. Far away while live → pin + chase with no
+  // theatre: fresh rows keep arriving under you and skeletons would linger
+  // for the whole turn; arrival still collapses onto the tail.
   const goBottom = useCallback(() => {
+    const el = listRef.current;
+    const dist = el ? el.scrollHeight - el.clientHeight - el.scrollTop : 0;
     stick.current = true;
     riding.current = true;
     setShowJump(false);
-    setJumping(true);
     rideDoneRef.current = finishRide;
+    if (dist < 400) {
+      finishRide();
+      return;
+    }
+    setJumping(!busy && !compacting);
     follow();
-  }, [follow, finishRide]);
+  }, [follow, finishRide, busy, compacting]);
 
   useEffect(() => {
     const el = listRef.current;
@@ -969,11 +977,16 @@ export default function MessageList({
       return;
     }
     // stream settled while pinned: chase may have arrived early against
-    // still-growing rows — snap exactly onto the finished tail
+    // still-growing rows — land exactly onto the finished tail. A pending
+    // pill ride finishes here too, or its skeletons would strand (no more
+    // chase frames will arrive to complete it).
     if (settled && stick.current) {
       setShowJump(false);
-      snap();
-      requestAnimationFrame(() => snap());
+      if (riding.current || rideDoneRef.current) finishRide();
+      else {
+        snap();
+        requestAnimationFrame(() => snap());
+      }
       return;
     }
     // refresh the pill while the reader is scrolled away and the bottom
@@ -981,11 +994,15 @@ export default function MessageList({
     // unless the jump ride is in flight, which owns the pill until it lands
     const dist = el.scrollHeight - el.clientHeight - el.scrollTop;
     if (!riding.current) setShowJump((v) => (v ? dist > 40 : dist > 80));
+    // a stream that starts under a pill ride drops the skeleton theatre
+    // (fresh rows keep arriving; it would linger) — the ride itself keeps
+    // chasing so arrival still collapses onto the tail
+    if (riding.current && (busy || compacting)) setJumping(false);
     // pinned readers chase the tail; unpinned readers are never touched
     if ((!busy && !compacting) || !stick.current) return;
     if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) snap();
     else follow();
-  }, [msgs, busy, compacting, sessionId, loading, snap, follow]);
+  }, [msgs, busy, compacting, sessionId, loading, snap, follow, finishRide]);
 
   // stick/unstick + pill visibility on scroll. Our eased chase and snaps
   // record their scrollTop in `expected` first, so their scroll events are
