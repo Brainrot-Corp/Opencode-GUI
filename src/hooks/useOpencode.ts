@@ -247,11 +247,25 @@ export function useOpencode() {
   const baseRef = useRef("");
 
   // authoritative per-session message stores (SSE mutations land here
-  // synchronously; only the active session mirrors into React state)
+  // synchronously; only the active session mirrors into React state).
+  // deltas arrive in bursts — coalesce mirrors into one setState per frame
+  // or huge sessions re-render once per chunk instead of once per batch.
+  const mirrorRaf = useRef(0);
+  const mirrorPending = useRef<string | null>(null);
+  useEffect(() => () => cancelAnimationFrame(mirrorRaf.current), []);
   const storeRef = useRef<ReturnType<typeof createSessionStore> | undefined>(undefined);
   if (!storeRef.current) {
     storeRef.current = createSessionStore((sid) => {
-      if (sid === activeRef.current) setMsgs(storeRef.current!.snapshot(sid));
+      if (sid !== activeRef.current) return;
+      if (mirrorPending.current === sid) return;
+      mirrorPending.current = sid;
+      cancelAnimationFrame(mirrorRaf.current);
+      mirrorRaf.current = requestAnimationFrame(() => {
+        mirrorPending.current = null;
+        const s = storeRef.current;
+        const cur = activeRef.current;
+        if (s && cur === sid) setMsgs(s.snapshot(sid));
+      });
     });
   }
   const store = storeRef.current;
@@ -890,12 +904,23 @@ export function useOpencode() {
     setActiveId(id);
     setPermission(permissionsRef.current.get(id) ?? null);
     setQuestion(questionsRef.current.get(id) ?? null);
+    // drop any coalesced SSE mirror — it belongs to the previous view and
+    // must not clobber the fresh cached paint below
+    cancelAnimationFrame(mirrorRaf.current);
+    mirrorPending.current = null;
     const cached = store.cached(id);
     setMsgs(cached ? [...cached] : []);
     const seq = store.beginFetch(id);
-    const dirFor = dirForOpen ?? getDirectory();
-    const { client } = dirFor ? await opencodeFor(dirFor) : await opencode();
-    const r = await (client.session as any).messages({ path: { id } });
+    let r: { data?: Msg[] };
+    try {
+      const dirFor = dirForOpen ?? getDirectory();
+      const { client } = dirFor ? await opencodeFor(dirFor) : await opencode();
+      r = (await (client.session as any).messages({ path: { id } })) as { data?: Msg[] };
+    } catch {
+      // offline / failed fetch: keep the cached paint, a later SSE delta or
+      // revisit will fill the store (never leave a rejected openSession)
+      return;
+    }
     if (store.isStale(id, seq)) return;
     // mid-stream the SSE-mutated store is NEWER than any fetch snapshot
     // (opencode persists part text only at milestones) — don't reset it

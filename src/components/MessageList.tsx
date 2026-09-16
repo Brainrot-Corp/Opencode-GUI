@@ -1,4 +1,4 @@
-import { Children, isValidElement, memo, useCallback, useEffect, useRef, useState } from "react";
+import { Children, isValidElement, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { createPortal } from "react-dom";
 import Markdown from "react-markdown";
@@ -9,7 +9,7 @@ import type { Msg } from "../types";
 import { iconFor } from "../lib/attachments";
 import ToolBlock from "./ToolBlock";
 import MonacoBlock from "./MonacoBlock";
-import { hlToMonacoLang } from "../lib/monaco";
+import { hlToMonacoLang, loadMonaco } from "../lib/monaco";
 import { stripAnsi } from "../lib/syntax";
 import "../styles/chat.css";
 import "../styles/find.css";
@@ -331,7 +331,9 @@ function codeLang(node: ReactNode): string | undefined {
 // fenced code block with a fast copy button — Monaco rendering under the
 // same .code-wrap chrome; copy uses the raw source so rendered markup (or
 // monaco's gutter) can never corrupt it. Untagged fences stay plaintext,
-// exactly like the old rehype-only rendering.
+// exactly like the old rehype-only rendering. Monaco editors are heavy (one
+// per fence), so the editor only mounts once the block nears the viewport —
+// huge histories mount <pre> placeholders until scrolled to.
 function CodePre(props: { children?: ReactNode }) {
   const { children } = props;
   // strip terminal escapes: <pre> swallowed them invisibly, Monaco would
@@ -339,6 +341,29 @@ function CodePre(props: { children?: ReactNode }) {
   const text = stripAnsi(codeText(children));
   const lang = hlToMonacoLang(codeLang(children));
   const [copied, setCopied] = useState(false);
+  const [near, setNear] = useState(false);
+  const boxRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (near) return;
+    const el = boxRef.current;
+    if (!el) return;
+    if (typeof IntersectionObserver === "undefined") {
+      setNear(true);
+      return;
+    }
+    const io = new IntersectionObserver(
+      (es) => {
+        if (es.some((e) => e.isIntersecting)) {
+          setNear(true);
+          io.disconnect();
+        }
+      },
+      // upgrade ahead of the viewport so the editor is ready on arrival
+      { rootMargin: "800px" },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [near]);
   const copy = () => {
     navigator.clipboard.writeText(text).then(
       () => {
@@ -349,7 +374,7 @@ function CodePre(props: { children?: ReactNode }) {
     );
   };
   return (
-    <div className="code-wrap">
+    <div className="code-wrap" ref={boxRef}>
       <button
         type="button"
         className="copy-btn"
@@ -359,17 +384,21 @@ function CodePre(props: { children?: ReactNode }) {
       >
         <i className={`fa-solid ${copied ? "fa-check" : "fa-copy"}`} />
       </button>
-      <MonacoBlock
-        value={text}
-        language={lang}
-        fontSize={12.5}
-        lineHeight={21}
-        padTop={12}
-        padBottom={12}
-        leftPad={14}
-        className="code-mono"
-        fallback={<pre>{text}</pre>}
-      />
+      {near ? (
+        <MonacoBlock
+          value={text}
+          language={lang}
+          fontSize={12.5}
+          lineHeight={21}
+          padTop={12}
+          padBottom={12}
+          leftPad={14}
+          className="code-mono"
+          fallback={<pre>{text}</pre>}
+        />
+      ) : (
+        <pre>{text}</pre>
+      )}
     </div>
   );
 }
@@ -645,6 +674,14 @@ const MsgRow = memo(function MsgRow({
   );
 });
 
+// tail window: huge histories mount only the newest N messages. Scrolling
+// near the top seamlessly prepends older ones (store already holds the full
+// list, so this is synchronous — no fetch, no spinner). Batches stay small
+// (25) and trigger early (1600px margin) so each prepend is a fast frame and
+// the next one is already mounting before the reader arrives.
+const TAIL_FIRST = 50;
+const TAIL_STEP = 25;
+
 export default function MessageList({
   msgs,
   busy,
@@ -704,6 +741,28 @@ export default function MessageList({
     if (findOpen) requestAnimationFrame(() => chatFindInputRef.current?.select());
   }, [findOpen]);
 
+  // warm the monaco chunk while idle — scrolled-to code blocks then upgrade
+  // instantly instead of fetching+compiling the editor on first sight
+  useEffect(() => {
+    let dead = false;
+    const warm = () => {
+      if (!dead) void loadMonaco().catch(() => {});
+    };
+    const ric = (window as any).requestIdleCallback;
+    if (typeof ric === "function") {
+      const id = ric.call(window, warm, { timeout: 3000 });
+      return () => {
+        dead = true;
+        (window as any).cancelIdleCallback?.call(window, id);
+      };
+    }
+    const t = window.setTimeout(warm, 1500);
+    return () => {
+      dead = true;
+      clearTimeout(t);
+    };
+  }, []);
+
   const listRef = useRef<HTMLDivElement>(null);
   const raf = useRef(0);
   // last scrollTop we set ourselves — lets the scroll listener tell our own
@@ -712,6 +771,12 @@ export default function MessageList({
   // "session:head-message" signature of the last render — a change means
   // content was replaced (switch/fill), not streamed onto
   const lastSig = useRef<string | undefined>(undefined);
+  // boot fill arrives as skeletons-then-content — landing needs the
+  // loading→ready flip too, not just the head-message signature
+  const wasLoading = useRef(false);
+  // stream end while pinned — late layout (monaco editors, images) grows
+  // content after the last chase frame, so land exactly instead of hovering
+  const wasBusy = useRef(false);
   // pinned = reader is at the exact tail: follow every growth until they
   // scroll away (any distance). only real user input moves the pin —
   // content growth alone can never unpin, and an unpinned reader is never
@@ -724,6 +789,91 @@ export default function MessageList({
   // true while the pill's smooth ride is in flight — suppresses pill
   // refreshes from content growth so it can't blink back mid-glide
   const riding = useRef(false);
+  // finish callback for the active ride — stored in a ref (not follow's
+  // onDone) because re-renders restart the glide loop without its original
+  // callback; whichever loop arrives first completes the ride exactly once
+  const rideDoneRef = useRef<(() => void) | null>(null);
+
+  // tail window into msgs — sig/snap above keep using msgs[0] (full-list
+  // head), so prepending older rows never looks like replaced content
+  const [visibleCount, setVisibleCount] = useState(TAIL_FIRST);
+  // true while the jump-to-bottom pill's ride is running — skeleton rows
+  // mask the travel; cleared on arrival, session switch, or manual scroll
+  const [jumping, setJumping] = useState(false);
+  useEffect(() => {
+    setVisibleCount(TAIL_FIRST);
+    setJumping(false);
+    rideDoneRef.current = null;
+    cancelAnimationFrame(raf.current);
+    riding.current = false;
+  }, [sessionId]);
+  const shown = useMemo(
+    () => (msgs.length > visibleCount ? msgs.slice(msgs.length - visibleCount) : msgs),
+    [msgs, visibleCount],
+  );
+  const hiddenCount = msgs.length - shown.length;
+  // fresh reads for the load-chain's post-paint check (closure values are
+  // stale by the time the frame runs)
+  const visRef = useRef(visibleCount);
+  visRef.current = visibleCount;
+  const lenRef = useRef(msgs.length);
+  lenRef.current = msgs.length;
+  // true briefly after older rows are prepended — drives the sentinel's
+  // loading spinner (loads chain across frames while the reader holds the
+  // top, so a trailing timeout keeps it lit instead of flickering)
+  const [olderBusy, setOlderBusy] = useState(false);
+  const olderTimer = useRef(0);
+  useEffect(() => () => clearTimeout(olderTimer.current), []);
+  // prepend older rows keeping the viewport anchored (no jump): measure
+  // before, grow, then shift scrollTop by the added height.
+  // Seamless chain: IntersectionObserver only fires on intersection *change*,
+  // so holding the top would stall after one batch — the post-paint check
+  // keeps loading one small batch per frame while the sentinel stays within
+  // reach (breathable for the streaming chase, invisible to the reader).
+  const loadOlder = useCallback(() => {
+    const el = listRef.current;
+    setOlderBusy(true);
+    clearTimeout(olderTimer.current);
+    olderTimer.current = window.setTimeout(() => setOlderBusy(false), 500);
+    const prevH = el?.scrollHeight ?? 0;
+    const prevTop = el?.scrollTop ?? 0;
+    setVisibleCount((c) => c + TAIL_STEP);
+    requestAnimationFrame(() => {
+      const e2 = listRef.current;
+      if (e2 && el) {
+        const dh = e2.scrollHeight - prevH;
+        if (dh > 0) {
+          e2.scrollTop = prevTop + dh;
+          expected.current = e2.scrollTop;
+        }
+      }
+      const t = topRef.current;
+      const root = listRef.current;
+      if (t && root && lenRef.current > visRef.current) {
+        const rr = root.getBoundingClientRect();
+        if (t.getBoundingClientRect().bottom > rr.top - 1600) loadOlderRef.current();
+      }
+    });
+  }, []);
+  const loadOlderRef = useRef(loadOlder);
+  loadOlderRef.current = loadOlder;
+  const topRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!hiddenCount) return;
+    const root = listRef.current;
+    const target = topRef.current;
+    if (!root || !target || typeof IntersectionObserver === "undefined") return;
+    const io = new IntersectionObserver(
+      (es) => {
+        if (es.some((e) => e.isIntersecting)) loadOlderRef.current();
+      },
+      // fire well before the reader hits the top — the next small batch
+      // mounts in the background while they keep scrolling
+      { root, rootMargin: "1600px 0px 0px 0px" },
+    );
+    io.observe(target);
+    return () => io.disconnect();
+  }, [hiddenCount, sessionId]);
 
   // jump straight to the tail, no animation
   const snap = useCallback(() => {
@@ -736,7 +886,9 @@ export default function MessageList({
 
   // eased chase toward the tail — text grows in place instead of snapping.
   // onDone lets callers react to the arrival (the jump pill hides itself
-  // there: its own scrolls are invisible to the scroll listener)
+  // there: its own scrolls are invisible to the scroll listener).
+  // A pending ride finish (rideDoneRef) fires on ANY loop's arrival, so a
+  // restarted glide still completes the pill ride instead of stranding it.
   const follow = useCallback(
     (onDone?: () => void) => {
       cancelAnimationFrame(raf.current);
@@ -748,7 +900,10 @@ export default function MessageList({
         if (Math.abs(d) < 2) {
           expected.current = target;
           el.scrollTop = target;
+          const done = rideDoneRef.current;
+          rideDoneRef.current = null;
           onDone?.();
+          done?.();
           return;
         }
         expected.current = el.scrollTop + d * 0.22;
@@ -760,15 +915,28 @@ export default function MessageList({
     [],
   );
 
-  // pill click: smooth ride back to the tail, then stay pinned for streaming
+  // pill ride arrival: collapse prepended history offscreen and land exactly
+  // on the tail — idempotent (ref nulls on first run)
+  const finishRide = useCallback(() => {
+    rideDoneRef.current = null;
+    riding.current = false;
+    setVisibleCount(TAIL_FIRST);
+    setJumping(false);
+    requestAnimationFrame(() => snap());
+  }, [snap]);
+
+  // pill click: smooth eased ride back to the tail (old feel) with
+  // skeleton rows masking the travel — the bottom rows are always mounted,
+  // so once the ride lands, prepended history collapses away offscreen and
+  // the view snaps exactly onto the tail
   const goBottom = useCallback(() => {
     stick.current = true;
     riding.current = true;
     setShowJump(false);
-    follow(() => {
-      riding.current = false;
-    });
-  }, [follow]);
+    setJumping(true);
+    rideDoneRef.current = finishRide;
+    follow();
+  }, [follow, finishRide]);
 
   useEffect(() => {
     const el = listRef.current;
@@ -777,16 +945,35 @@ export default function MessageList({
     // replaced content (session switch / history fill): land at the bottom.
     // detected via the head message id so stream-end and trailing updates
     // on the SAME session never move the viewport.
+    // boot restore fills skeletons first, content after — the loading flip
+    // lands on the tail too, so the app spawns at the bottom.
     // outgoing message: always jump to the tail, wherever the reader was.
     const sig = `${sessionId}:${msgs[0]?.info.id ?? ""}`;
     const tail = msgs[msgs.length - 1];
     const sent = tail?.info.role === "user" && tail.info.id !== lastTail.current;
     lastTail.current = tail?.info.id;
-    if (sig !== lastSig.current || sent) {
+    const justLoaded = wasLoading.current && !loading;
+    wasLoading.current = !!loading;
+    const settled = wasBusy.current && !busy && !compacting;
+    wasBusy.current = !!busy || !!compacting;
+    if (sig !== lastSig.current || sent || justLoaded) {
       lastSig.current = sig;
       stick.current = true;
       setShowJump(false);
+      rideDoneRef.current = null;
+      setJumping(false);
       snap();
+      // late layout (monaco editors, images, fonts) grows content after
+      // paint — re-land next frame so the tail stays the tail
+      requestAnimationFrame(() => snap());
+      return;
+    }
+    // stream settled while pinned: chase may have arrived early against
+    // still-growing rows — snap exactly onto the finished tail
+    if (settled && stick.current) {
+      setShowJump(false);
+      snap();
+      requestAnimationFrame(() => snap());
       return;
     }
     // refresh the pill while the reader is scrolled away and the bottom
@@ -798,7 +985,7 @@ export default function MessageList({
     if ((!busy && !compacting) || !stick.current) return;
     if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) snap();
     else follow();
-  }, [msgs, busy, compacting, sessionId, snap, follow]);
+  }, [msgs, busy, compacting, sessionId, loading, snap, follow]);
 
   // stick/unstick + pill visibility on scroll. Our eased chase and snaps
   // record their scrollTop in `expected` first, so their scroll events are
@@ -813,6 +1000,8 @@ export default function MessageList({
       // back down and mask the unpin; it also aborts any jump ride
       cancelAnimationFrame(raf.current);
       riding.current = false;
+      rideDoneRef.current = null;
+      setJumping(false);
       const dist = el.scrollHeight - el.clientHeight - el.scrollTop;
       // epsilon pin: fractional DPR/zoom can leave dist at 0.4-1.2px
       stick.current = dist <= 4;
@@ -953,9 +1142,23 @@ export default function MessageList({
           </>
         )}
         {!loading && msgs.length === 0 && !busy && <p className="empty">Say something…</p>}
-        {msgs.filter(rowVisible).map((m) => (
+        {!loading && hiddenCount > 0 && (
+          <div ref={topRef} className="history-sentinel mono" onClick={() => loadOlderRef.current()}>
+            <i className={`fa-solid ${olderBusy ? "fa-circle-notch fa-spin" : "fa-chevron-up"}`} />
+            {olderBusy
+              ? "loading older messages…"
+              : `${hiddenCount} older message${hiddenCount === 1 ? "" : "s"} — scroll up to load`}
+          </div>
+        )}
+        {shown.filter(rowVisible).map((m) => (
           <MsgRow key={m.info.id} m={m} collapsed={collapsed} onRevert={onRevert} onFork={onFork} onImage={setLightbox} taskCosts={taskCosts} dir={dir} />
         ))}
+        {jumping && (
+          <>
+            <div className="msg skel" style={{ width: "60%" }} />
+            <div className="msg skel" style={{ width: "42%" }} />
+          </>
+        )}
         {compacting && (
           <div className="compacting">
             <i className="fa-solid fa-compress fa-spin" /> compacting context…
@@ -969,12 +1172,12 @@ export default function MessageList({
       </div>
       <button
         type="button"
-        className={`jump-bottom${showJump ? " show" : ""}`}
-        data-tip="Back to tail"
-        aria-label="Scroll to bottom"
-        onClick={goBottom}
+        className={`jump-bottom${showJump || jumping ? " show" : ""}`}
+        data-tip={jumping ? "Going to latest…" : "Back to tail"}
+        aria-label={jumping ? "Going to latest messages" : "Scroll to bottom"}
+        onClick={jumping ? undefined : goBottom}
       >
-        <i className="fa-solid fa-arrow-down" />
+        <i className={`fa-solid ${jumping ? "fa-circle-notch fa-spin" : "fa-arrow-down"}`} />
       </button>
       {lightbox &&
         createPortal(
