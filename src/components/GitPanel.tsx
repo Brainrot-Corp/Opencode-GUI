@@ -178,8 +178,12 @@ const xcls = (l: string) =>
             ? "ren"
             : "oth";
 
-function GitWorkspacePanel({ dir }: { dir: string }) {
-  const [st, setSt] = useState<GitStatus>(CLEAN);
+function GitWorkspacePanel({ dir, initial }: { dir: string; initial?: GitStatus }) {
+  const [st, setSt] = useState<GitStatus>(initial ?? CLEAN);
+  // null-status (CLEAN) is ambiguous: unknown until the first refresh lands.
+  // Without this the tab-switch remount flashes "No git repository" for a
+  // repo that exists — seed from the wrapper's badge cache when available.
+  const [loaded, setLoaded] = useState(() => !!initial);
   const [open, setOpen] = useState(() => localStorage.getItem(OPEN_KEY()) === "1");
   const [msg, setMsg] = useState(() => msgDrafts.get(dir) ?? "");
   const [busy, setBusy] = useState(false);
@@ -295,6 +299,7 @@ function GitWorkspacePanel({ dir }: { dir: string }) {
       setSt(CLEAN);
     } finally {
       refreshingRef.current = false;
+      setLoaded(true);
     }
     if (queuedRef.current) {
       queuedRef.current = false;
@@ -648,6 +653,16 @@ function GitWorkspacePanel({ dir }: { dir: string }) {
     window.addEventListener("oc:git", h);
     return () => window.removeEventListener("oc:git", h);
   }, []);
+
+  if (!loaded)
+    return (
+      <div className="git-panel">
+        <div className="gp-head gp-none">
+          <i className="fa-solid fa-spinner fa-spin-pulse" />
+          <span>{t("git.loading")}</span>
+        </div>
+      </div>
+    );
 
   if (!st.repo)
     return (
@@ -1322,7 +1337,7 @@ function GitPanelMulti() {
   if (!tabs.length) {
     return (
       <div className="gp-multi">
-        <GitWorkspacePanel dir={nonEmpty[0]} />
+        <GitWorkspacePanel dir={nonEmpty[0]} initial={badges[nonEmpty[0]]} />
         {hiddenCount > 1 && (
           <div className="gp-hidden-note mono">
             {t("git.tabs.hidden", { count: hiddenCount - 1 })}
@@ -1335,7 +1350,7 @@ function GitPanelMulti() {
   if (tabs.length === 1) {
     return (
       <div className="gp-multi">
-        <GitWorkspacePanel key={tabs[0]} dir={tabs[0]} />
+        <GitWorkspacePanel key={tabs[0]} dir={tabs[0]} initial={badges[tabs[0]]} />
         {hiddenCount > 0 && (
           <div className="gp-hidden-note mono">
             {t("git.tabs.hidden", { count: hiddenCount })}
@@ -1390,7 +1405,7 @@ function GitPanelMulti() {
           );
         })}
       </div>
-      <GitWorkspacePanel key={active} dir={active} />
+      <GitWorkspacePanel key={active} dir={active} initial={badges[active]} />
       {hiddenCount > 0 && (
         <div className="gp-hidden-note mono">
           {t("git.tabs.hidden", { count: hiddenCount })}

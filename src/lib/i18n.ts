@@ -327,6 +327,7 @@ const en: Dict = {
   "git.diff.working": "{file} — working tree diff",
   "git.diff.noDiff": "No diff — new file or no unstaged edits.",
   "git.tabs.hidden": "+{count} non-repo hidden",
+  "git.loading": "Loading git status…",
 
   // chat / messages
   "chat.empty": "Say something…",
@@ -816,6 +817,7 @@ const fr: Dict = {
   "git.diff.working": "{file} — diff working tree",
   "git.diff.noDiff": "Pas de diff — nouveau fichier ou pas de modifs unstaged.",
   "git.tabs.hidden": "+{count} non-dépôt masqué",
+  "git.loading": "Chargement du statut git…",
   "chat.empty": "Dites quelque chose…",
   "chat.emptyNoSession": "Sélectionnez ou créez une session\npour commencer.",
   "chat.thinking": "réflexion",
@@ -1279,6 +1281,7 @@ const es: Dict = {
   "git.diff.working": "{file} — diff working tree",
   "git.diff.noDiff": "Sin diff — archivo nuevo o sin cambios unstaged.",
   "git.tabs.hidden": "+{count} no-repo oculto",
+  "git.loading": "Cargando estado git…",
   "chat.empty": "Di algo…",
   "chat.emptyNoSession": "Selecciona o crea una sesión\npara empezar.",
   "chat.thinking": "pensando",
