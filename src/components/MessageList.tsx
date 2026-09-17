@@ -435,7 +435,16 @@ function CodePre(props: { children?: ReactNode }) {
   );
 }
 
-const mdComponents = { pre: CodePre };
+const mdComponents = {
+  pre: CodePre,
+  // wide tables scroll inside their own wrapper — never force a horizontal
+  // scrollbar onto the whole history list
+  table: ({ node: _node, children, ...rest }: any) => (
+    <div className="md-table">
+      <table {...rest}>{children}</table>
+    </div>
+  ),
+};
 
 // one reasoning block — per-message visibility: the brain icon toggles THIS
 // block only; /collapse flips the default for blocks not manually toggled

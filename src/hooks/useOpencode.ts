@@ -1030,6 +1030,18 @@ export function useOpencode() {
     );
   }, []);
 
+  // re-read provider/model lists after /connect saves credentials —
+  // loadProvidersAll overwrites the per-server cache, so a new key shows
+  // up in /models without a restart
+  const refreshProviders = useCallback(async () => {
+    try {
+      const dirs = getAllDirs().filter((d) => d);
+      const getClient = (d: string) => (d ? opencodeFor(d) : opencode());
+      await (prov as any).loadProvidersAll(getClient, dirs).catch(() => {});
+    } catch {}
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [getAllDirs]);
+
   // fetch a session's history into the store — shared by openSession and
   // the subagent viewer. Mid-stream the SSE-mutated store is NEWER than any
   // fetch snapshot (opencode persists part text only at milestones), so a
@@ -2604,6 +2616,7 @@ export function useOpencode() {
     submit,
     cmdList,
     refreshCommands,
+    refreshProviders,
     dialog,
     closeDialog: () => setDialog(null),
     agents,

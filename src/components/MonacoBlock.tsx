@@ -183,6 +183,26 @@ export default function MonacoBlock({
     window.addEventListener("resize", applyWidth);
     return () => window.removeEventListener("resize", applyWidth);
   }, [applyWidth, expandWidth]);
+  // parent-driven resizes (sidebar drag, drawer/terminal toggles, bubble
+  // width settling after a stream) fire no window resize and monaco's
+  // automaticLayout can't see them — keep the editor fitted to its box or
+  // it stays a stale narrow slice with its own scrollbar
+  useEffect(() => {
+    const el = mountRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => {
+      try {
+        fitRef.current?.();
+      } catch {}
+      if (expandWidth) {
+        try {
+          applyWidth();
+        } catch {}
+      }
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [mod, fail, gramReady, expandWidth, applyWidth]);
   // webfont swaps change glyph advances after measure — re-fit once fonts
   // settle so late-loading JetBrains Mono can't leave lines scrolling
   useEffect(() => {
@@ -191,7 +211,11 @@ export default function MonacoBlock({
     try {
       document.fonts?.ready
         .then(() => {
-          if (!dead) applyWidth();
+          if (dead) return;
+          try {
+            fitRef.current?.();
+          } catch {}
+          applyWidth();
         })
         .catch(() => {});
     } catch {}

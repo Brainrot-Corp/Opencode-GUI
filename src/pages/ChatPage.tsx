@@ -23,6 +23,7 @@ const Onboarding = lazy(() => import("../components/Onboarding"));
 const FileEditorHost = lazy(() => import("../components/FileEditorHost"));
 const TerminalPanel = lazy(() => import("../components/Terminal"));
 import { HelpDialog, McpDialog, ShareDialog, VariantsDialog } from "../components/CommandDialog";
+import ConnectDialog from "../components/ConnectDialog";
 import AgentBoard from "../components/AgentBoard";
 import { useOpencode } from "../hooks/useOpencode";
 import { useSettings } from "../hooks/useSettings";
@@ -1510,6 +1511,9 @@ export default function ChatPage() {
           />
         )}
         {oc.dialog?.kind === "mcp" && <McpDialog onClose={oc.closeDialog} />}
+        {oc.dialog?.kind === "connect" && (
+          <ConnectDialog onClose={oc.closeDialog} onConnected={() => void (oc as any).refreshProviders?.()} />
+        )}
         {diffOpen && oc.activeId && <DiffPanel sessionId={oc.activeId} dir={(oc as any).getDirForSession?.(oc.activeId) ?? settings.workspace} onClose={() => setDiffOpen(false)} />}
         {subViewer && (
           <SubagentViewer

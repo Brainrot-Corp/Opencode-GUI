@@ -11,6 +11,10 @@
      anchoring would double-compensate the same growth, overshoot our
      recorded position, and read as a user scroll that unpins the tail */
   overflow-anchor: none;
+  /* wide children (tables, images) must scroll inside their own wrapper —
+     a horizontal scrollbar on the whole history hides the tail and fights
+     the vertical scroller */
+  overflow-x: hidden;
   display: flex;
   flex-direction: column;
   gap: 16px;
@@ -218,6 +222,14 @@
   border-radius: 4px;
   border: 1px solid var(--line);
 }
+/* markdown-embedded images (agent replies) — same containment as file parts */
+.msg img:not(.file-img) {
+  display: block;
+  max-width: min(560px, 100%);
+  height: auto;
+  border-radius: 4px;
+  border: 1px solid var(--line);
+}
 .file-chip {
   display: inline-flex;
   align-items: center;
@@ -242,7 +254,7 @@
 }
 
 .msg {
-  max-width: 84%;
+  max-width: 92%;
   padding: 11px 16px;
   border-radius: 0;
   font-family: var(--mono);
@@ -315,6 +327,9 @@
 
 .msg.user {
   align-self: flex-end;
+  /* narrower than assistant so the rewind/fork hover buttons (absolute,
+     left: -58px) keep their breathing room even on small stages */
+  max-width: 84%;
   background: color-mix(in srgb, var(--accent) calc(0.09 * 100%), transparent);
   border: 1px solid color-mix(in srgb, var(--accent) calc(0.22 * 100%), transparent);
   color: var(--text);
@@ -519,6 +534,17 @@
   border: none;
   border-top: 1px solid var(--line);
   margin: 0.8em 0;
+}
+/* markdown tables scroll horizontally inside their own wrapper instead of
+   overflowing the bubble (which would h-scroll the entire history) */
+.msg .md-table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  margin: 0.5em 0;
+}
+.msg .md-table table {
+  margin: 0;
 }
 .msg table {
   border-collapse: collapse;
