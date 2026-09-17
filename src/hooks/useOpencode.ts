@@ -2102,21 +2102,16 @@ export function useOpencode() {
         const all = store.cached(id) ?? msgsRef.current;
         const idx = all.findIndex((m: any) => m.info?.id === messageID);
         if (idx >= 0) {
-          const after = all.slice(idx + 1);
-          const userAfter = after.filter((m: any) => m.info?.role === "user");
-          const extract = (m: any): string => {
-            const parts: any[] = m.parts ?? [];
-            return parts
+          // put only the rewound-to message back in the composer, not every
+          // user message the revert cut away
+          const target = all[idx];
+          if (target?.info?.role === "user") {
+            const parts: any[] = target.parts ?? [];
+            pasteText = parts
               .filter((p: any) => p.type === "text" && typeof p.text === "string")
               .map((p: any) => p.text.trim())
               .filter(Boolean)
               .join("\n");
-          };
-          if (userAfter.length) {
-            pasteText = userAfter.map(extract).filter(Boolean).join("\n\n");
-          } else {
-            const target = all[idx];
-            if (target?.info?.role === "user") pasteText = extract(target);
           }
         }
       } catch {}
