@@ -1269,27 +1269,66 @@ export default function MessageList({
 
   // stick/unstick + pill visibility on scroll. Our snaps record their
   // scrollTop in `expected` first, so their scroll events are recognized
-  // and ignored — only genuine user scrolling moves the pin, and it kills
-  // any queued snap so it can never fight the reader.
+  // and ignored. Genuine reader scrolls (wheel/touch/pointer/scroll keys)
+  // unpin instantly and kill any queued snap so it can't fight the reader.
+  // Input-less scroll events are browser clamps: content shrinking ABOVE the
+  // viewport (stream part swaps, tool-block collapse, window eviction)
+  // re-anchors scrollTop and fires a scroll event that must NOT unpin —
+  // otherwise a delta landing between the clamp and the event dispatch left
+  // the tail permanently unglued. Those stay pinned and the queued snap
+  // re-glues; two input-less scrolls in a row (scrollbar drag) are a real
+  // reader move and unpin.
   useEffect(() => {
     const el = listRef.current;
     if (!el) return;
+    const INPUT_MS = 250;
+    let lastInput = 0;
+    let suspect = 0;
+    const mark = () => {
+      lastInput = performance.now();
+    };
+    el.addEventListener("wheel", mark, { passive: true });
+    el.addEventListener("touchstart", mark, { passive: true });
+    el.addEventListener("pointerdown", mark);
+    const keyMark = (e: KeyboardEvent) => {
+      if (["PageUp", "PageDown", "Home", "End", "ArrowUp", "ArrowDown", " "].includes(e.key)) mark();
+    };
+    el.addEventListener("keydown", keyMark);
     const scroll = () => {
-      if (Math.abs(el.scrollTop - expected.current) <= 2) return;
-      // genuine user input — a queued snap would otherwise drag the view
-      // back down and mask the unpin
-      cancelAnimationFrame(raf.current);
-      raf.current = 0;
+      if (Math.abs(el.scrollTop - expected.current) <= 2) {
+        suspect = 0;
+        return;
+      }
       const dist = el.scrollHeight - el.clientHeight - el.scrollTop;
-      // epsilon pin: fractional DPR/zoom can leave dist at 0.4-1.2px
-      stick.current = dist <= 4;
-      // hysteresis so the pill can't flicker at one threshold
-      setShowJump((v) => (v ? dist > 40 : dist > 80));
+      if (dist <= 4) {
+        // clamp re-landed us at the tail — stay glued
+        stick.current = true;
+        setShowJump(false);
+        return;
+      }
+      if (performance.now() - lastInput < INPUT_MS) {
+        suspect = 0;
+        cancelAnimationFrame(raf.current);
+        raf.current = 0;
+        stick.current = false;
+        setShowJump((v) => (v ? dist > 40 : dist > 80));
+        return;
+      }
+      if (++suspect >= 2) {
+        cancelAnimationFrame(raf.current);
+        raf.current = 0;
+        stick.current = false;
+        setShowJump((v) => (v ? dist > 40 : dist > 80));
+      }
     };
     el.addEventListener("scroll", scroll, { passive: true });
     return () => {
       cancelAnimationFrame(raf.current);
       el.removeEventListener("scroll", scroll);
+      el.removeEventListener("wheel", mark);
+      el.removeEventListener("touchstart", mark);
+      el.removeEventListener("pointerdown", mark);
+      el.removeEventListener("keydown", keyMark);
     };
   }, []);
 
@@ -1355,6 +1394,9 @@ export default function MessageList({
     if (hits.length) {
       const cur = ((findCur ?? 0) % hits.length + hits.length) % hits.length;
       const active = hits[cur];
+      // find navigates the reader on purpose — never let a tail snap drag
+      // them back while they inspect a hit
+      stick.current = false;
       active?.scrollIntoView({ block: "center", behavior: "smooth" });
     }
   }, [findOpen, findQuery, findCase, findCur, msgs, onFindHits]);
