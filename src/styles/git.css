@@ -124,6 +124,75 @@ body.gp-resizing * {
   box-shadow: 0 0 10px var(--accent-glow);
 }
 
+/* multi-workspace tabs: one tab per repo, horizontal scroll when many */
+.gp-multi {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.gp-tabs {
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  padding: 0 0 6px;
+  scrollbar-width: thin;
+}
+.gp-tab {
+  flex: 0 1 auto;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  max-width: 140px;
+  padding: 5px 8px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: transparent;
+  cursor: pointer;
+  font-size: 11px;
+  color: var(--text-faint);
+  white-space: nowrap;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.gp-tab:hover {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) calc(0.28 * 100%), transparent);
+}
+.gp-tab.active {
+  color: var(--accent-bright);
+  background: color-mix(in srgb, var(--accent) calc(0.09 * 100%), transparent);
+  border-color: color-mix(in srgb, var(--accent) calc(0.3 * 100%), transparent);
+}
+.gp-tab i {
+  font-size: 10px;
+  flex-shrink: 0;
+  opacity: 0.9;
+}
+.gp-tab-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.gp-tab-ab {
+  display: flex;
+  gap: 4px;
+  font-size: 10px;
+  flex-shrink: 0;
+}
+.gp-tab-ab em {
+  font-style: normal;
+  color: var(--accent);
+}
+.gp-tab-ab em.down {
+  color: var(--danger);
+}
+.gp-hidden-note {
+  padding: 4px 2px 0;
+  font-size: 10px;
+  color: var(--text-faint);
+  opacity: 0.85;
+}
+
 /* expanded body — height is controlled inline (draggable), overflow scrolls */
 .gp-body {
   display: flex;

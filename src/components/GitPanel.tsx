@@ -3,6 +3,9 @@ import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getDirectory, opencodeFor, tempSession, dropSession } from "../api";
+import { getAllWorkspaces } from "../lib/workspace";
+import { isRemoteDir, remoteLabel } from "../lib/remotes";
+import { normWorkspace } from "../lib/platform";
 import { isModelOnServer } from "../hooks/useProviders";
 import { splitModel } from "../lib/models";
 import { extLang } from "../lib/syntax";
@@ -17,8 +20,29 @@ import { useTranslation } from "../lib/i18n";
 import "../styles/git.css";
 
 const GH_KEY = () => windowKey("oc.git.h");
+const SELECTED_KEY = () => windowKey("oc.git.selected");
 const GH_MIN = 120;
 const GH_DEFAULT = 220;
+// per-repo commit drafts — survives tab-switch remounts (wrapper keys the
+// body by dir for full state isolation; drafts are restored on re-mount)
+const msgDrafts = new Map<string, string>();
+// short tab label — mirrors Sidebar baseName (kept local: Sidebar imports
+// this panel, so importing from there would cycle)
+function wsBaseName(p: string): string {
+  if (!p) return "Server cwd";
+  if (p.startsWith("ssh://")) {
+    const rest = p.slice("ssh://".length);
+    const i = rest.indexOf("/");
+    const auth = i < 0 ? rest : rest.slice(0, i);
+    const rp = i < 0 ? "" : rest.slice(i).replace(/\/+$/, "");
+    const leaf = rp.slice(rp.lastIndexOf("/") + 1) || "/";
+    const host = auth.includes("@") ? auth.slice(auth.lastIndexOf("@") + 1) : auth;
+    return `${host}:${leaf}`;
+  }
+  const t = p.replace(/[\/\\]+$/, "");
+  const idx = Math.max(t.lastIndexOf("\\"), t.lastIndexOf("/"));
+  return idx >= 0 ? t.slice(idx + 1) : t;
+}
 const PRIMARY_KEY = () => windowKey("oc.git.primary");
 const AMEND_KEY = () => windowKey("oc.git.amend");
 const OPEN_KEY = () => windowKey("oc.git.open");
@@ -154,10 +178,10 @@ const xcls = (l: string) =>
             ? "ren"
             : "oth";
 
-function GitPanelInner() {
+function GitWorkspacePanel({ dir }: { dir: string }) {
   const [st, setSt] = useState<GitStatus>(CLEAN);
   const [open, setOpen] = useState(() => localStorage.getItem(OPEN_KEY()) === "1");
-  const [msg, setMsg] = useState("");
+  const [msg, setMsg] = useState(() => msgDrafts.get(dir) ?? "");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [confirmPath, setConfirmPath] = useState("");
@@ -169,7 +193,11 @@ function GitPanelInner() {
   const genSidRef = useRef<string | null>(null);
   const [genHover, setGenHover] = useState(false);
   const { t } = useTranslation();
-  const curDir = () => getDirectory();
+  const curDir = () => dir;
+  // preserve the draft across tab-switch remounts (keyed by dir in wrapper)
+  useEffect(() => {
+    msgDrafts.set(dir, msg);
+  }, [dir, msg]);
   const watchRootRef = useRef("");
   const refreshTimer = useRef<number | null>(null);
   const refreshingRef = useRef(false);
@@ -272,7 +300,7 @@ function GitPanelInner() {
       queuedRef.current = false;
       void refresh();
     }
-  }, []);
+  }, [dir]);
 
   // trailing debounce for event-driven refreshes (file saves, watcher push,
   // workspace/storage noise) — own ops and focus still refresh immediately.
@@ -1200,10 +1228,182 @@ class GitBoundary extends Component<{ children: ReactNode }, { error: unknown }>
   }
 }
 
+// Multi-workspace wrapper: one tab per repo, full actions per tab.
+// Badge statuses are polled lightly here (5s); the active tab's body keeps
+// its own full refresh/watcher cycle. Single-repo users see zero UI change
+// (no strip, same panel as before).
+function GitPanelMulti() {
+  const { t } = useTranslation();
+  const [dirs, setDirs] = useState<string[]>(() => {
+    try {
+      return getAllWorkspaces();
+    } catch {
+      return [getDirectory()];
+    }
+  });
+  const [badges, setBadges] = useState<Record<string, GitStatus>>({});
+  const [selected, setSelected] = useState<string>(() => {
+    try {
+      return localStorage.getItem(SELECTED_KEY()) ?? "";
+    } catch {
+      return "";
+    }
+  });
+  const badgesBusy = useRef(false);
+
+  const refreshBadges = useCallback(async () => {
+    if (badgesBusy.current) return;
+    badgesBusy.current = true;
+    try {
+      const list = getAllWorkspaces().filter((d) => (d ?? "").trim() !== "");
+      if (!list.length) {
+        setBadges({});
+        return;
+      }
+      const results = await Promise.allSettled(
+        list.map((d) => invoke<GitStatus>("git_status", { dir: d })),
+      );
+      setBadges((prev) => {
+        const next: Record<string, GitStatus> = {};
+        list.forEach((d, i) => {
+          const r = results[i];
+          if (r.status === "fulfilled") {
+            next[d] = r.value;
+            if (r.value.repo && r.value.root) invoke("git_watch", { dir: d }).catch(() => {});
+          } else if (prev[d]) {
+            // ssh blip / slow host — keep the stale badge, don't flash tabs
+            next[d] = prev[d];
+          }
+        });
+        return next;
+      });
+    } finally {
+      badgesBusy.current = false;
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshBadges();
+    const sync = () => {
+      try {
+        setDirs(getAllWorkspaces());
+      } catch {}
+      void refreshBadges();
+    };
+    window.addEventListener("oc:workspaces-changed", sync);
+    window.addEventListener("oc:last-workspace-changed", sync);
+    window.addEventListener("focus", sync);
+    const id = window.setInterval(refreshBadges, 5000);
+    let tauriUnlisten: (() => void) | undefined;
+    // watcher push carries the changed repo root — just re-poll badges
+    // (cheap, debounced by the busy flag above)
+    listen<string>("git://changed", () => void refreshBadges())
+      .then((off) => {
+        tauriUnlisten = off;
+      })
+      .catch(() => {});
+    return () => {
+      window.removeEventListener("oc:workspaces-changed", sync);
+      window.removeEventListener("oc:last-workspace-changed", sync);
+      window.removeEventListener("focus", sync);
+      window.clearInterval(id);
+      tauriUnlisten?.();
+    };
+  }, [refreshBadges]);
+
+  const nonEmpty = dirs.filter((d) => (d ?? "").trim() !== "");
+  // no workspace open — legacy single view on the server cwd
+  if (!nonEmpty.length) return <GitWorkspacePanel dir={getDirectory()} />;
+
+  const knownNonRepo = nonEmpty.filter((d) => badges[d] && !badges[d].repo);
+  const hiddenCount = knownNonRepo.length;
+  const tabs = nonEmpty.filter((d) => !(badges[d] && !badges[d].repo));
+  // every workspace is a non-repo — keep the legacy strip + hidden note
+  if (!tabs.length) {
+    return (
+      <div className="gp-multi">
+        <GitWorkspacePanel dir={nonEmpty[0]} />
+        {hiddenCount > 1 && (
+          <div className="gp-hidden-note mono">
+            {t("git.tabs.hidden", { count: hiddenCount - 1 })}
+          </div>
+        )}
+      </div>
+    );
+  }
+  // single repo — identical UI to before, no strip
+  if (tabs.length === 1) {
+    return (
+      <div className="gp-multi">
+        <GitWorkspacePanel key={tabs[0]} dir={tabs[0]} />
+        {hiddenCount > 0 && (
+          <div className="gp-hidden-note mono">
+            {t("git.tabs.hidden", { count: hiddenCount })}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  const cur = getDirectory();
+  const active = tabs.some((d) => normWorkspace(d) === normWorkspace(selected))
+    ? tabs.find((d) => normWorkspace(d) === normWorkspace(selected))!
+    : tabs.some((d) => normWorkspace(d) === normWorkspace(cur))
+      ? tabs.find((d) => normWorkspace(d) === normWorkspace(cur))!
+      : tabs[0];
+  const pick = (d: string) => {
+    playSound("click");
+    setSelected(d);
+    try {
+      localStorage.setItem(SELECTED_KEY(), d);
+    } catch {}
+  };
+
+  return (
+    <div className="gp-multi">
+      <div className="gp-tabs" role="tablist" aria-label="Repositories">
+        {tabs.map((d) => {
+          const b = badges[d];
+          const n = b?.files.length ?? 0;
+          const conf = b ? b.files.filter((f) => f.conflict ?? (f.x === "U" || f.y === "U")).length : 0;
+          const isActive = normWorkspace(d) === normWorkspace(active);
+          return (
+            <button
+              key={d}
+              role="tab"
+              aria-selected={isActive}
+              className={`gp-tab mono${isActive ? " active" : ""}`}
+              data-tip={isRemoteDir(d) ? remoteLabel(d) : d}
+              onClick={() => pick(d)}
+            >
+              <i className={`fa-solid ${isRemoteDir(d) ? "fa-server" : "fa-folder"}`} />
+              <span className="gp-tab-name">{wsBaseName(d)}</span>
+              {!!conf && <span className="gp-badge gp-badge-conf">{conf}!</span>}
+              {!!n && !conf && <span className="gp-badge">{n}</span>}
+              {!!b && (b.ahead > 0 || b.behind > 0) && (
+                <span className="gp-tab-ab">
+                  {b.ahead > 0 && <em>↑{b.ahead}</em>}
+                  {b.behind > 0 && <em className="down">↓{b.behind}</em>}
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+      <GitWorkspacePanel key={active} dir={active} />
+      {hiddenCount > 0 && (
+        <div className="gp-hidden-note mono">
+          {t("git.tabs.hidden", { count: hiddenCount })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function GitPanel() {
   return (
     <GitBoundary>
-      <GitPanelInner />
+      <GitPanelMulti />
     </GitBoundary>
   );
 }
