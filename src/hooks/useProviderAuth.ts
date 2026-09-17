@@ -12,10 +12,70 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getDirectory, opencodeFor, serverFetchFor, withDeadline } from "../api";
 
-export type ProviderAuthMethod = { type: "oauth" | "api"; label: string };
-export type ProviderAuthItem = { id: string; label: string; methods: ProviderAuthMethod[]; connected?: boolean };
+export type AuthPromptWhen = { key: string; op: "eq" | "neq"; value: string };
+export type AuthPrompt =
+  | { type: "text"; key: string; message: string; placeholder?: string; when?: AuthPromptWhen }
+  | {
+      type: "select";
+      key: string;
+      message: string;
+      options: { label: string; value: string; hint?: string }[];
+      when?: AuthPromptWhen;
+    };
+export type ProviderAuthMethod = { type: "oauth" | "api"; label: string; prompts?: AuthPrompt[] };
+export type ProviderAuthItem = {
+  id: string;
+  label: string;
+  methods: ProviderAuthMethod[];
+  connected?: boolean;
+  popular?: boolean;
+  note?: string;
+};
 export type OAuthStart = { url: string; method: "auto" | "code"; instructions: string };
 
+// TUI parity (dialog-provider.tsx): popular ids sort first in this order,
+// everything else alphabetically by name with id tiebreak.
+const PROVIDER_PRIORITY: Record<string, number> = {
+  opencode: 0,
+  "opencode-go": 1,
+  openai: 2,
+  "github-copilot": 3,
+  anthropic: 4,
+  google: 5,
+};
+const PROVIDER_NOTES: Record<string, string> = {
+  opencode: "(Recommended)",
+  anthropic: "(API key)",
+  openai: "(ChatGPT Plus/Pro or API key)",
+  "opencode-go": "Low cost subscription for everyone",
+};
+
+// TUI PromptsMethod `when` semantics: a conditional prompt is skipped while
+// its referenced key is still unanswered.
+export function visiblePrompts(
+  prompts: AuthPrompt[] | undefined,
+  inputs: Record<string, string>,
+): AuthPrompt[] {
+  if (!prompts?.length) return [];
+  return prompts.filter((p) => {
+    const w = p.when;
+    if (!w) return true;
+    const v = inputs[w.key];
+    if (v === undefined) return false;
+    return w.op === "eq" ? v === w.value : v !== w.value;
+  });
+}
+
+function sortProviders<T extends { id: string; label: string }>(items: T[]): T[] {
+  const rank = (id: string) => PROVIDER_PRIORITY[id] ?? 99;
+  items.sort(
+    (a, b) =>
+      rank(a.id) - rank(b.id) ||
+      a.label.toLowerCase().localeCompare(b.label.toLowerCase()) ||
+      (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+  );
+  return items;
+}
 function apiErr(r: unknown, fallback: string): string {
   const e = (r as any)?.error;
   if (!e) return "";
@@ -76,13 +136,22 @@ export function useProviderAuth() {
             ? map[p.id]
             : [{ type: "api", label: "API key" }],
         connected: connected.has(p.id),
+        popular: p.id in PROVIDER_PRIORITY,
+        note: PROVIDER_NOTES[p.id],
       }));
       // auth-only ids (custom/plugin providers not in the catalog) still show
       for (const [id, methods] of Object.entries(map)) {
         if (seen.has(id) || !Array.isArray(methods) || methods.length === 0) continue;
-        out.push({ id, label: id, methods, connected: connected.has(id) });
+        out.push({
+          id,
+          label: id,
+          methods,
+          connected: connected.has(id),
+          popular: id in PROVIDER_PRIORITY,
+          note: PROVIDER_NOTES[id],
+        });
       }
-      out.sort((a, b) => a.label.localeCompare(b.label));
+      sortProviders(out);
       if (alive.current) setItems(out);
     } catch (e) {
       if (alive.current) {
@@ -100,14 +169,23 @@ export function useProviderAuth() {
 
   // API-key save. Key is trimmed, never stored or logged — cleared by the caller.
   // _method kept for symmetry with the OAuth calls (auth.set takes no method).
-  const saveKey = useCallback(async (id: string, _method: number, key: string) => {
+  // inputs carries the method's extra prompts (e.g. Azure resourceName) as
+  // `metadata`, matching `opencode auth login` (providers.ts).
+  const saveKey = useCallback(async (id: string, _method: number, key: string, inputs?: Record<string, string>) => {
     const k = key.trim();
     if (!k) throw new Error("Paste an API key first.");
     const client = await getClient(getDirectory());
     setBusy(id);
     try {
       const r = await withDeadline(
-        client.auth.set({ path: { id }, body: { type: "api", key: k } }),
+        client.auth.set({
+          path: { id },
+          body: {
+            type: "api",
+            key: k,
+            ...(inputs && Object.keys(inputs).length ? { metadata: inputs } : {}),
+          },
+        }),
         15_000,
         "provider auth",
       );
@@ -119,13 +197,17 @@ export function useProviderAuth() {
     }
   }, []);
 
-  // OAuth start — opens the browser like the MCP sign-in does.
-  const beginOAuth = useCallback(async (id: string, method: number): Promise<OAuthStart> => {
+  // OAuth start — prompts (e.g. GitLab instance URL) go as `inputs`, like the
+  // TUI's PromptsMethod → authorize. Opens the browser like the MCP sign-in.
+  const beginOAuth = useCallback(async (id: string, method: number, inputs?: Record<string, string>): Promise<OAuthStart> => {
     const client = await getClient(getDirectory());
     setBusy(id);
     try {
       const r = await withDeadline(
-        client.provider.oauth.authorize({ path: { id }, body: { method } }),
+        client.provider.oauth.authorize({
+          path: { id },
+          body: { method, ...(inputs && Object.keys(inputs).length ? { inputs } : {}) },
+        }),
         15_000,
         "provider auth",
       );

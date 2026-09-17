@@ -1,12 +1,14 @@
 import { useMemo, useState } from "react";
 import Dialog from "./Dialog";
-import { useProviderAuth } from "../hooks/useProviderAuth";
+import { useProviderAuth, visiblePrompts } from "../hooks/useProviderAuth";
 import { playSound } from "../lib/sounds";
 import "../styles/plugins.css";
 
 // /connect — provider auth for the current workspace's server.
-// Step 1: filter + pick provider. Step 2: pick method. Step 3: paste API key
-// (PUT /auth/{id}) or browser OAuth (authorize → code → callback).
+// Step 1: filter + pick provider (popular first, TUI order). Step 2: pick
+// method + answer its extra prompts (e.g. Azure resource name). Step 3: paste
+// API key (PUT /auth/{id} + metadata) or browser OAuth (authorize+inputs →
+// code → callback).
 export default function ConnectDialog({
   onClose,
   onConnected,
@@ -21,6 +23,8 @@ export default function ConnectDialog({
   const [methodIdx, setMethodIdx] = useState(0);
   const [key, setKey] = useState("");
   const [code, setCode] = useState("");
+  // extra per-method prompt answers (keyed by prompt key), reset on pick/method change
+  const [inputs, setInputs] = useState<Record<string, string>>({});
   const [oauth, setOauth] = useState<{ url: string; method: string; instructions: string } | null>(null);
   const [err, setErr] = useState("");
   const [notice, setNotice] = useState("");
@@ -40,6 +44,19 @@ export default function ConnectDialog({
   const method = sel?.methods[Math.min(methodIdx, (sel?.methods.length ?? 1) - 1)];
   const isOAuth = method?.type === "oauth";
   const working = busy !== null;
+  // visible extra prompts for the picked method (`when` conditionals follow
+  // the answers so far, TUI PromptsMethod semantics)
+  const prompts = useMemo(() => visiblePrompts(method?.prompts, inputs), [method, inputs]);
+  const promptsReady = prompts.every((p) => (inputs[p.key] ?? "").trim() !== "");
+  // only visible answers are sent — stale values from hidden conditionals stay out
+  const activeInputs = (): Record<string, string> | undefined => {
+    const out: Record<string, string> = {};
+    for (const p of prompts) {
+      const v = p.type === "select" ? (inputs[p.key] ?? "") : (inputs[p.key] ?? "").trim();
+      if (v) out[p.key] = v;
+    }
+    return Object.keys(out).length ? out : undefined;
+  };
 
   const pick = (id: string) => {
     playSound("click");
@@ -47,20 +64,28 @@ export default function ConnectDialog({
     setMethodIdx(0);
     setKey("");
     setCode("");
+    setInputs({});
     setOauth(null);
     setErr("");
     setNotice("");
     setDone("");
   };
+  const pickMethod = (i: number) => {
+    playSound("click");
+    setMethodIdx(i);
+    setInputs({});
+    setOauth(null);
+    setErr("");
+  };
 
   const fail = (e: unknown) => setErr(e instanceof Error ? e.message : String(e));
 
   const doSaveKey = async () => {
-    if (!sel || working || !key.trim()) return;
+    if (!sel || working || !key.trim() || !promptsReady) return;
     setErr("");
     setNotice("");
     try {
-      await saveKey(sel.id, Math.min(methodIdx, sel.methods.length - 1), key);
+      await saveKey(sel.id, Math.min(methodIdx, sel.methods.length - 1), key, activeInputs());
       setKey(""); // never keep the secret in state longer than the call
       setDone(sel.label);
       setNotice(`Connected ${sel.label} — models refreshing. Pick one with /models.`);
@@ -72,11 +97,11 @@ export default function ConnectDialog({
   };
 
   const doOAuth = async () => {
-    if (!sel || working) return;
+    if (!sel || working || !promptsReady) return;
     setErr("");
     setNotice("");
     try {
-      const r = await beginOAuth(sel.id, Math.min(methodIdx, sel.methods.length - 1));
+      const r = await beginOAuth(sel.id, Math.min(methodIdx, sel.methods.length - 1), activeInputs());
       setOauth(r);
       setCode("");
     } catch (e) {
@@ -216,8 +241,18 @@ export default function ConnectDialog({
                     style={{ color: p.id === selId ? "var(--accent)" : "var(--text-faint)", fontSize: 12 }}
                   />
                   <div className="vc-desc" style={{ minWidth: 0 }}>
-                    <div className="vc-name">{p.label}</div>
-                    <div style={{ color: "var(--text-faint)", fontSize: 10 }} className="mono">{p.id}</div>
+                    <div className="vc-name">
+                      {p.popular && (
+                        <i
+                          className="fa-solid fa-star"
+                          style={{ color: "var(--accent)", fontSize: 10, marginRight: 4 }}
+                        />
+                      )}
+                      {p.label}
+                    </div>
+                    <div style={{ color: "var(--text-faint)", fontSize: 10 }} className="mono">
+                      {p.id}{p.note ? ` ${p.note}` : ""}
+                    </div>
                   </div>
                   <span style={{ color: "var(--text-faint)", fontSize: 10 }}>
                     {p.connected ? "connected · " : ""}
@@ -251,11 +286,7 @@ export default function ConnectDialog({
                       type="button"
                       className={`reset-btn${i === Math.min(methodIdx, sel.methods.length - 1) ? " on" : ""}`}
                       data-tip={m.type === "oauth" ? "Browser sign-in" : "Paste an API key"}
-                      onClick={() => {
-                        setMethodIdx(i);
-                        setOauth(null);
-                        setErr("");
-                      }}
+                      onClick={() => pickMethod(i)}
                       style={
                         i === Math.min(methodIdx, sel.methods.length - 1)
                           ? { color: "var(--accent)", borderColor: "var(--accent)" }
@@ -266,6 +297,51 @@ export default function ConnectDialog({
                       {m.label || (m.type === "oauth" ? "OAuth" : "API key")}
                     </button>
                   ))}
+                </div>
+              )}
+              {/* extra per-method prompts (TUI PromptsMethod) — answered before
+                  the key is saved or the browser flow starts */}
+              {(!isOAuth || !oauth) && prompts.length > 0 && (
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  {prompts.map((p) =>
+                    p.type === "select" ? (
+                      <div key={p.key} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                        <span style={{ fontSize: 11, color: "var(--text-faint)" }}>{p.message}</span>
+                        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                          {p.options.map((o) => (
+                            <button
+                              key={o.value}
+                              type="button"
+                              className={`reset-btn${inputs[p.key] === o.value ? " on" : ""}`}
+                              data-tip={o.hint || o.label}
+                              onClick={() => {
+                                playSound("click");
+                                setInputs((prev) => ({ ...prev, [p.key]: o.value }));
+                              }}
+                              style={
+                                inputs[p.key] === o.value
+                                  ? { color: "var(--accent)", borderColor: "var(--accent)" }
+                                  : undefined
+                              }
+                            >
+                              {o.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    ) : (
+                      <label key={p.key} className="model-search-wrap" style={{ cursor: "text" }}>
+                        <i className="fa-solid fa-pen" />
+                        <input
+                          className="model-search"
+                          placeholder={p.placeholder || p.message}
+                          value={inputs[p.key] ?? ""}
+                          onChange={(e) => setInputs((prev) => ({ ...prev, [p.key]: e.target.value }))}
+                          data-tip={p.message}
+                        />
+                      </label>
+                    ),
+                  )}
                 </div>
               )}
               {!isOAuth ? (
@@ -286,9 +362,11 @@ export default function ConnectDialog({
                   <button
                     type="button"
                     className="reset-btn"
-                    disabled={!key.trim() || working}
+                    disabled={!key.trim() || working || !promptsReady}
                     onClick={() => void doSaveKey()}
-                    data-tip={busy === sel.id ? "Saving…" : "Save key"}
+                    data-tip={
+                      !promptsReady ? "Answer the fields above first" : busy === sel.id ? "Saving…" : "Save key"
+                    }
                   >
                     <i className={`fa-solid ${busy === sel.id ? "fa-spinner fa-spin" : "fa-arrow-right"}`} />
                   </button>
@@ -298,9 +376,13 @@ export default function ConnectDialog({
                   <button
                     type="button"
                     className="reset-btn"
-                    disabled={working}
+                    disabled={working || !promptsReady}
                     onClick={() => void doOAuth()}
-                    data-tip={`Sign in to ${sel.label} in the browser`}
+                    data-tip={
+                      !promptsReady
+                        ? "Answer the fields above first"
+                        : `Sign in to ${sel.label} in the browser`
+                    }
                   >
                     <i className={`fa-solid ${busy === sel.id ? "fa-spinner fa-spin" : "fa-globe"}`} />
                     {busy === sel.id ? "Working…" : `Sign in with ${sel.label}`}
