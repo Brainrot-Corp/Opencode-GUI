@@ -220,6 +220,7 @@ export default function ConnectDialog({
                     <div style={{ color: "var(--text-faint)", fontSize: 10 }} className="mono">{p.id}</div>
                   </div>
                   <span style={{ color: "var(--text-faint)", fontSize: 10 }}>
+                    {p.connected ? "connected · " : ""}
                     {p.methods.some((m) => m.type === "oauth") && p.methods.some((m) => m.type === "api")
                       ? "key · oauth"
                       : p.methods[0]?.type === "oauth"

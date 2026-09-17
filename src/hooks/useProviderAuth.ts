@@ -1,6 +1,8 @@
 // Provider auth (/connect) — current-workspace server only.
-// Wraps the three server endpoints the TUI uses:
-//   GET  /provider/auth                  -> { [id]: { type: "oauth"|"api", label }[] }
+// Lists the full catalog like the TUI (GET /provider `all`) with methods
+// from GET /provider/auth and a generic API-key fallback:
+//   GET  /provider                     -> { all: [{ id, name }], connected }
+//   GET  /provider/auth                -> { [id]: { type: "oauth"|"api", label }[] }
 //   PUT  /auth/{id} { type:"api", key }  -> boolean
 //   POST /provider/{id}/oauth/authorize  -> { url, method: "auto"|"code", instructions }
 //   POST /provider/{id}/oauth/callback   -> boolean
@@ -11,7 +13,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { getDirectory, opencodeFor, serverFetchFor, withDeadline } from "../api";
 
 export type ProviderAuthMethod = { type: "oauth" | "api"; label: string };
-export type ProviderAuthItem = { id: string; label: string; methods: ProviderAuthMethod[] };
+export type ProviderAuthItem = { id: string; label: string; methods: ProviderAuthMethod[]; connected?: boolean };
 export type OAuthStart = { url: string; method: "auto" | "code"; instructions: string };
 
 function apiErr(r: unknown, fallback: string): string {
@@ -52,21 +54,35 @@ export function useProviderAuth() {
     }
     try {
       const client = await getClient(d);
-      const [authR, cfgR] = await Promise.all([
+      // TUI /connect lists the full catalog (GET /provider `all`, ~200
+      // entries) and falls back to a generic API-key method when
+      // GET /provider/auth has no entry for that id. Auth-only listing
+      // showed ~10 providers and hid anthropic/openai/google/etc.
+      const [authR, listR] = await Promise.all([
         withDeadline(client.provider.auth(), 15_000, "provider auth"),
-        withDeadline(client.config.providers(), 15_000, "provider auth").catch(() => null),
+        withDeadline(client.provider.list(), 15_000, "provider auth").catch(() => null),
       ]);
       const authErr = apiErr(authR, "provider auth rejected");
       if (authErr) throw new Error(authErr);
       const map = ((authR as any)?.data ?? {}) as Record<string, ProviderAuthMethod[]>;
-      const labels = new Map<string, string>();
-      for (const p of (((cfgR as any)?.data?.providers ?? []) as any[])) {
-        if (p?.id) labels.set(p.id, p.name || p.id);
+      const all = (((listR as any)?.data?.all ?? []) as any[]).filter((p) => p?.id);
+      const connected = new Set<string>(((listR as any)?.data?.connected ?? []) as string[]);
+      const seen = new Set(all.map((p) => p.id as string));
+      const out: ProviderAuthItem[] = all.map((p) => ({
+        id: p.id,
+        label: p.name || p.id,
+        methods:
+          Array.isArray(map[p.id]) && map[p.id].length > 0
+            ? map[p.id]
+            : [{ type: "api", label: "API key" }],
+        connected: connected.has(p.id),
+      }));
+      // auth-only ids (custom/plugin providers not in the catalog) still show
+      for (const [id, methods] of Object.entries(map)) {
+        if (seen.has(id) || !Array.isArray(methods) || methods.length === 0) continue;
+        out.push({ id, label: id, methods, connected: connected.has(id) });
       }
-      const out: ProviderAuthItem[] = Object.entries(map)
-        .filter(([, m]) => Array.isArray(m) && m.length > 0)
-        .map(([id, methods]) => ({ id, label: labels.get(id) || id, methods }))
-        .sort((a, b) => a.label.localeCompare(b.label));
+      out.sort((a, b) => a.label.localeCompare(b.label));
       if (alive.current) setItems(out);
     } catch (e) {
       if (alive.current) {
