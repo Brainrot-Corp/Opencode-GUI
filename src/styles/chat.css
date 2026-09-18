@@ -607,6 +607,14 @@
 }
 .code-wrap {
   position: relative;
+  width: 100%;
+  min-width: 0;
+}
+/* fenced blocks have zero intrinsic width once monaco mounts (absolutely
+   positioned lines), so a shrink-to-fit bubble collapses to min-content and
+   the prompt renders as a tiny strip — stretch code-bearing bubbles wide */
+.msg:has(.code-wrap) {
+  width: 100%;
 }
 .code-wrap .copy-btn {
   position: absolute;
@@ -626,6 +634,8 @@
   border-radius: 0;
   margin: 0.5em 0;
   overflow: hidden;
+  width: 100%;
+  min-width: 0;
 }
 /* monaco-backed tool input/output — same material as .tool-input/.tool-out */
 .tool-mono {
