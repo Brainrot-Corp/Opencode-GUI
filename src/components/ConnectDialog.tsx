@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Dialog from "./Dialog";
 import { useProviderAuth, visiblePrompts } from "../hooks/useProviderAuth";
 import { playSound } from "../lib/sounds";
@@ -30,6 +30,10 @@ export default function ConnectDialog({
   const [notice, setNotice] = useState("");
   const [copied, setCopied] = useState(false);
   const [done, setDone] = useState("");
+  const detailRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (selId) detailRef.current?.scrollIntoView({ block: "nearest" });
+  }, [selId]);
 
   const needle = q.trim().toLowerCase();
   const shown = useMemo(
@@ -60,8 +64,13 @@ export default function ConnectDialog({
 
   const pick = (id: string) => {
     playSound("click");
+    // default to the API-key method when the provider offers both key and
+    // browser sign-in (e.g. OpenAI lists OAuth first) — otherwise clicking
+    // a provider lands on OAuth and never asks for the key.
+    const item = items.find((p) => p.id === id);
+    const apiIdx = item?.methods.findIndex((m) => m.type === "api") ?? -1;
     setSelId(id);
-    setMethodIdx(0);
+    setMethodIdx(apiIdx >= 0 ? apiIdx : 0);
     setKey("");
     setCode("");
     setInputs({});
@@ -220,7 +229,7 @@ export default function ConnectDialog({
               <span>{dir || "local server"}</span>
               <span className="vc-count">{shown.length}</span>
             </div>
-            <div className="vc-list">
+            <div className="vc-list" style={{ maxHeight: 300, overflowY: "auto" }}>
               {shown.map((p) => (
                 <button
                   key={p.id}
@@ -270,7 +279,7 @@ export default function ConnectDialog({
         </div>
       )}
       {sel && (
-        <div className="vc-frame" style={{ marginTop: 6 }}>
+        <div className="vc-frame" ref={detailRef} style={{ marginTop: 6 }}>
           <div className="vc-section">
             <div className="vc-section-head" style={{ cursor: "default" }}>
               <i className="fa-solid fa-key" />
