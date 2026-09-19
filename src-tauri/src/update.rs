@@ -195,7 +195,8 @@ pub fn update_install(app: tauri::AppHandle) -> Result<(), String> {
 }
 
 // rename-then-move with a retry loop: the sidecar's image file stays locked
-// until the killed server process fully exits, which can lag the kill
+// until every process running it exits — the killed server child, but also
+// other windows' servers and pty shells running the opencode CLI
 // ponytail: 5s of retries, per-file waits if a hung child ever needs more
 fn move_file(src: &PathBuf, dst: &PathBuf) {
     for _ in 0..50 {
@@ -209,12 +210,20 @@ fn move_file(src: &PathBuf, dst: &PathBuf) {
         }
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
+    // silent give-up used to leave the OLD exe in place unnoticed — the
+    // relaunched app then ran the old version. Surface it.
+    trace(&format!(
+        "move_file gave up: {} -> {}",
+        src.display(),
+        dst.display()
+    ));
 }
 
 pub fn cleanup_old() {
     if let Ok(cur) = std::env::current_exe() {
         if let Some(dir) = cur.parent() {
             let _ = std::fs::remove_file(dir.join("opencode-gui.old.exe"));
+            let _ = std::fs::remove_file(dir.join("opencode.old.exe"));
         }
     }
 }
@@ -231,6 +240,46 @@ fn trace(msg: &str) {
         writeln!(f, "[{ts}] {msg}").ok();
         Ok(())
     })();
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    // regression for the "reopened as old version" bug: replacing/copying
+    // over a RUNNING image is denied, renaming it aside is not. Spawns a
+    // copy of cmd.exe as a stand-in sidecar and replays the swap steps.
+    #[test]
+    fn swap_running_image_needs_rename_aside() {
+        use std::io::Write;
+        let dir = std::env::temp_dir().join("oc-update-selftest");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let src_cmd = r"C:\Windows\System32\cmd.exe";
+        let running = dir.join("A.exe");
+        let spare = dir.join("B.exe");
+        std::fs::copy(src_cmd, &running).unwrap();
+        std::fs::copy(src_cmd, &spare).unwrap();
+        let mut child = std::process::Command::new(&running)
+            .args(["/c", "ping", "-n", "30", "127.0.0.1"])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        // wait until the image is actually loaded (CreateProcess returns
+        // before the loader finishes mapping)
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        // old behavior: replace over the running image — must FAIL
+        assert!(std::fs::rename(&spare, &running).is_err(), "replace over a running image should be denied");
+        // fix: rename-aside while running, then move the new one in
+        let aside = dir.join("A.old.exe");
+        std::fs::rename(&running, &aside).expect("rename-aside of a running image must succeed");
+        std::fs::rename(&spare, &running).expect("move into vacated path must succeed");
+        child.kill().unwrap();
+        let _ = child.wait();
+        // cleanup marker so later runs see a fresh dir
+        let mut probe = std::fs::OpenOptions::new().append(true).open(std::env::temp_dir().join("oc-update-trace.log")).unwrap();
+        let _ = writeln!(probe, "[selftest] swap_running_image_needs_rename_aside ok");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
 
 pub fn apply_on_exit() {
@@ -258,6 +307,16 @@ pub fn apply_on_exit() {
     }
     move_file(&dir.join("opencode-gui.exe"), &exe_dir.join("opencode-gui.exe"));
     trace(&format!("move_file gui -> {} exists={}", exe_dir.join("opencode-gui.exe").display(), exe_dir.join("opencode-gui.exe").exists()));
+    // sidecar: rename the old one aside first (allowed even while it's still
+    // running — other windows' servers or a pty `opencode` can hold the image
+    // past our own child.kill()), then move the new one into the vacated
+    // path. Copying/replacing over a running image is denied, renaming is not.
+    let side_old = exe_dir.join("opencode.old.exe");
+    let _ = std::fs::remove_file(&side_old);
+    match std::fs::rename(&exe_dir.join("opencode.exe"), &side_old) {
+        Ok(_) => trace("rename sidecar -> old ok"),
+        Err(e) => trace(&format!("rename sidecar aside failed (not running?): {e}")),
+    }
     move_file(&dir.join("opencode.exe"), &exe_dir.join("opencode.exe"));
     trace(&format!("move_file sidecar -> {} exists={}", exe_dir.join("opencode.exe").display(), exe_dir.join("opencode.exe").exists()));
 

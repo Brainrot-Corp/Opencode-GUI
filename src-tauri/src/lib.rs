@@ -2419,10 +2419,9 @@ pub fn run() {
                     // the next launch or the updater's file swap doesn't collide
                     let _ = child.wait();
                 }
-                // staged update swap + relaunch — after the sidecar is dead
-                // so its image file is no longer locked
-                apply_on_exit();
-                // terminal shells die with the app
+                // terminal shells die with the app — before the update swap,
+                // a pty running the opencode CLI would hold the old sidecar
+                // image locked and silently break the file swap below
                 if let Some(state) = _app_handle.try_state::<PtyState>() {
                     pty_kill_all(&state);
                 }
@@ -2430,6 +2429,9 @@ pub fn run() {
                 if let Some(state) = _app_handle.try_state::<RemoteState>() {
                     crate::remote::kill_all(&state);
                 }
+                // staged update swap + relaunch — after the sidecar is dead
+                // so its image file is no longer locked
+                apply_on_exit();
                 // discord ipc pipe close
                 if let Some(state) = _app_handle.try_state::<DiscordState>() {
                     state.shutdown();
