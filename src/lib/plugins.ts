@@ -6,11 +6,11 @@
 // example. Plugins are trusted local code — they run with app privileges.
 import { createElement, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { stripComments } from "./themes";
-import { setPluginLexicon } from "./voiceLexicon";
-import { playSound as hostPlaySound } from "./sounds";
-import { matchesEvent as hostMatchesEvent, normalizeBinding as hostNormalizeBinding } from "./hotkeys";
-import { registerPluginTranslations, createPluginT, getLang } from "./i18n";
+import { stripComments } from "./themes.ts";
+import { setPluginLexicon } from "./voiceLexicon.ts";
+import { playSound as hostPlaySound } from "./sounds.ts";
+import { matchesEvent as hostMatchesEvent, normalizeBinding as hostNormalizeBinding } from "./hotkeys.ts";
+import { registerPluginTranslations, createPluginT, getLang } from "./i18n.ts";
 
 export type PluginApi = {
   id: string;

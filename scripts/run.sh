@@ -331,6 +331,7 @@ case "${CMD}" in
         done
         ;;
     check)
+        npm run test
         npm run build
         (cd src-tauri && cargo check)
         ;;

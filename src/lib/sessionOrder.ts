@@ -2,7 +2,7 @@
 // Pins stay out: pinned rows are never draggable and always render first
 // (sorted by created desc via useOpencode). Only unpinned ids are stored here.
 // ponytail: localStorage map, no server API; new ids render on top until dragged.
-import { normWorkspace } from "./platform";
+import { normWorkspace } from "./platform.ts";
 
 const KEY = "oc.sessionOrder";
 

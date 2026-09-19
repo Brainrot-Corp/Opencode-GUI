@@ -2,7 +2,7 @@
 // Used by FileEditor, Composer (subset) and Notepad plugin.
 // Pure string ops + a textarea handler that preserves undo as far as
 // a controlled React textarea allows (setState + rAF caret restore).
-import { matchesEvent } from "./hotkeys";
+import { matchesEvent } from "./hotkeys.ts";
 
 export type CommentStyle =
   | { kind: "line"; prefix: string }

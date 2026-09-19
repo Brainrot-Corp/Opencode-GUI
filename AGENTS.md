@@ -36,7 +36,8 @@ run.sh dev                             # same on macOS/Linux (checks any opencod
 run.sh build [native|win11|win10|both] [bundles]  # native = current OS; win11/win10 only on Windows
 run.ps1 build [win11|win10|both] [msi nsis]       # MSI → src-tauri/target/release/bundle
 run.ps1 portable [win11|win10|both]    # zip (exe + sidecar) → bundle/portable (Windows only; mac/Linux use build)
-run.sh check | run.ps1 check           # tsc + vite build + cargo check
+run.sh check | run.ps1 check           # node unit tests + tsc + vite build + cargo check
+npm run test                           # frontend unit tests only (scripts/run-tests.mjs, framework-free self-checks in src/lib/*.test.ts)
 run.sh clean | run.ps1 clean           # cargo clean + remove dist
 ```
 

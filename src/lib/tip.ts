@@ -1,4 +1,4 @@
-import { formatBinding } from "./hotkeys";
+import { formatBinding } from "./hotkeys.ts";
 
 // Append a live binding to a tooltip label: "Workspace" + Ctrl+O → "Workspace (Ctrl+O)".
 // Unbound (null/undefined) → bare label so tooltips never show "(—)".

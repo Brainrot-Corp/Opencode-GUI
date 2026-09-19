@@ -126,6 +126,8 @@ switch ($Cmd) {
         }
     }
     "check" {
+        Push-Location $root; npm run test; Pop-Location
+        if ($LASTEXITCODE -ne 0) { Write-Host "!! tests failed" -ForegroundColor Red; exit 1 }
         Push-Location $root; npm run build; Pop-Location
         Push-Location (Join-Path $root "src-tauri"); cargo check; Pop-Location
     }

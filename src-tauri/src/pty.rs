@@ -351,3 +351,37 @@ pub fn pty_kill(state: State<'_, PtyState>, id: u32, gen: u64) -> Result<(), Str
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::parse_shell_args;
+
+    #[test]
+    fn shell_args_parsing() {
+        assert!(parse_shell_args(None).is_empty());
+        assert!(parse_shell_args(Some("   ".into())).is_empty());
+        assert_eq!(parse_shell_args(Some("--login -i".into())), vec!["--login", "-i"]);
+        assert_eq!(parse_shell_args(Some("-NoExit -Command cd".into())), vec!["-NoExit", "-Command", "cd"]);
+        // quoted args stay one token
+        assert_eq!(
+            parse_shell_args(Some("-Command \"Write-Host hello world\"".into())),
+            vec!["-Command", "Write-Host hello world"]
+        );
+        // single quotes
+        assert_eq!(
+            parse_shell_args(Some("--exec 'my shell name'".into())),
+            vec!["--exec", "my shell name"]
+        );
+        // mixed quote types inside tokens
+        assert_eq!(
+            parse_shell_args(Some("sh -c \"echo 'a b'\"".into())),
+            vec!["sh", "-c", "echo 'a b'"]
+        );
+        // unterminated quote consumes the rest
+        assert_eq!(parse_shell_args(Some("a \"b c".into())), vec!["a", "b c"]);
+        // extra whitespace collapsed
+        assert_eq!(parse_shell_args(Some("  a   b  ".into())), vec!["a", "b"]);
+        // tabs are separators too
+        assert_eq!(parse_shell_args(Some("a\tb".into())), vec!["a", "b"]);
+    }
+}

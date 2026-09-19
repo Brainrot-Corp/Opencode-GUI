@@ -1,4 +1,4 @@
-import { escPlain } from "./syntax";
+import { escPlain } from "./syntax.ts";
 
 export function findMatches(
   text: string,
