@@ -287,10 +287,9 @@
       if (e.target.closest("a,button,.card,.asset,.chip,.dl-card")) ring.classList.remove("is-hover");
     });
     document.addEventListener("mouseup", function (e) {
+      // no has-cursor toggle here: remove/reflow/add made the OS cursor
+      // reappear at the mouseup point until the next mousemove
       if (!e.target.closest(".prose,pre,code,input,textarea")) { var s = window.getSelection(); if (s) s.removeAllRanges(); }
-      root.classList.remove("has-cursor");
-      void root.offsetWidth;
-      root.classList.add("has-cursor");
     });
     place(dot, tx, ty); place(ring, rx, ry);
     (function loop() {
