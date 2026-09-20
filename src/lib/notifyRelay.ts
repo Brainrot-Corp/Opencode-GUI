@@ -3,7 +3,7 @@
 // module stays testable under scripts/run-tests.mjs (no window at import time).
 
 export type NotifyKind = "idle" | "permission" | "question" | "error";
-export type NotifyMsg = { kind: NotifyKind; title: string; body: string; sessionID: string };
+export type NotifyMsg = { kind: NotifyKind; title: string; body: string; sessionID: string; session?: string };
 
 export type NotifySettings = {
   relayUrl: string;
@@ -73,6 +73,26 @@ export function busyLeaving(prev: Set<string>, next: Set<string>): string[] {
 
 const askTitle = (p: { title?: string }): string => p.title || "permission";
 
+// the AI's final reply, flattened to one readable line — the body of the
+// turn-complete notification so the phone shows what the agent actually said
+export function assistantReplyText(
+  msgs: { info?: { role?: string }; parts?: { type?: string; text?: string }[] }[],
+  max = 240,
+): string {
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    const m = msgs[i];
+    if (m?.info?.role !== "assistant") continue;
+    const text = (m.parts ?? [])
+      .filter((p) => p.type === "text" && p.text?.trim())
+      .map((p) => (p.text as string).trim())
+      .join(" ");
+    if (!text) continue;
+    const one = text.replace(/\s+/g, " ").trim();
+    return one.length > max ? one.slice(0, max - 1) + "…" : one;
+  }
+  return "";
+}
+
 export function permNotifyText(ask: { id: string; sessionID: string; type: string; title: string }): NotifyMsg {
   return {
     kind: "permission",
@@ -82,12 +102,18 @@ export function permNotifyText(ask: { id: string; sessionID: string; type: strin
   };
 }
 
-export function questionNotifyText(ask: { id: string; sessionID: string; questions: { question?: string; header?: string }[] }): NotifyMsg {
+export function questionNotifyText(ask: { id: string; sessionID: string; questions: { question?: string; header?: string; options?: string[] }[] }): NotifyMsg {
   const first = ask.questions?.[0];
+  // options ride along so the banner alone can answer — no app open needed
+  const opts = (first?.options ?? []).filter(Boolean).slice(0, 4);
+  const body = [first?.question || "", opts.length ? `Options: ${opts.join(" · ")}` : ""]
+    .filter(Boolean)
+    .join(" — ")
+    .slice(0, 300);
   return {
     kind: "question",
     title: `Question: ${first?.header || "agent"}`,
-    body: first?.question || "",
+    body,
     sessionID: ask.sessionID,
   };
 }

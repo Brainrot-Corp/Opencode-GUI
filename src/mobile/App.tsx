@@ -35,6 +35,15 @@ const KIND_ICON: Record<string, string> = {
   test: "fa-flask",
 };
 
+// readable kind labels for the list rows ("idle" alone tells nothing)
+const KIND_LABEL: Record<string, string> = {
+  idle: "turn complete",
+  permission: "permission needed",
+  question: "question",
+  error: "error",
+  test: "test",
+};
+
 export default function App() {
   const [screen, setScreen] = useState<"connect" | "notifs">("notifs");
   const [prefs, setPrefs] = useState<Prefs>(loadPrefs);
@@ -107,20 +116,27 @@ export default function App() {
     if (!p.url || !p.token) void discover();
   }, [discover]);
 
-  // app reopened from background while still offline — retry the probe
+  // app reopened from background — Android froze the webview and killed the
+  // socket without a close event, and the suspended backoff timer only resumes
+  // stale. Foregrounding → dial now; missed messages arrive via relay replay.
+  const onVis = () => {
+    if (document.visibilityState !== "visible") return;
+    if (scanningRef.current) return;
+    const p = prefsRef.current;
+    if (!p.url || !p.token) {
+      if (statusRef.current !== "connected") void discover();
+      return;
+    }
+    if (statusRef.current !== "connected") connRef.current?.reconnect();
+  };
   useEffect(() => {
-    const onVis = () => {
-      if (document.visibilityState !== "visible") return;
-      if (scanningRef.current || statusRef.current === "connected") return;
-      const p = prefsRef.current;
-      if (!p.url || !p.token) void discover();
-    };
     document.addEventListener("visibilitychange", onVis);
     window.addEventListener("focus", onVis);
     return () => {
       document.removeEventListener("visibilitychange", onVis);
       window.removeEventListener("focus", onVis);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [discover]);
 
   // connected status syncs with autofind — while the LAN probe runs the
@@ -273,11 +289,15 @@ function NotifScreen({ notifs, status, scanning, onClear }: { notifs: RelayNotif
           <div className="mrow" key={`${m.id ?? "x"}-${i}`}>
             <div className="mrow-k">
               <i className={`fa-solid ${KIND_ICON[m.kind ?? ""] ?? "fa-bell"}`} />
-              {m.kind ?? "notify"}
+              {KIND_LABEL[m.kind ?? ""] ?? m.kind ?? "notify"}
             </div>
             <div className="mrow-t">{m.title ?? ""}</div>
             {m.body && <div className="mrow-b">{m.body}</div>}
-            <div className="mrow-m">#{m.id ?? "?"}{m.sessionID ? ` · ${m.sessionID}` : ""}{m.ts ? ` · ${new Date((m.ts as number) * 1000).toLocaleTimeString()}` : ""}</div>
+            <div className="mrow-m">
+              #{m.id ?? "?"}
+              {m.session || m.sessionID ? ` · ${m.session || (m.sessionID ?? "").slice(0, 8)}` : ""}
+              {m.ts ? ` · ${new Date((m.ts as number) * 1000).toLocaleTimeString()}` : ""}
+            </div>
           </div>
         ))
       )}

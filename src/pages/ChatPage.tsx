@@ -77,7 +77,7 @@ export default function ChatPage() {
   const [pluginsOpen, setPluginsOpen] = useState(false);
   const [diffOpen, setDiffOpen] = useState(false);
   // phone relay (docs/mobile-companion.md phase 1) — desktop-side bridge
-  useNotifyRelay({ busyIds: oc.busyIds, sessions: oc.sessions });
+  useNotifyRelay({ busyIds: oc.busyIds, sessions: oc.sessions, peekSession: oc.peekSession });
   // read-only subagent transcript (parent session stays active underneath)
   const [subViewer, setSubViewer] = useState<{ id: string } | { picker: true } | null>(null);
   // discord plugin reads this for {status} — file > diff > permission/question > compacting > busy > typing > working > idle

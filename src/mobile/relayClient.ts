@@ -11,6 +11,7 @@ export type RelayNotify = {
   title?: string;
   body?: string;
   sessionID?: string;
+  session?: string;
   ts?: number;
 };
 
@@ -38,6 +39,10 @@ type WsCtor = new (url: string) => MinimalWs;
 
 export type RelayConn = {
   stop: () => void;
+  // foreground wake-up: Android freezes the webview in background, the socket
+  // dies without a close event, and the backoff timer resumes stale — tear
+  // down whatever is left and dial now (missed messages arrive via replay)
+  reconnect: () => void;
 };
 
 export function connectRelay(
@@ -72,6 +77,8 @@ export function connectRelay(
 
   const connect = () => {
     if (dead) return;
+    // a healthy socket from a prior dial is still there — don't double-connect
+    if (ws && ws.readyState <= 1) return;
     h.onStatus?.(attempt === 0 ? "connecting" : "reconnecting");
     let w: MinimalWs;
     try {
@@ -123,6 +130,16 @@ export function connectRelay(
       const w = ws;
       ws = null;
       try { w?.close(); } catch {}
+    },
+    reconnect: () => {
+      if (dead) return;
+      attempt = 0;
+      if (timer) { clearTimeout(timer); timer = null; }
+      const w = ws;
+      if (w && w.readyState === 0) return; // dial already in flight
+      ws = null;
+      try { w?.close(); } catch {}
+      connect();
     },
   };
 }

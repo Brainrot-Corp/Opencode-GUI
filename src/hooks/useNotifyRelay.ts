@@ -16,6 +16,7 @@ import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { Session } from "@opencode-ai/sdk/client";
 import {
+  assistantReplyText,
   backoffMs,
   busyLeaving,
   createDedupe,
@@ -39,7 +40,15 @@ export type RelayInfo = {
   phone_token: string | null;
 };
 
-export function useNotifyRelay({ busyIds, sessions }: { busyIds: Set<string>; sessions: Session[] }) {
+export function useNotifyRelay({
+  busyIds,
+  sessions,
+  peekSession,
+}: {
+  busyIds: Set<string>;
+  sessions: Session[];
+  peekSession?: (sid: string) => { info?: { role?: string }; parts?: { type?: string; text?: string }[] }[] | undefined;
+}) {
   const [cfg, setCfg] = useState<NotifySettings | null>(readNotifySettings);
   const cfgRef = useRef(cfg);
   cfgRef.current = cfg;
@@ -157,6 +166,9 @@ export function useNotifyRelay({ busyIds, sessions }: { busyIds: Set<string>; se
         title: msg.title,
         body: msg.body,
         sessionID: msg.sessionID,
+        // human-readable session name for the phone list (banners show
+        // title/body; the list's meta line shows this instead of the raw id)
+        session: describe(msg.sessionID),
       }),
     );
   };
@@ -196,7 +208,8 @@ export function useNotifyRelay({ busyIds, sessions }: { busyIds: Set<string>; se
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // turn finished — busyIds shrink (message settle or session.idle)
+  // turn finished — busyIds shrink (message settle or session.idle); the
+  // body carries the AI's final reply so the banner shows what it answered
   const prevBusy = useRef<Set<string>>(new Set());
   useEffect(() => {
     const prev = prevBusy.current;
@@ -204,7 +217,12 @@ export function useNotifyRelay({ busyIds, sessions }: { busyIds: Set<string>; se
     if (!cfgRef.current?.onIdle) return;
     for (const sid of busyLeaving(prev, busyIds)) {
       emit(
-        { kind: "idle", title: `${describe(sid)} — turn complete`, body: "", sessionID: sid },
+        {
+          kind: "idle",
+          title: `${describe(sid)} — turn complete`,
+          body: assistantReplyText(peekSession?.(sid) ?? []),
+          sessionID: sid,
+        },
         `idle:${sid}`,
         idleDedupe.current,
       );

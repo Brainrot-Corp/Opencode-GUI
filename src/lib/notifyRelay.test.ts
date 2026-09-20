@@ -1,5 +1,6 @@
 // notifyRelay pure helpers — dedupe/TTL, busy-diff, text builders, backoff
 import {
+  assistantReplyText,
   backoffMs,
   busyLeaving,
   createDedupe,
@@ -57,8 +58,23 @@ eq("question text", questionNotifyText({ id: "q1", sessionID: "s1", questions: [
   body: "Proceed?",
   sessionID: "s1",
 });
+eq("question with options", questionNotifyText({ id: "q1", sessionID: "s1", questions: [{ question: "Proceed?", header: "Confirm", options: ["Yes", "No"] }] }).body, "Proceed? — Options: Yes · No");
 eq("question empty header", questionNotifyText({ id: "q1", sessionID: "s1", questions: [{ question: "Hi?" }] }).title, "Question: agent");
 eq("error text clamps", errorNotifyText("s1", "x".repeat(500)).body.length, 300);
+
+// assistantReplyText: last assistant message's text, flattened + clamped
+eq("reply none", assistantReplyText([]), "");
+eq("reply skips user", assistantReplyText([
+  { info: { role: "user" }, parts: [{ type: "text", text: "hello" }] },
+]), "");
+eq("reply takes last assistant", assistantReplyText([
+  { info: { role: "assistant" }, parts: [{ type: "text", text: "first" }] },
+  { info: { role: "user" }, parts: [{ type: "text", text: "go on" }] },
+  { info: { role: "assistant" }, parts: [{ type: "reasoning", text: "thinking" }, { type: "text", text: "Done.\nNext line" }] },
+]), "Done. Next line");
+eq("reply clamps", assistantReplyText([
+  { info: { role: "assistant" }, parts: [{ type: "text", text: "y".repeat(300) }] },
+]).length, 240);
 
 // backoff: 1,2,4,8,16,30-cap, caps at 30s
 eq("backoff 0", backoffMs(0), 1000);

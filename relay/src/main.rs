@@ -327,14 +327,20 @@ async fn sw_js() -> impl axum::response::IntoResponse {
 });
 
 // background delivery — browsers suspend open sockets, so messages that
-// arrive while the app is closed/backgrounded ride Web Push instead
+// arrive while the app is closed/backgrounded ride Web Push instead.
+// Tagged per session: a new reply updates that session's banner instead of
+// stacking/clobbering across sessions.
 self.addEventListener("push", (e) => {
-  let title = "opencode", body = "";
+  let title = "opencode", body = "", tag = "oc-relay";
   try {
     const m = e.data ? e.data.json() : null;
-    if (m) { title = m.title ?? title; body = m.body ?? ""; }
+    if (m) {
+      title = m.title ?? title;
+      body = m.body ?? "";
+      if (m.sessionID) tag = "oc-" + m.sessionID;
+    }
   } catch {}
-  e.waitUntil(self.registration.showNotification(title, { body, tag: "oc-relay" }));
+  e.waitUntil(self.registration.showNotification(title, { body, tag }));
 });
 "#,
     )
