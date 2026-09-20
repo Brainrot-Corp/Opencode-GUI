@@ -31,8 +31,7 @@
   border-radius: 0;
   /* flush panel: no card shadow — it smears a dark gradient past the edges */
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.045);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
+  /* no backdrop-filter here — see .msgs-wrap (WebView2 scroll flicker) */
   transition: border-color 0.4s;
 }
 .messages::before {
@@ -55,6 +54,12 @@
   flex: 1;
   min-height: 0;
   display: flex;
+  /* glass blur lives on this STATIC wrapper, never on the scroller — a
+     backdrop-filter on .messages itself is re-rasterized every programmatic
+     scroll frame (tail pin during streaming) and flickers the text on
+     WebView2; the wrapper's backdrop is motionless so it can be cached */
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
 }
 
 /* floating "back to tail" pill — fades in once the bottom is out of view */
