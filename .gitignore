@@ -19,3 +19,6 @@ relay/relay-push-subs.json
 !.vscode/extensions.json
 .idea
 .DS_Store
+
+# Android release signing (machine-local keystore path + password)
+src-tauri/gen/android/keystore.properties
