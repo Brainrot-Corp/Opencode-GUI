@@ -163,7 +163,7 @@ function ConnectScreen({ prefs, onSave, status, onDiscover, scanning, scanFail }
       <input
         id="m-relay"
         className="minput"
-        placeholder="wss://192.168.1.10:8919/ws"
+        placeholder="ws://192.168.1.10:8918/ws"
         value={url}
         onChange={(e) => setUrl(e.target.value.trim())}
         spellCheck={false}
@@ -195,7 +195,8 @@ function ConnectScreen({ prefs, onSave, status, onDiscover, scanning, scanFail }
       </div>
       <p className="mhint">
         Run <code>oc-relay</code> on the PC (Settings → Phone notifications → Run relay on this PC)
-        and paste the phone token it prints. The relay URL and token persist on this device.
+        and paste the phone token it prints. Use the <code>ws://</code> (port 8918) URL, not the
+        <code> wss://</code> one — the phone app can't accept the relay's self-signed TLS cert.
       </p>
     </div>
   );
