@@ -35,16 +35,23 @@ files (modules/hooks/lib extracted).** Baseline and both gates green:
 | 08-rust-reorg.md | lib.rs→server/input/files/windowctl/plugins/glass, voice.rs→voice/{stt,tts,voice_install}, platform.rs, git.rs, update.rs, terminals, pty, browser, remote | **lib.rs 2441→513 L; voice.rs 1438→46 L**; registration matrix verified 110↔110; git run_root async + timeout honored (push/pull no longer pin workers 120 s); `platform::curl_download` shared; single cmdline tokenizer; hand-rolled b64 → base64 crate |
 | 09-misc-hooks-scripts.md | useSpeech, useVoice, useMcp, useProviderAuth, useSettings, main.tsx, themes.ts, speechText.ts, apiErr.ts, voiceEvents.ts, scripts, README, AGENTS | NUL byte removed (file greps as text again); duplicate speech effects merged; withDeadline adopted ×2; apiErr deduped; themeList memoized; cyan.dark = FALLBACK (proven output-identical); **run.ps1 deleted, run.sh single runner**; AGENTS.md updated to new layout |
 
+## Wave 3 (docs/audit-fixes/10–13) — deferred-fix pass
+
+| Doc | Scope | Highlights |
+|---|---|---|
+| 10-panels-hooks-deferred.md | useDragResize, useTwoStepConfirm, GitPanel, Terminal, AgentBoard | resize hook gained orientation/invert (adopted: GitPanel height, Terminal dock); confirm hook gained `ttlMs: null` + `cancel()` (adopted: GitPanel force-push/discard); **AgentBoard Simulate mode deleted (~200 L, owner-approved)**; AgentBoard 8-handle + Terminal side-panel drags still skipped (geometry/side-channel) |
+| 11-message-surface.md | MessageList, ToolBlock, parts/, Composer, Lightbox.tsx | shared `<Lightbox>` replaces 2 inline portals; `PartCtx` context flattens the 4-level prop drill (taskCosts/dir/collapsedDefault/onOpenSubagent); ChatPage unchanged |
+| 12-rust-wait-port.md | server.rs, voice/stt.rs, remote.rs | `wait_for_port(port, timeout, http_ok)` unifies the two poll loops — strict for serve/tunnels (default `true`), loose for whisper-server (404 builds stay "up"); stt's local `wait_for_server` deleted; +1 unit test (reply_ok predicate) |
+| 13-useopencode-typing-polls.md | useOpencode.ts, opencodeEvents.ts | **`@ts-nocheck` removed — hook fully typed** (24 documented casts remain for stale-SDK fields); 3 s children interval dropped (event triggers + settle edge cover it); 2 s workspace tick → event-driven reconcile (SSE onerror debounce + workspaces-changed), `remoteStatus` only probed for non-open remote streams |
+
 ## Deliberately deferred (documented, not lost)
 
 - `useOpencode.ts` `@ts-nocheck` removal + full typing (incremental project)
 - `update_stage_local` release registration (cfg stub kept; conditional registration not cleanly possible in `generate_handler!`)
-- MessageList ↔ Composer lightbox dedupe; MessageList prop-drilling context (not low-risk enough to bundle)
-- GitPanel `useDragResize`/`useTwoStepConfirm` adoption (hook is horizontal-only / hook lacks cancel — would change confirm timing)
-- Sidebar two-step confirm (per-dir keyed state doesn't fit the boolean hook), Terminal/AgentBoard drags (vertical/inverted/8-handle geometry)
+- GitPanel `useDragResize`/`useTwoStepConfirm` adoption (hook is horizontal-only / hook lacks cancel — would change confirm timing) — **RESOLVED in wave 3** (hooks extended, adopted)
+- Sidebar two-step confirm (per-dir keyed state doesn't fit the boolean hook), Terminal side-panel drag (body-flag side-channel), AgentBoard drags (8-handle geometry)
 - SettingsDrawer Esc set (intentionally omits own scrim — not expressible as base+extras)
-- `wait_for_server`→`wait_for_port` (strictness mismatch would degrade GPU STT to CLI), `run_captured` helper (3 genuinely different spawn shapes)
-- Piper migration shim kept (old installs may hold Piper voice ids; `ponytail:` marked)
-- 2 s workspace tick + 3 s children poll reductions (behavior-affecting timing — needs manual per-machine verification)
-- AgentBoard Simulate mode (~200 L demo feature — needs an owner decision)
+- `run_captured` helper (3 genuinely different spawn shapes)
+- Piper migration shim kept (old installs may hold Piper voice ids; `ponytail:` marked — revisit after a release cycle)
+- AgentBoard Simulate mode — **DELETED in wave 3 (owner decision)**
 - Google-Fonts self-hosting (needs woff2 assets); accent-dim/glow kept hardcoded (alphas actually span 0.12–0.15 — color-mix would change rendering)
