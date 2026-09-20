@@ -150,7 +150,9 @@ switch ($Cmd) {
         }
     }
     "android" {
-        Push-Location $root; npm run tauri android build; Pop-Location
+        # aarch64 only — the TTS stack (ort-sys) has no armv7/i686 prebuilts and
+        # the notification+relay app ships to modern arm64 phones anyway
+        Push-Location $root; npm run tauri android build -- --target aarch64; Pop-Location
         if ($LASTEXITCODE -ne 0) { Write-Host "!! android build failed" -ForegroundColor Red; exit 1 }
         $apkDir = Join-Path $root "src-tauri\gen\android\app\build\outputs\apk\universal"
         Get-ChildItem $apkDir -Filter *.apk -ErrorAction SilentlyContinue |

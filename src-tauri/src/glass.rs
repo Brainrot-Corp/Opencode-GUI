@@ -35,5 +35,5 @@ pub fn apply_glass(app: &tauri::AppHandle) {
     }
 }
 
-#[cfg(any(target_os = "linux", feature = "noglass", all(not(windows), not(target_os = "macos"))))]
+#[cfg(any(target_os = "linux", feature = "noglass", all(desktop, not(windows), not(target_os = "macos"))))]
 pub fn apply_glass(_app: &tauri::AppHandle) {}

@@ -1,20 +1,45 @@
+#[cfg(desktop)]
 use std::sync::Mutex;
 
+#[cfg(desktop)]
 use tauri::{Manager, RunEvent, WindowEvent};
 
+mod glass;
+#[cfg(desktop)]
+use glass::apply_glass;
+use glass::os_glass;
+
+#[cfg_attr(not(desktop), allow(dead_code))]
+mod platform;
+
+#[cfg(desktop)]
+mod autostart;
+#[cfg(desktop)]
+use autostart::{autostart_disable, autostart_enable, autostart_is_enabled};
+
+#[cfg(desktop)]
 mod browser;
+#[cfg(desktop)]
 use browser::{browser_back, browser_close, browser_forward, browser_navigate, browser_open,
     browser_reload, open_app, open_external, tiktok_close, tiktok_navigate, tiktok_open,
     tiktok_set_bounds, tiktok_set_glass, window_app};
 
+#[cfg(desktop)]
+mod discord;
+#[cfg(desktop)]
+use discord::{
+    discord_clear, discord_close, discord_get_start_ts, discord_set, discord_status, DiscordState,
+};
+
+#[cfg(desktop)]
 mod files;
+#[cfg(desktop)]
 use files::{file_create, file_delete, file_duplicate, file_open, file_rename, window_scope,
     workspace_get, workspace_is_dir, workspace_set, write_file};
 
-mod glass;
-use glass::{apply_glass, os_glass};
-
+#[cfg(desktop)]
 mod git;
+#[cfg(desktop)]
 use git::{git_commit, git_diff, git_diff_stat, git_discard, git_fetch, git_log, git_merge_abort, git_merge_continue, git_publish, git_pull, git_push, git_rebase_abort, git_rebase_continue, git_resolve, git_stage, git_stash_pop, git_stash_push, git_status, git_sync, git_unstage, git_watch};
 
 #[cfg(windows)]
@@ -22,51 +47,60 @@ mod input;
 #[cfg(windows)]
 use input::{handle_global_shortcut, ipc_hook, read_last_focused, send_ipc_to_hwnd, webfocus,
     write_last_focused, IPC_SHOW};
-mod platform;
 
+#[cfg(desktop)]
 mod plugins;
+#[cfg(desktop)]
 use plugins::{http_json, plugin_install_files, plugin_remove, plugins_scan, reveal_config_dir,
     reveal_plugins_dir, theme_config_read, theme_config_write};
 
+#[cfg(desktop)]
 mod pty;
+#[cfg(desktop)]
 use pty::{kill_all as pty_kill_all, pty_kill, pty_resize, pty_spawn, pty_write, PtyState};
 
+#[cfg(desktop)]
 mod remote;
+#[cfg(desktop)]
 use remote::{
     remote_base_url, remote_ensure, remote_get_key, remote_remove, remote_set_key,
     remote_status, remote_terminals, remote_test, RemoteState,
 };
 
+#[cfg(desktop)]
 mod relay;
+#[cfg(desktop)]
 use relay::{relay_start, relay_status, relay_stop};
 
+#[cfg(desktop)]
 mod server;
+#[cfg(desktop)]
 use server::{server_url, spawn_server, ServerState};
 
+#[cfg(desktop)]
 mod terminals;
+#[cfg(desktop)]
 use terminals::list_terminals;
 
-mod discord;
-use discord::{
-    discord_clear, discord_close, discord_get_start_ts, discord_set, discord_status, DiscordState,
-};
-
+#[cfg(desktop)]
 mod update;
+#[cfg(desktop)]
 use update::{apply_on_exit, build_flavor, update_download, update_install, update_stage_local};
 
-mod autostart;
-use autostart::{autostart_disable, autostart_enable, autostart_is_enabled};
-
+#[cfg(desktop)]
 mod voice;
+#[cfg(desktop)]
 use voice::{install_bin_finalize, install_model_finalize, install_piper_bin, install_tts_voice_part,
 kokoro_remove_engine, install_kokoro_gpu_part, tts_gpu_remove, tts_remove_voice, tts_speak, tts_speak_pcm, tts_warm, tts_status, tts_debug_log, tts_clear_debug, voice_download, voice_gpu, voice_remove_all, voice_remove_gpu, voice_remove_model,
     voice_status, voice_transcribe, voice_transcribe_pcm};
 
-mod windowctl;
-use windowctl::{apply_jumplist, apply_default_size, debug_log, hide_to_tray, quit_app,
-    set_close_on_x, set_tray_reset, show_main, spawn_new_instance, toggle_window};
 #[cfg(desktop)]
-use windowctl::toggle_main;
+mod windowctl;
+#[cfg(desktop)]
+use windowctl::{apply_default_size, debug_log, hide_to_tray, quit_app, set_close_on_x,
+    set_tray_reset, show_main, spawn_new_instance, toggle_window};
+#[cfg(desktop)]
+use windowctl::{apply_jumplist, toggle_main};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -130,6 +164,12 @@ pub fn run() {
     }
     #[cfg(not(desktop))]
     let _ = is_new_instance;
+    // mobile (android/ios) is a notification + relay client: it invokes no
+    // Rust commands yet — the notification plugin's JS API is the surface.
+    // Desktop registers the full command set.
+    #[cfg(not(desktop))]
+    let builder = builder.invoke_handler(tauri::generate_handler![os_glass]);
+    #[cfg(desktop)]
     let builder = builder
         .invoke_handler(tauri::generate_handler![
             server_url,
@@ -263,6 +303,8 @@ pub fn run() {
 
     builder
         .setup(|app| {
+            #[cfg(not(desktop))]
+            let _ = app;
             // system tray: left click toggles visibility, right click menu.
             // Both tray and pinned taskbar JumpList expose "Open new window"
             // and "Quit" so the two surfaces stay consistent.
@@ -343,71 +385,76 @@ pub fn run() {
             }
 
             // Pinned taskbar JumpList — mirrors tray: "Open new window" + "Quit"
-            apply_jumplist(app.handle());
-
-            // don't wait for the sidecar to bind — hand out the URL
-            // immediately; the frontend renders on templates and polls
-            // silently until the server answers
-            // debug local builds restore last workspace as server CWD so
-            // file tree works even before the frontend's ?directory= hydrates
-            let saved_ws = files::read_saved_workspace(app.handle());
-            let state = match spawn_server(saved_ws) {
-                Ok((child, port)) => ServerState {
-                    port,
-                    child: Mutex::new(Some(child)),
-                    error: None,
-                },
-                Err(e) => ServerState {
-                    port: 0,
-                    child: Mutex::new(None),
-                    error: Some(format!("failed to start opencode serve: {e}")),
-                },
-            };
-            app.manage(state);
-            app.manage(RemoteState::default());
-            crate::remote::init(app.handle().clone());
-            app.manage(browser::BrowserState::default());
-            app.manage(browser::FloatingState::default());
-            app.manage(PtyState::default());
-            app.manage(relay::RelayState {
-                child: Mutex::new(None),
-            });
-            app.manage(DiscordState::default());
-            update::cleanup_old();
-            plugins::watch_all(app.handle().clone());
-            apply_glass(app.handle());
-            // the window is created hidden (tauri.conf.json "visible": false)
-            // so any launch-time resize happens on an invisible window — a
-            // programmatic set_size on a visible one poisons WebView2 input.
-            // "Keep window size" OFF (the default): undo the window-state
-            // plugin's restore first. The marker file mirrors the setting
-            // because the webview hasn't loaded yet — its set_tray_reset
-            // sync only lands later
-            if !windowctl::keep_size_flag_present(app.handle()) {
-                apply_default_size(app.handle());
-            }
-            // show + focus + input repair. The explicit focus matters: the
-            // first Alt+Space must see "visible and focused" to hide again
-            show_main(app.handle());
-
-            // mac: align the native traffic lights with the HTML titlebar's
-            // vertical center (macOS parks them at the stock titlebar height)
-            #[cfg(target_os = "macos")]
-            if let Some(w) = app.handle().get_webview_window("main") {
-                crate::platform::center_traffic_lights(&w);
-            }
-
-            #[cfg(windows)]
+            // Everything below is the desktop backend: sidecar, file tree,
+            // plugins, glass, tray-sizing — none of it exists on mobile.
+            #[cfg(desktop)]
             {
-                // per-instance IPC hook for last-focused hotkey forwarding
-                ipc_hook::install(app.handle());
+                apply_jumplist(app.handle());
+
+                // don't wait for the sidecar to bind — hand out the URL
+                // immediately; the frontend renders on templates and polls
+                // silently until the server answers
+                // debug local builds restore last workspace as server CWD so
+                // file tree works even before the frontend's ?directory= hydrates
+                let saved_ws = files::read_saved_workspace(app.handle());
+                let state = match spawn_server(saved_ws) {
+                    Ok((child, port)) => ServerState {
+                        port,
+                        child: Mutex::new(Some(child)),
+                        error: None,
+                    },
+                    Err(e) => ServerState {
+                        port: 0,
+                        child: Mutex::new(None),
+                        error: Some(format!("failed to start opencode serve: {e}")),
+                    },
+                };
+                app.manage(state);
+                app.manage(RemoteState::default());
+                crate::remote::init(app.handle().clone());
+                app.manage(browser::BrowserState::default());
+                app.manage(browser::FloatingState::default());
+                app.manage(PtyState::default());
+                app.manage(relay::RelayState {
+                    child: Mutex::new(None),
+                });
+                app.manage(DiscordState::default());
+                update::cleanup_old();
+                plugins::watch_all(app.handle().clone());
+                apply_glass(app.handle());
+                // the window is created hidden (tauri.conf.json "visible": false)
+                // so any launch-time resize happens on an invisible window — a
+                // programmatic set_size on a visible one poisons WebView2 input.
+                // "Keep window size" OFF (the default): undo the window-state
+                // plugin's restore first. The marker file mirrors the setting
+                // because the webview hasn't loaded yet — its set_tray_reset
+                // sync only lands later
+                if !windowctl::keep_size_flag_present(app.handle()) {
+                    apply_default_size(app.handle());
+                }
+                // show + focus + input repair. The explicit focus matters: the
+                // first Alt+Space must see "visible and focused" to hide again
+                show_main(app.handle());
+
+                // mac: align the native traffic lights with the HTML titlebar's
+                // vertical center (macOS parks them at the stock titlebar height)
+                #[cfg(target_os = "macos")]
                 if let Some(w) = app.handle().get_webview_window("main") {
-                    if let Ok(hwnd) = w.hwnd() {
-                        write_last_focused(app.handle(), hwnd.0 as isize);
+                    crate::platform::center_traffic_lights(&w);
+                }
+
+                #[cfg(windows)]
+                {
+                    // per-instance IPC hook for last-focused hotkey forwarding
+                    ipc_hook::install(app.handle());
+                    if let Some(w) = app.handle().get_webview_window("main") {
+                        if let Ok(hwnd) = w.hwnd() {
+                            write_last_focused(app.handle(), hwnd.0 as isize);
+                        }
+                        // keyboard-focus repair across reactivation (alt-tab /
+                        // taskbar / tray) — see webfocus module docs
+                        webfocus::install(&w);
                     }
-                    // keyboard-focus repair across reactivation (alt-tab /
-                    // taskbar / tray) — see webfocus module docs
-                    webfocus::install(&w);
                 }
             }
 
@@ -419,6 +466,8 @@ pub fn run() {
             std::process::exit(1);
         })
         .run(|_app_handle, event| {
+            #[cfg(not(desktop))]
+            let _ = event;
             // track last focused HWND for system-wide hotkeys across multiple
             // instances. Keyboard-focus repair on reactivation lives in the
             // webfocus subclass (WM_ACTIVATE → MoveFocus) — a per-event repair
@@ -456,6 +505,7 @@ pub fn run() {
             }
             // keep the browser webview glued below the top bar across
             // window resizes / DPI changes while it is open
+            #[cfg(desktop)]
             if let RunEvent::WindowEvent {
                 label,
                 event: WindowEvent::Resized(size),
@@ -513,6 +563,7 @@ pub fn run() {
             // native close paths (mac red stoplight, taskbar "Close window"):
             // default to hide-to-tray like every other path out of the app,
             // unless the user opted into real quits ("Close on X" setting)
+            #[cfg(desktop)]
             if let RunEvent::WindowEvent {
                 label,
                 event: WindowEvent::CloseRequested { api, .. },
@@ -524,6 +575,9 @@ pub fn run() {
                     windowctl::hide_main_for_close(_app_handle);
                 }
             }
+            // desktop shutdown: sidecar, ptys, ssh tunnels, staged update
+            // swap, discord ipc — none of it exists on mobile
+            #[cfg(desktop)]
             if let RunEvent::Exit = event {
                 // shutdown persistent whisper server (GPU) if running
                 voice::shutdown_whisper_server();
@@ -560,9 +614,9 @@ pub fn run() {
         });
 }
 
-// non-Windows builds: no input module, and resize_cursor is a stub (the
-// frontend guards on platform anyway).
-#[cfg(not(windows))]
+// non-Windows desktop builds: no input module, and resize_cursor is a stub
+// (the frontend guards on platform anyway). Mobile needs neither.
+#[cfg(all(desktop, not(windows)))]
 #[tauri::command]
 fn resize_cursor() -> Option<serde_json::Value> {
     None

@@ -31,13 +31,23 @@ tauri-build = { version = "2", features = [] }
 # macos-private-api: WKWebView drawsBackground=false — required for
 # transparent webview so the macOS vibrancy layer shows through
 tauri = { version = "2", features = ["tray-icon", "unstable", "macos-private-api"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri-plugin-dialog = "2.7.2"
+tauri-plugin-clipboard-manager = "2.3.2"
+# OS notifications — the mobile app's system banners (phase 2); desktop
+# gets the plugin too (harmless) so the crate compiles for every target
+tauri-plugin-notification = "2"
+
+# Full desktop backend. Mobile (android/ios) is a notification + relay
+# client only: no sidecar, no TTS/voice, no pty/git/discord/updater —
+# keep heavy deps out of the mobile build here and gate their modules
+# #[cfg(desktop)] in lib.rs.
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-global-shortcut = "2"
 tauri-plugin-window-state = "2"
 tauri-plugin-autostart = "2"
 tauri-plugin-single-instance = "2"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-tauri-plugin-dialog = "2.7.2"
 notify = "7"
 zip = { version = "4", default-features = false, features = ["deflate"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "multipart", "stream", "blocking"] }
@@ -45,8 +55,6 @@ portable-pty = "0.9.0"
 base64 = "0.23.1"
 discord-rich-presence = "0.2"
 sha2 = "0.10"
-tauri-plugin-clipboard-manager = "2.3.2"
-tauri-plugin-notification = "2"
 kokoro-en = { git = "https://github.com/pguso/kokoro", package = "kokoro-en", default-features = false, features = ["misaki-lean"] }
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "sync", "time", "fs", "macros"] }
 futures = "0.3"
@@ -64,4 +72,3 @@ winreg = "0.52"
 # version-matched to wry's — gives access to ICoreWebView2Controller
 webview2-com = "0.38"
 windows = { version = "0.58", features = ["Win32_System_Com", "Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_System_DataExchange", "Win32_Graphics_Gdi", "Win32_System_JobObjects", "Win32_System_Threading", "Win32_System_WindowsProgramming", "Win32_System_LibraryLoader"] }
-

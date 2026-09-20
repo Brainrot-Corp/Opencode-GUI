@@ -371,7 +371,8 @@ case "${CMD}" in
         done
         ;;
     android)
-        npm run tauri android build
+        # aarch64 only — ort-sys (TTS) has no armv7/i686 prebuilts; modern phones are arm64
+        npm run tauri android build -- --target aarch64
         apk="src-tauri/gen/android/app/build/outputs/apk/universal"
         ls -lh "$apk"/*.apk 2>/dev/null || true
         echo ">> apks in $apk"
