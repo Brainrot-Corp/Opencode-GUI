@@ -116,14 +116,123 @@
     }).join("");
   }
 
+  // CBS parallax fractal galaxy (Shadertoy-inspired). iChannel0 audio has no
+  // equivalent here, so freqs breathe on timers; mouse adds parallax drift.
+  // Returns true when accelerated rendering is on, false → CSS orb fallback.
+  function glbg(host) {
+    var cv = document.createElement("canvas");
+    cv.className = "glbg";
+    var gl = null;
+    try { gl = cv.getContext("webgl", { antialias: false, alpha: false, depth: false, stencil: false }) || cv.getContext("experimental-webgl"); } catch (e) { gl = null; }
+    if (!gl) return false;
+    var fsrc = [
+      "precision highp float;",
+      "uniform vec2 u_res; uniform float u_time; uniform vec2 u_mouse;",
+      "float field(in vec3 p, float s) {",
+      "  float strength = 7. + .03 * log(1.e-6 + fract(sin(u_time) * 4373.11));",
+      "  float accum = s / 4.; float prev = 0.; float tw = 0.;",
+      "  for (int i = 0; i < 26; ++i) {",
+      "    float mag = dot(p, p);",
+      "    p = abs(p) / mag + vec3(-.5, -.4, -1.5);",
+      "    float w = exp(-float(i) / 7.);",
+      "    accum += w * exp(-strength * pow(abs(mag - prev), 2.2));",
+      "    tw += w; prev = mag;",
+      "  }",
+      "  return max(0., 5. * accum / tw - .7);",
+      "}",
+      "float field2(in vec3 p, float s) {",
+      "  float strength = 7. + .03 * log(1.e-6 + fract(sin(u_time) * 4373.11));",
+      "  float accum = s / 4.; float prev = 0.; float tw = 0.;",
+      "  for (int i = 0; i < 18; ++i) {",
+      "    float mag = dot(p, p);",
+      "    p = abs(p) / mag + vec3(-.5, -.4, -1.5);",
+      "    float w = exp(-float(i) / 7.);",
+      "    accum += w * exp(-strength * pow(abs(mag - prev), 2.2));",
+      "    tw += w; prev = mag;",
+      "  }",
+      "  return max(0., 5. * accum / tw - .7);",
+      "}",
+      "vec3 nrand3(vec2 co) {",
+      "  vec3 a = fract(cos(co.x * 8.3e-3 + co.y) * vec3(1.3e5, 4.7e5, 2.9e5));",
+      "  vec3 b = fract(sin(co.x * 0.3e-3 + co.y) * vec3(8.1e5, 1.0e5, 0.1e5));",
+      "  return mix(a, b, 0.5);",
+      "}",
+      "void main() {",
+      "  vec2 uv = 2. * gl_FragCoord.xy / u_res - 1.;",
+      "  vec2 uvs = uv * u_res / max(u_res.x, u_res.y);",
+      "  vec2 m = u_mouse - 0.5;",
+      "  vec3 p = vec3(uvs / 4., 0.) + vec3(1., -1.3, 0.);",
+      "  p.xy += m * 0.25;",
+      "  p += .2 * vec3(sin(u_time / 16.), sin(u_time / 12.), sin(u_time / 128.));",
+      "  float f0 = .55 + .15 * sin(u_time * .23);",
+      "  float f1 = .60 + .15 * sin(u_time * .31 + 1.7);",
+      "  float f2 = .65 + .15 * sin(u_time * .27 + 3.1);",
+      "  float f3 = .75 + .15 * sin(u_time * .19 + 5.0);",
+      "  float t = field(p, f2);",
+      "  float v = (1. - exp((abs(uv.x) - 1.) * 6.)) * (1. - exp((abs(uv.y) - 1.) * 6.));",
+      "  vec3 p2 = vec3(uvs / (4. + sin(u_time * .11) * .2 + .2 + sin(u_time * .15) * .3 + .4), 1.5) + vec3(2., -1.3, -1.);",
+      "  p2.xy += m * 0.35;",
+      "  p2 += .25 * vec3(sin(u_time / 16.), sin(u_time / 12.), sin(u_time / 128.));",
+      "  float t2 = field2(p2, f3);",
+      "  vec4 c2 = mix(.4, 1., v) * vec4(1.3 * t2 * t2 * t2, 1.8 * t2 * t2, t2 * f0, t2);",
+      "  vec2 seed = floor(p.xy * 2.0 * u_res.x);",
+      "  vec4 starcolor = vec4(pow(nrand3(seed).y, 40.0));",
+      "  vec2 seed2 = floor(p2.xy * 2.0 * u_res.x);",
+      "  starcolor += vec4(pow(nrand3(seed2).y, 40.0));",
+      "  gl_FragColor = mix(f3 - .3, 1., v) * vec4(1.5 * f2 * t * t * t, 1.2 * f1 * t * t, f3 * t, 1.0) + c2 + starcolor;",
+      "}"
+    ].join("\n");
+    function sh(type, src) {
+      var s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s);
+      return gl.getShaderParameter(s, gl.COMPILE_STATUS) ? s : null;
+    }
+    var vs = sh(gl.VERTEX_SHADER, "attribute vec2 p; void main() { gl_Position = vec4(p, 0., 1.); }");
+    var fs = sh(gl.FRAGMENT_SHADER, fsrc);
+    if (!vs || !fs) return false;
+    var pr = gl.createProgram();
+    gl.attachShader(pr, vs); gl.attachShader(pr, fs); gl.linkProgram(pr);
+    if (!gl.getProgramParameter(pr, gl.LINK_STATUS)) return false;
+    gl.useProgram(pr);
+    var buf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+    var loc = gl.getAttribLocation(pr, "p");
+    gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+    var uRes = gl.getUniformLocation(pr, "u_res"), uTime = gl.getUniformLocation(pr, "u_time"), uMouse = gl.getUniformLocation(pr, "u_mouse");
+    var mx = 0.5, my = 0.5, t0 = performance.now();
+    function size() {
+      var w = Math.max(2, Math.floor(host.clientWidth * 0.55)), h = Math.max(2, Math.floor(host.clientHeight * 0.55));
+      if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; gl.viewport(0, 0, w, h); }
+    }
+    host.insertBefore(cv, host.firstChild);
+    var blur = document.createElement("div");
+    blur.className = "glblur"; blur.setAttribute("aria-hidden", "true");
+    document.body.insertBefore(blur, host.nextSibling);
+    window.addEventListener("resize", size);
+    document.addEventListener("mousemove", function (e) {
+      mx = e.clientX / window.innerWidth; my = 1 - e.clientY / window.innerHeight;
+    }, { passive: true });
+    size();
+    (function frame() {
+      if (!document.hidden) {
+        gl.uniform2f(uRes, cv.width, cv.height);
+        gl.uniform1f(uTime, (performance.now() - t0) / 1000);
+        gl.uniform2f(uMouse, mx, my);
+        gl.drawArrays(gl.TRIANGLES, 0, 3);
+      }
+      requestAnimationFrame(frame);
+    })();
+    return true;
+  }
+
   function ambient() {
     if (!window.matchMedia("(hover:hover) and (pointer:fine)").matches) return;
     if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
     var root = document.documentElement;
     var aur = document.createElement("div");
     aur.className = "aurora"; aur.setAttribute("aria-hidden", "true");
-    aur.innerHTML = '<span class="orb o1"></span><span class="orb o2"></span><span class="orb o3"></span>';
     document.body.insertBefore(aur, document.body.firstChild);
+    if (!glbg(aur)) aur.innerHTML = '<span class="orb o1"></span><span class="orb o2"></span><span class="orb o3"></span>';
     var dot = document.createElement("div"); dot.className = "cursor-dot"; dot.setAttribute("aria-hidden", "true");
     var ring = document.createElement("div"); ring.className = "cursor-ring"; ring.setAttribute("aria-hidden", "true");
     document.body.appendChild(dot); document.body.appendChild(ring);

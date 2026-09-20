@@ -221,3 +221,12 @@ html.has-cursor .cursor-dot, html.has-cursor .cursor-ring { display: block; }
   .aurora { transform: none; transition: none; }
   html.has-cursor .cursor-dot, html.has-cursor .cursor-ring { display: none; }
 }
+
+/* accelerated background — shader canvas + blur pass (injected by site.js) */
+.glbg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.glblur { position: fixed; inset: 0; z-index: 0; pointer-events: none;
+  background: linear-gradient(180deg, rgba(9,13,17,0.42), rgba(9,13,17,0.60));
+  backdrop-filter: blur(30px) brightness(0.72) saturate(0.9);
+  -webkit-backdrop-filter: blur(30px) brightness(0.72) saturate(0.9); }
+/* hide the native cursor — the dynamic dot + ring take over (only when live) */
+html.has-cursor, html.has-cursor * { cursor: none !important; }
