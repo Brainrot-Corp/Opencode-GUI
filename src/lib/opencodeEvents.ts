@@ -57,6 +57,16 @@ function askTitle(p: any, extra: string, fallback: string): string {
   return p.metadata?.command || p.metadata?.title || p.title || extra || fallback;
 }
 
+// notify-window relay — same pattern as the oc:file-changed dispatch: the
+// phone-notify hook (useNotifyRelay) listens; guarded so node tests (no
+// window) can exercise these paths. Exported for useOpencode's boot
+// catch-up (asks that fired while the app was closed).
+export function notifyWindow(type: string, detail: unknown) {
+  try {
+    if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent(type, { detail }));
+  } catch {}
+}
+
 export function handleOpenCodeEvent(ev: OpenCodeEvent, ctx: OpenCodeEventCtx, dirHint?: string) {
   const p = ev.properties;
   if (typeof ev.type === "string" && ev.type.includes("compaction")) {
@@ -118,6 +128,7 @@ export function handleOpenCodeEvent(ev: OpenCodeEvent, ctx: OpenCodeEventCtx, di
         dirHint,
         true,
       );
+      notifyWindow("oc:notify-perm", { id: p.id, sessionID: p.sessionID, type, title: askTitle(p, (p.patterns ?? []).join(", "), type) });
       break;
     }
     case "permission.updated": {
@@ -149,6 +160,7 @@ export function handleOpenCodeEvent(ev: OpenCodeEvent, ctx: OpenCodeEventCtx, di
         },
         dirHint,
       );
+      notifyWindow("oc:notify-question", { id: p.id ?? p.requestID, sessionID: p.sessionID, questions: Array.isArray(p.questions) ? p.questions : [] });
       break;
     }
     case "question.replied":
@@ -182,6 +194,7 @@ export function handleOpenCodeEvent(ev: OpenCodeEvent, ctx: OpenCodeEventCtx, di
         ctx.restoreFailedInput(sid);
       }
       ctx.pushToast(msg);
+      notifyWindow("oc:notify-error", { sessionID: sid ?? "", message: msg });
       break;
     }
     // compaction live indicator — server decides when to compact (auto

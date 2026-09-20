@@ -1,0 +1,21 @@
+[package]
+name = "oc-relay"
+version = "0.1.0"
+edition = "2021"
+description = "Standalone notification relay for the opencode GUI mobile companion (docs/mobile-companion.md)"
+
+[dependencies]
+axum = { version = "0.8", features = ["ws"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+rand = "0.8"
+futures-util = "0.3"
+axum-server = { version = "0.7", features = ["tls-rustls"] }
+rcgen = "0.13"
+rustls = "0.23"
+
+[profile.release]
+strip = true
+lto = true

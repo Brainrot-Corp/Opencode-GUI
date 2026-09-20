@@ -44,7 +44,7 @@ import {
   writeTitleOverride,
   applyOverrides,
 } from "../lib/sessionMeta";
-import { handleOpenCodeEvent, type OpenCodeEventCtx } from "../lib/opencodeEvents";
+import { handleOpenCodeEvent, notifyWindow, type OpenCodeEventCtx } from "../lib/opencodeEvents";
 import { ensureServerGroups, useProviders } from "./useProviders";
 import { useSecurity, type SecurityMode } from "./useSecurity";
 import { useAsks } from "./useAsks";
@@ -732,7 +732,7 @@ export function useOpencode() {
           .then((list: QuestionAsk[]) => {
             if (disposed) return;
             const touched = new Set<string>();
-            for (const q of list ?? []) if (q.sessionID) { questionsRef.current.set(q.sessionID, q); touched.add(q.sessionID); }
+            for (const q of list ?? []) if (q.sessionID) { questionsRef.current.set(q.sessionID, q); touched.add(q.sessionID); notifyWindow("oc:notify-question", q); }
             for (const sid of touched) {
               syncAttention(sid);
               emitQuestion(sid);
@@ -771,6 +771,7 @@ export function useOpencode() {
               title: bootPermTitle(p),
             };
             permissionsRef.current.set(ask.sessionID, ask); touched.add(ask.sessionID);
+            notifyWindow("oc:notify-perm", ask);
           }
           for (const sid of touched) {
             syncAttention(sid);

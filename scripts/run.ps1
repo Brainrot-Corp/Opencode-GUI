@@ -73,6 +73,20 @@ function Fetch-Sidecar {
     & $sidecar --version
 }
 
+# Build-Relay: build the oc-relay companion and stage it where Tauri's
+# externalBin expects it (src-tauri\binaries\oc-relay-<triple>) — shipped in
+# installers + portable zips so "Run relay on this PC" works out of the box
+function Build-Relay {
+    Write-Host ">> building oc-relay (notification relay)..."
+    Push-Location $root
+    cargo build --release --manifest-path relay\Cargo.toml
+    Pop-Location
+    if ($LASTEXITCODE -ne 0) { Write-Host "!! relay build failed" -ForegroundColor Red; exit 1 }
+    $dest = Join-Path $root "src-tauri\binaries\oc-relay-x86_64-pc-windows-msvc.exe"
+    Copy-Item (Join-Path $root "relay\target\release\oc-relay.exe") $dest -Force
+    Write-Host ">> relay staged: $dest"
+}
+
 # Bundle=$false skips packaging (portable zips only need the exe);
 # $Bundles optionally overrides bundle types, e.g. "nsis" or "msi nsis"
 function Build-One([string]$T, [bool]$Bundle = $true, [string]$Bundles = "") {
@@ -92,6 +106,7 @@ switch ($Cmd) {
     "setup" {
         Push-Location $root; npm install; Pop-Location
         Fetch-Sidecar
+        Build-Relay
         Write-Host ">> setup complete"
     }
     "dev" {
@@ -99,6 +114,7 @@ switch ($Cmd) {
         Push-Location $root; npm run tauri dev; Pop-Location
     }
     "build" {
+        Build-Relay
         foreach ($t in $targets) {
             Build-One $t $true $Bundles
             # suffix installers so variants don't clobber each other
@@ -112,6 +128,7 @@ switch ($Cmd) {
         }
     }
     "portable" {
+        Build-Relay
         foreach ($t in $targets) {
             Build-One $t $false
             $rel = Join-Path $root "src-tauri\target\release"
@@ -120,6 +137,10 @@ switch ($Cmd) {
             New-Item -ItemType Directory -Force $stage | Out-Null
             Copy-Item (Join-Path $rel "opencode-gui.exe") $stage -Force
             Copy-Item (Join-Path $rel "opencode.exe") $stage -Force
+            # relay companion — Tauri externalBin stages it next to the exe; fall back to the staged binaries copy
+            $relayExe = Join-Path $rel "oc-relay.exe"
+            if (-not (Test-Path $relayExe)) { $relayExe = Join-Path $root "src-tauri\binaries\oc-relay-x86_64-pc-windows-msvc.exe" }
+            Copy-Item $relayExe $stage -Force
             $zip = Join-Path $out "opencode-gui-$t-x64.zip"
             Compress-Archive -Path $stage -DestinationPath $zip -Force
             Write-Host ">> portable [$t]: $zip ($([math]::Round((Get-Item $zip).Length / 1MB, 1)) MB)"

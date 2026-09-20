@@ -39,6 +39,7 @@ import { usePluginUpdates } from "../hooks/usePluginUpdates";
 import { useTwoStepConfirm } from "../hooks/useTwoStepConfirm";
 import { useDragResize } from "../hooks/useDragResize";
 import { useChatFind } from "../hooks/useChatFind";
+import { useNotifyRelay } from "../hooks/useNotifyRelay";
 import { ContextMenuProvider } from "../hooks/useContextMenu";
 import SelectionMenu from "../components/SelectionMenu";
 import { useTranslation } from "../lib/i18n";
@@ -56,6 +57,7 @@ export default function ChatPage() {
     update,
     updatePlugin,
     updateSounds,
+    updateNotify,
     updateColors,
     resetColors,
     resetThemes,
@@ -74,6 +76,8 @@ export default function ChatPage() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [pluginsOpen, setPluginsOpen] = useState(false);
   const [diffOpen, setDiffOpen] = useState(false);
+  // phone relay (docs/mobile-companion.md phase 1) — desktop-side bridge
+  useNotifyRelay({ busyIds: oc.busyIds, sessions: oc.sessions });
   // read-only subagent transcript (parent session stays active underneath)
   const [subViewer, setSubViewer] = useState<{ id: string } | { picker: true } | null>(null);
   // discord plugin reads this for {status} — file > diff > permission/question > compacting > busy > typing > working > idle
@@ -555,6 +559,7 @@ export default function ChatPage() {
             settings={settings}
             update={update}
             updateSounds={updateSounds}
+            updateNotify={updateNotify}
             updateColors={updateColors}
             resetColors={resetColors}
             resetThemes={resetThemes}

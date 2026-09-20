@@ -37,6 +37,9 @@ use remote::{
     remote_status, remote_terminals, remote_test, RemoteState,
 };
 
+mod relay;
+use relay::{relay_start, relay_status, relay_stop};
+
 mod server;
 use server::{server_url, spawn_server, ServerState};
 
@@ -228,7 +231,11 @@ pub fn run() {
             remote_remove,
             remote_set_key,
             remote_get_key,
+            remote_get_key,
             remote_terminals,
+            relay_start,
+            relay_status,
+            relay_stop,
         ]);
 
     // global hotkeys, work system-wide. The plugin itself registers nothing;
@@ -342,6 +349,9 @@ pub fn run() {
             app.manage(browser::BrowserState::default());
             app.manage(browser::FloatingState::default());
             app.manage(PtyState::default());
+            app.manage(relay::RelayState {
+                child: Mutex::new(None),
+            });
             app.manage(DiscordState::default());
             update::cleanup_old();
             plugins::watch_all(app.handle().clone());

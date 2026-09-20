@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import type { AppSettings, ColorSet } from "../hooks/useSettings";
+import { invoke } from "@tauri-apps/api/core";import type { AppSettings, ColorSet } from "../hooks/useSettings";
 import { fetchTerminalProfiles, useTerminalProfiles } from "../hooks/useTerminalProfiles";
 import { useUpdater as useUpdaterInternal } from "../hooks/useUpdater";
 import type { ThemeMeta } from "../lib/themes";
@@ -20,6 +19,7 @@ import SoundsSettings from "./SoundsSettings";
 import InfoDialog from "./InfoDialog";
 import type { ProviderGroup } from "../types";
 import { useTranslation } from "../lib/i18n";
+import { pushToast } from "../hooks/useToast";
 import { useTwoStepConfirm } from "../hooks/useTwoStepConfirm";
 import "../styles/settings.css";
 
@@ -29,6 +29,7 @@ export default function SettingsDrawer({
   settings,
   update,
   updateSounds,
+  updateNotify,
   updateColors,
   resetColors,
   resetThemes,
@@ -47,6 +48,7 @@ export default function SettingsDrawer({
   settings: AppSettings;
   update: (patch: Partial<AppSettings>) => void;
   updateSounds: (patch: Partial<SoundPrefs>) => void;
+  updateNotify: (patch: Partial<AppSettings["notify"]>) => void;
   updateColors: (patch: Partial<ColorSet>) => void;
   resetColors: () => void;
   resetThemes?: () => void | Promise<void>;
@@ -83,6 +85,14 @@ export default function SettingsDrawer({
   const confirmClean = cleanConfirm.armed;
   const confirmThemes = themesConfirm.armed;
   const upd = updProp ?? useUpdaterInternal();
+
+  // relay status for the phone-notifications section (lazily probed when the
+  // drawer is open; kept fresh on toggle clicks)
+  const [relayInfo, setRelayInfo] = useState<any | null>(null);
+  useEffect(() => {
+    if (!open) return;
+    invoke("relay_status").then((info) => setRelayInfo(info)).catch(() => {});
+  }, [open, settings.notify.runLocal]);
 
   // terminal discovery — shared global cache (probes + WSL + WT via Rust)
   const { profiles: termProfiles, loading: termLoading, error: termErr } = useTerminalProfiles();
@@ -713,6 +723,127 @@ export default function SettingsDrawer({
               </div>
               {debugLocalErr && <div className="voice-err mono-hint" style={{ marginTop: "4px" }}>{debugLocalErr}</div>}
             </div>
+          </section>
+
+          {/* ── Phone relay ── */}
+          <section className="settings-section" aria-label="Phone notifications">
+            <div className="settings-section-title">
+              <i className="fa-solid fa-mobile-screen" /> Phone notifications
+            </div>
+
+            <div className="setting-row">
+              <div className="setting-info">
+                <i className="fa-solid fa-tower-broadcast setting-icon" />
+                <div>
+                  <div className="setting-name">Run relay on this PC</div>
+                  <div className="setting-desc">Launches/stops the built-in oc-relay with the app and auto-fills the connection. {relayInfo?.running ? "Relay running." : "Relay stopped."}</div>
+                </div>
+              </div>
+              <button
+                type="button"
+                className={`toggle${settings.notify.runLocal ? " on" : ""}`}
+                aria-pressed={settings.notify.runLocal}
+                onClick={async () => {
+                  const next = !settings.notify.runLocal;
+                  updateNotify({ runLocal: next });
+                  if (next) {
+                    try {
+                      const info = await invoke<any>("relay_start");
+                      setRelayInfo(info);
+                    } catch (e) {
+                      pushToast(`relay: ${e}`);
+                    }
+                  } else {
+                    try { setRelayInfo(await invoke<any>("relay_stop")); } catch {}
+                  }
+                }}
+              >
+                <span className="knob" />
+              </button>
+            </div>
+
+            {settings.notify.runLocal && (
+              <div className="setting-row setting-row--muted" style={{ flexDirection: "column", alignItems: "stretch", gap: "6px" }}>
+                <div className="setting-info">
+                  <i className="fa-solid fa-link setting-icon" />
+                  <div>
+                    <div className="setting-name">Phone setup link</div>
+                    <div className="setting-desc">Open this link on your phone (same Wi-Fi) — it connects by itself. Or tap to copy and send it anywhere.</div>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  className="reset-btn"
+                  style={{ width: "100%", justifyContent: "flex-start", textAlign: "left", overflow: "hidden", textOverflow: "ellipsis" }}
+                  disabled={!relayInfo?.phone_page}
+                  onClick={() => {
+                    if (relayInfo?.phone_page) {
+                      void navigator.clipboard?.writeText(relayInfo.phone_page).catch(() => {});
+                      pushToast("Phone link copied");
+                    }
+                  }}
+                  data-tip={relayInfo?.phone_page || "start the relay first"}
+                >
+                  <i className="fa-solid fa-copy" />
+                  <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>{relayInfo?.phone_page || "start the relay first"}</span>
+                </button>
+              </div>
+            )}
+
+            {!settings.notify.runLocal && (
+              <div className="setting-row setting-row--muted" style={{ flexDirection: "column", alignItems: "stretch", gap: "6px" }}>
+                <div className="setting-info">
+                  <i className="fa-solid fa-tower-broadcast setting-icon" />
+                  <div>
+                    <div className="setting-name">Remote relay</div>
+                    <div className="setting-desc">Point at an oc-relay running elsewhere (VPS, NAS, second PC). Both are outbound connections — no port-forwarding needed.</div>
+                  </div>
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: "6px", width: "100%" }}>
+                  <input
+                    className="oc-input"
+                    style={{ width: "100%" }}
+                    placeholder="ws://192.168.1.10:8918/ws"
+                    value={settings.notify.relayUrl}
+                    onChange={(e) => updateNotify({ relayUrl: e.target.value.trim() })}
+                    spellCheck={false}
+                  />
+                  <input
+                    className="oc-input mono-hint"
+                    style={{ width: "100%" }}
+                    placeholder="desktop token (printed by oc-relay on first boot)"
+                    value={settings.notify.token}
+                    onChange={(e) => updateNotify({ token: e.target.value.trim() })}
+                    spellCheck={false}
+                  />
+                </div>
+              </div>
+            )}
+
+            {([
+              ["onIdle", "Turn completed", "Notify when a session finishes its turn"],
+              ["onPermission", "Permission needed", "Notify when the agent asks for approval"],
+              ["onQuestion", "Question asked", "Notify when the agent asks a question"],
+              ["onError", "Errors", "Notify when a turn ends with an error"],
+            ] as const).map(([key, name, desc]) => (
+              <div className="setting-row" key={key}>
+                <div className="setting-info">
+                  <i className={`fa-solid ${key === "onError" ? "fa-triangle-exclamation" : key === "onIdle" ? "fa-circle-check" : key === "onPermission" ? "fa-hand" : "fa-circle-question"} setting-icon`} />
+                  <div>
+                    <div className="setting-name">{name}</div>
+                    <div className="setting-desc">{desc}</div>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  className={`toggle${settings.notify[key] ? " on" : ""}`}
+                  aria-pressed={settings.notify[key]}
+                  onClick={() => updateNotify({ [key]: !settings.notify[key] })}
+                >
+                  <span className="knob" />
+                </button>
+              </div>
+            ))}
           </section>
 
           {/* ── Danger Zone ── */}

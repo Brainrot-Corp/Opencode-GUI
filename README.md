@@ -15,10 +15,10 @@ Windows 10/11 (WebView2 ships with Windows), Node 20+, Rust stable + MSVC Build 
 Run everything through `scripts/run.sh` (Git Bash on Windows, bash/WSL elsewhere):
 
 ```
-./scripts/run.sh setup    # first time: npm deps + rustup (if missing) + sidecar binary
+./scripts/run.sh setup    # first time: npm deps + rustup (if missing) + sidecar binary + oc-relay
 ./scripts/run.sh dev      # run the app
 ./scripts/run.sh build    # bundle → src-tauri/target/release/bundle
-./scripts/run.sh portable # portable zip (exe + sidecar) → bundle/portable
+./scripts/run.sh portable # portable zip (exe + sidecar + oc-relay) → bundle/portable
 ./scripts/run.sh check    # unit tests + tsc + vite build + cargo check
 ./scripts/run.sh clean    # cargo clean + remove dist
 ```

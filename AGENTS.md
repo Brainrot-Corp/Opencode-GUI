@@ -29,10 +29,10 @@ Design is identical on all platforms (single CSS/design system, custom titlebar,
 ## Commands
 
 ```
-run.sh setup                           # npm deps + rustup (if missing) + download correct sidecar triple + chmod +x
+run.sh setup                           # npm deps + rustup (if missing) + download correct sidecar triple + chmod +x + build/stage oc-relay
 run.sh dev                             # Vite :1420 + Tauri window (checks any opencode-* binary)
 run.sh build [native|win11|win10|both] [bundles] [--version X.Y.Z]  # native = current OS; win11/win10 only on Windows
-run.sh portable [native|win11|win10|both]  # zip (exe + sidecar) → bundle/portable (Windows; mac/Linux build makes a .app/zip)
+run.sh portable [native|win11|win10|both]  # zip (exe + sidecar + oc-relay) → bundle/portable (Windows; mac/Linux build makes a .app/zip)
 run.sh check                           # node unit tests + tsc + vite build + cargo check
 npm run test                           # frontend unit tests only (scripts/run-tests.mjs, framework-free self-checks in src/lib/*.test.ts)
 run.sh clean                           # cargo clean + remove dist

@@ -15,6 +15,12 @@ dist-ssr
 # Bundled opencode sidecar binary (downloaded from opencode releases)
 src-tauri/binaries/
 
+# oc-relay (notification relay) — build output + generated tokens/logs
+relay/target/
+relay/relay-tokens.txt
+relay/relay-out.txt
+relay/relay-err.txt
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

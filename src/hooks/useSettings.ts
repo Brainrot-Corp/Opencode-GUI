@@ -126,6 +126,18 @@ export type AppSettings = {
   secondaryModel: string;
   // include optional body in AI commit messages (subject + bullet body)
   commitBody: boolean;
+  // phone relay: push notifications about agent activity (mobile companion,
+  // docs/mobile-companion.md) — all-optional, off when relayUrl is ""
+  notify: {
+    relayUrl: string;
+    token: string;
+    // spawn/kill oc-relay from the GUI and auto-fill URL/token from it
+    runLocal: boolean;
+    onIdle: boolean;
+    onPermission: boolean;
+    onQuestion: boolean;
+    onError: boolean;
+  };
   // show the update-available prompt on launch (Settings → Updates still works when off)
   updateNotifications: boolean;
   terminal: TerminalSettings;
@@ -183,6 +195,7 @@ const DEFAULTS: AppSettings = {
   ttsSpeed: 1,
   secondaryModel: "",
   commitBody: false,
+  notify: { relayUrl: "", token: "", runLocal: false, onIdle: true, onPermission: true, onQuestion: true, onError: true },
   updateNotifications: true,
   terminal: { defaultProfileId: null, customShells: [] },
   plugins: {},
@@ -388,6 +401,21 @@ export function useSettings() {
         ttsSpeed: num(p.ttsSpeed, DEFAULTS.ttsSpeed, 0.5, 2),
         secondaryModel: typeof p.secondaryModel === "string" ? p.secondaryModel : "",
         commitBody: !!p.commitBody,
+        notify: (() => {
+          const n: any = p.notify;
+          const relayUrl = typeof n?.relayUrl === "string" && /^wss?:\/\//.test(n.relayUrl) && n.relayUrl.length < 500 ? n.relayUrl : "";
+          const token = typeof n?.token === "string" && n.token.length <= 200 ? n.token : "";
+          const flag = (v: unknown, def: boolean) => (v === undefined ? def : !!v);
+          return {
+            relayUrl,
+            token,
+            runLocal: !!n?.runLocal,
+            onIdle: flag(n?.onIdle, true),
+            onPermission: flag(n?.onPermission, true),
+            onQuestion: flag(n?.onQuestion, true),
+            onError: flag(n?.onError, true),
+          };
+        })(),
         updateNotifications: p.updateNotifications === false ? false : true,
         terminal: (() => {
           const t: any = p.terminal;
@@ -756,6 +784,10 @@ export function useSettings() {
     setSettings((s) => ({ ...s, sounds: { ...s.sounds, ...clean } }));
   }, []);
 
+  const updateNotify = useCallback((patch: Partial<AppSettings["notify"]>) => {
+    setSettings((s) => ({ ...s, notify: { ...s.notify, ...patch } }));
+  }, []);
+
   // Appearance edits are persisted CSS overrides keyed by the *effective*
   // theme/mode (the actual vars on <html>). They never touch themes.json,
   // so the file stays as the reset source.
@@ -842,6 +874,7 @@ export function useSettings() {
     update,
     updatePlugin,
     updateSounds,
+    updateNotify,
     updateColors,
     resetColors,
     resetThemes,

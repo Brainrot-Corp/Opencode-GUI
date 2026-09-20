@@ -186,8 +186,7 @@ ensure_node_deps() {
 
 fetch_sidecar() {
     mkdir -p src-tauri/binaries
-    echo ">> fetching $ASSET for $OS/$ARCH → $SIDECAR"
-    url=$(curl -fsSL https://api.github.com/repos/anomalyco/opencode/releases/latest \
+    echo ">> fetching $ASSET for $OS/$ARCH → $SIDECAR"    url=$(curl -fsSL https://api.github.com/repos/anomalyco/opencode/releases/latest \
         | grep -o '"browser_download_url": *"[^"]*'"$ASSET"'"' \
         | head -1 | sed 's/.*"\(https[^"]*\)".*/\1/')
     if [ -z "$url" ]; then
@@ -217,6 +216,28 @@ fetch_sidecar() {
     fi
 }
 
+# build the oc-relay companion binary and stage it where Tauri's externalBin
+# expects it (src-tauri/binaries/oc-relay-$TRIPLE) — shipped in bundles +
+# portable zips so "Run relay on this PC" works out of the box
+build_relay() {
+    echo ">> building oc-relay (notification relay)..."
+    local host flag=""
+    host=$(rustc -vV 2>/dev/null | sed -n 's/^host: *//p')
+    if [ -n "$host" ] && [ "$host" != "$TRIPLE" ]; then
+        flag="--target $TRIPLE"
+        echo ">> cross-compiling relay for $TRIPLE"
+    fi
+    cargo build --release --manifest-path relay/Cargo.toml $flag
+    if [ $? -ne 0 ]; then echo "!! relay build failed"; exit 1; fi
+    src="relay/target/release/oc-relay"
+    [ -n "$flag" ] && src="relay/target/$TRIPLE/release/oc-relay"
+    [ -f "$src.exe" ] && src="$src.exe"
+    dest="src-tauri/binaries/oc-relay-$TRIPLE"
+    case "$OS" in MINGW*|MSYS*|CYGWIN*|Windows*) dest="$dest.exe" ;; esac
+    cp "$src" "$dest"
+    echo ">> relay staged: $dest"
+}
+
 build_one() {
     local extra=""
     [ "$2" = "nobundle" ] && extra="--no-bundle"
@@ -227,7 +248,6 @@ build_one() {
         npm run tauri build -- $extra
     fi
 }
-
 # zip <entry> from <dir> into <archive> — Git Bash often has no zip, fall back
 # to PowerShell's Compress-Archive on Windows (native Compress-Archive path)
 zip_dir() {
@@ -245,6 +265,7 @@ case "${CMD}" in
         ensure_rust
         ensure_node_deps
         fetch_sidecar
+        build_relay
         echo ">> verifying Rust toolchain..."
         cargo --version 2>&1 || true
         echo ">> setup complete"
@@ -261,6 +282,7 @@ case "${CMD}" in
             echo "!! cargo not found, run './scripts/run.sh setup' first (installs rustup)"
             exit 1
         fi
+        build_relay
         for t in $TARGETS; do
             build_one "$t" "" "$BUNDLES"
             bundle="src-tauri/target/release/bundle"
@@ -284,6 +306,7 @@ case "${CMD}" in
             echo "!! cargo not found, run './scripts/run.sh setup' first (installs rustup)"
             exit 1
         fi
+        build_relay
         rel="src-tauri/target/release"
         out="$rel/bundle/portable"
         for t in $TARGETS; do
@@ -298,6 +321,8 @@ case "${CMD}" in
                 mkdir -p "$out/OpenCode"
                 cp "$rel/opencode-gui.exe" "$out/OpenCode/" 2>/dev/null || cp "$rel/opencode-gui" "$out/OpenCode/" 2>/dev/null || true
                 if [ -f "$rel/opencode.exe" ]; then cp "$rel/opencode.exe" "$out/OpenCode/"; elif [ -f "$rel/opencode" ]; then cp "$rel/opencode" "$out/OpenCode/"; elif [ -f "$SIDECAR" ]; then cp "$SIDECAR" "$out/OpenCode/opencode.exe" 2>/dev/null || cp "$SIDECAR" "$out/OpenCode/opencode" 2>/dev/null || true; fi
+                # relay companion (from Tauri's externalBin staging, else the crate build)
+                if [ -f "$rel/oc-relay.exe" ]; then cp "$rel/oc-relay.exe" "$out/OpenCode/"; elif [ -f "$rel/oc-relay" ]; then cp "$rel/oc-relay" "$out/OpenCode/"; elif [ -f "src-tauri/binaries/oc-relay-$TRIPLE.exe" ]; then cp "src-tauri/binaries/oc-relay-$TRIPLE.exe" "$out/OpenCode/oc-relay.exe"; elif [ -f "src-tauri/binaries/oc-relay-$TRIPLE" ]; then cp "src-tauri/binaries/oc-relay-$TRIPLE" "$out/OpenCode/oc-relay"; fi
                 zip_dir "opencode-gui-$t-x64.zip" "$out" OpenCode
                 echo ">> portable [$t]: $out/opencode-gui-$t-x64.zip"
                 ls -lh "$out/opencode-gui-$t-x64.zip" 2>/dev/null || true
@@ -308,6 +333,8 @@ case "${CMD}" in
                 if [ -f "$rel/opencode-gui" ]; then cp "$rel/opencode-gui" "$out/OpenCode/"; elif [ -f "$rel/opencode-gui.exe" ]; then cp "$rel/opencode-gui.exe" "$out/OpenCode/"; fi
                 # sidecar: prefer built, fallback to source sidecar
                 if [ -f "$rel/opencode" ]; then cp "$rel/opencode" "$out/OpenCode/"; elif [ -f "$rel/opencode.exe" ]; then cp "$rel/opencode.exe" "$out/OpenCode/"; elif [ -f "$SIDECAR" ]; then cp "$SIDECAR" "$out/OpenCode/" 2>/dev/null || true; fi
+                # relay companion — staged by Tauri externalBin or the crate build
+                if [ -f "$rel/oc-relay" ]; then cp "$rel/oc-relay" "$out/OpenCode/"; elif [ -f "$rel/oc-relay.exe" ]; then cp "$rel/oc-relay.exe" "$out/OpenCode/"; elif [ -f "src-tauri/binaries/oc-relay-$TRIPLE" ]; then cp "src-tauri/binaries/oc-relay-$TRIPLE" "$out/OpenCode/"; fi
                 if [ "$OS" = "Darwin" ]; then
                     _app=$(find "$bundle/macos" -maxdepth 2 -name "*.app" -type d 2>/dev/null | head -1)
                     if [ -z "$_app" ]; then _app=$(find "$bundle" -maxdepth 3 -name "*.app" -type d 2>/dev/null | head -1); fi
