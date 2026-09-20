@@ -93,4 +93,27 @@ orph.applyPart({ id: "p1", sessionID: S, messageID: "m1", type: "text", text: ""
 orph.applyMessage(msg("m1", "assistant").info);
 check("orphan part keeps stash", (orph.cached(S) as any[])[0].parts[0].text, "hi");
 
+// a stale (shorter, non-extending) snapshot must not wipe streamed text —
+// server snapshots travel separately and can land out of order; only a
+// refetch heals a wipe, so never regress client-side
+const regr = createSessionStore(() => {});
+regr.applyMessage(msg("m1", "assistant").info);
+regr.applyPart({ id: "p1", sessionID: S, messageID: "m1", type: "text", text: "" } as any);
+regr.applyDelta({ sessionID: S, messageID: "m1", partID: "p1", delta: "hello world" });
+regr.applyPart({ id: "p1", sessionID: S, messageID: "m1", type: "text", text: "" } as any);
+check("late empty snapshot keeps text", (regr.cached(S) as any[])[0].parts[0].text, "hello world");
+regr.applyPart({ id: "p1", sessionID: S, messageID: "m1", type: "text", text: "hello" } as any);
+check("stale prefix snapshot keeps text", (regr.cached(S) as any[])[0].parts[0].text, "hello world");
+// growth and genuine rewrites still apply
+regr.applyPart({ id: "p1", sessionID: S, messageID: "m1", type: "text", text: "hello world!" } as any);
+check("growing snapshot applies", (regr.cached(S) as any[])[0].parts[0].text, "hello world!");
+regr.applyPart({ id: "p1", sessionID: S, messageID: "m1", type: "text", text: "rewritten" } as any);
+check("rewrite snapshot applies", (regr.cached(S) as any[])[0].parts[0].text, "rewritten");
+
+// unplaced events are reported per session for the settle-time repair
+const unp = createSessionStore(() => {});
+unp.applyDelta({ sessionID: S, messageID: "m1", partID: "p1", delta: "hi" });
+check("stashed delta counts as unplaced", unp.unplaced(S), 1);
+check("other sessions unaffected", unp.unplaced("s2"), 0);
+
 console.log(`sessionStore: ${n} checks passed`);

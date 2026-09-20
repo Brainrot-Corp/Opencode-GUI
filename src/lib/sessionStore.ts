@@ -84,7 +84,22 @@ export function createSessionStore(onChange: (sid: string) => void) {
     // deltas can outrun the part announcement (short replies whose tokens
     // stream before the part exists) — fold them in unless the part already
     // carries them, else the part lands empty and the row hides until refetch
-    const merged = withStash(part);
+    let merged = withStash(part);
+    // server text only grows (deltas append; text-end is cumulative), but its
+    // snapshots travel on separate fibers and can land out of order — never
+    // let a stale (shorter, non-extending) snapshot wipe streamed text, or a
+    // short reply goes blank until refetch. Genuine rewrites (shorter and not
+    // a prefix) still apply.
+    if (pi >= 0) {
+      const prev = m.parts[pi] as { type?: string; text?: string };
+      const t = (merged as any).type;
+      if ((t === "text" || t === "reasoning") && prev.type === t) {
+        const a = prev.text ?? "";
+        const b = (merged as any).text ?? "";
+        if (a && (b === "" || (b.length < a.length && a.startsWith(b))))
+          merged = { ...merged, text: a } as Part;
+      }
+    }
     // fresh message identity — memoized rows compare msg references, so an
     // update must swap its own object or the row never re-renders
     store[mi] = {
@@ -309,6 +324,15 @@ export function createSessionStore(onChange: (sid: string) => void) {
     addCommand,
     cached: (sid: string) => stores.get(sid),
     usageOf: (sid: string) => usage.get(sid) ?? EMPTY_USAGE,
+    // events that arrived but could never be placed (parts without a parent
+    // message, deltas without a part) — at settle these mean a gap the live
+    // stream won't fill, so the caller refetches instead of staying blank
+    unplaced: (sid: string) => {
+      let n = 0;
+      for (const v of orphanParts.values()) if (v.sid === sid) n += v.parts.length;
+      for (const v of pendingDeltas.values()) if (v.sid === sid) n++;
+      return n;
+    },
   };
 }
 
