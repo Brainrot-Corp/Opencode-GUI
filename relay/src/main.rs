@@ -30,8 +30,21 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 use futures_util::{SinkExt, StreamExt};
+use base64::Engine;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64URL;
+use web_push_native::{jwt_simple::algorithms::ES256KeyPair, p256::PublicKey, Auth, WebPushBuilder};
 
 const RELAY_TTL: u64 = 24 * 60 * 60; // seconds a notify stays replayable
+
+const SUBS_FILE: &str = "relay-push-subs.json";
+
+fn b64url(s: &str) -> Result<Vec<u8>, base64::DecodeError> {
+    B64URL.decode(s.trim_end_matches('='))
+}
+
+fn b64url_str(bytes: &[u8]) -> String {
+    B64URL.encode(bytes)
+}
 
 struct Relay {
     desktop_token_hash: String,
@@ -40,6 +53,10 @@ struct Relay {
     phones: Mutex<Vec<WsSender>>,
     log: Mutex<Vec<Value>>,
     next_id: AtomicU64,
+    // web push (background delivery): VAPID signing key + browser subscriptions
+    vapid: ES256KeyPair,
+    subs: Mutex<Vec<Value>>,
+    http: reqwest::Client,
 }
 
 type WsSender = tokio::sync::mpsc::UnboundedSender<WsMessage>;
@@ -67,6 +84,66 @@ impl Relay {
             let drop = log.len() - 1000;
             log.drain(..drop);
         }
+    }
+
+    // OS-level background delivery via Web Push (works on Android Chrome and
+    // iOS 16.4+ A2HS-installed pages, which suspend open sockets otherwise).
+    // Fire-and-forget: dead subscriptions (410/404) are pruned; failures are
+    // non-fatal since live phones also get the WS fan-out.
+    fn push_web(self: &std::sync::Arc<Self>, msg: Value) {
+        let subs = self.subs.lock().unwrap().clone();
+        if subs.is_empty() {
+            return;
+        }
+        let this = self.clone();
+        tokio::spawn(async move {
+            let mut gone = Vec::new();
+            for (i, sub) in subs.iter().enumerate() {
+                            let (endpoint, ua_public, ua_auth) = (
+                    sub["endpoint"].as_str().unwrap_or("").parse(),
+                    b64url(sub["keys"]["p256dh"].as_str().unwrap_or(""))
+                        .and_then(|b| PublicKey::from_sec1_bytes(&b).map_err(|_| base64::DecodeError::InvalidLength(0))),
+                    b64url(sub["keys"]["auth"].as_str().unwrap_or("")).map(|b| Auth::clone_from_slice(&b)),
+                );
+                let (Ok(endpoint), Ok(ua_public), Ok(ua_auth)) = (endpoint, ua_public, ua_auth) else {
+                    gone.push(i);
+                    continue;
+                };
+                match WebPushBuilder::new(endpoint, ua_public, ua_auth)
+                    .with_vapid(&this.vapid, "mailto:oc-relay@localhost")
+                    .build(msg.to_string())
+                {
+                    Ok(req) => {
+                        let (parts, body) = req.into_parts();
+                        let mut rb = this
+                            .http
+                            .request(parts.method, parts.uri.to_string())
+                            .body(body);
+                        for (k, v) in parts.headers.iter() {
+                            rb = rb.header(k.as_str(), v.to_str().unwrap_or_default());
+                        }
+                        match rb.send().await {
+                            Ok(resp) if resp.status() == 404 || resp.status() == 410 => gone.push(i),
+                            Ok(_) => {}
+                            Err(_) => {}
+                        }
+                    }
+                    Err(_) => gone.push(i),
+                }
+            }
+            if !gone.is_empty() {
+                let mut all = this.subs.lock().unwrap();
+                let mut next = Vec::new();
+                for (i, s) in all.iter().enumerate() {
+                    if !gone.contains(&i) {
+                        next.push(s.clone());
+                    }
+                }
+                *all = next;
+                let _ = std::fs::write(SUBS_FILE, serde_json::to_string(&*all).unwrap_or_default());
+                println!("[~] pruned {} dead push subscription(s)", gone.len());
+            }
+        });
     }
 
     fn replay_after(&self, last_id: u64) -> Vec<Value> {
@@ -131,6 +208,8 @@ async fn handle_socket(socket: WebSocket, relay: std::sync::Arc<Relay>) {
                 relay.push_log(v.clone());
                 let mut phones = relay.phones.lock().unwrap();
                 phones.retain(|p| p.send(WsMessage::Text(v.to_string().into())).is_ok());
+                drop(phones);
+                relay.push_web(v);
             }
             _ => {}
         }
@@ -170,8 +249,42 @@ async fn test_handler(
     let mut phones = relay.phones.lock().unwrap();
     let n = phones.len();
     phones.retain(|p| p.send(WsMessage::Text(msg.to_string().into())).is_ok());
+    drop(phones);
+    relay.push_web(msg);
     println!("[~] test notify fanned out to {n} phone(s)");
     (axum::http::StatusCode::OK, format!("fanned out to {n} phone(s)"))
+}
+
+// POST /push-sub (Bearer phone token) — a browser push subscription from the
+// phone shim. Persisted so pushes survive relay restarts; pruned on 410/404.
+async fn push_sub_handler(
+    State(relay): State<std::sync::Arc<Relay>>,
+    headers: axum::http::HeaderMap,
+    body: String,
+) -> impl axum::response::IntoResponse {
+    let token = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.strip_prefix("Bearer "))
+        .unwrap_or("");
+    if !token_ok(token, &relay.phone_token_hash) {
+        return (axum::http::StatusCode::UNAUTHORIZED, "bad phone token".to_string());
+    }
+    let sub: Value = match serde_json::from_str::<Value>(&body) {
+        Ok(v) if v["endpoint"].is_string() && v["keys"]["p256dh"].is_string() && v["keys"]["auth"].is_string() => v,
+        _ => return (axum::http::StatusCode::BAD_REQUEST, "not a push subscription".to_string()),
+    };
+    let mut subs = relay.subs.lock().unwrap();
+    subs.retain(|s| s["endpoint"] != sub["endpoint"]);
+    if subs.len() >= 16 {
+        let drop = subs.len() - 16;
+        subs.drain(..drop);
+    }
+    subs.push(sub);
+    let _ = std::fs::write(SUBS_FILE, serde_json::to_string(&*subs).unwrap_or_default());
+    let n = subs.len();
+    println!("[+] push subscription stored ({n} total)");
+    (axum::http::StatusCode::OK, format!("stored ({n} subscription(s))"))
 }
 
 async fn ws_handler(ws: WebSocketUpgrade, State(relay): State<std::sync::Arc<Relay>>) -> impl axum::response::IntoResponse {
@@ -181,8 +294,13 @@ async fn ws_handler(ws: WebSocketUpgrade, State(relay): State<std::sync::Arc<Rel
 // phone shim — a test page for the phase-1 milestone check before the real
 // mobile app exists (docs/mobile-companion.md): open http://<relay-host>:PORT/phone
 // in any phone browser, paste the phone token, receive the fan-out.
-async fn phone_page() -> impl axum::response::IntoResponse {
-    axum::response::Html(PHONE_SHIM)
+async fn phone_page(State(relay): State<std::sync::Arc<Relay>>) -> impl axum::response::IntoResponse {
+    // applicationServerKey = uncompressed VAPID public key, base64url —
+    // derive via the raw scalar (jwt_simple's public-key wrapper hides sec1 export)
+    use web_push_native::p256::elliptic_curve::sec1::ToEncodedPoint;
+    let secret = web_push_native::p256::SecretKey::from_slice(&relay.vapid.to_bytes()).unwrap();
+    let pub_bytes = secret.public_key().to_encoded_point(false).as_bytes().to_vec();
+    axum::response::Html(PHONE_SHIM.replace("__VAPID_PUB__", &b64url_str(&pub_bytes)))
 }
 
 // service worker — Android Chrome refuses page-level `new Notification()`
@@ -198,6 +316,17 @@ async fn sw_js() -> impl axum::response::IntoResponse {
     for (const c of cs) if (c.url.includes("/phone")) return c.focus();
     return self.clients.openWindow("/phone");
   }));
+});
+
+// background delivery — browsers suspend open sockets, so messages that
+// arrive while the app is closed/backgrounded ride Web Push instead
+self.addEventListener("push", (e) => {
+  let title = "opencode", body = "";
+  try {
+    const m = e.data ? e.data.json() : null;
+    if (m) { title = m.title ?? title; body = m.body ?? ""; }
+  } catch {}
+  e.waitUntil(self.registration.showNotification(title, { body, tag: "oc-relay" }));
 });
 "#,
     )
@@ -220,6 +349,10 @@ async fn icon_svg() -> impl axum::response::IntoResponse {
 
 #[tokio::main]
 async fn main() {
+    // reqwest (rustls-tls) + axum-server (tls-rustls) enable different rustls
+    // crypto providers — without an explicit pick rustls panics on the
+    // ambiguous "exactly one provider" rule
+    let _ = rustls::crypto::ring::default_provider().install_default();
     let port: u16 = std::env::args()
         .nth(1)
         .and_then(|a| a.parse().ok())
@@ -233,6 +366,16 @@ async fn main() {
     println!("desktop token: {desktop_token}");
     println!("phone token:   {phone_token}");
 
+    // VAPID key for web push (background delivery) — persists in the token
+    // file so browser subscriptions stay valid across restarts
+    let vapid = load_or_make_vapid();
+    println!("vapid public:  {}", b64url_str(&vapid.public_key().to_bytes()));
+    let subs: Vec<Value> = std::fs::read_to_string(SUBS_FILE)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default();
+    println!("push subscriptions loaded: {}", subs.len());
+
     let relay = std::sync::Arc::new(Relay {
         desktop_token_hash: sha256_hex(&desktop_token),
         phone_token_hash: sha256_hex(&phone_token),
@@ -240,6 +383,9 @@ async fn main() {
         phones: Mutex::new(Vec::new()),
         log: Mutex::new(Vec::new()),
         next_id: AtomicU64::new(0),
+        vapid,
+        subs: Mutex::new(subs),
+        http: reqwest::Client::new(),
     });
 
     let app = Router::new()
@@ -249,6 +395,7 @@ async fn main() {
         .route("/manifest.webmanifest", get(manifest))
         .route("/icon.svg", get(icon_svg))
         .route("/test", post(test_handler))
+        .route("/push-sub", post(push_sub_handler))
         .with_state(relay.clone());
 
     // self-signed TLS on port+1 — phone browsers (MDM/Screen Time) often block
@@ -316,6 +463,30 @@ fn tls_config() -> Result<axum_server::tls_rustls::RustlsConfig, Box<dyn std::er
 
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+// VAPID private key (raw 32-byte scalar, base64url) — persisted as a third
+// `vap-` line in relay-tokens.txt so browser subscriptions survive restarts
+fn load_or_make_vapid() -> ES256KeyPair {
+    let existing = std::fs::read_to_string("relay-tokens.txt")
+        .ok()
+        .and_then(|txt| {
+            txt.lines()
+                .find(|l| l.starts_with("vap-"))
+                .and_then(|l| b64url(l.trim().trim_start_matches("vap-")).ok())
+        });
+    let kp = if let Some(raw) = existing {
+        ES256KeyPair::from_bytes(&raw).unwrap_or_else(|_| ES256KeyPair::generate())
+    } else {
+        ES256KeyPair::generate()
+    };
+    if let Ok(txt) = std::fs::read_to_string("relay-tokens.txt") {
+        let vap = format!("vap-{}", b64url_str(&kp.to_bytes()));
+        let mut lines: Vec<String> = txt.lines().filter(|l| !l.starts_with("vap-")).map(String::from).collect();
+        lines.push(vap);
+        let _ = std::fs::write("relay-tokens.txt", lines.join("\n") + "\n");
+    }
+    kp
 }
 
 const PHONE_SHIM: &str = r#"<!doctype html>
@@ -397,6 +568,37 @@ async function ask() {
       else st.textContent = "system notifications: " + p + " — the page list still works. On Android/iOS, use 'Add to Home Screen' and open from the icon, then press Enable again.";
     } catch (e) { st.textContent = "notifications: " + e; }
   }
+  // background delivery: a push subscription routes messages through the OS
+  // push service (FCM on Android / APNs on iOS) so they arrive while the
+  // page is backgrounded or closed. iOS needs the page installed (A2HS).
+  if (swreg && swreg.pushManager) {
+    try {
+      const key = "__VAPID_PUB__";
+      let sub = await swreg.pushManager.getSubscription();
+      if (!sub || sub.options.applicationServerKey && btoa(String.fromCharCode(...new Uint8Array(sub.options.applicationServerKey))) !== key) {
+        sub = await swreg.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlB64ToUint8(key),
+        });
+      }
+      const r = await fetch("/push-sub", {
+        method: "POST",
+        headers: { Authorization: "Bearer " + document.getElementById("tok").value.trim() },
+        body: JSON.stringify(sub.toJSON ? sub.toJSON() : sub),
+      });
+      st.textContent = r.ok
+        ? "system + background notifications on — banners now arrive when the app is closed"
+        : "push subscribe failed: " + r.status;
+    } catch (e) {
+      st.textContent = "background push: " + e + " — iOS needs 'Add to Home Screen' first (Share menu), then Enable again.";
+    }
+  }
+}
+
+function urlB64ToUint8(b64) {
+  const pad = "=".repeat((4 - (b64.length % 4)) % 4);
+  const raw = atob((b64 + pad).replace(/-/g, "+").replace(/_/g, "/"));
+  return Uint8Array.from(raw, (c) => c.charCodeAt(0));
 }
 
 function connect() {
@@ -442,6 +644,9 @@ mod tests {
             phones: Mutex::new(Vec::new()),
             log: Mutex::new(Vec::new()),
             next_id: AtomicU64::new(0),
+            vapid: ES256KeyPair::generate(),
+            subs: Mutex::new(Vec::new()),
+            http: reqwest::Client::new(),
         }
     }
 

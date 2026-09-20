@@ -20,6 +20,8 @@ relay/target/
 relay/relay-tokens.txt
 relay/relay-out.txt
 relay/relay-err.txt
+relay/relay-push-subs.json
+relay/phone-check.html
 
 # Editor directories and files
 .vscode/*
