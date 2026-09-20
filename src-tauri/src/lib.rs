@@ -31,6 +31,9 @@ use discord::{
     discord_clear, discord_close, discord_get_start_ts, discord_set, discord_status, DiscordState,
 };
 
+mod discover;
+use discover::relay_discover;
+
 #[cfg(desktop)]
 mod files;
 #[cfg(desktop)]
@@ -168,12 +171,13 @@ pub fn run() {
     // Rust commands yet — the notification plugin's JS API is the surface.
     // Desktop registers the full command set.
     #[cfg(not(desktop))]
-    let builder = builder.invoke_handler(tauri::generate_handler![os_glass]);
+    let builder = builder.invoke_handler(tauri::generate_handler![os_glass, relay_discover]);
     #[cfg(desktop)]
     let builder = builder
         .invoke_handler(tauri::generate_handler![
             server_url,
             os_glass,
+            relay_discover,
             window_scope,
             workspace_get,
             workspace_set,

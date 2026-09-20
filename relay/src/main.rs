@@ -36,6 +36,10 @@ use web_push_native::{jwt_simple::algorithms::ES256KeyPair, p256::PublicKey, Aut
 
 const RELAY_TTL: u64 = 24 * 60 * 60; // seconds a notify stays replayable
 
+// LAN auto-discovery: phones broadcast this magic and we answer with the
+// wss:// URL + phone token so the mobile app connects with one tap
+const DISCOVER_MAGIC: &[u8] = b"oc-relay-discover-v1";
+
 const SUBS_FILE: &str = "relay-push-subs.json";
 
 fn b64url(s: &str) -> Result<Vec<u8>, base64::DecodeError> {
@@ -449,6 +453,8 @@ async fn main() {
     } else {
         println!("(no LAN IP / TLS — phone test page unavailable, use ws:// only)");
     }
+    spawn_discovery(port, phone_token);
+    println!("LAN discovery: UDP broadcast port {port} → ws URL + phone token");
 
     let listener = tokio::net::TcpListener::bind(("0.0.0.0", port)).await.unwrap();
     axum::serve(listener, app).await.unwrap();
@@ -497,6 +503,32 @@ fn tls_config() -> Result<axum_server::tls_rustls::RustlsConfig, Box<dyn std::er
 
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+// LAN auto-discovery: answer broadcast probes with the ws:// URL + phone
+// token so the mobile app connects with one tap (no manual URL/token paste).
+// Plain ws:// (not wss://) — the self-signed TLS port is untrusted by the
+// Android WebView; the token + LAN-only binding are the protection.
+// Probe: `oc-relay-discover-v1`; reply: JSON {app, url, token}. Blocking
+// socket on a plain thread — tokio would just complicate a recvfrom loop.
+fn spawn_discovery(port: u16, phone_token: String) {
+    let Some(ip) = lan_ip() else { return };
+    std::thread::spawn(move || {
+        let Ok(sock) = std::net::UdpSocket::bind(("0.0.0.0", port)) else { return };
+        let reply = json!({
+            "app": "oc-relay",
+            "url": format!("ws://{ip}:{port}/ws"),
+            "token": phone_token,
+        })
+        .to_string();
+        let mut buf = [0u8; 64];
+        loop {
+            let Ok((n, src)) = sock.recv_from(&mut buf) else { return };
+            if buf[..n].starts_with(DISCOVER_MAGIC) {
+                let _ = sock.send_to(reply.as_bytes(), src);
+            }
+        }
+    });
 }
 
 // VAPID private key (raw 32-byte scalar, base64url) — persisted as a third

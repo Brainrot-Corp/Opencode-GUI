@@ -25,7 +25,7 @@ android {
     compileSdk = 36
     namespace = "com.ewanr.opencode_gui"
     defaultConfig {
-        manifestPlaceholders["usesCleartextTraffic"] = "false"
+        manifestPlaceholders["usesCleartextTraffic"] = "true" // LAN relay discovery hands out plain ws:// URLs
         applicationId = "com.ewanr.opencode_gui"
         minSdk = 24
         targetSdk = 36

@@ -40,6 +40,8 @@ export default function App() {
   const [prefs, setPrefs] = useState<Prefs>(loadPrefs);
   const [notifs, setNotifs] = useState<RelayNotify[]>(loadNotifs);
   const [status, setStatus] = useState<"connecting" | "connected" | "reconnecting" | "off">("off");
+  const [scanning, setScanning] = useState(false);
+  const [scanFail, setScanFail] = useState(false);
   const connRef = useRef<RelayConn | null>(null);
 
   useEffect(() => {
@@ -61,10 +63,24 @@ export default function App() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [prefs.url, prefs.token]);
-
   const save = (p: Prefs) => {
     setPrefs(p);
     try { localStorage.setItem(PREF_KEY, JSON.stringify(p)); } catch {}
+  };
+
+  const discover = async () => {
+    setScanning(true);
+    setScanFail(false);
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      const found = await invoke<{ url: string; token: string } | null>("relay_discover");
+      if (found) save({ url: found.url, token: found.token });
+      else setScanFail(true);
+    } catch {
+      setScanFail(true);
+    } finally {
+      setScanning(false);
+    }
   };
 
   const addNotif = (m: RelayNotify) => {
@@ -86,7 +102,14 @@ export default function App() {
         </button>
       </header>
       {screen === "connect" ? (
-        <ConnectScreen prefs={prefs} onSave={save} status={status} />
+        <ConnectScreen
+          prefs={prefs}
+          onSave={save}
+          status={status}
+          onDiscover={discover}
+          scanning={scanning}
+          scanFail={scanFail && !prefs.url}
+        />
       ) : (
         <NotifScreen notifs={notifs} status={status} onClear={() => {
           setNotifs([]);
@@ -113,11 +136,29 @@ async function banner(m: RelayNotify) {
   } catch {}
 }
 
-function ConnectScreen({ prefs, onSave, status }: { prefs: Prefs; onSave: (p: Prefs) => void; status: string }) {
+function ConnectScreen({ prefs, onSave, status, onDiscover, scanning, scanFail }: {
+  prefs: Prefs;
+  onSave: (p: Prefs) => void;
+  status: string;
+  onDiscover: () => void;
+  scanning: boolean;
+  scanFail: boolean;
+}) {
   const [url, setUrl] = useState(prefs.url);
   const [token, setToken] = useState(prefs.token);
   return (
     <div className="mform">
+      <button className="mbtn" onClick={onDiscover} disabled={scanning}>
+        {scanning ? <><i className="fa-solid fa-spinner fa-spin" /> Searching…</> : <><i className="fa-solid fa-magnifying-glass" /> Find desktop on this network</>}
+      </button>
+      {scanFail && (
+        <p className="mhint">
+          No desktop found — make sure the GUI is running on the same Wi-Fi with
+          the relay started (Settings → Phone notifications → Run relay on this PC),
+          then search again or connect manually below.
+        </p>
+      )}
+      <div className="mdivider"><span>or connect manually</span></div>
       <label className="mlabel" htmlFor="m-relay">Relay URL</label>
       <input
         id="m-relay"
@@ -159,7 +200,6 @@ function ConnectScreen({ prefs, onSave, status }: { prefs: Prefs; onSave: (p: Pr
     </div>
   );
 }
-
 function NotifScreen({ notifs, status, onClear }: { notifs: RelayNotify[]; status: string; onClear: () => void }) {
   return (
     <div className="mlist-wrap">

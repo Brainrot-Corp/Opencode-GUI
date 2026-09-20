@@ -105,6 +105,22 @@ html, body, #root {
   font-weight: 600;
   cursor: pointer;
 }
+.mbtn:disabled { opacity: .6; }
+
+.mdivider {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 0;
+  color: var(--m-dim);
+  font-size: 12px;
+}
+.mdivider::before, .mdivider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--m-border);
+}
 
 .mstatus {
   font-size: 12px;
