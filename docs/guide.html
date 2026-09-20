@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#0a0e12" />
+  <meta name="description" content="opencode-gui guide — plugins and the plugin API, default hotkeys, themes." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="assets/style.css" />
+  <title>opencode-gui — Guide</title>
+</head>
+<body>
+  <div class="noise" aria-hidden="true"></div>
+  <header class="nav">
+    <div class="brand"><a href="./index.html"><i></i>opencode-gui</a></div>
+    <nav class="nav-links" aria-label="Site">
+      <a href="./index.html#downloads">Download</a>
+      <a href="./install.html" class="hide-sm">Install</a>
+      <a href="./guide.html" aria-current="page" class="hide-sm">Guide</a>
+      <a href="./changelog.html" class="hide-sm">Changelog</a>
+      <a href="https://github.com/Brainrot-Corp/Opencode-GUI">GitHub</a>
+    </nav>
+  </header>
+  <main class="wrap">
+    <section class="hero" style="padding-bottom:6px">
+      <div class="brand-mark">guide</div>
+      <h1>Make it <span class="glow">yours</span></h1>
+      <p class="tagline">Plugins, hotkeys, themes — everything lives in plain files, no rebuild.</p>
+    </section>
+    <section class="block">
+      <div class="prose">
+        <h2>Plugins</h2>
+        <p>A plugin is a folder with <code>plugin.json</code> + <code>main.js</code> (plus optional <code>styles.css</code>) dropped into <code>%USERPROFILE%\.config\.opencode-gui\plugins\</code>, next to <code>themes.json</code>. Files hot-reload on save; a broken plugin shows a banner and is skipped. Toggling a plugin off disables without deleting.</p>
+        <div class="warn"><strong>Trusted local code.</strong> Plugins run with full app privileges — only install folders you wrote or reviewed.</div>
+        <pre>{
+  "id": "notepad",
+  "name": "Notepad",
+  "version": "1.7.1",
+  "description": "Floating resizable scratch notepad"
+}</pre>
+        <h2>Plugin API</h2>
+        <p><code>main.js</code> is plain browser ESM. Its default export <code>activate(api)</code> returns an extension object:</p>
+        <pre>export default function activate(api) {
+  return {
+    Titlebar: TitlebarBtn,  // icon before the Settings gear
+    Overlay: OverlayPanel,  // floating overlay
+    // Settings / Sidebar also available
+    hotkeys: [
+      { id: "toggle", default: "Alt+N", label: "toggle notepad" },
+    ],
+    onHotkey(id) { if (id === "toggle") toggle(); },
+    slash: [
+      { name: "note", description: "new scratch note",
+        handle: (args) =&gt; openNote(args) },
+    ],
+    info: { keys: [["Alt+N", "toggle floating notepad"]] },
+    async init() { /* background work after load */ },
+  };
+}</pre>
+        <ul>
+          <li><strong>api you get:</strong> <code>invoke</code> (Tauri commands), <code>h</code>/<code>useState</code>/<code>useEffect</code>/<code>useRef</code> (React), <code>settings()</code> (live settings blob), <code>playSound(kind)</code>, <code>matchesEvent</code>/<code>normalizeBinding</code> (same hotkey helpers as core, so rebinds apply), <code>t</code>/<code>i18n.register</code> (en/fr/es).</li>
+          <li><strong>UI slots:</strong> <code>Settings</code> (drawer section), <code>Sidebar</code> (panel above git), <code>Titlebar</code> (icon), <code>Overlay</code> (floating layer).</li>
+          <li><strong>Voice:</strong> <code>parse</code>/<code>describe</code>/<code>exec</code> slot into the spoken-command chain, plus <code>triggers</code>, <code>vocab</code>, <code>lexicon</code> rewrites.</li>
+          <li><strong>Hotkeys:</strong> <code>hotkeys[]</code> appear as rebindable pills in the keybinds menu, dispatched via <code>onHotkey</code>.</li>
+        </ul>
+        <p>Bundled examples in <code>default_plugins/</code>: <code>notepad</code> (Alt+N scratch notes), <code>timer</code>, <code>spotify-control</code>, <code>hue-bridge-control</code>, <code>tuya-lights-control</code> (with <code>test.mjs</code> self-check — the full API example), <code>discord-rich-presence</code>, <code>tiktok</code>. To install one:</p>
+        <pre>Copy-Item -Recurse default_plugins\notepad "$env:USERPROFILE\.config\.opencode-gui\plugins\"</pre>
+        <h2>Hotkeys</h2>
+        <p>Everything below is rebindable in the app's keybinds menu (a <code>—</code> means unbound). On macOS, <code>Ctrl</code> shows as <code>⌘</code>.</p>
+        <ul>
+          <li><code>Ctrl+B</code> toggle sidebar · <code>Ctrl+,</code> settings · <code>Ctrl+M</code> mic on/off</li>
+          <li><code>Ctrl+O</code> open workspace · <code>Ctrl+Shift+W</code> close workspace · <code>Ctrl+Shift+N</code> new window · <code>Ctrl+P</code> pin on top</li>
+          <li><code>Ctrl+N</code> new session · <code>Ctrl+Tab</code> / <code>Ctrl+Shift+Tab</code> next / previous session · <code>Ctrl+W</code> close session</li>
+          <li><code>Ctrl+`</code> terminal · <code>Alt+A</code> agents board · <code>Tab</code> cycle agent</li>
+          <li><code>Ctrl+=</code> / <code>Ctrl+-</code> / <code>Ctrl+0</code> zoom in / out / reset</li>
+        </ul>
+        <p>Editor line ops (also mirrored by the notepad plugin):</p>
+        <ul>
+          <li><code>Ctrl+C</code> / <code>Ctrl+X</code> copy / cut line (no selection) · <code>Ctrl+Shift+K</code> delete line · <code>Ctrl+L</code> select line</li>
+          <li><code>Ctrl+/</code> toggle comment · <code>Alt+↑</code> / <code>Alt+↓</code> move line · <code>Shift+Alt+↑</code> / <code>Shift+Alt+↓</code> duplicate line</li>
+          <li><code>Ctrl+Enter</code> / <code>Ctrl+Shift+Enter</code> insert line below / above</li>
+        </ul>
+        <p>System-wide (work even when the app is unfocused): <code>Alt+Space</code> show/hide, <code>Ctrl+Shift+M</code> mic.</p>
+        <h2>Themes</h2>
+        <p>14 built-ins, each with dark + light modes: <code>cyan</code> (default) · <code>latte</code> · <code>matcha</code> · <code>strawberry</code> · <code>sakura</code> · <code>nebula</code> · <code>vaporwave</code> · <code>ember</code> · <code>abyss</code> · <code>citrus</code> · <code>graphite</code> · <code>crimson</code> · <code>tidal</code> · <code>aurora</code>.</p>
+        <p>Your copy lives at <code>~/.config/.opencode-gui/themes.json</code> — seeded with the defaults on first launch, hot-reloaded on save (comments allowed). An invalid file keeps the last good set with a toast; Reset restores the built-ins. A theme is a map of id → <code>{name, icon, modes: {dark, light}}</code>, each mode setting CSS vars on <code>&lt;html&gt;</code>:</p>
+        <pre>"ember": {
+  "name": "Ember",
+  "modes": { "dark": { "vars": { "--accent": "#e0a37f" } } }
+}</pre>
+        <p>Unset keys inherit the cyan-dark fallback (<code>--accent: #7fd4d4</code>, <code>--danger: #e08f8f</code>, surfaces, plus <code>--syn-*</code> chat/editor syntax colors).</p>
+        <h2>Good to know</h2>
+        <ul>
+          <li><strong>Workspaces:</strong> up to 5 directories plus <code>ssh://user@host/path</code> remotes, each with its own session stream.</li>
+          <li><strong>Permissions:</strong> approve/deny tool calls inline, abort mid-stream, revert with one click.</li>
+          <li><strong>Slash commands:</strong> built-ins plus any <code>slash[]</code> your plugins contribute — dispatched locally, no server round-trip.</li>
+          <li><strong>State:</strong> drafts, models, agents, and UI prefs persist per-session under <code>oc.*</code> localStorage keys.</li>
+        </ul>
+      </div>
+    </section>
+    <footer>
+      <div class="foot-inner">
+        <span>opencode-gui · MIT · <a href="https://github.com/Brainrot-Corp/Opencode-GUI/releases">releases</a></span>
+        <nav><a href="./index.html">Home</a><a href="./install.html">Install</a><a href="./changelog.html">Changelog</a><a href="https://github.com/Brainrot-Corp/Opencode-GUI">GitHub</a></nav>
+      </div>
+    </footer>
+  </main>
+</body>
+</html>
