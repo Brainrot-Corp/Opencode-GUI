@@ -153,6 +153,22 @@ export default memo(function Sidebar({
   // server's cwd tree (which may be the just-closed folder it spawned in)
   const hasRealWorkspace = allDirs.some((d) => (d ?? "").trim() !== "");
 
+  // drops over an open file tree copy files into that tree (FileTree handles
+  // them) — anywhere else stays "add workspace". Point is logical CSS px.
+  const overFileTree = (x: number, y: number): boolean => {
+    for (const el of Array.from(document.querySelectorAll(".filetree"))) {
+      const r = el.getBoundingClientRect();
+      if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) return true;
+    }
+    return false;
+  };
+  // tauri drag payloads carry physical px — sidebar CSS coords are logical
+  const scaledXY = (pos?: { x: number; y: number }) => {
+    if (!pos) return null;
+    const s = (window.devicePixelRatio || 1) || 1;
+    return { x: pos.x / s, y: pos.y / s };
+  };
+
   // drag-drop: Tauri payload + HTML fallback — also show dimmed preview on hover
   useEffect(() => {
     let unDrop: (() => void) | undefined;
@@ -190,7 +206,9 @@ export default memo(function Sidebar({
         }
         idx = Math.max(0, rawIdx - 1);
       }
-      void handleDropPaths(paths, idx);
+      // a drop over the file tree is claimed by FileTree (copy-into-folder)
+      const p = scaledXY(payload?.position);
+      if (!overFileTree(p?.x ?? Infinity, p?.y ?? Infinity)) void handleDropPaths(paths, idx);
       setDragOver(false); setDropIndex(null); setDraggedName(null);
     }).then(f => unDrop = f).catch(() => {});
     // Tauri hover events — drive preview before drop (HTML drag events may not fire for OS files)
@@ -198,13 +216,20 @@ export default memo(function Sidebar({
       const payload = e.payload as { paths?: string[]; position?: { x: number; y: number } };
       const paths: string[] = Array.isArray(payload?.paths) ? payload.paths : Array.isArray(payload) ? payload : [];
       const y = payload?.position?.y;
+      // over the file tree? it claims the drop — don't show the workspace hint
+      const p = scaledXY(payload?.position);
+      if (p && overFileTree(p.x, p.y)) { setDragOver(false); setDropIndex(null); setDraggedName(null); return; }
       if (typeof y === "number") updatePreviewFromY(y, paths);
       else setDragOver(true);
     };
     listen("tauri://drag-enter", tauriHover as any).then(f => unEnter = f).catch(() => {});
     listen("tauri://drag-over", tauriHover as any).then(f => unOver = f).catch(() => {});
     listen("tauri://drag-leave", (() => { setDragOver(false); setDropIndex(null); setDraggedName(null); }) as any).then(f => unLeave = f).catch(() => {});
-    const onEnter = () => setDragOver(true);
+    const onEnter = (e: DragEvent) => {
+      // in-app file-tree drags don't mean "add workspace" — don't dim the sidebar
+      try { if ((e.target as HTMLElement)?.closest?.(".filetree")) return; } catch {}
+      setDragOver(true);
+    };
     const onLeave = () => { setDragOver(false); setDraggedName(null); };
     window.addEventListener("dragenter", onEnter as any);
     window.addEventListener("dragleave", onLeave as any);
@@ -271,7 +296,8 @@ export default memo(function Sidebar({
       const txt = dt.getData("text/plain");
       for (const line of txt.split("\n")) { const t = line.trim(); if (t && (t.includes("\\") || t.includes("/"))) paths.push(t); }
     }
-    if (paths.length) await handleDropPaths(paths, dropIndex);
+    // drops over the file tree are claimed by FileTree (copy-into-folder)
+    if (!overFileTree(e.clientX, e.clientY) && paths.length) await handleDropPaths(paths, dropIndex);
     setDropIndex(null);
     setDragReorder(null);
   };

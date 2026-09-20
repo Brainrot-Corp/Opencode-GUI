@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { opencode, opencodeFor, getDirectory } from "../api";
 import { applyWorkspace, replaceWorkspace } from "../lib/workspace";
 import { normWorkspace } from "../lib/platform";
+import { isRemoteDir } from "../lib/remotes";
 import { useContextMenu } from "../hooks/useContextMenu";
 import { invalidateFileCache, normalizeFilePath, refreshWorkspaceFiles, useFileCache } from "../hooks/useFileCache";
 import { clipboardWrite } from "../lib/clipboard";
@@ -66,6 +68,53 @@ export default function FileTree({ dir = "" }: { dir?: string }) {
     };
     window.addEventListener("oc:ft-header", onHeader as EventListener);
     return () => window.removeEventListener("oc:ft-header", onHeader as EventListener);
+  }, [dir, load]);
+
+  // OS files dropped onto the tree → copy into the hovered folder
+  // (Tauri intercepts native drags, so highlight also rides these events)
+  useEffect(() => {
+    let disposed = false;
+    const unlisten: (() => void)[] = [];
+    const track = (p: Promise<() => void>) => p.then((f) => { if (disposed) f(); else unlisten.push(f); }).catch(() => {});
+    const scale = () => (window.devicePixelRatio || 1) || 1; // tauri sends physical px
+    const localXY = (pos?: { x: number; y: number }) => pos ? { x: pos.x / scale(), y: pos.y / scale() } : null;
+    const inRect = (p: { x: number; y: number }) => {
+      const r = containerRef.current?.getBoundingClientRect();
+      return !!r && p.x >= r.left && p.x <= r.right && p.y >= r.top && p.y <= r.bottom;
+    };
+    const clearHover = () => {
+      dropTargetRef.current = null;
+      setDropDir((prev) => (prev === null ? prev : null));
+    };
+    const hover = (e: { payload?: { position?: { x: number; y: number } } }) => {
+      const p = localXY(e.payload?.position);
+      if (!p || !inRect(p)) { clearHover(); return; }
+      const row = document.elementFromPoint(p.x, p.y)?.closest?.(".ft-row") as HTMLElement | null;
+      const rel = row?.dataset.ftRel ?? "";
+      const abs = row?.dataset.ftAbs ?? workspaceRootAbs();
+      dropTargetRef.current = { rel, abs };
+      setDropDir(rel);
+    };
+    const onOsDrop = (e: { payload?: { paths?: string[]; position?: { x: number; y: number } } }) => {
+      const p = localXY(e.payload?.position);
+      const target = dropTargetRef.current;
+      clearHover();
+      const paths = Array.isArray(e.payload?.paths) ? e.payload!.paths! : [];
+      if (!p || !inRect(p) || !paths.length) return;
+      const destAbs = target?.abs || workspaceRootAbs();
+      if (!destAbs) { setError("Cannot determine workspace root — open a workspace first"); return; }
+      if (isRemoteDir(dir)) { setError("Local files can't be copied into a remote workspace"); return; }
+      const rel = target?.rel ?? "";
+      void invoke<string[]>("file_import", { paths, destDir: destAbs })
+        .then(() => load(rel, true))
+        .then(() => emitChange(rel))
+        .catch((er) => setError(String(er)));
+    };
+    track(listen("tauri://drag-enter", hover as any));
+    track(listen("tauri://drag-over", hover as any));
+    track(listen("tauri://drag-leave", clearHover as any));
+    track(listen("tauri://drag-drop", onOsDrop as any));
+    return () => { disposed = true; for (const f of unlisten) f(); };
   }, [dir, load]);
   // file name search — triggered when last click was in file area (positioned at file tree)
   const [filterOpen, setFilterOpen] = useState(false);
@@ -231,6 +280,57 @@ export default function FileTree({ dir = "" }: { dir?: string }) {
     } catch (e) { setError(String(e)); }
   }
 
+  // drag-drop: rows drag to a folder row (or the tree background) to move;
+  // OS-dropped files copy into the hovered folder via tauri://drag-drop.
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [dropDir, setDropDir] = useState<string | null>(null); // norm rel dir highlighted; "" = root
+  const dragSrcRef = useRef<Node | null>(null);
+  const dropTargetRef = useRef<{ rel: string; abs: string } | null>(null);
+
+  function onDragStart(e: React.DragEvent, n: Node) {
+    dragSrcRef.current = n;
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", n.absolute);
+    e.stopPropagation();
+  }
+  function onDragEnd() {
+    dragSrcRef.current = null;
+    dropTargetRef.current = null;
+    setDropDir(null);
+  }
+  // HTML dragover only fires for in-app drags — OS file drops arrive as
+  // tauri://drag-drop (native interception), so this can't clobber them
+  function allowMove(e: React.DragEvent, rel: string, paint = true) {
+    if (!dragSrcRef.current) return;
+    e.preventDefault();
+    e.stopPropagation();
+    e.dataTransfer.dropEffect = "move";
+    if (paint) setDropDir(rel);
+  }
+  async function moveInto(e: React.DragEvent, rel: string, abs: string) {
+    const src = dragSrcRef.current;
+    if (!src) return;
+    e.preventDefault();
+    e.stopPropagation();
+    onDragEnd();
+    if (!abs) { setError("Cannot determine workspace root — open a workspace first"); return; }
+    const dst = joinAbs(abs, src.name);
+    if (norm(dst) === norm(src.absolute)) return;
+    if (src.type === "directory" && norm(abs).startsWith(norm(src.absolute) + "/")) { setError("Cannot move a folder into itself"); return; }
+    if (norm(parentAbs(src)) === norm(abs)) return;
+    const newRel = rel ? `${rel}/${src.name}` : src.name;
+    try {
+      await invoke("file_rename", { from: src.absolute, to: dst });
+      const fromRel = parentPath(src.path);
+      invalidateFileCache(src.path, dir);
+      await Promise.all([load(fromRel, true), load(rel, true)]);
+      emitChange(src.path);
+      emitChange(newRel);
+      emitChange(fromRel);
+      emitChange(rel);
+    } catch (er) { setError(String(er)); }
+  }
+
   async function doRename(n: Node) {
     const newName = renameVal.trim();
     if (!newName || newName === n.name) { setRenaming(null); return; }
@@ -339,10 +439,17 @@ export default function FileTree({ dir = "" }: { dir?: string }) {
       return n.type === "directory" ? (
         <div key={n.path}>
           <button
-            className={`ft-row${n.ignored ? " ignored" : ""}`}
+            className={`ft-row${n.ignored ? " ignored" : ""}${dropDir === key ? " ft-drop" : ""}`}
             style={{ paddingLeft: 6 + depth * 14 }}
             onClick={() => toggleDir(n)}
             onContextMenu={(e) => showFileMenu(e as any, n)}
+            draggable
+            onDragStart={(e) => onDragStart(e, n)}
+            onDragEnd={onDragEnd}
+            onDragOver={(e) => allowMove(e, key)}
+            onDrop={(e) => void moveInto(e, key, n.absolute)}
+            data-ft-abs={n.absolute}
+            data-ft-rel={key}
           >
             <i className={`fa-solid fa-chevron-${isOpen ? "down" : "right"} ft-chev`} />
             <i className={`fa-solid ${isOpen ? "fa-folder-open" : "fa-folder"}`} />
@@ -358,6 +465,14 @@ export default function FileTree({ dir = "" }: { dir?: string }) {
           style={{ paddingLeft: 6 + depth * 14 + 16 }}
           onClick={() => openFile(n)}
           onContextMenu={(e) => showFileMenu(e as any, n)}
+          draggable
+          onDragStart={(e) => onDragStart(e, n)}
+          onDragEnd={onDragEnd}
+          // drop onto a file row targets its parent folder (VS Code style) — no highlight
+          onDragOver={(e) => allowMove(e, norm(parentPath(n.path)), false)}
+          onDrop={(e) => void moveInto(e, norm(parentPath(n.path)), parentAbs(n))}
+          data-ft-abs={parentAbs(n)}
+          data-ft-rel={norm(parentPath(n.path))}
         >
           <FileIcon name={n.name} />
           <span>{filterQuery ? highlightName(n.name, filterQuery) : n.name}</span>
@@ -367,7 +482,14 @@ export default function FileTree({ dir = "" }: { dir?: string }) {
   }
 
   return (
-    <div className="filetree" onContextMenu={showBackgroundMenu} style={{ minHeight: 60 }}>
+    <div
+      ref={containerRef}
+      className={`filetree${dropDir === "" ? " ft-drop-root" : ""}`}
+      onContextMenu={showBackgroundMenu}
+      onDragOver={(e) => allowMove(e, "")}
+      onDrop={(e) => void moveInto(e, "", workspaceRootAbs())}
+      style={{ minHeight: 60 }}
+    >
       {filterOpen && (
         <div className="ft-find" onMouseDown={(e) => e.preventDefault()}>
           <i className="fa-solid fa-magnifying-glass" />

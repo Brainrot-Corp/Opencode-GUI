@@ -66,6 +66,15 @@
   font-size: 10px;
   color: var(--accent);
 }
+/* drop targets — folder rows (in-app move + OS import) and the tree root */
+.ft-row.ft-drop {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--text);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent);
+}
+.filetree.ft-drop-root {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 30%, transparent);
+}
 .ft-rename {
   flex: 1 1 auto;
   min-width: 0;

@@ -326,6 +326,51 @@ pub async fn file_duplicate(app: tauri::AppHandle, path: String) -> Result<Strin
     Err("too many copies".into())
 }
 
+/// Copy OS-dragged files/folders (host paths) into a workspace folder.
+/// Local-only: remote trees can't reach the drop source.
+#[tauri::command]
+pub async fn file_import(paths: Vec<String>, dest_dir: String) -> Result<Vec<String>, String> {
+    if dest_dir.trim().is_empty() { return Err("empty dest".into()); }
+    if crate::remote::is_remote(&dest_dir) {
+        return Err("local files can't be copied into a remote workspace".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || -> Result<Vec<String>, String> {
+        let dest = std::path::PathBuf::from(dest_dir.trim());
+        if !dest.is_dir() { return Err("target is not a folder".into()); }
+        let mut done = Vec::new();
+        for p in paths {
+            let src = PathBuf::from(p.trim());
+            if !src.exists() { continue; }
+            let name = src.file_name().and_then(|n| n.to_str()).unwrap_or("file").to_string();
+            let cand = free_copy_name(&dest, &name);
+            let dst = dest.join(&cand);
+            if src.is_dir() {
+                copy_dir_recursive(&src, &dst).map_err(|e| e.to_string())?;
+            } else {
+                std::fs::copy(&src, &dst).map_err(|e| e.to_string())?;
+            }
+            done.push(cand);
+        }
+        Ok(done)
+    })
+    .await
+    .map_err(|e| format!("file_import task failed: {e}"))?
+}
+
+/// First free name in `dest`: `name`, then `name copy`, `name copy 2`, …
+fn free_copy_name(dest: &std::path::Path, name: &str) -> String {
+    let (stem, ext) = match name.rfind('.') {
+        Some(i) if i > 0 => (&name[..i], &name[i..]),
+        _ => (name, ""),
+    };
+    let mut cand = name.to_string();
+    for i in 1..100 {
+        if !dest.join(&cand).exists() { break; }
+        cand = if i == 1 { format!("{stem} copy{ext}") } else { format!("{stem} copy {i}{ext}") };
+    }
+    cand
+}
+
 fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()> {
     std::fs::create_dir_all(dst)?;
     for entry in std::fs::read_dir(src)? {
@@ -363,4 +408,27 @@ pub async fn workspace_is_dir(app: tauri::AppHandle, path: String) -> bool {
         .unwrap_or(false);
     }
     std::path::Path::new(&p).is_dir()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::free_copy_name;
+
+    #[test]
+    fn free_copy_name_dedupes() {
+        let base = std::env::temp_dir().join(format!("oc-ft-import-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        assert_eq!(free_copy_name(&base, "a.txt"), "a.txt");
+        std::fs::write(base.join("a.txt"), "").unwrap();
+        assert_eq!(free_copy_name(&base, "a.txt"), "a copy.txt");
+        std::fs::write(base.join("a copy.txt"), "").unwrap();
+        assert_eq!(free_copy_name(&base, "a.txt"), "a copy 2.txt");
+        // no extension / dotfile shapes
+        std::fs::write(base.join("Makefile"), "").unwrap();
+        assert_eq!(free_copy_name(&base, "Makefile"), "Makefile copy");
+        std::fs::write(base.join(".gitignore"), "").unwrap();
+        assert_eq!(free_copy_name(&base, ".gitignore"), ".gitignore copy");
+        let _ = std::fs::remove_dir_all(&base);
+    }
 }

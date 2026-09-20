@@ -37,7 +37,7 @@ use discover::relay_discover;
 #[cfg(desktop)]
 mod files;
 #[cfg(desktop)]
-use files::{file_create, file_delete, file_duplicate, file_open, file_rename, window_scope,
+use files::{file_create, file_delete, file_duplicate, file_import, file_open, file_rename, window_scope,
     workspace_get, workspace_is_dir, workspace_set, write_file};
 
 #[cfg(desktop)]
@@ -190,6 +190,7 @@ pub fn run() {
             file_delete,
             file_rename,
             file_duplicate,
+            file_import,
             file_open,
             reveal_config_dir,
             reveal_plugins_dir,
