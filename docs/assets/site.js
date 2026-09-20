@@ -41,6 +41,9 @@
     };
   }
 
+  // Windows 10 and 11 look identical to the sync UA surface (both "Win32" /
+  // "Windows NT 10.0") — default to the safe win10 build; refineWindows()
+  // upgrades to the win11 zip only when high-entropy data confirms 11
   function detectOS() {
     var p = "";
     try { p = (navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || navigator.userAgent || ""; } catch (e) { p = navigator.userAgent || ""; }
@@ -48,7 +51,19 @@
     var archArm = p.indexOf("arm") > -1 || p.indexOf("aarch64") > -1 || /mac.*arm/i.test(navigator.userAgent || "");
     if (p.indexOf("mac") > -1 || p.indexOf("darwin") > -1) return { id: "mac", label: "macOS" };
     if (p.indexOf("linux") > -1) return { id: archArm ? "linux-arm64" : "linux-x64", label: archArm ? "Linux (arm64)" : "Linux (x64)" };
-    return { id: "win", label: "Windows 11" }; // default: largest audience
+    return { id: "win", label: "Windows 10", win11: false };
+  }
+
+  // Chromium platformVersion mapping: Windows 11 = 13+, Windows 10 = 1-10
+  function refineWindows(os, apply) {
+    var uad = navigator.userAgentData;
+    if (!uad || !uad.getHighEntropyValues) return; // Firefox/Safari — safe default stays
+    try {
+      uad.getHighEntropyValues(["platformVersion"]).then(function (ua) {
+        var major = parseInt(String(ua && ua.platformVersion || "").split(".")[0], 10) || 0;
+        if (major >= 13) { os.win11 = true; os.label = "Windows 11"; apply(); }
+      }).catch(function () {});
+    } catch (e) {}
   }
 
   function assetRow(a, fallbackHref, fallbackName) {
@@ -66,26 +81,40 @@
     var page = rel ? rel.html_url : WEB + "/releases/latest";
     var m = matchAssets(rel ? rel.assets : []);
     var os = detectOS();
-    var primary = { href: page, label: "Download" };
-    if (m.win11 && os.id === "win") primary = { href: m.win11.browser_download_url, label: "Download for Windows 11" };
-    else if (m.dmg && os.id === "mac") primary = { href: m.dmg.browser_download_url, label: "Download for macOS" };
-    else if (m.debX64 && os.id === "linux-x64") primary = { href: m.debX64.browser_download_url, label: "Download for Linux (x64)" };
-    else if (m.debArm && os.id === "linux-arm64") primary = { href: m.debArm.browser_download_url, label: "Download for Linux (arm64)" };
-    else if (m.win11) primary = { href: m.win11.browser_download_url, label: "Download for Windows 11" };
 
-    var cta = $("#cta-primary");
-    if (cta) { cta.setAttribute("href", primary.href); var lbl = $("#cta-label"); if (lbl) lbl.textContent = primary.label; }
+    function pickPrimary() {
+      if (os.id === "win") {
+        var z = os.win11 ? (m.win11 || m.win10) : (m.win10 || m.win11);
+        if (z) return { href: z.browser_download_url, label: "Download for " + (z === m.win11 ? "Windows 11" : "Windows 10") };
+        return { href: page, label: "Download" };
+      }
+      if (os.id === "mac") {
+        if (m.dmg) return { href: m.dmg.browser_download_url, label: "Download for macOS" };
+        return { href: page, label: "Download" };
+      }
+      if (os.id === "linux-x64" && m.debX64) return { href: m.debX64.browser_download_url, label: "Download for Linux (x64)" };
+      if (os.id === "linux-arm64" && m.debArm) return { href: m.debArm.browser_download_url, label: "Download for Linux (arm64)" };
+      return { href: page, label: "Download" };
+    }
+
+    function applyPrimary() {
+      var primary = pickPrimary();
+      var cta = $("#cta-primary");
+      if (cta) { cta.setAttribute("href", primary.href); var lbl = $("#cta-label"); if (lbl) lbl.textContent = primary.label; }
+      var chip = $("#win-detected");
+      if (chip) chip.textContent = "Detected — " + os.label;
+    }
     var vl = $("#cta-version");
     if (vl) vl.innerHTML = "v" + esc(ver) + '<span class="dot"></span>' + (hasApi && date ? esc(date) + '<span class="dot"></span>' : "") + '<a href="' + esc(page) + '">release notes</a>' + (hasApi ? "" : " · offline list");
 
     var rows = $("#dl-rows");
     if (rows) {
       var html = "";
-      html += '<div class="dl-card"><h3><span class="os-dot"></span>Windows x64</h3>' + (os.id === "win" ? '<span class="rec">Detected — ' + esc(os.label) + "</span>" : "") +
+      html += '<div class="dl-card"><h3><span class="os-dot"></span>Windows x64</h3>' + (os.id === "win" ? '<span id="win-detected" class="rec">Detected — ' + esc(os.label) + "</span>" : "") +
         '<div class="win-split"><div class="win-col"><span class="win-tag">Windows 11 · glass</span>' +
         assetRow(m.win11, page, "opencode-gui-win11-x64.zip") + '</div><div class="win-col"><span class="win-tag">Windows 10 · opaque</span>' +
         assetRow(m.win10, page, "opencode-gui-win10-x64.zip") + "</div></div>" +
-        '<p class="note">Pick the build for your OS — glass/acrylic on 11, opaque on 10.</p></div>';
+        '<p class="note">Glass/acrylic on 11, opaque on 10 — the Windows 10 build runs on both.</p></div>';
       html += '<div class="dl-card"><h3><span class="os-dot"></span>macOS arm64</h3>' + (os.id === "mac" ? '<span class="rec">Detected — macOS</span>' : "") +
         assetRow(m.dmg, page, "disk image (.dmg)") + assetRow(m.macTar, page, "app archive (.app.tar.gz)") +
         '<p class="note">Unsigned — right-click → Open on first launch. macOS 13+.</p></div>';
@@ -95,6 +124,8 @@
         '<p class="note">Ubuntu 22.04+. AppImage runs anywhere.</p></div>';
       rows.innerHTML = html + lin;
     }
+    applyPrimary(); // CTA + win chip (chip exists only when #dl-rows rendered)
+    refineWindows(os, applyPrimary); // async Chromium verdict re-runs it
   }
 
   function linkify(s) {
