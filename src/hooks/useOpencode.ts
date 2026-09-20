@@ -12,6 +12,8 @@ import {
   baseFor,
   evictRemoteBase,
   getDirectory,
+  hiddenSessions,
+  HIDDEN_TITLE,
   serverFetch,
   withDeadline,
   resetOpencodeCache,
@@ -532,7 +534,6 @@ export function useOpencode() {
       childParentRef,
       sessionDirRef,
       getSecurityModeFor,
-      autoRespondPermission,
       resolveParent,
       restoreFailedInput,
       handlePermAsk,
@@ -555,6 +556,10 @@ export function useOpencode() {
       refreshAgents,
       refreshChildrenRef,
       learnServerDefault,
+      getDirectory,
+      hiddenSessions,
+      hiddenTitle: HIDDEN_TITLE,
+      pushToast,
     };
     const onEvent = (e: OpenCodeEvent, dirHint?: string) => handleOpenCodeEvent(e, ctx, dirHint);
 

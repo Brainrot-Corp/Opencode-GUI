@@ -1,9 +1,9 @@
 // SSE event dispatch — moved verbatim out of useOpencode's boot effect.
 // Pure dispatcher: no state of its own except the two file-watcher throttle
 // timestamps; everything else arrives through ctx (built once per boot).
+// Zero runtime imports — api/toast access is injected via ctx, which keeps
+// this module testable under scripts/run-tests.mjs (node strip-types).
 import type { Message, Session } from "@opencode-ai/sdk/client";
-import { getDirectory, hiddenSessions, HIDDEN_TITLE } from "../api";
-import { pushToast } from "../hooks/useToast";
 import type { createBusyTracker } from "./busyTracker";
 import type { createSessionStore } from "./sessionStore";
 import type { OpenCodeEvent, PermAsk, QuestionAsk } from "../types";
@@ -19,7 +19,6 @@ export type OpenCodeEventCtx = {
   childParentRef: { current: Map<string, string> };
   sessionDirRef: { current: Map<string, string> };
   getSecurityModeFor: (sid: string) => "full" | "user" | "block";
-  autoRespondPermission: (ask: PermAsk, response: "always" | "reject") => Promise<void>;
   resolveParent: (sid: string, dirHint?: string) => Promise<void>;
   restoreFailedInput: (sid: string) => void;
   handlePermAsk: (ask: PermAsk, dirHint?: string, sound?: boolean) => void;
@@ -42,6 +41,10 @@ export type OpenCodeEventCtx = {
   refreshAgents: () => Promise<void>;
   refreshChildrenRef: { current: (sid: string) => Promise<void> };
   learnServerDefault: (providerID: string, modelID: string) => void;
+  getDirectory: () => string;
+  hiddenSessions: Set<string>;
+  hiddenTitle: string;
+  pushToast: (msg: string) => void;
 };
 
 // command/agent registry refetch throttle for file-watcher bursts
@@ -178,7 +181,7 @@ export function handleOpenCodeEvent(ev: OpenCodeEvent, ctx: OpenCodeEventCtx, di
         // Guarded: new typing since the send wins over the failed text.
         ctx.restoreFailedInput(sid);
       }
-      pushToast(msg);
+      ctx.pushToast(msg);
       break;
     }
     // compaction live indicator — server decides when to compact (auto
@@ -204,8 +207,8 @@ export function handleOpenCodeEvent(ev: OpenCodeEvent, ctx: OpenCodeEventCtx, di
         if (parent === ctx.activeRef.current) void ctx.refreshChildrenRef.current(ctx.activeRef.current);
         break;
       }
-      if (hiddenSessions.has(s.id) || s.title === HIDDEN_TITLE) break;
-      const dir = dirHint ?? getDirectory();
+      if (ctx.hiddenSessions.has(s.id) || s.title === ctx.hiddenTitle) break;
+      const dir = dirHint ?? ctx.getDirectory();
       ctx.sessionDirRef.current.set(s.id, dir);
       const patched = { ...s, _dir: dir } as Session & { _dir: string };
       ctx.setSessions((prev) => {
@@ -224,7 +227,7 @@ export function handleOpenCodeEvent(ev: OpenCodeEvent, ctx: OpenCodeEventCtx, di
         if (parent2 === ctx.activeRef.current) void ctx.refreshChildrenRef.current(ctx.activeRef.current);
         break;
       }
-      if (hiddenSessions.has(s.id) || s.title === HIDDEN_TITLE) break;
+      if (ctx.hiddenSessions.has(s.id) || s.title === ctx.hiddenTitle) break;
       ctx.setSessions((prev) => {
         if (!prev.some((x) => x.id === s.id)) return prev;
         return ctx.applyOverrides(prev.map((x) => (x.id === s.id ? s : x)));
