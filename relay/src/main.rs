@@ -49,6 +49,10 @@ fn b64url_str(bytes: &[u8]) -> String {
 struct Relay {
     desktop_token_hash: String,
     phone_token_hash: String,
+    // raw phone token — baked into the PWA manifest start_url so a
+    // home-screen-installed page opens pre-connected (its own storage is
+    // empty; the ?t= in start_url is the only thing that survives)
+    phone_token: String,
     desktop: Mutex<Option<WsSender>>,
     phones: Mutex<Vec<WsSender>>,
     log: Mutex<Vec<Value>>,
@@ -332,11 +336,39 @@ self.addEventListener("push", (e) => {
     )
 }
 
-// minimal PWA manifest — required by Android Chrome for install + notifications
-async fn manifest() -> impl axum::response::IntoResponse {
+// PWA manifest — home-screen install metadata (Android Chrome reads this;
+// iOS uses the meta tags in the page itself). Name/icon match the desktop
+// app, and the phone token rides in start_url so the installed app opens
+// pre-connected (its storage is a separate partition on both platforms).
+async fn manifest(State(relay): State<std::sync::Arc<Relay>>) -> impl axum::response::IntoResponse {
+    let start = format!("/phone?t={}", relay.phone_token);
+    let body = json!({
+        "name": "opencode-gui",
+        "short_name": "opencode-gui",
+        "start_url": start_url_escape(&start),
+        "scope": "/",
+        "display": "standalone",
+        "background_color": "#0d1216",
+        "theme_color": "#0d1216",
+        "icons": [{"src": "/icon-256.png", "sizes": "256x256", "type": "image/png", "purpose": "any"}],
+    });
     (
         [(axum::http::header::CONTENT_TYPE, "application/manifest+json")],
-        r##"{"name":"opencode relay","short_name":"oc-relay","start_url":"/phone","display":"standalone","background_color":"#0d1216","theme_color":"#0d1216","icons":[{"src":"/icon.svg","sizes":"any","type":"image/svg+xml"}]}"##,
+        body.to_string(),
+    )
+}
+
+// query values must survive as-is in start_url (phone tokens are ocp-hex, but
+// stay strict rather than trusting that)
+fn start_url_escape(url: &str) -> String {
+    url.replace('&', "%26").replace('"', "%22")
+}
+
+// desktop app icon, embedded — iOS home-screen icons must be PNG (SVG ignored)
+async fn icon_256() -> impl axum::response::IntoResponse {
+    (
+        [(axum::http::header::CONTENT_TYPE, "image/png")],
+        include_bytes!("../../src-tauri/icons/128x128@2x.png").to_vec(),
     )
 }
 
@@ -379,6 +411,7 @@ async fn main() {
     let relay = std::sync::Arc::new(Relay {
         desktop_token_hash: sha256_hex(&desktop_token),
         phone_token_hash: sha256_hex(&phone_token),
+        phone_token: phone_token.clone(),
         desktop: Mutex::new(None),
         phones: Mutex::new(Vec::new()),
         log: Mutex::new(Vec::new()),
@@ -393,6 +426,7 @@ async fn main() {
         .route("/phone", get(phone_page))
         .route("/sw.js", get(sw_js))
         .route("/manifest.webmanifest", get(manifest))
+        .route("/icon-256.png", get(icon_256))
         .route("/icon.svg", get(icon_svg))
         .route("/test", post(test_handler))
         .route("/push-sub", post(push_sub_handler))
@@ -494,11 +528,13 @@ const PHONE_SHIM: &str = r#"<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>oc-relay phone</title>
+<title>opencode-gui</title>
 <link rel="manifest" href="/manifest.webmanifest">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<link rel="apple-touch-icon" href="/icon.svg">
+<meta name="apple-mobile-web-app-title" content="opencode-gui">
+<link rel="apple-touch-icon" href="/icon-256.png">
+<link rel="icon" type="image/png" href="/icon-256.png">
 <style>
   body { background:#0d1216; color:#d7e2e4; font:15px/1.45 system-ui, sans-serif; margin:0; padding:18px; }
   h1 { font-size:16px; color:#7fd4d4; margin:0 0 10px; }
@@ -570,12 +606,15 @@ async function ask() {
   }
   // background delivery: a push subscription routes messages through the OS
   // push service (FCM on Android / APNs on iOS) so they arrive while the
-  // page is backgrounded or closed. iOS needs the page installed (A2HS).
+  // page is backgrounded or closed. iOS needs the page installed (A2HS) and
+  // Safari will not even register the SW on an untrusted (self-signed) cert.
   if (swreg && swreg.pushManager) {
     try {
       const key = "__VAPID_PUB__";
+      // reuse the existing subscription (same VAPID key persists server-side);
+      // the old broken key-compare forced a pointless resubscribe every time
       let sub = await swreg.pushManager.getSubscription();
-      if (!sub || sub.options.applicationServerKey && btoa(String.fromCharCode(...new Uint8Array(sub.options.applicationServerKey))) !== key) {
+      if (!sub) {
         sub = await swreg.pushManager.subscribe({
           userVisibleOnly: true,
           applicationServerKey: urlB64ToUint8(key),
@@ -590,7 +629,9 @@ async function ask() {
         ? "system + background notifications on — banners now arrive when the app is closed"
         : "push subscribe failed: " + r.status;
     } catch (e) {
-      st.textContent = "background push: " + e + " — iOS needs 'Add to Home Screen' first (Share menu), then Enable again.";
+      st.textContent = "background push: " + e + (e && String(e.name) === "NotAllowedError"
+        ? " — on iOS: Add to Home Screen (Share menu), open from the icon, press Enable again."
+        : " — iOS needs 'Add to Home Screen' first (Share menu), then Enable again.");
     }
   }
 }
@@ -601,10 +642,13 @@ function urlB64ToUint8(b64) {
   return Uint8Array.from(raw, (c) => c.charCodeAt(0));
 }
 
+let cur = null;
 function connect() {
   if (dead) return;
+  if (cur && (cur.readyState === 0 || cur.readyState === 1)) return;
   const proto = location.protocol === "https:" ? "wss" : "ws";
   const ws = new WebSocket(`${proto}://${location.host}/ws`);
+  cur = ws;
   ws.onopen = () => {
     st.textContent = "connected — waiting for desktop events";
     ws.send(JSON.stringify({ type: "hello", role: "phone", token: document.getElementById("tok").value.trim(), lastId: lastId() }));
@@ -616,10 +660,32 @@ function connect() {
       else if (m.type === "error") st.textContent = m.error;
     } catch {}
   };
-  ws.onclose = () => { st.textContent = "reconnecting…"; setTimeout(connect, 2000); };
+  ws.onclose = () => {
+    if (cur === ws) cur = null;
+    if (!dead) { st.textContent = "reconnecting…"; setTimeout(connect, 2000); }
+  };
 }
 
+// iOS/Android suspend the socket while backgrounded — the close event only
+// fires (and reconnect retries only run) once the page is unfrozen, so on
+// return the user stared at "reconnecting…". Foregrounding → reconnect now;
+// anything missed is caught up by the relay replay (lastId).
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible" && !dead) {
+    if (cur && cur.readyState > 1) cur = null;
+    if (!cur) {
+      st.textContent = "reconnecting…";
+      connect();
+    }
+  }
+});
+
 window.addEventListener("beforeunload", () => { dead = true; });
+// secure-context + SW availability hint — Safari refuses service workers on
+// an untrusted (self-signed) cert, which kills background push there
+if (!window.isSecureContext) {
+  st.textContent = "not a secure context — background notifications unavailable (trust the relay cert or use https://localhost)";
+}
 // ?t= autofill — the desktop settings drawer builds the full link with token
 const qtok = new URLSearchParams(location.search).get("t");
 if (qtok) { document.getElementById("tok").value = qtok; go(); }
@@ -640,6 +706,7 @@ mod tests {
         Relay {
             desktop_token_hash: sha256_hex("desk-secret"),
             phone_token_hash: sha256_hex("phone-secret"),
+            phone_token: "ocp-test".to_string(),
             desktop: Mutex::new(None),
             phones: Mutex::new(Vec::new()),
             log: Mutex::new(Vec::new()),
