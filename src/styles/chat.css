@@ -621,6 +621,9 @@
   top: 6px;
   right: 6px;
   opacity: 0;
+  /* monaco paints positioned layers above z-auto siblings — without this
+     clicks land on the editor, not the button */
+  z-index: 10;
 }
 .code-wrap:hover .copy-btn,
 .code-wrap .copy-btn:focus-visible {
