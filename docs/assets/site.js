@@ -32,7 +32,6 @@
     return {
       win11: findAsset(assets, function (n) { return n.indexOf("win11") > -1 && n.slice(-4) === ".zip"; }),
       win10: findAsset(assets, function (n) { return n.indexOf("win10") > -1 && n.slice(-4) === ".zip"; }),
-      msi: findAsset(assets, function (n) { return n.slice(-4) === ".msi"; }),
       dmg: findAsset(assets, function (n) { return n.slice(-4) === ".dmg"; }),
       macTar: findAsset(assets, function (n) { return n.indexOf(".app.tar.gz") > -1; }),
       debX64: findAsset(assets, function (n) { return n.slice(-4) === ".deb" && n.indexOf("arm64") === -1 && n.indexOf("aarch64") === -1; }),
@@ -76,9 +75,6 @@
 
     var cta = $("#cta-primary");
     if (cta) { cta.setAttribute("href", primary.href); var lbl = $("#cta-label"); if (lbl) lbl.textContent = primary.label; }
-    var sec = $("#cta-secondary");
-    if (sec && m.msi) sec.setAttribute("href", m.msi.browser_download_url);
-    else if (sec) sec.setAttribute("href", page);
     var vl = $("#cta-version");
     if (vl) vl.innerHTML = "v" + esc(ver) + '<span class="dot"></span>' + (hasApi && date ? esc(date) + '<span class="dot"></span>' : "") + '<a href="' + esc(page) + '">release notes</a>' + (hasApi ? "" : " · offline list");
 
@@ -86,7 +82,7 @@
     if (rows) {
       var html = "";
       html += '<div class="dl-card"><h3><span class="os-dot"></span>Windows x64</h3>' + (os.id === "win" ? '<span class="rec">Detected — ' + esc(os.label) + "</span>" : "") +
-        assetRow(m.win11, page, "opencode-gui-win11-x64.zip") + assetRow(m.win10, page, "opencode-gui-win10-x64.zip") + assetRow(m.msi, page, "installer (.msi)") +
+        assetRow(m.win11, page, "opencode-gui-win11-x64.zip") + assetRow(m.win10, page, "opencode-gui-win10-x64.zip") +
         '<p class="note">Win11 build uses glass/acrylic. Win10 build is opaque (no-glass).</p></div>';
       html += '<div class="dl-card"><h3><span class="os-dot"></span>macOS arm64</h3>' + (os.id === "mac" ? '<span class="rec">Detected — macOS</span>' : "") +
         assetRow(m.dmg, page, "disk image (.dmg)") + assetRow(m.macTar, page, "app archive (.app.tar.gz)") +
@@ -110,7 +106,7 @@
       return;
     }
     box.innerHTML = list.map(function (rel, i) {
-      var assets = (rel.assets || []).map(function (a) {
+      var assets = (rel.assets || []).filter(function (a) { return String(a.name || "").toLowerCase().slice(-4) !== ".msi"; }).map(function (a) {
         return '<a class="chip" href="' + esc(a.browser_download_url) + '">' + esc(a.name) + (a.size ? " · " + esc(fmtSize(a.size)) : "") + "</a>";
       }).join("");
       return '<article class="rel-card' + (i === 0 ? " latest" : "") + '"><h2><span class="tag">' + esc(rel.tag_name) + "</span>" +
