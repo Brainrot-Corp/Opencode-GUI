@@ -253,6 +253,12 @@
     document.addEventListener("mouseout", function (e) {
       if (e.target.closest("a,button,.card,.asset,.chip,.dl-card")) ring.classList.remove("is-hover");
     });
+    document.addEventListener("mouseup", function (e) {
+      if (!e.target.closest(".prose,pre,code,input,textarea")) { var s = window.getSelection(); if (s) s.removeAllRanges(); }
+      root.classList.remove("has-cursor");
+      void root.offsetWidth;
+      root.classList.add("has-cursor");
+    });
     place(dot, tx, ty); place(ring, rx, ry);
     (function loop() {
       rx += (tx - rx) * 0.16; ry += (ty - ry) * 0.16;
