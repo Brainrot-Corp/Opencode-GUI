@@ -185,6 +185,39 @@ async fn phone_page() -> impl axum::response::IntoResponse {
     axum::response::Html(PHONE_SHIM)
 }
 
+// service worker — Android Chrome refuses page-level `new Notification()`
+// (it demands ServiceWorkerRegistration.showNotification); iOS exposes the
+// Notification API only after Add to Home Screen. This tiny worker provides
+// the registration and handles clicks.
+async fn sw_js() -> impl axum::response::IntoResponse {
+    (
+        [(axum::http::header::CONTENT_TYPE, "application/javascript")],
+        r#"self.addEventListener("notificationclick", (e) => {
+  e.notification.close();
+  e.waitUntil(self.clients.matchAll({ type: "window" }).then((cs) => {
+    for (const c of cs) if (c.url.includes("/phone")) return c.focus();
+    return self.clients.openWindow("/phone");
+  }));
+});
+"#,
+    )
+}
+
+// minimal PWA manifest — required by Android Chrome for install + notifications
+async fn manifest() -> impl axum::response::IntoResponse {
+    (
+        [(axum::http::header::CONTENT_TYPE, "application/manifest+json")],
+        r##"{"name":"opencode relay","short_name":"oc-relay","start_url":"/phone","display":"standalone","background_color":"#0d1216","theme_color":"#0d1216","icons":[{"src":"/icon.svg","sizes":"any","type":"image/svg+xml"}]}"##,
+    )
+}
+
+async fn icon_svg() -> impl axum::response::IntoResponse {
+    (
+        [(axum::http::header::CONTENT_TYPE, "image/svg+xml")],
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="12" fill="#0d1216"/><circle cx="32" cy="30" r="14" fill="none" stroke="#7fd4d4" stroke-width="4"/><path d="M26 48h12" stroke="#7fd4d4" stroke-width="4" stroke-linecap="round"/></svg>"##,
+    )
+}
+
 #[tokio::main]
 async fn main() {
     let port: u16 = std::env::args()
@@ -212,6 +245,9 @@ async fn main() {
     let app = Router::new()
         .route("/ws", get(ws_handler))
         .route("/phone", get(phone_page))
+        .route("/sw.js", get(sw_js))
+        .route("/manifest.webmanifest", get(manifest))
+        .route("/icon.svg", get(icon_svg))
         .route("/test", post(test_handler))
         .with_state(relay.clone());
 
@@ -288,6 +324,10 @@ const PHONE_SHIM: &str = r#"<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>oc-relay phone</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="apple-touch-icon" href="/icon.svg">
 <style>
   body { background:#0d1216; color:#d7e2e4; font:15px/1.45 system-ui, sans-serif; margin:0; padding:18px; }
   h1 { font-size:16px; color:#7fd4d4; margin:0 0 10px; }
@@ -300,7 +340,7 @@ const PHONE_SHIM: &str = r#"<!doctype html>
   .t { font-weight:600; margin:2px 0; }
   .b { color:#9fb3ba; font-size:13px; white-space:pre-wrap; word-break:break-word; }
   .m { color:#5c6f77; font-size:11px; font-family:ui-monospace, monospace; margin-top:4px; }
-  #st { font-size:12px; color:#8aa0a8; margin:6px 0; }
+  #st { font-size:12px; color:#8aa0a8; margin:6px 0; white-space:pre-wrap; }
 </style>
 </head>
 <body>
@@ -311,9 +351,21 @@ const PHONE_SHIM: &str = r#"<!doctype html>
 <button onclick="ask()">Enable phone notifications</button>
 <div id="log"></div>
 <script>
-let log = document.getElementById("log"), st = document.getElementById("st");
-let dead = false;
+const log = document.getElementById("log"), st = document.getElementById("st");
+let dead = false, swreg = null;
 const lastId = () => +(localStorage.getItem("oc-lastId") || 0);
+
+// OS banner notifications — mobile browsers gate this API:
+// Android needs ServiceWorkerRegistration.showNotification (new Notification throws),
+// iOS only exposes Notification after Add to Home Screen (iOS 16.4+).
+// The in-page list below always works regardless.
+async function osNotify(title, body) {
+  if (swreg) {
+    try { await swreg.showNotification(title, { body }); return; } catch {}
+  }
+  try { new Notification(title, { body }); return; } catch {}
+}
+
 function notify(m) {
   const d = document.createElement("div");
   d.className = "row";
@@ -321,14 +373,32 @@ function notify(m) {
   d.querySelector(".t").textContent = m.title ?? "";
   d.querySelector(".b").textContent = m.body ?? "";
   log.prepend(d);
-  if (Notification?.permission === "granted") new Notification(m.title ?? "opencode", { body: m.body ?? "" });
+  osNotify(m.title ?? "opencode", m.body ?? "");
 }
+
 function go() {
   dead = false;
   localStorage.setItem("oc-phone-token", document.getElementById("tok").value.trim());
   connect();
 }
-function ask() { Notification.requestPermission().then(p => st.textContent = "notifications: " + p); }
+
+async function ask() {
+  if (!("serviceWorker" in navigator) && !("Notification" in window)) {
+    st.textContent = "this browser has no web notifications — notifications only appear in the list below";
+    return;
+  }
+  if ("serviceWorker" in navigator) {
+    try { swreg = await navigator.serviceWorker.register("/sw.js"); } catch (e) { st.textContent = "sw: " + e; }
+  }
+  if ("Notification" in window) {
+    try {
+      const p = await Notification.requestPermission();
+      if (p === "granted") st.textContent = "system notifications on" + (swreg ? "" : " (no SW)");
+      else st.textContent = "system notifications: " + p + " — the page list still works. On Android/iOS, use 'Add to Home Screen' and open from the icon, then press Enable again.";
+    } catch (e) { st.textContent = "notifications: " + e; }
+  }
+}
+
 function connect() {
   if (dead) return;
   const proto = location.protocol === "https:" ? "wss" : "ws";
@@ -346,6 +416,7 @@ function connect() {
   };
   ws.onclose = () => { st.textContent = "reconnecting…"; setTimeout(connect, 2000); };
 }
+
 window.addEventListener("beforeunload", () => { dead = true; });
 // ?t= autofill — the desktop settings drawer builds the full link with token
 const qtok = new URLSearchParams(location.search).get("t");
