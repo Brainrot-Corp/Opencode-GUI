@@ -7,6 +7,10 @@ import { createRoot } from "react-dom/client";
 import App from "./App";
 import "@fortawesome/fontawesome-free/css/all.min.css";
 import "../styles/tokens.css";
+// same exact settings components/style as the desktop app — the mobile
+// settings drawer reuses drawer-scrim/settings-drawer/setting-row/oc-input
+import "../styles/settings.css";
+import "../styles/plugin-ui.css";
 import "../styles/mobile.css";
 
 createRoot(document.getElementById("root")!).render(

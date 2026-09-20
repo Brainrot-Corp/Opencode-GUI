@@ -45,7 +45,7 @@ const KIND_LABEL: Record<string, string> = {
 };
 
 export default function App() {
-  const [screen, setScreen] = useState<"connect" | "notifs">("notifs");
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [prefs, setPrefs] = useState<Prefs>(loadPrefs);
   const [notifs, setNotifs] = useState<RelayNotify[]>(loadNotifs);
   const [status, setStatus] = useState<"connecting" | "connected" | "reconnecting" | "off">("off");
@@ -151,32 +151,59 @@ export default function App() {
     });
   };
 
+  // Escape closes the drawer — same as desktop SettingsDrawer
+  useEffect(() => {
+    if (!settingsOpen) return;
+    const key = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || e.repeat) return;
+      setSettingsOpen(false);
+    };
+    window.addEventListener("keydown", key);
+    return () => window.removeEventListener("keydown", key);
+  }, [settingsOpen]);
+
   return (
     <div className="mapp">
       <div className="mnoise" aria-hidden="true" />
       <header className="mhead">
         <span className="mtitle"><i aria-hidden="true" />opencode-gui</span>
         <span className={`mdot mdot-${effStatus}`} data-status={effStatus} />
-        <button className="mtab" onClick={() => setScreen(screen === "notifs" ? "connect" : "notifs")}>
-          <i className={`fa-solid ${screen === "notifs" ? "fa-gear" : "fa-bell"}`} />
-          {screen === "notifs" ? "Setup" : "Alerts"}
+        <button className="mtab" onClick={() => setSettingsOpen(true)}>
+          <i className="fa-solid fa-gear" />
+          Setup
         </button>
       </header>
-      {screen === "connect" ? (
-        <ConnectScreen
-          prefs={prefs}
-          onSave={save}
-          status={effStatus}
-          scanning={scanning}
-          onDiscover={discover}
-          scanFail={scanFail && !scanning && !prefs.url}
-        />
-      ) : (
-        <NotifScreen notifs={notifs} status={effStatus} scanning={scanning} onClear={() => {
-          setNotifs([]);
-          try { localStorage.removeItem(NOTIF_KEY); } catch {}
-        }} />
-      )}
+      <NotifScreen notifs={notifs} status={effStatus} scanning={scanning} onClear={() => {
+        setNotifs([]);
+        try { localStorage.removeItem(NOTIF_KEY); } catch {}
+      }} />
+      {/* settings pop on top from the right — same exact shell as desktop
+          SettingsDrawer (drawer-scrim + settings-drawer + settings-head/body) */}
+      <div className={`drawer-scrim${settingsOpen ? " open" : ""}`} onClick={() => setSettingsOpen(false)} />
+      <aside
+        className={`settings-drawer${settingsOpen ? " open" : ""}`}
+        role="dialog"
+        aria-label="Settings"
+      >
+        <div className="settings-head">
+          <h2>Settings</h2>
+          <div className="color-controls">
+            <button className="reset-btn" onClick={() => setSettingsOpen(false)}>
+              <i className="fa-solid fa-xmark" />
+            </button>
+          </div>
+        </div>
+        <div className="settings-body">
+          <SettingsSection
+            prefs={prefs}
+            onSave={(p) => save(p)}
+            status={effStatus}
+            scanning={scanning}
+            onDiscover={discover}
+            scanFail={scanFail && !scanning && !prefs.url}
+          />
+        </div>
+      </aside>
     </div>
   );
 }
@@ -197,7 +224,10 @@ async function banner(m: RelayNotify) {
   } catch {}
 }
 
-function ConnectScreen({ prefs, onSave, status, scanning, onDiscover, scanFail }: {
+// connection form — same exact components/style as the desktop settings
+// drawer (settings-section / setting-row / setting-info / oc-input /
+// reset-btn from settings.css + plugin-ui.css, no mobile forks)
+function SettingsSection({ prefs, onSave, status, scanning, onDiscover, scanFail }: {
   prefs: Prefs;
   onSave: (p: Prefs) => void;
   status: string;
@@ -211,61 +241,122 @@ function ConnectScreen({ prefs, onSave, status, scanning, onDiscover, scanFail }
     setUrl(prefs.url);
     setToken(prefs.token);
   }, [prefs.url, prefs.token]);
+  const statusText = scanning
+    ? "searching for desktop…"
+    : status === "connected"
+      ? "connected — waiting for desktop events"
+      : status === "reconnecting"
+        ? "reconnecting…"
+        : status === "connecting"
+          ? "connecting…"
+          : "not connected";
   return (
-    <div className="mform">
-      <button className="mbtn" onClick={onDiscover} disabled={scanning}>
-        {scanning ? <><i className="fa-solid fa-spinner fa-spin" /> Searching…</> : <><i className="fa-solid fa-magnifying-glass" /> Find desktop on this network</>}
-      </button>
-      {scanFail && (
-        <p className="mhint">
-          No desktop found — make sure the GUI is running on the same Wi-Fi with
-          the relay started (Settings → Phone notifications → Run relay on this PC),
-          then search again or connect manually below.
-        </p>
-      )}
-      <div className="mdivider"><span>or connect manually</span></div>
-      <label className="mlabel" htmlFor="m-relay">Relay URL</label>
-      <input
-        id="m-relay"
-        className="minput"
-        placeholder="ws://192.168.1.10:8918/ws"
-        value={url}
-        onChange={(e) => setUrl(e.target.value.trim())}
-        spellCheck={false}
-        autoCapitalize="off"
-        autoCorrect="off"
-      />
-      <label className="mlabel" htmlFor="m-token">Phone token</label>
-      <input
-        id="m-token"
-        className="minput mono"
-        placeholder="ocp-xxxxxxxx"
-        value={token}
-        onChange={(e) => setToken(e.target.value.trim())}
-        spellCheck={false}
-        autoCapitalize="off"
-        autoCorrect="off"
-      />
-      <button className="mbtn" onClick={() => onSave({ url, token })}>
-        Connect
-      </button>
-      <div className="mstatus" data-status={status}>
-        {scanning
-          ? "searching for desktop…"
-          : status === "connected"
-            ? "connected — waiting for desktop events"
-            : status === "reconnecting"
-              ? "reconnecting…"
-              : status === "connecting"
-                ? "connecting…"
-                : "not connected"}
-      </div>
-      <p className="mhint">
-        Run <code>oc-relay</code> on the PC (Settings → Phone notifications → Run relay on this PC)
-        and paste the phone token it prints. Use the <code>ws://</code> (port 8918) URL, not the
-        <code> wss://</code> one — the phone app can't accept the relay's self-signed TLS cert.
-      </p>
-    </div>
+    <>
+      <section className="settings-section" aria-label="Relay connection">
+        <div className="settings-section-title">
+          <i className="fa-solid fa-tower-broadcast" /> Relay connection
+        </div>
+        <div className="setting-row">
+          <div className="setting-info">
+            <i className="fa-solid fa-signal setting-icon" />
+            <div>
+              <div className="setting-name">Status</div>
+              <div className="setting-desc">{statusText}</div>
+            </div>
+          </div>
+        </div>
+        <div className="setting-row">
+          <div className="setting-info">
+            <i className="fa-solid fa-magnifying-glass setting-icon" />
+            <div>
+              <div className="setting-name">Find desktop</div>
+              <div className="setting-desc">Search this network for a running relay</div>
+            </div>
+          </div>
+          <button type="button" className="reset-btn" onClick={onDiscover} disabled={scanning}>
+            <i className={`fa-solid ${scanning ? "fa-spinner fa-spin" : "fa-magnifying-glass"}`} />
+            {scanning ? "Searching…" : "Search"}
+          </button>
+        </div>
+        {scanFail && (
+          <div className="setting-row">
+            <div className="setting-info">
+              <div>
+                <div className="setting-desc">No desktop found — make sure the GUI is running on the same Wi-Fi with the relay started (Settings → Phone notifications → Run relay on this PC), then search again or connect manually below.</div>
+              </div>
+            </div>
+          </div>
+        )}
+      </section>
+
+      <section className="settings-section" aria-label="Connect manually">
+        <div className="settings-section-title">
+          <i className="fa-solid fa-link" /> Connect manually
+        </div>
+        <div className="setting-row">
+          <div className="setting-info">
+            <i className="fa-solid fa-globe setting-icon" />
+            <div>
+              <div className="setting-name">Relay URL</div>
+              <div className="setting-desc">The ws:// (port 8918) URL the relay prints</div>
+            </div>
+          </div>
+        </div>
+        <div className="setting-row" style={{ paddingTop: 0 }}>
+          <input
+            id="m-relay"
+            className="oc-input mono-hint"
+            placeholder="ws://192.168.1.10:8918/ws"
+            value={url}
+            onChange={(e) => setUrl(e.target.value.trim())}
+            spellCheck={false}
+            autoCapitalize="off"
+            autoCorrect="off"
+          />
+        </div>
+        <div className="setting-row">
+          <div className="setting-info">
+            <i className="fa-solid fa-key setting-icon" />
+            <div>
+              <div className="setting-name">Phone token</div>
+              <div className="setting-desc">Printed by oc-relay on first boot</div>
+            </div>
+          </div>
+        </div>
+        <div className="setting-row" style={{ paddingTop: 0 }}>
+          <input
+            id="m-token"
+            className="oc-input mono-hint"
+            placeholder="ocp-xxxxxxxx"
+            value={token}
+            onChange={(e) => setToken(e.target.value.trim())}
+            spellCheck={false}
+            autoCapitalize="off"
+            autoCorrect="off"
+          />
+        </div>
+        <div className="setting-row">
+          <div className="setting-info">
+            <i className="fa-solid fa-plug setting-icon" />
+            <div>
+              <div className="setting-name">Connect</div>
+              <div className="setting-desc">Save and dial the relay</div>
+            </div>
+          </div>
+          <button type="button" className="reset-btn" onClick={() => onSave({ url, token })}>
+            <i className="fa-solid fa-check" />
+            Connect
+          </button>
+        </div>
+        <div className="setting-row">
+          <div className="setting-info">
+            <div>
+              <div className="setting-desc">Run oc-relay on the PC (Settings → Phone notifications → Run relay on this PC) and paste the phone token it prints. Use the ws:// URL, not wss:// — the phone app can&apos;t accept the relay&apos;s self-signed TLS cert.</div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </>
   );
 }
 function NotifScreen({ notifs, status, scanning, onClear }: { notifs: RelayNotify[]; status: string; scanning: boolean; onClear: () => void }) {

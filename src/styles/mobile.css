@@ -149,8 +149,7 @@ body {
   box-shadow: 0 0 14px -6px rgba(224, 143, 143, 0.5);
 }
 
-/* screens — same rhythm as desktop .dlg-body: 6px unit, scrollable */
-.mform,
+/* list — same rhythm as desktop .dlg-body: 6px unit, scrollable */
 .mlist-wrap {
   flex: 1;
   min-height: 0;
@@ -168,195 +167,6 @@ body {
     );
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
-}
-
-/* field label — same as desktop .vc-section-head (dialog.css) */
-.mlabel {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 6px;
-  font-family: var(--mono);
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.13em;
-  text-transform: uppercase;
-  color: var(--text-dim);
-  user-select: none;
-}
-
-/* text fields — same inset material as desktop .model-search / .oc-input */
-.minput {
-  width: 100%;
-  padding: 11px 12px;
-  background: var(--inset-bg);
-  border: 1px solid var(--line);
-  border-radius: 0;
-  color: var(--text);
-  font-family: var(--mono);
-  font-size: 12.5px;
-  outline: none;
-  transition: border-color 0.25s var(--ease), box-shadow 0.3s var(--ease);
-}
-.minput::placeholder {
-  color: var(--text-faint);
-}
-.minput:focus {
-  border-color: color-mix(in srgb, var(--accent) calc(0.4 * 100%), transparent);
-  box-shadow: 0 0 12px -4px var(--accent-glow);
-}
-
-/* primary action — same warm chip as desktop .send-btn (composer.css) */
-.mbtn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  width: 100%;
-  margin-top: 6px;
-  padding: 12px;
-  min-height: 44px;
-  border-radius: 4px;
-  cursor: pointer;
-  font-family: var(--sans);
-  font-size: 13px;
-  font-weight: 500;
-  letter-spacing: 0.06em;
-  color: var(--accent-bright);
-  background: linear-gradient(
-    180deg,
-    color-mix(in srgb, var(--accent) calc(0.14 * 100%), transparent),
-    color-mix(in srgb, var(--accent) calc(0.06 * 100%), transparent)
-  );
-  border: 1px solid color-mix(in srgb, var(--accent) calc(0.28 * 100%), transparent);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.06),
-    0 0 16px -9px var(--accent-glow);
-  transition:
-    border-color 0.35s var(--ease),
-    background 0.35s var(--ease),
-    box-shadow 0.45s var(--ease),
-    color 0.25s var(--ease),
-    transform 0.12s var(--ease);
-}
-.mbtn i {
-  text-shadow: 0 0 8px var(--accent-glow);
-}
-.mbtn:hover:not(:disabled) {
-  color: var(--text);
-  border-color: color-mix(in srgb, var(--accent) calc(0.55 * 100%), transparent);
-  background: linear-gradient(
-    180deg,
-    color-mix(in srgb, var(--accent) calc(0.22 * 100%), transparent),
-    color-mix(in srgb, var(--accent) calc(0.11 * 100%), transparent)
-  );
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.09),
-    0 0 26px -6px var(--accent-glow);
-}
-.mbtn:active:not(:disabled) {
-  transform: translateY(1px);
-}
-.mbtn:disabled {
-  opacity: 0.35;
-  cursor: default;
-}
-.mbtn:focus-visible {
-  outline: 1px solid color-mix(in srgb, var(--accent) calc(0.55 * 100%), transparent);
-  outline-offset: 3px;
-}
-
-/* divider — hairline + mono caption, same line language as desktop */
-.mdivider {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin: 6px 0;
-  color: var(--text-faint);
-  font-family: var(--mono);
-  font-size: 10px;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-}
-.mdivider::before,
-.mdivider::after {
-  content: "";
-  flex: 1;
-  height: 1px;
-  background: var(--line);
-}
-
-/* status strip — same as desktop .revert-banner (chat.css) */
-.mstatus {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  margin: 0;
-  margin-top: 6px;
-  padding: 8px 12px;
-  font-family: var(--mono);
-  font-size: 11.5px;
-  color: var(--text-dim);
-  background: color-mix(in srgb, var(--accent) calc(0.06 * 100%), transparent);
-  border: 1px solid color-mix(in srgb, var(--accent) calc(0.22 * 100%), transparent);
-  border-radius: 0;
-}
-.mstatus[data-status="connected"] {
-  color: var(--text-dim);
-}
-.mstatus[data-status="connected"]::before {
-  content: "";
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--accent);
-  box-shadow: 0 0 8px var(--accent-glow);
-  flex: none;
-}
-.mstatus[data-status="connecting"]::before,
-.mstatus[data-status="reconnecting"]::before {
-  content: "";
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--accent);
-  box-shadow: 0 0 8px var(--accent-glow);
-  flex: none;
-  animation: mdot-pulse 1.2s ease-in-out infinite;
-}
-.mstatus[data-status="off"] {
-  color: var(--text-faint);
-  background: var(--inset-bg);
-  border-color: var(--line);
-}
-.mstatus[data-status="off"]::before {
-  content: "";
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--text-faint);
-  opacity: 0.55;
-  flex: none;
-}
-
-/* hint — same as desktop .cmd-note (composer.css) */
-.mhint {
-  font-family: var(--sans);
-  font-size: 11px;
-  line-height: 1.5;
-  color: var(--text-faint);
-  padding: 0 2px;
-  overflow-wrap: anywhere;
-}
-.mhint code {
-  font-family: var(--mono);
-  font-size: 0.92em;
-  color: var(--accent-bright);
-  background: var(--inset-bg);
-  border: 1px solid var(--line);
-  padding: 1px 5px;
-  border-radius: 0;
 }
 
 /* empty — same as desktop .empty (layout.css) */
@@ -445,20 +255,16 @@ body {
 }
 
 /* blocky square scrollbars — same as desktop tokens.css */
-.mform::-webkit-scrollbar,
 .mlist-wrap::-webkit-scrollbar {
   width: 8px;
 }
-.mform::-webkit-scrollbar-track,
 .mlist-wrap::-webkit-scrollbar-track {
   background: var(--inset-bg);
 }
-.mform::-webkit-scrollbar-thumb,
 .mlist-wrap::-webkit-scrollbar-thumb {
   background: color-mix(in srgb, var(--accent) calc(0.18 * 100%), transparent);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) calc(0.12 * 100%), transparent);
 }
-.mform::-webkit-scrollbar-thumb:hover,
 .mlist-wrap::-webkit-scrollbar-thumb:hover {
   background: color-mix(in srgb, var(--accent) calc(0.34 * 100%), transparent);
   box-shadow: 0 0 10px var(--accent-glow);
@@ -474,4 +280,10 @@ body {
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+/* settings drawer (same exact desktop shell) — phone-only delta is the home
+   indicator clearance; all material comes from settings.css + plugin-ui.css */
+.settings-drawer {
+  padding-bottom: env(safe-area-inset-bottom);
 }
