@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#0a0e12" />
+  <meta name="description" content="Install opencode-gui on Windows, macOS, and Linux." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="assets/style.css" />
+  <title>opencode-gui — Install</title>
+</head>
+<body>
+  <div class="noise" aria-hidden="true"></div>
+  <header class="nav">
+    <div class="brand"><a href="./index.html"><i></i>opencode-gui</a></div>
+    <nav class="nav-links" aria-label="Site">
+      <a href="./index.html#downloads">Download</a>
+      <a href="./install.html" aria-current="page" class="hide-sm">Install</a>
+      <a href="./changelog.html" class="hide-sm">Changelog</a>
+      <a href="https://github.com/Brainrot-Corp/Opencode-GUI">GitHub</a>
+    </nav>
+  </header>
+  <main class="wrap">
+    <section class="hero" style="padding-bottom:6px">
+      <div class="brand-mark">install</div>
+      <h1>Up and running <span class="glow">in minutes</span></h1>
+      <p class="tagline">Pick the artifact for your OS — no Node, no Rust, no build.</p>
+    </section>
+    <section class="block">
+      <div class="prose">
+        <h2>Windows 10 / 11 (x64)</h2>
+        <ul>
+          <li><strong>Recommended:</strong> <code>opencode-gui-win11-x64.zip</code> — glass/acrylic build. Unzip anywhere, run <code>opencode-gui.exe</code>.</li>
+          <li><strong>Windows 10:</strong> <code>opencode-gui-win10-x64.zip</code> — opaque no-glass build, same features.</li>
+          <li><strong>Installer:</strong> <code>.msi</code> from the release page for Start Menu + Programs entry.</li>
+          <li>Portable zips contain <code>opencode-gui.exe + opencode.exe (sidecar) + oc-relay.exe</code> — keep them side by side.</li>
+          <li>WebView2 ships with Windows. SmartScreen may flag the unsigned zip — More info → Run anyway.</li>
+        </ul>
+        <h2>macOS 13+ (arm64)</h2>
+        <ul>
+          <li>Download the <code>.dmg</code> (or <code>.app.tar.gz</code>), drag to Applications.</li>
+        </ul>
+        <div class="warn"><strong>Unsigned build.</strong> First launch: right-click the app → Open → Open. No notarization yet.</div>
+        <h2>Linux (x64 + arm64)</h2>
+        <ul>
+          <li><code>.deb</code> for your arch (Debian/Ubuntu), or <code>.AppImage</code> (chmod +x, runs anywhere).</li>
+          <li>Needs system webview:</li>
+        </ul>
+        <pre>sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf</pre>
+        <h2>First run</h2>
+        <ol>
+          <li>Launch the app — it starts its own <code>opencode serve</code> sidecar automatically.</li>
+          <li>Pick a workspace folder (empty = home directory).</li>
+          <li>Create a session, pick a model, prompt. Approve tool permissions inline.</li>
+        </ol>
+        <h2>Troubleshooting</h2>
+        <ul>
+          <li><strong>Blank window (Linux):</strong> missing webkit — install the packages above, restart.</li>
+          <li><strong>Sidecar missing:</strong> portable zips must keep all three exes together; MSI installs handle this.</li>
+          <li><strong>Download page shows "offline list":</strong> GitHub API rate-limit (60/hr) — use <a href="https://github.com/Brainrot-Corp/Opencode-GUI/releases">releases directly</a>.</li>
+          <li><strong>Devs:</strong> <code>run.sh setup / dev / build</code> (or <code>run.ps1</code> on Windows) — see README.</li>
+        </ul>
+      </div>
+    </section>
+    <footer>
+      <div class="foot-inner">
+        <span>opencode-gui · MIT · <a href="https://github.com/Brainrot-Corp/Opencode-GUI/releases">releases</a></span>
+        <nav><a href="./index.html">Home</a><a href="./changelog.html">Changelog</a><a href="https://github.com/Brainrot-Corp/Opencode-GUI">GitHub</a></nav>
+      </div>
+    </footer>
+  </main>
+</body>
+</html>

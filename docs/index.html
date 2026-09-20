@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#0a0e12" />
+  <meta name="description" content="opencode-gui — lightweight cross-platform GUI for opencode. Download for Windows, macOS, and Linux." />
+  <meta property="og:title" content="opencode-gui — Download" />
+  <meta property="og:description" content="Thin cross-platform GUI for opencode. Glass on Windows 11, native everywhere." />
+  <meta property="og:image" content="assets/screenshot.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="assets/style.css" />
+  <link rel="icon" href="assets/screenshot.png" />
+  <title>opencode-gui — Download</title>
+</head>
+<body>
+  <div class="noise" aria-hidden="true"></div>
+  <header class="nav">
+    <div class="brand"><a href="./index.html"><i></i>opencode-gui</a></div>
+    <nav class="nav-links" aria-label="Site">
+      <a href="#downloads">Download</a>
+      <a href="./install.html" class="hide-sm">Install</a>
+      <a href="./changelog.html" class="hide-sm">Changelog</a>
+      <a href="https://github.com/Brainrot-Corp/Opencode-GUI">GitHub</a>
+    </nav>
+  </header>
+
+  <main class="wrap">
+    <section class="hero">
+      <div class="brand-mark">opencode-gui</div>
+      <h1>A thin GUI for <span class="glow">opencode</span></h1>
+      <p class="tagline">Tauri + React sidecar client — no fork, all agent logic reused from the server.</p>
+      <div class="cta-row">
+        <a id="cta-primary" class="btn primary" href="https://github.com/Brainrot-Corp/Opencode-GUI/releases/latest"><span id="cta-label">Download for Windows 11</span><span class="caret" aria-hidden="true"></span></a>
+        <a id="cta-secondary" class="btn ghost" href="https://github.com/Brainrot-Corp/Opencode-GUI/releases/latest">Installer (.msi)</a>
+      </div>
+      <p id="cta-version" class="ver-line">v2.2.5</p>
+    </section>
+
+    <figure class="shot">
+      <img src="assets/screenshot.png" alt="opencode-gui chat window with glass titlebar and session sidebar" loading="eager" />
+      <figcaption>Chat stage + composer · session sidebar · cyan accent — Windows 11 glass build.</figcaption>
+    </figure>
+
+    <section class="block">
+      <h2 class="sec-head">Why a GUI</h2>
+      <p class="sec-sub">Same opencode server, friendlier shell around it.</p>
+      <div class="grid">
+        <div class="card"><h3><span class="glyph">▣</span>Server reuse</h3><p>Spawns <span class="mono">opencode serve</span> as a sidecar and talks HTTP/SSE. No forked agent logic.</p></div>
+        <div class="card"><h3><span class="glyph">⧉</span>Workspaces</h3><p>Up to 5 directories plus <span class="mono">ssh://</span> remote hosts, each with its own session stream.</p></div>
+        <div class="card"><h3><span class="glyph">◈</span>Glass chrome</h3><p>Acrylic on Win11, vibrancy on macOS, opaque fallback on Linux. Square flush panels.</p></div>
+        <div class="card"><h3><span class="glyph">✦</span>Permissions</h3><p>Approve / deny tool calls inline, abort mid-stream, revert with one click.</p></div>
+        <div class="card"><h3><span class="glyph">❖</span>Editor + terminal</h3><p>Monaco diffs, xterm dock, git panel, file watcher, voice control via plugins.</p></div>
+        <div class="card"><h3><span class="glyph">⬣</span>Portable</h3><p>Portable zips ship exe + sidecar + relay. No admin install required.</p></div>
+      </div>
+    </section>
+
+    <section id="downloads" class="block">
+      <h2 class="sec-head">Downloads</h2>
+      <p class="sec-sub">Links resolve from the latest GitHub release automatically. Offline? <a href="https://github.com/Brainrot-Corp/Opencode-GUI/releases">Browse all releases →</a></p>
+      <div id="dl-rows" class="dl-grid">
+        <div class="dl-card"><h3><span class="os-dot"></span>Windows x64</h3><p class="note">Loading latest release…</p></div>
+        <div class="dl-card"><h3><span class="os-dot"></span>macOS arm64</h3><p class="note">Loading latest release…</p></div>
+        <div class="dl-card"><h3><span class="os-dot"></span>Linux</h3><p class="note">Loading latest release…</p></div>
+      </div>
+      <div class="req-strip"><span>Requirements —</span> Windows 10/11 (WebView2 ships with Windows) · macOS 13+ arm64 · Ubuntu 22.04+ (webkit2gtk-4.1) · Node/Rust needed for dev only, never for the download.</div>
+    </section>
+
+    <section class="block">
+      <h2 class="sec-head">Next steps</h2>
+      <div class="grid">
+        <div class="card"><h3><span class="glyph">→</span>Install guide</h3><p>MSI vs portable, Gatekeeper, Linux deps. <a href="./install.html">Read install →</a></p></div>
+        <div class="card"><h3><span class="glyph">→</span>Changelog</h3><p>Latest 20 releases with per-asset links. <a href="./changelog.html">Read changelog →</a></p></div>
+        <div class="card"><h3><span class="glyph">→</span>Source</h3><p>Tauri v2 + React 19 + TypeScript. <a href="https://github.com/Brainrot-Corp/Opencode-GUI">Open repo →</a></p></div>
+      </div>
+    </section>
+
+    <footer>
+      <div class="foot-inner">
+        <span>opencode-gui · MIT · <a href="https://github.com/Brainrot-Corp/Opencode-GUI/releases">releases</a></span>
+        <nav><a href="./install.html">Install</a><a href="./changelog.html">Changelog</a><a href="https://github.com/Brainrot-Corp/Opencode-GUI">GitHub</a></nav>
+      </div>
+    </footer>
+  </main>
+  <script src="assets/site.js" defer></script>
+</body>
+</html>
