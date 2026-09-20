@@ -60,7 +60,7 @@ a:focus-visible, button:focus-visible { outline: 1px solid color-mix(in srgb, va
 .nav-links a { font-size: 12.5px; color: var(--text-dim); padding: 8px 12px; letter-spacing: 0.04em; transition: color 0.25s var(--ease), background 0.25s var(--ease), box-shadow 0.35s var(--ease); }
 .nav-links a:hover, .nav-links a[aria-current="page"] { color: var(--accent); background: var(--accent-dim); box-shadow: 0 0 18px -4px var(--accent-glow); }
 
-.wrap { width: min(1020px, 100%); margin: 0 auto; padding: 0 clamp(18px, 4vw, 36px); }
+.wrap { width: min(1020px, 100%); margin: 0 auto; padding: 0 clamp(18px, 4vw, 36px); position: relative; z-index: 1; }
 
 /* hero */
 .hero { text-align: center; padding: 72px 0 30px; animation: rise 0.9s var(--ease) both; }
@@ -184,3 +184,40 @@ table.plat tr:last-child td { border-bottom: none; }
 .steps strong { color: var(--text); font-weight: 600; }
 .step-n { font-family: var(--mono); font-size: 12px; color: var(--accent-bright); background: var(--accent-dim); border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent); width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
 @media (max-width: 900px) { .flow { grid-template-columns: 1fr; } .flow-arrow { display: none; } }
+
+/* ambient background — aurora orbs + dot grid, mouse-reactive via --px/--py */
+.aurora { position: fixed; inset: -60px; z-index: 0; overflow: hidden; pointer-events: none;
+  transform: translate3d(var(--px, 0px), var(--py, 0px), 0);
+  transition: transform 0.6s var(--ease); }
+.orb { position: absolute; border-radius: 50%; filter: blur(90px); will-change: transform; }
+.orb.o1 { width: 560px; height: 560px; left: -140px; top: -160px;
+  background: radial-gradient(circle, rgba(127,212,212,0.16), transparent 65%);
+  animation: drift1 26s ease-in-out infinite alternate; }
+.orb.o2 { width: 640px; height: 640px; right: -180px; top: 22%;
+  background: radial-gradient(circle, rgba(127,212,212,0.10), transparent 65%);
+  animation: drift2 32s ease-in-out infinite alternate; }
+.orb.o3 { width: 520px; height: 520px; left: 30%; bottom: -220px;
+  background: radial-gradient(circle, rgba(168,230,228,0.07), transparent 65%);
+  animation: drift3 38s ease-in-out infinite alternate; }
+@keyframes drift1 { to { transform: translate(120px, 80px) scale(1.15); } }
+@keyframes drift2 { to { transform: translate(-140px, -60px) scale(0.9); } }
+@keyframes drift3 { to { transform: translate(-100px, -90px) scale(1.2); } }
+.aurora::after { content: ""; position: absolute; inset: 0;
+  background-image: radial-gradient(rgba(127,212,212,0.09) 1px, transparent 1px);
+  background-size: 26px 26px;
+  mask-image: radial-gradient(70% 55% at 50% 0%, black, transparent 75%);
+  -webkit-mask-image: radial-gradient(70% 55% at 50% 0%, black, transparent 75%); }
+
+/* cursor — native cursor stays, ambient dot + lagging ring follow it */
+.cursor-dot, .cursor-ring { position: fixed; top: 0; left: 0; z-index: 100; pointer-events: none; border-radius: 50%; display: none; }
+html.has-cursor .cursor-dot, html.has-cursor .cursor-ring { display: block; }
+.cursor-dot { width: 6px; height: 6px; background: var(--accent); box-shadow: 0 0 10px var(--accent-glow); }
+.cursor-ring { width: 30px; height: 30px; border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  box-shadow: 0 0 18px -4px var(--accent-glow), inset 0 0 12px -8px var(--accent-glow);
+  transition: width 0.25s var(--ease), height 0.25s var(--ease), border-color 0.25s; }
+.cursor-ring.is-hover { width: 46px; height: 46px; border-color: color-mix(in srgb, var(--accent) 70%, transparent); }
+@media (prefers-reduced-motion: reduce) {
+  .orb { animation: none; }
+  .aurora { transform: none; transition: none; }
+  html.has-cursor .cursor-dot, html.has-cursor .cursor-ring { display: none; }
+}

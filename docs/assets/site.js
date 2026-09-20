@@ -116,7 +116,43 @@
     }).join("");
   }
 
+  function ambient() {
+    if (!window.matchMedia("(hover:hover) and (pointer:fine)").matches) return;
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    var root = document.documentElement;
+    var aur = document.createElement("div");
+    aur.className = "aurora"; aur.setAttribute("aria-hidden", "true");
+    aur.innerHTML = '<span class="orb o1"></span><span class="orb o2"></span><span class="orb o3"></span>';
+    document.body.insertBefore(aur, document.body.firstChild);
+    var dot = document.createElement("div"); dot.className = "cursor-dot"; dot.setAttribute("aria-hidden", "true");
+    var ring = document.createElement("div"); ring.className = "cursor-ring"; ring.setAttribute("aria-hidden", "true");
+    document.body.appendChild(dot); document.body.appendChild(ring);
+    root.classList.add("has-cursor");
+    var tx = -100, ty = -100, rx = -100, ry = -100;
+    function place(el, x, y) { el.style.transform = "translate3d(" + x + "px," + y + "px,0) translate(-50%,-50%)"; }
+    document.addEventListener("mousemove", function (e) {
+      tx = e.clientX; ty = e.clientY;
+      var nx = e.clientX / window.innerWidth - 0.5, ny = e.clientY / window.innerHeight - 0.5;
+      root.style.setProperty("--px", (-nx * 24).toFixed(1) + "px");
+      root.style.setProperty("--py", (-ny * 24).toFixed(1) + "px");
+      place(dot, tx, ty);
+    }, { passive: true });
+    document.addEventListener("mouseover", function (e) {
+      if (e.target.closest("a,button,.card,.asset,.chip,.dl-card")) ring.classList.add("is-hover");
+    });
+    document.addEventListener("mouseout", function (e) {
+      if (e.target.closest("a,button,.card,.asset,.chip,.dl-card")) ring.classList.remove("is-hover");
+    });
+    place(dot, tx, ty); place(ring, rx, ry);
+    (function loop() {
+      rx += (tx - rx) * 0.16; ry += (ty - ry) * 0.16;
+      place(ring, rx, ry);
+      requestAnimationFrame(loop);
+    })();
+  }
+
   function boot() {
+    ambient();
     var needChangelog = !!$("#releases");
     if ($("#cta-primary") || $("#dl-rows")) {
       getJSON(API + "/releases/latest").then(hydrateLanding, function () { hydrateLanding(null); });
