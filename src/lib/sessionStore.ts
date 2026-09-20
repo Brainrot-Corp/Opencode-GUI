@@ -53,22 +53,46 @@ export function createSessionStore(onChange: (sid: string) => void) {
     usage.set(sid, next);
   };
 
+  // stashed early deltas for a part that arrived before its part/message —
+  // fold them into the part unless it already carries them (authoritative
+  // re-announce). Dropping them blindly loses short replies wholesale.
+  function withStash(part: Part): Part {
+    const key = `${(part as any).messageID}:${(part as any).id}`;
+    const stash = pendingDeltas.get(key);
+    if (!stash?.text) {
+      if (stash) pendingDeltas.delete(key);
+      return part;
+    }
+    const t = (part as any).type;
+    if (t !== "text" && t !== "reasoning") {
+      pendingDeltas.delete(key);
+      return part;
+    }
+    const cur = (part as any).text ?? "";
+    pendingDeltas.delete(key);
+    if (!cur || (!cur.startsWith(stash.text) && !cur.endsWith(stash.text)))
+      return { ...part, text: cur + stash.text } as Part;
+    return part;
+  }
+
   function upsertPart(part: Part): boolean {
     const store = storeFor(part.sessionID);
     const mi = findMsgIdx(store, part.messageID);
     if (mi < 0) return false;
     const m = store[mi];
     const pi = m.parts.findIndex((x) => x.id === part.id);
+    // deltas can outrun the part announcement (short replies whose tokens
+    // stream before the part exists) — fold them in unless the part already
+    // carries them, else the part lands empty and the row hides until refetch
+    const merged = withStash(part);
     // fresh message identity — memoized rows compare msg references, so an
     // update must swap its own object or the row never re-renders
     store[mi] = {
       ...m,
       info: { ...m.info },
       parts:
-        pi < 0 ? [...m.parts, part] : m.parts.map((x) => (x.id === part.id ? part : x)),
+        pi < 0 ? [...m.parts, merged] : m.parts.map((x) => (x.id === part.id ? merged : x)),
     };
-    // authoritative full-text update — drop any stashed deltas for this part
-    pendingDeltas.delete(`${part.messageID}:${part.id}`);
     onChange(part.sessionID);
     return true;
   }
@@ -105,9 +129,8 @@ export function createSessionStore(onChange: (sid: string) => void) {
   }
 
   // message.updated body: insert/replace the message header, flushing any
-  // parts that arrived before it. Their stashed pre-deltas are stale — the
-  // queued parts are authoritative (same rule as upsertPart); keeping them
-  // makes flushDeltas re-append early text = duplicated streaming.
+  // parts that arrived before it (with their stashed early deltas folded in
+  // — see withStash; dropping them duplicates nothing but loses short replies)
   function applyMessage(info: Message) {
     const sid = info.sessionID;
     const store = storeFor(sid);
@@ -115,9 +138,7 @@ export function createSessionStore(onChange: (sid: string) => void) {
     if (i < 0) {
       const queued = orphanParts.get(info.id);
       orphanParts.delete(info.id);
-      for (const pt of queued?.parts ?? [])
-        pendingDeltas.delete(`${info.id}:${(pt as any).id}`);
-      store.push({ info, parts: queued?.parts ?? [] });
+      store.push({ info, parts: (queued?.parts ?? []).map(withStash) });
       usageAdd(sid, info, 1);
     } else {
       usageAdd(sid, store[i].info, -1);

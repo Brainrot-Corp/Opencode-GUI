@@ -70,4 +70,27 @@ on.applyPart({ id: "p1", sessionID: S, messageID: "m2", type: "text", text: "hel
 check("applyPart hits tail msg", (on.cached(S) as any[])[1].parts[0].text, "hello");
 check("onChange fired", changes > 0, true);
 
+// deltas that outrun the part announcement must survive an empty part —
+// otherwise short replies land blank and stay invisible until refetch
+const early = createSessionStore(() => {});
+early.applyMessage(msg("m1", "assistant").info);
+early.applyDelta({ sessionID: S, messageID: "m1", partID: "p1", delta: "hello " });
+early.applyDelta({ sessionID: S, messageID: "m1", partID: "p1", delta: "world" });
+early.applyPart({ id: "p1", sessionID: S, messageID: "m1", type: "text", text: "" } as any);
+check("early deltas kept on empty part", (early.cached(S) as any[])[0].parts[0].text, "hello world");
+
+// authoritative re-announce already carries the early text — no duplication
+const auth = createSessionStore(() => {});
+auth.applyMessage(msg("m1", "assistant").info);
+auth.applyDelta({ sessionID: S, messageID: "m1", partID: "p1", delta: "hello " });
+auth.applyPart({ id: "p1", sessionID: S, messageID: "m1", type: "text", text: "hello " } as any);
+check("authoritative part not duplicated", (auth.cached(S) as any[])[0].parts[0].text, "hello ");
+
+// orphan parts (part before message) keep early deltas too
+const orph = createSessionStore(() => {});
+orph.applyDelta({ sessionID: S, messageID: "m1", partID: "p1", delta: "hi" });
+orph.applyPart({ id: "p1", sessionID: S, messageID: "m1", type: "text", text: "" } as any);
+orph.applyMessage(msg("m1", "assistant").info);
+check("orphan part keeps stash", (orph.cached(S) as any[])[0].parts[0].text, "hi");
+
 console.log(`sessionStore: ${n} checks passed`);
