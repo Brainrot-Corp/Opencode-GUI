@@ -23,6 +23,14 @@ Run everything through `scripts/run.sh` (Git Bash on Windows, bash/WSL elsewhere
 ./scripts/run.sh clean    # cargo clean + remove dist
 ```
 
+On Windows you can also use the native PowerShell runner — no Git Bash needed:
+
+```
+powershell -ExecutionPolicy Bypass -File scripts\run.ps1 dev
+```
+
+Both runners are maintained on purpose (`run.sh` = cross-platform default, `run.ps1` = native Windows wrapper) — keep them in sync when a command changes.
+
 `build`/`portable` take an optional target `native` (default, current OS) or — on Windows only — `win11` (glass/acrylic) / `win10` (no-glass) / `both`, plus an optional bundle list (`msi`, `nsis`); e.g. `./scripts/run.sh build win11 "msi nsis"`. A version bump before a release: `./scripts/run.sh build --version 2.3.0`. The sidecar binary (`src-tauri/binaries/opencode-*`) is not committed; `setup` downloads the correct triple from [opencode releases](https://github.com/anomalyco/opencode/releases) automatically.
 
 ## Structure

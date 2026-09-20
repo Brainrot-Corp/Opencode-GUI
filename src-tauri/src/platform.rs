@@ -160,7 +160,7 @@ pub fn curl_bin() -> &'static str {
 
 /// Spawn a child process without flashing a console window on Windows
 /// (CREATE_NO_WINDOW). Other OS: plain Command — there is no console flash.
-pub fn win_command(program: &str) -> std::process::Command {
+pub fn win_command(program: impl AsRef<std::ffi::OsStr>) -> std::process::Command {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;

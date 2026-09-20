@@ -36,7 +36,13 @@ run.sh portable [native|win11|win10|both]  # zip (exe + sidecar) → bundle/port
 run.sh check                           # node unit tests + tsc + vite build + cargo check
 npm run test                           # frontend unit tests only (scripts/run-tests.mjs, framework-free self-checks in src/lib/*.test.ts)
 run.sh clean                           # cargo clean + remove dist
+run.ps1 <cmd> [win11|win10|both] [bundles] [-Version X.Y.Z]  # Windows-native PowerShell runner (setup|dev|build|portable|check|clean)
 ```
+
+**Keep both runners.** `run.sh` and `run.ps1` are both maintained on purpose:
+`run.sh` (Git Bash on Windows / bash elsewhere) is the cross-platform default,
+`run.ps1` is the native Windows wrapper (no Git Bash needed). When adding or
+changing a runner command, mirror it in the other script.
 
 Direct: `npm run dev` / `npm run build` / `npm run tauri build -- --target <triple>`.
 

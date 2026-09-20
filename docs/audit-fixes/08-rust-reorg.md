@@ -145,3 +145,11 @@ single-instance callback, setup, tray, RunEvent handler, Exit teardown). 513 lin
   paths — lib.rs backend split should be reflected there in a separate wave (not in allowed file set).
 - **whisper-rs** in-process path + dep lockout was audited earlier (feature never enabled) — not
   touched here; still deletable as its own change.
+
+
+## Post-wave fix: win_command signature (found in real win11 release build)
+
+- platform.rs:163 — win_command(program: &str) → impl AsRef<OsStr>: release-only call sites pass &PathBuf/&Path (server.rs:197, voice/stt.rs:360, voice/stt.rs:524, windowctl.rs:213); dev builds use raw Command::new so dev-profile cargo check never saw these. &str callers unchanged.
+- voice/stt.rs, windowctl.rs — dropped 	o_string_lossy() roundtrips, pass &Path directly.
+- Verify: cargo check --release + cargo check both clean.
+

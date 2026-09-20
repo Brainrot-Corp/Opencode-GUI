@@ -357,7 +357,7 @@ fn ensure_whisper_server(model_path: &Path, use_gpu: bool) -> Result<u16, String
     };
     let port = crate::platform::free_port().map_err(|e| e.to_string())?;
     eprintln!("[STT] ensure_whisper_server spawn bin={} port={} model={}", server_bin.display(), port, model_str);
-    let mut cmd = crate::platform::win_command(&server_bin.to_string_lossy());
+    let mut cmd = crate::platform::win_command(&server_bin);
     cmd.args(["-m", &model_str, "--host", "127.0.0.1", "--port", &port.to_string()]);
     cmd.stdout(Stdio::null()).stderr(Stdio::piped());
     let child = cmd.spawn().map_err(|e| format!("failed to spawn whisper-server: {e}"))?;
@@ -521,7 +521,7 @@ pub async fn voice_transcribe_pcm(
 fn run_whisper(cli: &Path, mp: &Path, tmp: &Path, translate: bool) -> Result<(String, String), String> {
     use std::io::Read;
     eprintln!("[STT] run_whisper start cli={} tmp={} translate={}", cli.display(), tmp.display(), translate);
-    let mut cmd = crate::platform::win_command(&cli.to_string_lossy());
+    let mut cmd = crate::platform::win_command(cli);
     cmd.arg("-m").arg(mp).arg("-f").arg(tmp);
     cmd.args(["-nt", "-np"]);
     if translate {

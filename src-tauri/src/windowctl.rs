@@ -210,7 +210,7 @@ pub fn spawn_new_instance() {
             return;
         }
     };
-    let mut cmd = crate::platform::win_command(&exe.to_string_lossy());
+    let mut cmd = crate::platform::win_command(&exe);
     cmd.arg("--new-instance");
     match cmd.spawn() {
         Ok(_) => {
