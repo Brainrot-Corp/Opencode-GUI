@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { connectRelay, type RelayConn, type RelayNotify } from "./relayClient";
 
 // persisted prefs — phone-local, never the shared desktop blob
@@ -68,20 +68,64 @@ export default function App() {
     try { localStorage.setItem(PREF_KEY, JSON.stringify(p)); } catch {}
   };
 
-  const discover = async () => {
+  const scanningRef = useRef(false);
+  scanningRef.current = scanning;
+  const statusRef = useRef(status);
+  statusRef.current = status;
+  const prefsRef = useRef(prefs);
+  prefsRef.current = prefs;
+
+  const discover = useCallback(async () => {
+    if (scanningRef.current) return;
     setScanning(true);
     setScanFail(false);
     try {
       const { invoke } = await import("@tauri-apps/api/core");
       const found = await invoke<{ url: string; token: string } | null>("relay_discover");
-      if (found) save({ url: found.url, token: found.token });
-      else setScanFail(true);
+      if (found?.url && found?.token) {
+        setScanFail(false);
+        save({ url: found.url, token: found.token });
+      } else {
+        setScanFail(true);
+      }
     } catch {
       setScanFail(true);
     } finally {
       setScanning(false);
     }
-  };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // autofind on open when not connected — no saved relay creds means the
+  // socket effect above stays "off", so probe the LAN once instead of
+  // leaving the user on a dead "not connected" screen
+  const autoRan = useRef(false);
+  useEffect(() => {
+    if (autoRan.current) return;
+    autoRan.current = true;
+    const p = loadPrefs();
+    if (!p.url || !p.token) void discover();
+  }, [discover]);
+
+  // app reopened from background while still offline — retry the probe
+  useEffect(() => {
+    const onVis = () => {
+      if (document.visibilityState !== "visible") return;
+      if (scanningRef.current || statusRef.current === "connected") return;
+      const p = prefsRef.current;
+      if (!p.url || !p.token) void discover();
+    };
+    document.addEventListener("visibilitychange", onVis);
+    window.addEventListener("focus", onVis);
+    return () => {
+      document.removeEventListener("visibilitychange", onVis);
+      window.removeEventListener("focus", onVis);
+    };
+  }, [discover]);
+
+  // connected status syncs with autofind — while the LAN probe runs the
+  // header dot + status lines read as connecting, never stale "off"
+  const effStatus = scanning ? "connecting" : status;
 
   const addNotif = (m: RelayNotify) => {
     setNotifs((prev) => {
@@ -93,9 +137,10 @@ export default function App() {
 
   return (
     <div className="mapp">
+      <div className="mnoise" aria-hidden="true" />
       <header className="mhead">
-        <span className="mtitle">opencode-gui</span>
-        <span className={`mdot mdot-${status}`} data-status={status} />
+        <span className="mtitle"><i aria-hidden="true" />opencode-gui</span>
+        <span className={`mdot mdot-${effStatus}`} data-status={effStatus} />
         <button className="mtab" onClick={() => setScreen(screen === "notifs" ? "connect" : "notifs")}>
           <i className={`fa-solid ${screen === "notifs" ? "fa-gear" : "fa-bell"}`} />
           {screen === "notifs" ? "Setup" : "Alerts"}
@@ -105,13 +150,13 @@ export default function App() {
         <ConnectScreen
           prefs={prefs}
           onSave={save}
-          status={status}
-          onDiscover={discover}
+          status={effStatus}
           scanning={scanning}
-          scanFail={scanFail && !prefs.url}
+          onDiscover={discover}
+          scanFail={scanFail && !scanning && !prefs.url}
         />
       ) : (
-        <NotifScreen notifs={notifs} status={status} onClear={() => {
+        <NotifScreen notifs={notifs} status={effStatus} scanning={scanning} onClear={() => {
           setNotifs([]);
           try { localStorage.removeItem(NOTIF_KEY); } catch {}
         }} />
@@ -136,16 +181,20 @@ async function banner(m: RelayNotify) {
   } catch {}
 }
 
-function ConnectScreen({ prefs, onSave, status, onDiscover, scanning, scanFail }: {
+function ConnectScreen({ prefs, onSave, status, scanning, onDiscover, scanFail }: {
   prefs: Prefs;
   onSave: (p: Prefs) => void;
   status: string;
-  onDiscover: () => void;
   scanning: boolean;
+  onDiscover: () => void;
   scanFail: boolean;
 }) {
   const [url, setUrl] = useState(prefs.url);
   const [token, setToken] = useState(prefs.token);
+  useEffect(() => {
+    setUrl(prefs.url);
+    setToken(prefs.token);
+  }, [prefs.url, prefs.token]);
   return (
     <div className="mform">
       <button className="mbtn" onClick={onDiscover} disabled={scanning}>
@@ -185,13 +234,15 @@ function ConnectScreen({ prefs, onSave, status, onDiscover, scanning, scanFail }
         Connect
       </button>
       <div className="mstatus" data-status={status}>
-        {status === "connected"
-          ? "connected — waiting for desktop events"
-          : status === "reconnecting"
-            ? "reconnecting…"
-            : status === "connecting"
-              ? "connecting…"
-              : "not connected"}
+        {scanning
+          ? "searching for desktop…"
+          : status === "connected"
+            ? "connected — waiting for desktop events"
+            : status === "reconnecting"
+              ? "reconnecting…"
+              : status === "connecting"
+                ? "connecting…"
+                : "not connected"}
       </div>
       <p className="mhint">
         Run <code>oc-relay</code> on the PC (Settings → Phone notifications → Run relay on this PC)
@@ -201,7 +252,7 @@ function ConnectScreen({ prefs, onSave, status, onDiscover, scanning, scanFail }
     </div>
   );
 }
-function NotifScreen({ notifs, status, onClear }: { notifs: RelayNotify[]; status: string; onClear: () => void }) {
+function NotifScreen({ notifs, status, scanning, onClear }: { notifs: RelayNotify[]; status: string; scanning: boolean; onClear: () => void }) {
   return (
     <div className="mlist-wrap">
       {notifs.length > 0 && (
@@ -209,7 +260,13 @@ function NotifScreen({ notifs, status, onClear }: { notifs: RelayNotify[]; statu
       )}
       {notifs.length === 0 ? (
         <div className="mempty">
-          {status === "connected" ? "waiting for desktop events…" : status === "reconnecting" ? "reconnecting…" : "not connected — open Setup"}
+          {scanning
+            ? "searching for desktop…"
+            : status === "connected"
+              ? "waiting for desktop events…"
+              : status === "reconnecting" || status === "connecting"
+                ? "reconnecting…"
+                : "not connected — open Setup"}
         </div>
       ) : (
         notifs.map((m, i) => (

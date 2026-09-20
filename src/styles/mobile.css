@@ -1,177 +1,477 @@
-/* Mobile app screens (docs/mobile-companion.md phase 2) — standalone minimal
-   style, same dark/cyan language as the desktop theme. 6px spacing unit. */
-
-:root {
-  --m-bg: #0d1216;
-  --m-surface: #141d24;
-  --m-border: #223038;
-  --m-text: #d7e2e4;
-  --m-dim: #8aa0a8;
-  --m-accent: #7fd4d4;
-}
+/* Mobile companion — desktop design system 1:1 (docs/mobile-companion.md phase 2).
+   Same tokens, materials and component language as the desktop app:
+   Inter UI + JetBrains Mono, cyan accent, 6px unit, square flush panels,
+   blocky chrome, glass blur, film grain. No --m-* forks — every value reads
+   from tokens.css so theme/appearance edits apply to both entries. */
 
 html, body, #root {
-  margin: 0;
-  padding: 0;
   height: 100%;
-  background: var(--m-bg);
-  color: var(--m-text);
-  font: 15px/1.45 Inter, system-ui, sans-serif;
+}
+
+body {
+  font-family: var(--sans);
   -webkit-tap-highlight-color: transparent;
+  overscroll-behavior: none;
+}
+
+/* film grain — same as desktop .noise in tokens.css */
+.mnoise {
+  position: fixed;
+  inset: -50%;
+  z-index: 60;
+  pointer-events: none;
+  opacity: 0.032;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  animation: grain 9s steps(10) infinite;
+}
+@keyframes grain {
+  0%, 100% { transform: translate(0, 0); }
+  10% { transform: translate(-2%, 1%); }
+  30% { transform: translate(1%, -2%); }
+  50% { transform: translate(-1%, 2%); }
+  70% { transform: translate(2%, 1%); }
+  90% { transform: translate(-2%, -1%); }
 }
 
 .mapp {
   display: flex;
   flex-direction: column;
-  height: 100%;
-  padding: 12px;
-  gap: 6px;
-  box-sizing: border-box;
+  height: 100vh;
+  height: 100dvh;
 }
 
+/* header — same material as desktop .titlebar (layout.css) */
 .mhead {
+  height: calc(42px + env(safe-area-inset-top));
+  z-index: 10;
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 6px;
-  border-bottom: 1px solid var(--m-border);
+  padding-left: 12px;
+  padding-right: 6px;
+  padding-top: env(safe-area-inset-top);
+  background: linear-gradient(90deg, rgba(var(--chrome-rgb), 0.14), rgba(var(--chrome-rgb), 0.22));
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border-bottom: 1px solid var(--line);
+  user-select: none;
 }
 
+/* brand — same as desktop .brand (layout.css) */
 .mtitle {
-  font-weight: 600;
-  color: var(--m-accent);
   flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.42em;
+  text-indent: 0.42em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  user-select: none;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
-
-.mdot {
-  width: 8px;
-  height: 8px;
+.mtitle i {
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
-  background: #5c6f77;
+  background: var(--accent);
+  box-shadow: 0 0 8px var(--accent-glow);
+  opacity: 0.85;
+  flex-shrink: 0;
 }
-.mdot-connected { background: var(--m-accent); box-shadow: 0 0 6px var(--m-accent); }
-.mdot-connecting, .mdot-reconnecting { background: #d4c97f; }
-.mdot-off { background: #5c6f77; }
 
-.mtab {
+/* connection dot — same language as desktop .debrief-dot + .saveDot */
+.mdot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-faint);
+  opacity: 0.55;
+  flex-shrink: 0;
+}
+.mdot-connected {
+  background: var(--accent);
+  box-shadow: 0 0 8px var(--accent-glow);
+  opacity: 1;
+}
+.mdot-connecting,
+.mdot-reconnecting {
+  background: var(--accent);
+  box-shadow: 0 0 8px var(--accent-glow);
+  opacity: 1;
+  animation: mdot-pulse 1.2s ease-in-out infinite;
+}
+.mdot-off {
+  background: var(--text-faint);
+  opacity: 0.55;
+}
+@keyframes mdot-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.55; transform: scale(0.85); }
+}
+
+/* header tab + clear — same as desktop .reset-btn (settings.css) */
+.mtab,
+.mclear {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 6px 10px;
-  border: 1px solid var(--m-border);
+  padding: 4px 10px;
+  min-height: 32px;
+  background: color-mix(in srgb, var(--accent) calc(0.06 * 100%), transparent);
+  border: 1px solid var(--line);
   border-radius: 4px;
-  background: transparent;
-  color: var(--m-text);
-  font: inherit;
+  color: var(--text-dim);
+  font-family: var(--sans);
+  font-size: 11px;
   cursor: pointer;
+  transition: all 0.25s var(--ease);
 }
-.mtab:hover { border-color: var(--m-accent); }
+.mtab i,
+.mclear i {
+  font-size: 10px;
+}
+.mtab:hover,
+.mclear:hover {
+  border-color: color-mix(in srgb, var(--accent) calc(0.45 * 100%), transparent);
+  color: var(--accent-bright);
+  box-shadow: 0 0 14px -6px var(--accent-glow);
+}
+.mclear:hover {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) calc(0.45 * 100%), transparent);
+  box-shadow: 0 0 14px -6px rgba(224, 143, 143, 0.5);
+}
 
-.mform, .mlist-wrap {
+/* screens — same rhythm as desktop .dlg-body: 6px unit, scrollable */
+.mform,
+.mlist-wrap {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 6px;
-  overflow-y: auto;
-  flex: 1;
+  padding: 12px 12px calc(12px + env(safe-area-inset-bottom));
+  background:
+    radial-gradient(52% 46% at 50% 30%, color-mix(in srgb, var(--accent) calc(0.05 * 100%), transparent), transparent 70%),
+    linear-gradient(
+      180deg,
+      rgba(var(--surf-rgb), min(1, calc(var(--surf-a) * 1.15))),
+      rgba(var(--surf-rgb), var(--surf-a))
+    );
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
 }
 
+/* field label — same as desktop .vc-section-head (dialog.css) */
 .mlabel {
-  font-size: 12px;
-  color: var(--m-dim);
+  display: flex;
+  align-items: center;
+  gap: 8px;
   margin-top: 6px;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.13em;
   text-transform: uppercase;
-  letter-spacing: .4px;
+  color: var(--text-dim);
+  user-select: none;
 }
 
+/* text fields — same inset material as desktop .model-search / .oc-input */
 .minput {
-  padding: 10px;
-  border: 1px solid var(--m-border);
-  border-radius: 4px;
-  background: var(--m-surface);
-  color: var(--m-text);
-  font: inherit;
+  width: 100%;
+  padding: 11px 12px;
+  background: var(--inset-bg);
+  border: 1px solid var(--line);
+  border-radius: 0;
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 12.5px;
+  outline: none;
+  transition: border-color 0.25s var(--ease), box-shadow 0.3s var(--ease);
 }
-.minput.mono, .mono { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 13px; }
-.minput:focus { outline: none; border-color: var(--m-accent); }
+.minput::placeholder {
+  color: var(--text-faint);
+}
+.minput:focus {
+  border-color: color-mix(in srgb, var(--accent) calc(0.4 * 100%), transparent);
+  box-shadow: 0 0 12px -4px var(--accent-glow);
+}
 
+/* primary action — same warm chip as desktop .send-btn (composer.css) */
 .mbtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
   margin-top: 6px;
   padding: 12px;
-  border: 0;
+  min-height: 44px;
   border-radius: 4px;
-  background: var(--m-accent);
-  color: var(--m-bg);
-  font: inherit;
-  font-weight: 600;
   cursor: pointer;
+  font-family: var(--sans);
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  color: var(--accent-bright);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--accent) calc(0.14 * 100%), transparent),
+    color-mix(in srgb, var(--accent) calc(0.06 * 100%), transparent)
+  );
+  border: 1px solid color-mix(in srgb, var(--accent) calc(0.28 * 100%), transparent);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    0 0 16px -9px var(--accent-glow);
+  transition:
+    border-color 0.35s var(--ease),
+    background 0.35s var(--ease),
+    box-shadow 0.45s var(--ease),
+    color 0.25s var(--ease),
+    transform 0.12s var(--ease);
 }
-.mbtn:disabled { opacity: .6; }
+.mbtn i {
+  text-shadow: 0 0 8px var(--accent-glow);
+}
+.mbtn:hover:not(:disabled) {
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--accent) calc(0.55 * 100%), transparent);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--accent) calc(0.22 * 100%), transparent),
+    color-mix(in srgb, var(--accent) calc(0.11 * 100%), transparent)
+  );
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.09),
+    0 0 26px -6px var(--accent-glow);
+}
+.mbtn:active:not(:disabled) {
+  transform: translateY(1px);
+}
+.mbtn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.mbtn:focus-visible {
+  outline: 1px solid color-mix(in srgb, var(--accent) calc(0.55 * 100%), transparent);
+  outline-offset: 3px;
+}
 
+/* divider — hairline + mono caption, same line language as desktop */
 .mdivider {
   display: flex;
   align-items: center;
   gap: 6px;
   margin: 6px 0;
-  color: var(--m-dim);
-  font-size: 12px;
+  color: var(--text-faint);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
 }
-.mdivider::before, .mdivider::after {
+.mdivider::before,
+.mdivider::after {
   content: "";
   flex: 1;
   height: 1px;
-  background: var(--m-border);
+  background: var(--line);
 }
 
+/* status strip — same as desktop .revert-banner (chat.css) */
 .mstatus {
-  font-size: 12px;
-  color: var(--m-dim);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  margin: 0;
   margin-top: 6px;
+  padding: 8px 12px;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--text-dim);
+  background: color-mix(in srgb, var(--accent) calc(0.06 * 100%), transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) calc(0.22 * 100%), transparent);
+  border-radius: 0;
+}
+.mstatus[data-status="connected"] {
+  color: var(--text-dim);
+}
+.mstatus[data-status="connected"]::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 8px var(--accent-glow);
+  flex: none;
+}
+.mstatus[data-status="connecting"]::before,
+.mstatus[data-status="reconnecting"]::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 8px var(--accent-glow);
+  flex: none;
+  animation: mdot-pulse 1.2s ease-in-out infinite;
+}
+.mstatus[data-status="off"] {
+  color: var(--text-faint);
+  background: var(--inset-bg);
+  border-color: var(--line);
+}
+.mstatus[data-status="off"]::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-faint);
+  opacity: 0.55;
+  flex: none;
 }
 
+/* hint — same as desktop .cmd-note (composer.css) */
 .mhint {
-  font-size: 12px;
-  color: var(--m-dim);
+  font-family: var(--sans);
+  font-size: 11px;
   line-height: 1.5;
+  color: var(--text-faint);
+  padding: 0 2px;
+  overflow-wrap: anywhere;
 }
 .mhint code {
-  font-family: "JetBrains Mono", ui-monospace, monospace;
-  color: var(--m-text);
+  font-family: var(--mono);
+  font-size: 0.92em;
+  color: var(--accent-bright);
+  background: var(--inset-bg);
+  border: 1px solid var(--line);
+  padding: 1px 5px;
+  border-radius: 0;
 }
 
+/* empty — same as desktop .empty (layout.css) */
 .mempty {
   margin: auto;
-  color: var(--m-dim);
-  font-size: 14px;
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--text-faint);
+  letter-spacing: 0.05em;
+  line-height: 2;
+  text-align: center;
+  padding: 24px 12px;
 }
 
 .mclear {
   align-self: flex-end;
-  padding: 4px 8px;
-  border: 1px solid var(--m-border);
-  border-radius: 4px;
-  background: transparent;
-  color: var(--m-dim);
-  font: 12px Inter, system-ui, sans-serif;
-  cursor: pointer;
 }
-.mclear:hover { color: #e08f8f; border-color: #e08f8f; }
 
+/* notification rows — same card as desktop .vc-row (dialog.css): square,
+   surface bg, hairline border, no rounded SaaS card */
 .mrow {
-  padding: 10px 12px;
-  background: var(--m-surface);
-  border: 1px solid var(--m-border);
-  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 9px 10px 8px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 0;
+  transition: border-color 0.2s var(--ease), background 0.2s var(--ease);
+}
+.mrow:hover {
+  background: color-mix(in srgb, var(--surface) 96%, var(--accent) 4%);
+  border-color: color-mix(in srgb, var(--accent) calc(0.18 * 100%), var(--line));
 }
 .mrow-k {
   display: flex;
   align-items: center;
   gap: 6px;
-  color: var(--m-accent);
+  font-family: var(--mono);
+  font-size: 10px;
   font-weight: 700;
-  font-size: 12px;
+  letter-spacing: 0.13em;
   text-transform: uppercase;
-  letter-spacing: .4px;
+  color: var(--text-dim);
 }
-.mrow-t { font-weight: 600; margin: 2px 0; }
-.mrow-b { color: #9fb3ba; font-size: 13px; white-space: pre-wrap; word-break: break-word; }
-.mrow-m { color: #5c6f77; font-size: 11px; font-family: "JetBrains Mono", ui-monospace, monospace; margin-top: 4px; }
+.mrow-k i {
+  width: 14px;
+  text-align: center;
+  font-size: 11px;
+  color: var(--accent);
+  opacity: 0.9;
+  flex: none;
+}
+.mrow-t {
+  font-family: var(--sans);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.4;
+  color: var(--text);
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.mrow-b {
+  font-family: var(--sans);
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text-dim);
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+.mrow-m {
+  margin-top: 4px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  color: var(--text-faint);
+  overflow-wrap: anywhere;
+}
+
+/* visible keyboard focus everywhere (mouse clicks don't trigger it) */
+.mapp button:focus-visible,
+.mapp input:focus-visible {
+  outline: 1px solid color-mix(in srgb, var(--accent) calc(0.55 * 100%), transparent);
+  outline-offset: 2px;
+}
+
+/* blocky square scrollbars — same as desktop tokens.css */
+.mform::-webkit-scrollbar,
+.mlist-wrap::-webkit-scrollbar {
+  width: 8px;
+}
+.mform::-webkit-scrollbar-track,
+.mlist-wrap::-webkit-scrollbar-track {
+  background: var(--inset-bg);
+}
+.mform::-webkit-scrollbar-thumb,
+.mlist-wrap::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--accent) calc(0.18 * 100%), transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) calc(0.12 * 100%), transparent);
+}
+.mform::-webkit-scrollbar-thumb:hover,
+.mlist-wrap::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--accent) calc(0.34 * 100%), transparent);
+  box-shadow: 0 0 10px var(--accent-glow);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mnoise {
+    animation: none;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
