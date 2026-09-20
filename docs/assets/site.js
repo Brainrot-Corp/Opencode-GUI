@@ -82,8 +82,10 @@
     if (rows) {
       var html = "";
       html += '<div class="dl-card"><h3><span class="os-dot"></span>Windows x64</h3>' + (os.id === "win" ? '<span class="rec">Detected — ' + esc(os.label) + "</span>" : "") +
-        assetRow(m.win11, page, "opencode-gui-win11-x64.zip") + assetRow(m.win10, page, "opencode-gui-win10-x64.zip") +
-        '<p class="note">Win11 build uses glass/acrylic. Win10 build is opaque (no-glass).</p></div>';
+        '<div class="win-split"><div class="win-col"><span class="win-tag">Windows 11 · glass</span>' +
+        assetRow(m.win11, page, "opencode-gui-win11-x64.zip") + '</div><div class="win-col"><span class="win-tag">Windows 10 · opaque</span>' +
+        assetRow(m.win10, page, "opencode-gui-win10-x64.zip") + "</div></div>" +
+        '<p class="note">Pick the build for your OS — glass/acrylic on 11, opaque on 10.</p></div>';
       html += '<div class="dl-card"><h3><span class="os-dot"></span>macOS arm64</h3>' + (os.id === "mac" ? '<span class="rec">Detected — macOS</span>' : "") +
         assetRow(m.dmg, page, "disk image (.dmg)") + assetRow(m.macTar, page, "app archive (.app.tar.gz)") +
         '<p class="note">Unsigned — right-click → Open on first launch. macOS 13+.</p></div>';

@@ -123,6 +123,10 @@ section.block { padding: 54px 0 6px; }
 .dl-card .asset .size { color: var(--text-faint); font-family: var(--mono); font-size: 11px; white-space: nowrap; }
 .dl-card .note { font-size: 12px; color: var(--text-faint); }
 .dl-card .rec { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--accent); }
+.win-split { display: flex; flex-direction: column; gap: 12px; }
+.win-col { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.win-col + .win-col { padding-top: 12px; border-top: 1px solid var(--line-strong); }
+.win-tag { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-dim); white-space: nowrap; }
 .req-strip { margin-top: 18px; font-family: var(--mono); font-size: 12px; color: var(--text-faint); letter-spacing: 0.03em;
   background: var(--inset-bg); border: 1px solid var(--line); padding: 12px 14px; }
 .req-strip span { color: var(--text-dim); }
