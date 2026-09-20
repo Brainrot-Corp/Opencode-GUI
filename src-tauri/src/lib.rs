@@ -64,7 +64,9 @@ kokoro_remove_engine, install_kokoro_gpu_part, tts_gpu_remove, tts_remove_voice,
 
 mod windowctl;
 use windowctl::{apply_jumplist, apply_default_size, debug_log, hide_to_tray, quit_app,
-    set_close_on_x, set_tray_reset, show_main, spawn_new_instance, toggle_main, toggle_window};
+    set_close_on_x, set_tray_reset, show_main, spawn_new_instance, toggle_window};
+#[cfg(desktop)]
+use windowctl::toggle_main;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -73,25 +75,31 @@ pub fn run() {
     // second launches go through the single-instance callback and restore
     // the existing window (left-click on pinned taskbar).
     let is_new_instance = std::env::args().any(|a| a == "--new-instance");
-    let mut builder = tauri::Builder::default()
+    let mut builder = tauri::Builder::default();
+    #[cfg(desktop)]
+    {
         // remembers window size/position across launches — but never
         // visibility: the window is created hidden ("visible": false) and
         // shown explicitly in setup once the launch resize has run on it
-        .plugin(
-            tauri_plugin_window_state::Builder::default()
-                .with_state_flags(
-                    tauri_plugin_window_state::StateFlags::all()
-                        - tauri_plugin_window_state::StateFlags::VISIBLE,
-                )
-                .build(),
-        )
-        .plugin(tauri_plugin_autostart::init(
-            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
-            None,
-        ))
+        builder = builder
+            .plugin(
+                tauri_plugin_window_state::Builder::default()
+                    .with_state_flags(
+                        tauri_plugin_window_state::StateFlags::all()
+                            - tauri_plugin_window_state::StateFlags::VISIBLE,
+                    )
+                    .build(),
+            )
+            .plugin(tauri_plugin_autostart::init(
+                tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+                None,
+            ));
+    }
+    builder = builder
         // native folder picker for the workspace setting
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init());
+    #[cfg(desktop)]
     if !is_new_instance {
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
             if args.iter().any(|a| a == "--new-instance") {
@@ -120,6 +128,8 @@ pub fn run() {
             }
         }));
     }
+    #[cfg(not(desktop))]
+    let _ = is_new_instance;
     let builder = builder
         .invoke_handler(tauri::generate_handler![
             server_url,
@@ -245,81 +255,91 @@ pub fn run() {
     // --new-instance used to skip the plugin entirely, silently leaving the
     // app with NO hotkeys after every auto-update relaunch (update.rs spawns
     // --new-instance while the old owner is already gone).
+    #[cfg(desktop)]
     let builder = builder.plugin(tauri_plugin_global_shortcut::Builder::new().build());
+    // OS notifications — the mobile app's system banners (phase 2); desktop
+    // gets the plugin too (harmless) so the crate compiles for every target
+    let builder = builder.plugin(tauri_plugin_notification::init());
 
     builder
         .setup(|app| {
             // system tray: left click toggles visibility, right click menu.
             // Both tray and pinned taskbar JumpList expose "Open new window"
             // and "Quit" so the two surfaces stay consistent.
-            use tauri::{
-                menu::{Menu, MenuItem},
-                tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-            };
-            use tauri_plugin_global_shortcut::GlobalShortcutExt;
+            #[cfg(windows)]
+            {
+                // register global hotkeys one by one: a taken combo (second
+                // instance, PowerToys Run) only skips that combo instead of
+                // aborting plugin setup
+                use tauri_plugin_global_shortcut::GlobalShortcutExt;
 
-            // register global hotkeys one by one: a taken combo (second
-            // instance, PowerToys Run) only skips that combo instead of
-            // aborting plugin setup
-            for combo in ["alt+space", "ctrl+shift+m"] {
-                if let Err(e) = app
-                    .global_shortcut()
-                    .on_shortcut(combo, handle_global_shortcut)
-                {
-                    eprintln!("global shortcut {combo} unavailable: {e}");
+                for combo in ["alt+space", "ctrl+shift+m"] {
+                    if let Err(e) = app
+                        .global_shortcut()
+                        .on_shortcut(combo, handle_global_shortcut)
+                    {
+                        eprintln!("global shortcut {combo} unavailable: {e}");
+                    }
                 }
             }
+            #[cfg(desktop)]
+            {
+                use tauri::{
+                    menu::{Menu, MenuItem},
+                    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
+                };
 
-            let show = MenuItem::with_id(app, "show", "Show/Hide OpenCode GUI", true, None::<&str>)?;
-            let new_win = MenuItem::with_id(app, "new-instance", "Open new window", true, None::<&str>)?;
-            let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-            // separator is cosmetic; omit to maximize tray compat (second instance had empty menu with it)
-            let menu = Menu::with_items(app, &[&show, &new_win, &quit])?;
+                let show = MenuItem::with_id(app, "show", "Show/Hide OpenCode GUI", true, None::<&str>)?;
+                let new_win = MenuItem::with_id(app, "new-instance", "Open new window", true, None::<&str>)?;
+                let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
+                // separator is cosmetic; omit to maximize tray compat (second instance had empty menu with it)
+                let menu = Menu::with_items(app, &[&show, &new_win, &quit])?;
 
-            // Build tray icon — don't let a missing icon crash the second instance.
-            // Primary and second instance share the same bundle icon, but be defensive.
-            let tray_icon = match app.default_window_icon().cloned() {
-                Some(icon) => icon,
-                None => {
-                    debug_log("tray icon missing, aborting tray build (non-fatal)".into());
-                    eprintln!("tray icon missing");
-                    // still continue setup so window shows; skip tray
-                    // we need to still run JumpList and server setup, so don't return Err
-                    // Instead, create a dummy 1x1 image to keep tray alive
-                    tauri::image::Image::new(&[0, 0, 0, 0], 1, 1)
+                // Build tray icon — don't let a missing icon crash the second instance.
+                // Primary and second instance share the same bundle icon, but be defensive.
+                let tray_icon = match app.default_window_icon().cloned() {
+                    Some(icon) => icon,
+                    None => {
+                        debug_log("tray icon missing, aborting tray build (non-fatal)".into());
+                        eprintln!("tray icon missing");
+                        // still continue setup so window shows; skip tray
+                        // we need to still run JumpList and server setup, so don't return Err
+                        // Instead, create a dummy 1x1 image to keep tray alive
+                        tauri::image::Image::new(&[0, 0, 0, 0], 1, 1)
+                    }
+                };
+                // Wrap tray build so a failure doesn't crash the window (second instance race)
+                let tray_res: Result<(), String> = (|| {
+                    TrayIconBuilder::with_id("main")
+                        .icon(tray_icon)
+                        .tooltip("OpenCode")
+                        .menu(&menu)
+                        .show_menu_on_left_click(false)
+                        .on_menu_event(|app, event| match event.id.as_ref() {
+                            "show" => toggle_main(app),
+                            "new-instance" => spawn_new_instance(),
+                            "quit" => app.exit(0),
+                            _ => {}
+                        })
+                        .on_tray_icon_event(|tray, event| {
+                            if let TrayIconEvent::Click {
+                                button: MouseButton::Left,
+                                button_state: MouseButtonState::Up,
+                                ..
+                            } = event
+                            {
+                                let app = tray.app_handle();
+                                toggle_main(app);
+                            }
+                        })
+                        .build(app)
+                        .map(|_| ())
+                        .map_err(|e| e.to_string())
+                })();
+                if let Err(e) = tray_res {
+                    debug_log(format!("tray build failed (non-fatal): {e}"));
+                    eprintln!("tray build failed: {e}");
                 }
-            };
-            // Wrap tray build so a failure doesn't crash the window (second instance race)
-            let tray_res: Result<(), String> = (|| {
-                TrayIconBuilder::with_id("main")
-                    .icon(tray_icon)
-                    .tooltip("OpenCode")
-                    .menu(&menu)
-                    .show_menu_on_left_click(false)
-                    .on_menu_event(|app, event| match event.id.as_ref() {
-                        "show" => toggle_main(app),
-                        "new-instance" => spawn_new_instance(),
-                        "quit" => app.exit(0),
-                        _ => {}
-                    })
-                    .on_tray_icon_event(|tray, event| {
-                        if let TrayIconEvent::Click {
-                            button: MouseButton::Left,
-                            button_state: MouseButtonState::Up,
-                            ..
-                        } = event
-                        {
-                            let app = tray.app_handle();
-                            toggle_main(app);
-                        }
-                    })
-                    .build(app)
-                    .map(|_| ())
-                    .map_err(|e| e.to_string())
-            })();
-            if let Err(e) = tray_res {
-                debug_log(format!("tray build failed (non-fatal): {e}"));
-                eprintln!("tray build failed: {e}");
             }
 
             // Pinned taskbar JumpList — mirrors tray: "Open new window" + "Quit"

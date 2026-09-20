@@ -1,0 +1,17 @@
+{
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "opencode-gui",
+        "url": "mobile.html",
+        "width": 400,
+        "height": 720,
+        "visible": true
+      }
+    ]
+  },
+  "bundle": {
+    "externalBin": []
+  }
+}

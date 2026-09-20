@@ -6,7 +6,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use tauri::Manager;
 
+#[cfg(windows)]
 pub(crate) use crate::input::unpoison_input;
+#[cfg(not(windows))]
+pub(crate) fn unpoison_input(_app: &tauri::AppHandle) {}
 
 // when true (default), reopening the window from the tray snaps it back to
 // the default size from tauri.conf.json — restoring a taskbar-minimized
@@ -65,6 +68,7 @@ fn default_size(app: &tauri::AppHandle) -> (f64, f64) {
 pub(crate) fn show_main(app: &tauri::AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.show();
+        #[cfg(desktop)]
         let _ = w.unminimize();
         let _ = w.set_focus();
         unpoison_input(app);
@@ -143,6 +147,7 @@ pub fn toggle_window(app: tauri::AppHandle) {
 // resize, tao's internal focus tracking desyncs and is_focused() reports
 // false until a hide/minimize cycle resets it — making the hotkey take the
 // "show" branch on an already-visible window. Ask user32 directly instead.
+// Windows-only: called exclusively from the input module's hotkey router.
 #[cfg(windows)]
 pub(crate) fn window_focused(win: &tauri::WebviewWindow) -> bool {
     // user32 is already linked by the tao/webview stack; GetForegroundWindow
@@ -158,11 +163,6 @@ pub(crate) fn window_focused(win: &tauri::WebviewWindow) -> bool {
         }
         Err(_) => win.is_focused().unwrap_or(false),
     }
-}
-
-#[cfg(not(windows))]
-pub(crate) fn window_focused(win: &tauri::WebviewWindow) -> bool {
-    win.is_focused().unwrap_or(false)
 }
 
 // TEMP diagnostics — appends frontend errors to %TEMP%\oc-gui-debug.log so
@@ -193,7 +193,10 @@ pub(crate) fn apply_default_size(app: &tauri::AppHandle) {
         // it first — parent/webview geometry desyncs and hovers go dead
         // until the next click
         if w.is_maximized().unwrap_or(false) {
-            let _ = w.unmaximize();
+            #[cfg(desktop)]
+            {
+                let _ = w.unmaximize();
+            }
         }
         let (width, height) = default_size(app);
         let _ = w.set_size(tauri::LogicalSize::new(width, height));

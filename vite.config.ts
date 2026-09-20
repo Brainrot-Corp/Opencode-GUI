@@ -15,6 +15,12 @@ export default defineConfig(async () => ({
     // warnings for these intentionally-lazy chunks.
     chunkSizeWarningLimit: 4500,
     rollupOptions: {
+      // two entries: desktop (index.html) and the mobile companion app
+      // (mobile.html — docs/mobile-companion.md phase 2)
+      input: {
+        index: "index.html",
+        mobile: "mobile.html",
+      },
       output: {
         manualChunks(id) {
           if (!id.includes("node_modules")) return;

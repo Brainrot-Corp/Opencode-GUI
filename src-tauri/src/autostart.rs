@@ -82,7 +82,7 @@ mod imp {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(all(not(windows), desktop))]
 mod imp {
     use tauri::Manager;
     // On macOS/Linux delegate to the auto_launch crate via the plugin's manager,
@@ -106,6 +106,19 @@ mod imp {
             return mgr.disable().map_err(|e| e.to_string());
         }
         Err("autostart not available".into())
+    }
+}
+
+#[cfg(not(any(windows, desktop)))]
+mod imp {
+    pub fn is_enabled(_app: tauri::AppHandle) -> Result<bool, String> {
+        Err("autostart not available on mobile".into())
+    }
+    pub fn enable(_app: tauri::AppHandle) -> Result<(), String> {
+        Err("autostart not available on mobile".into())
+    }
+    pub fn disable(_app: tauri::AppHandle) -> Result<(), String> {
+        Err("autostart not available on mobile".into())
     }
 }
 

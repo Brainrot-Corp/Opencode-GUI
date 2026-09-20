@@ -1,16 +1,8 @@
 # Logs
-logs
 *.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-pnpm-debug.log*
-lerna-debug.log*
 
 node_modules
 dist
-dist-ssr
-*.local
 
 # Bundled opencode sidecar binary (downloaded from opencode releases)
 src-tauri/binaries/
@@ -21,16 +13,9 @@ relay/relay-tokens.txt
 relay/relay-out.txt
 relay/relay-err.txt
 relay/relay-push-subs.json
-relay/phone-check.html
 
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
 .idea
 .DS_Store
-*.suo
-*.ntvs*
-*.njsproj
-*.sln
-*.sw?
-test

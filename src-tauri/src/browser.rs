@@ -29,6 +29,48 @@ pub struct FloatingState(pub Mutex<Option<FloatingBrowser>>);
 static GEN: AtomicU64 = AtomicU64::new(0);
 static FLOAT_GEN: AtomicU64 = AtomicU64::new(0);
 
+// add_child/close/set_bounds are desktop multiwebview APIs; on mobile the
+// helper stubs keep the commands compiling (they just can't do anything).
+#[cfg(desktop)]
+fn add_child_wv(
+    win: &tauri::Window<Wry>,
+    builder: WebviewBuilder<Wry>,
+    pos: LogicalPosition<f64>,
+    size: LogicalSize<f64>,
+) -> Result<Webview<Wry>, String> {
+    win.add_child(builder, pos, size).map_err(|e| e.to_string())
+}
+#[cfg(not(desktop))]
+fn add_child_wv(
+    _win: &tauri::Window<Wry>,
+    builder: WebviewBuilder<Wry>,
+    _pos: LogicalPosition<f64>,
+    _size: LogicalSize<f64>,
+) -> Result<Webview<Wry>, String> {
+    let _ = builder;
+    Err("embedded browser is desktop-only".into())
+}
+
+#[cfg(desktop)]
+fn wv_close(wv: &Webview<Wry>) {
+    let _ = wv.close();
+}
+#[cfg(not(desktop))]
+fn wv_close(_wv: &Webview<Wry>) {}
+
+#[cfg(desktop)]
+fn wv_set_bounds(wv: &Webview<Wry>, x: f64, y: f64, w: f64, h: f64) -> Result<(), String> {
+    wv.set_bounds(tauri::Rect {
+        position: LogicalPosition::new(x, y).into(),
+        size: LogicalSize::new(w, h).into(),
+    })
+    .map_err(|e| e.to_string())
+}
+#[cfg(not(desktop))]
+fn wv_set_bounds(_wv: &Webview<Wry>, _x: f64, _y: f64, _w: f64, _h: f64) -> Result<(), String> {
+    Ok(())
+}
+
 // TikTok-only allowlist — host must be tiktok.com or subdomain, plus cdn for assets
 fn tiktok_allowed(url: &Url) -> bool {
     let host = url.host_str().unwrap_or("").to_ascii_lowercase();
@@ -140,19 +182,18 @@ pub async fn browser_open(
     }
 
     let gen = GEN.fetch_add(1, Ordering::Relaxed);
-    let webview = win
-        .add_child(
-            WebviewBuilder::new("browser", WebviewUrl::External(parsed.clone())).incognito(true),
-            LogicalPosition::new(0.0, top),
-            LogicalSize::new(size.width, size.height - top),
-        )
-        .map_err(|e| e.to_string())?;
+    let webview = add_child_wv(
+        &win,
+        WebviewBuilder::new("browser", WebviewUrl::External(parsed.clone())).incognito(true),
+        LogicalPosition::new(0.0, top),
+        LogicalSize::new(size.width, size.height - top),
+    )?;
 
     let mut guard = state.0.lock().unwrap_or_else(|e| e.into_inner());
     if guard.is_some() {
         // lost a race with another opener — keep theirs, drop ours
         drop(guard);
-        let _ = webview.close();
+        wv_close(&webview);
         return Ok(());
     }
     *guard = Some(Browser {
@@ -231,7 +272,7 @@ pub async fn browser_reload(state: State<'_, BrowserState>) -> Result<(), String
 pub async fn browser_close(state: State<'_, BrowserState>) -> Result<(), String> {
     let wv = state.0.lock().unwrap_or_else(|e| e.into_inner()).take().map(|b| b.webview);
     if let Some(wv) = wv {
-        let _ = wv.close();
+        wv_close(&wv);
     }
     Ok(())
 }
@@ -454,10 +495,7 @@ pub async fn tiktok_open(
     let existing = state.0.lock().unwrap_or_else(|e| e.into_inner()).as_ref().map(|b| b.webview.clone());
     if let Some(wv) = existing {
         wv.navigate(parsed).map_err(|e| e.to_string())?;
-        let _ = wv.set_bounds(tauri::Rect {
-            position: LogicalPosition::new(x, y).into(),
-            size: LogicalSize::new(w, h).into(),
-        });
+        let _ = wv_set_bounds(&wv, x, y, w, h);
         if let Some(b) = state.0.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
             b.rect = (x, y, w, h);
         }
@@ -480,17 +518,16 @@ pub async fn tiktok_open(
         // transparent WebView on macOS needs `tauri/macos-private-api`; keep opaque fallback
         let _ = &mut builder;
     }
-    let webview = win
-        .add_child(
-            builder.initialization_script(init_js),
-            LogicalPosition::new(x, y),
-            LogicalSize::new(w, h),
-        )
-        .map_err(|e| e.to_string())?;
+    let webview = add_child_wv(
+        &win,
+        builder.initialization_script(init_js),
+        LogicalPosition::new(x, y),
+        LogicalSize::new(w, h),
+    )?;
     let mut guard = state.0.lock().unwrap_or_else(|e| e.into_inner());
     if guard.is_some() {
         drop(guard);
-        let _ = webview.close();
+        wv_close(&webview);
         return Ok(());
     }
     *guard = Some(FloatingBrowser { webview, rect: (x, y, w, h), gen });
@@ -503,7 +540,7 @@ pub async fn tiktok_open(
 pub async fn tiktok_close(state: State<'_, FloatingState>) -> Result<(), String> {
     let wv = state.0.lock().unwrap_or_else(|e| e.into_inner()).take().map(|b| b.webview);
     if let Some(wv) = wv {
-        let _ = wv.close();
+        wv_close(&wv);
     }
     Ok(())
 }
@@ -522,10 +559,7 @@ pub async fn tiktok_set_bounds(
         b.rect = (x, y, w, h);
         b.webview.clone()
     };
-    wv.set_bounds(tauri::Rect {
-        position: LogicalPosition::new(x, y).into(),
-        size: LogicalSize::new(w, h).into(),
-    }).map_err(|e| e.to_string())
+    wv_set_bounds(&wv, x, y, w, h)
 }
 
 #[tauri::command]
@@ -579,10 +613,7 @@ pub fn on_main_resize(app: &AppHandle, size: PhysicalSize<u32>) {
     let Some(win) = app.get_window("main") else { return };
     let Ok(scale) = win.scale_factor() else { return };
     let s = size.to_logical::<f64>(scale);
-    let _ = wv.set_bounds(tauri::Rect {
-        position: LogicalPosition::new(0.0, top).into(),
-        size: LogicalSize::new(s.width, (s.height - top).max(0.0)).into(),
-    });
+    let _ = wv_set_bounds(&wv, 0.0, top, s.width, (s.height - top).max(0.0));
 }
 
 #[cfg(all(test, windows))]

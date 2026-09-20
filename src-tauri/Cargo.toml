@@ -46,6 +46,7 @@ base64 = "0.23.1"
 discord-rich-presence = "0.2"
 sha2 = "0.10"
 tauri-plugin-clipboard-manager = "2.3.2"
+tauri-plugin-notification = "2"
 kokoro-en = { git = "https://github.com/pguso/kokoro", package = "kokoro-en", default-features = false, features = ["misaki-lean"] }
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "sync", "time", "fs", "macros"] }
 futures = "0.3"

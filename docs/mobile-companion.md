@@ -1,6 +1,6 @@
 # Mobile Companion App — Implementation Doc
 
-Status: design · Phases: 1 (notifications) → 2 (intervention) → 3 (full interaction)
+Status: phase 1 shipped · Phases: 1 (notifications — shipped) → 2 (mobile app) → 3 (intervention) → 4 (full interaction)
 
 ## Goal
 
@@ -63,16 +63,32 @@ Relay protocol (JSON over WS):
   replays undelivered messages.
 - Relay → phone: `{type:"notify", …}`.
 
-**iOS background-push caveat (deliberate constraint):** a self-hosted relay
-cannot wake a backgrounded iOS app — that requires APNs. v1 scope: Android
-gets true background notifications via a foreground-service websocket; iOS
-gets notifications while the app is open/recent, and phase 2 adds the
-ntfy.sh-upstream wakeup option (self-hosted ntfy server + APNs-backed iOS
-app) as an alternative carrier if iOS backgrounding proves necessary. No
-Apple developer account / APNs cert work until then. `ponytail:` ceiling —
-revisit only if iOS background delivery is actually reported as a problem.
+**iOS background-push note:** Web Push (VAPID + service worker, via APNs on
+iOS 16.4+ / FCM on Android) solved background delivery during phase 1 — the
+self-hosted relay posts encrypted pushes to browser subscriptions, and the
+desktop (or shim page) never needs ntfy.sh. Phase-2 status: the shim page
+(what the mobile app replaces) already proves delivery incl. backgrounded.
 
-## Phase 2 — Manual intervention (phone → desktop)
+## Phase 2 — Mobile app (Tauri v2, notifications only)
+
+The actual iOS/Android app replaces the browser shim: a Tauri v2 mobile
+target reusing the repo's React stack, wired to the relay as a "phone"
+device. Notifications-only scope — no server commands leave the phone.
+
+- Connect to the relay (outbound WS + web push subscription, same protocol
+  the shim already speaks: hello/notify/lastId replay).
+- Notification list (kind, title, body, session) persisted across launches.
+- Background delivery: Web Push in the webview service worker on Android;
+  on iOS the Tauri shell (WKWebView) still gates background delivery — the
+  native phase-2 upgrade path is a native push plugin fed by the same relay
+  VAPID keys, only if the web push route proves insufficient.
+- Reuse from `src/`: `lib/notifyRelay.ts` (pure protocol helpers), settings
+  UI bits. New `src/mobile/` entry: two screens (Connect · Notifications).
+- Packaging: `npx tauri android init/dev` (Android Studio + NDK),
+  `npx tauri ios init/dev` (macOS + Xcode). Needs Apple dev account only
+  for App Store/TestFlight — sideload/development builds ship unsigned.
+
+## Phase 3 — Manual intervention (phone → desktop)
 
 Request/response tunneled over the desktop's existing websocket (relay is a
 postbox, desktop executes):
@@ -94,9 +110,9 @@ buttons, question options incl. `multiple` and `custom` free-text).
 State catch-up on connect: same boot-sync the desktop does
 (`GET /question`, `/permission`, `/api/permission/request` via the tunnel).
 
-## Phase 3 — Full interaction (phone as remote)
+## Phase 4 — Full interaction (phone as remote)
 
-- Generalize the phase-2 tunnel to arbitrary server calls, including SSE:
+- Generalize the phase-3 tunnel to arbitrary server calls, including SSE:
   `GET /event?directory=…` streams through the same desktop websocket
   (desktop re-emits events it already parses — it has one EventSource per
   workspace, ≤5, in `useOpencode.ts`).
@@ -113,12 +129,14 @@ State catch-up on connect: same boot-sync the desktop does
 
 | Step | Files |
 |---|---|
-| Relay | `relay/` new crate/bin (standalone, own README) |
-| Phase 1 | `src/hooks/useNotifyRelay.ts` + `useNotifyRelay.test.ts`, `useSettings.ts` keys, settings UI section |
-| Phase 2 | relay req/res pass-through (desktop handler ~100 lines in `useNotifyRelay.ts`), `src/mobile/` screens |
-| Phase 3 | `src/mobile/` navigation + pages, `api.ts` relay transport |
+| Relay | `relay/` crate (done in phase 1: WS fan-out, web push, PWA shim) |
+| Phase 1 | `src/hooks/useNotifyRelay.ts` + `useNotifyRelay.test.ts`, `useSettings.ts` keys, settings UI section (done) |
+| Phase 2 | `src/mobile/` entry + Connect/Notifications screens, Tauri mobile targets |
+| Phase 3 | relay req/res pass-through (desktop handler ~100 lines in `useNotifyRelay.ts`), `src/mobile/` ask screens |
+| Phase 4 | `src/mobile/` navigation + pages, `api.ts` relay transport |
 
 Milestone checks: phase 1 — kill desktop network, send 3 events, verify
-redelivery on reconnect; phase 2 — approve a permission from the phone
-mid-run, verify agent continues; phase 3 — send a prompt from the phone,
-receive the streamed reply. `run.sh check` + `npm run test` at each step.
+redelivery on reconnect; phase 2 — app builds on device, notifications match
+the shim's (incl. background push); phase 3 — approve a permission from the
+phone mid-run, verify agent continues; phase 4 — send a prompt from the
+phone, receive the streamed reply. `run.sh check` + `npm run test` at each step.
