@@ -110,10 +110,36 @@ check("growing snapshot applies", (regr.cached(S) as any[])[0].parts[0].text, "h
 regr.applyPart({ id: "p1", sessionID: S, messageID: "m1", type: "text", text: "rewritten" } as any);
 check("rewrite snapshot applies", (regr.cached(S) as any[])[0].parts[0].text, "rewritten");
 
-// unplaced events are reported per session for the settle-time repair
-const unp = createSessionStore(() => {});
-unp.applyDelta({ sessionID: S, messageID: "m1", partID: "p1", delta: "hi" });
-check("stashed delta counts as unplaced", unp.unplaced(S), 1);
-check("other sessions unaffected", unp.unplaced("s2"), 0);
+// tool snapshots can land out of order — a stale running must not wipe a
+// completed output (fast tools like read race hardest; the block would sit
+// spinning with no content until refetch)
+function toolPart(id: string, status: string, extra?: any): any {
+  return {
+    id, sessionID: S, messageID: "m1", type: "tool", tool: "read",
+    state: { status, input: { filePath: "readme.md" }, output: status === "completed" ? "# readme\ncontent" : undefined, time: { start: 1, end: 2 }, ...(extra ?? {}) },
+  };
+}
+const tls = createSessionStore(() => {});
+tls.applyMessage(msg("m1", "assistant").info);
+tls.applyPart(toolPart("t1", "pending"));
+tls.applyPart(toolPart("t1", "running"));
+tls.applyPart(toolPart("t1", "completed"));
+check("completion applies", (tls.cached(S) as any[])[0].parts[0].state.status, "completed");
+check("completion keeps output", (tls.cached(S) as any[])[0].parts[0].state.output, "# readme\ncontent");
+tls.applyPart(toolPart("t1", "running"));
+check("stale running keeps status", (tls.cached(S) as any[])[0].parts[0].state.status, "completed");
+check("stale running keeps output", (tls.cached(S) as any[])[0].parts[0].state.output, "# readme\ncontent");
+tls.applyPart(toolPart("t1", "pending"));
+check("stale pending keeps status", (tls.cached(S) as any[])[0].parts[0].state.status, "completed");
+// forward flow still works
+const tfw = createSessionStore(() => {});
+tfw.applyMessage(msg("m1", "assistant").info);
+tfw.applyPart(toolPart("t1", "pending"));
+tfw.applyPart(toolPart("t1", "running"));
+check("pending->running applies", (tfw.cached(S) as any[])[0].parts[0].state.status, "running");
+tfw.applyPart(toolPart("t1", "error", { error: "boom" }));
+check("running->error applies", (tfw.cached(S) as any[])[0].parts[0].state.status, "error");
+tfw.applyPart(toolPart("t1", "running"));
+check("stale running keeps error", (tfw.cached(S) as any[])[0].parts[0].state.status, "error");
 
 console.log(`sessionStore: ${n} checks passed`);

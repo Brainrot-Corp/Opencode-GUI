@@ -91,13 +91,22 @@ export function createSessionStore(onChange: (sid: string) => void) {
     // short reply goes blank until refetch. Genuine rewrites (shorter and not
     // a prefix) still apply.
     if (pi >= 0) {
-      const prev = m.parts[pi] as { type?: string; text?: string };
-      const t = (merged as any).type;
-      if ((t === "text" || t === "reasoning") && prev.type === t) {
+      const prev = m.parts[pi] as any;
+      const pt = (merged as any).type;
+      if ((pt === "text" || pt === "reasoning") && prev.type === pt) {
         const a = prev.text ?? "";
         const b = (merged as any).text ?? "";
         if (a && (b === "" || (b.length < a.length && a.startsWith(b))))
           merged = { ...merged, text: a } as Part;
+      } else if (pt === "tool" && prev.type === "tool") {
+        // tool snapshots stream pending → running → completed/error through
+        // the same reorderable path — a stale pre-terminal snapshot landing
+        // after completion wipes the output and wedges the block as running
+        // with no content until refetch (fast tools like read race hardest)
+        const rank = (s: string) => (s === "completed" || s === "error" ? 2 : s === "running" ? 1 : 0);
+        const ps = prev.state?.status ?? "";
+        const ns = (merged as any).state?.status ?? "";
+        if (rank(ps) === 2 && rank(ns) < 2) merged = prev;
       }
     }
     // fresh message identity — memoized rows compare msg references, so an
@@ -324,15 +333,6 @@ export function createSessionStore(onChange: (sid: string) => void) {
     addCommand,
     cached: (sid: string) => stores.get(sid),
     usageOf: (sid: string) => usage.get(sid) ?? EMPTY_USAGE,
-    // events that arrived but could never be placed (parts without a parent
-    // message, deltas without a part) — at settle these mean a gap the live
-    // stream won't fill, so the caller refetches instead of staying blank
-    unplaced: (sid: string) => {
-      let n = 0;
-      for (const v of orphanParts.values()) if (v.sid === sid) n += v.parts.length;
-      for (const v of pendingDeltas.values()) if (v.sid === sid) n++;
-      return n;
-    },
   };
 }
 

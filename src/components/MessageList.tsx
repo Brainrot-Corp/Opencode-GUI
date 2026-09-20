@@ -642,10 +642,8 @@ function errText(err: any): string {
 
 // cheap row-visibility check mirroring renderPart's null branches — without
 // building throwaway elements (the old .some(renderPart(…)) rendered every
-// message on every pass just to decide what to skip). Exported for the
-// settle-time gap repair: an invisible row at idle means the live stream
-// lost content that only a refetch can bring back.
-export function rowVisible(m: Msg): boolean {
+// message on every pass just to decide what to skip)
+function rowVisible(m: Msg): boolean {
   if (m.info.role === "user") return true;
   const err = m.info.role === "assistant" ? (m.info as any).error : null;
   if (err && err.name !== "MessageAbortedError") return true;

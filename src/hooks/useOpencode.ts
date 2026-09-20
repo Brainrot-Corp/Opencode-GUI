@@ -33,7 +33,6 @@ import {
 import { getPluginSlash } from "../lib/plugins";
 import { ensureServerGroups, useProviders } from "./useProviders";
 import { clearDraft, getDraft, setDraft } from "../lib/drafts";
-import { rowVisible } from "../components/MessageList";
 import { clearAttachmentDraft, restoreAttachmentDraft } from "./useAttachments";
 import { invalidateFileCache } from "./useFileCache";
 import { pushToast } from "./useToast";
@@ -1094,33 +1093,6 @@ export function useOpencode() {
     }
   }, [loadMessagesIntoStore]);
 
-  // settle-time gap repair: the live stream can lose content (missed deltas,
-  // reordered snapshots) leaving an invisible row or unplaceable events that
-  // no later event will ever fill — only a refetch heals it, same as a manual
-  // session revisit. Runs only for the visible session, only when a gap is
-  // actually detected, and never while a new turn is already streaming.
-  const repairGaps = useCallback(async (sid: string) => {
-    if (!sid || sid.startsWith(DEBUG_PREFIX)) return;
-    if (sid !== activeRef.current) return;
-    if (busyRef.current.has(sid)) return;
-    const st = storeRef.current;
-    if (!st) return;
-    let gap = st.unplaced(sid) > 0;
-    if (!gap) {
-      const list = st.cached(sid);
-      if (list) for (const m of list) {
-        if ((m as any)._isCommand || (m.info as any)?.error) continue;
-        if (!rowVisible(m)) { gap = true; break; }
-      }
-    }
-    if (!gap) return;
-    try {
-      const dirFor = sessionDirRef.current.get(sid) ?? getDirectory();
-      const fresh = await loadMessagesIntoStore(sid, dirFor);
-      if (activeRef.current === sid && !busyRef.current.has(sid)) setMsgs(fresh);
-    } catch {}
-  }, [loadMessagesIntoStore]);
-
   const openSession = useCallback(async (id: string) => {
     localStorage.setItem(LAST_KEY, id);
     const dirForOpen = sessionDirRef.current.get(id);
@@ -1378,7 +1350,6 @@ export function useOpencode() {
           // settles the turn only when no assistant message is still live —
           // mid-turn idles in heavier tasks are ignored
           if (!tracker.hasInflight(p.sessionID)) tracker.settle(p.sessionID);
-          void repairGaps(p.sessionID);
           break;
         case "session.error": {
           // runtime turn failure (provider auth, API errors…) — the prompt

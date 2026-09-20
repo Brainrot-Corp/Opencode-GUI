@@ -357,10 +357,15 @@ export default function MonacoBlock({
         if (d) {
           const s = model.getPositionAt(d.start);
           const e = model.getPositionAt(d.end);
-          ed.executeEdits("mono-sync", [{
-            range: new mod.Range(s.lineNumber, s.column, e.lineNumber, e.column),
-            text: d.insert,
-          }]);
+          // model-level edit — ed.executeEdits silently no-ops on read-only
+          // editors (monaco checks EditorOption.readOnly), which froze every
+          // streamed code fence / tool output at its creation value until a
+          // remount (session switch) re-created it with the full content
+          model.pushEditOperations(
+            [],
+            [{ range: new mod.Range(s.lineNumber, s.column, e.lineNumber, e.column), text: d.insert }],
+            () => null,
+          );
         }
       }
       if (model.getLanguageId() !== language) mod.editor.setModelLanguage(model, language);
