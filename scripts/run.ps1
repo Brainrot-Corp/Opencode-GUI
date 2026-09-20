@@ -1,6 +1,7 @@
 # OpenCode GUI task runner (Windows)
 # usage:  powershell -ExecutionPolicy Bypass -File scripts\run.ps1 <command> [win11|win10|both] [bundles] [-Version X.Y.Z]
-# commands: setup | dev | build | check | clean   (build/portable take a target, default win11)
+# commands: setup | dev | build | portable | android | check | clean   (build/portable take a target, default win11)
+# android = APK build for the mobile companion (needs JDK 17 + ANDROID_HOME + NDK + Developer Mode)
 # win11 = glass build (acrylic), win10 = no-glass build (--features noglass)
 # build only: 3rd arg picks bundle types (default msi; e.g. "nsis", "msi nsis")
 # -Version X.Y.Z bumps the version in tauri.conf.json / Cargo.toml / package.json / package-lock.json first
@@ -14,11 +15,13 @@ $root = Split-Path -Parent $PSScriptRoot
 $env:Path = "$env:USERPROFILE\.cargo\bin;$env:Path"
 $sidecar = Join-Path $root "src-tauri\binaries\opencode-x86_64-pc-windows-msvc.exe"
 
-switch ($Target) {
-    "win11" { $targets = @("win11") }
-    "win10" { $targets = @("win10") }
-    "both"  { $targets = @("win10", "win11") } # win11 last ??? it stays staged in OpenCode\
-    default { Write-Host "!! target must be win11, win10 or both" -ForegroundColor Red; exit 1 }
+if ($Cmd -ne "android") {
+    switch ($Target) {
+        "win11" { $targets = @("win11") }
+        "win10" { $targets = @("win10") }
+        "both"  { $targets = @("win10", "win11") } # win11 last ??? it stays staged in OpenCode\
+        default { Write-Host "!! target must be win11, win10 or both" -ForegroundColor Red; exit 1 }
+    }
 }
 
 # bumps the app version in the four files that carry it, before a build
@@ -146,6 +149,13 @@ switch ($Cmd) {
             Write-Host ">> portable [$t]: $zip ($([math]::Round((Get-Item $zip).Length / 1MB, 1)) MB)"
         }
     }
+    "android" {
+        Push-Location $root; npm run tauri android build; Pop-Location
+        if ($LASTEXITCODE -ne 0) { Write-Host "!! android build failed" -ForegroundColor Red; exit 1 }
+        $apkDir = Join-Path $root "src-tauri\gen\android\app\build\outputs\apk\universal"
+        Get-ChildItem $apkDir -Filter *.apk -ErrorAction SilentlyContinue |
+            ForEach-Object { Write-Host ">> apk: $($_.Name) ($([math]::Round($_.Length / 1MB, 1)) MB)" }
+    }
     "check" {
         Push-Location $root; npm run test; Pop-Location
         if ($LASTEXITCODE -ne 0) { Write-Host "!! tests failed" -ForegroundColor Red; exit 1 }
@@ -158,7 +168,7 @@ switch ($Cmd) {
         Write-Host ">> cleaned"
     }
     default {
-        Write-Host "usage: run.ps1 [setup|dev|build|portable|check|clean] [win11|win10|both] [bundles] [-Version X.Y.Z]"
+        Write-Host "usage: run.ps1 [setup|dev|build|portable|android|check|clean] [win11|win10|both] [bundles] [-Version X.Y.Z]"
         exit 1
     }
 }

@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # OpenCode GUI task runner (cross-platform)
 # usage:  ./scripts/run.sh <command> [native|win11|win10|both] [bundles] [--version X.Y.Z]
-# commands: setup | dev | build | portable | check | clean
+# commands: setup | dev | build | portable | android | check | clean
 #  native = current OS (default on macOS/Linux), win11/win10 = Windows glass variants (only on Windows)
+#  android = APK build for the mobile companion (needs JDK 17 + ANDROID_HOME + NDK)
 set -e
 cd "$(dirname "$0")/.."
 
@@ -369,6 +370,12 @@ case "${CMD}" in
             fi
         done
         ;;
+    android)
+        npm run tauri android build
+        apk="src-tauri/gen/android/app/build/outputs/apk/universal"
+        ls -lh "$apk"/*.apk 2>/dev/null || true
+        echo ">> apks in $apk"
+        ;;
     check)
         npm run test
         npm run build
@@ -380,7 +387,7 @@ case "${CMD}" in
         echo ">> cleaned"
         ;;
     *)
-        echo "usage: run.sh [setup|dev|build|portable|check|clean] [native|win11|win10|both] [bundles] [--version X.Y.Z]"
+        echo "usage: run.sh [setup|dev|build|portable|android|check|clean] [native|win11|win10|both] [bundles] [--version X.Y.Z]"
         exit 1
         ;;
 esac
