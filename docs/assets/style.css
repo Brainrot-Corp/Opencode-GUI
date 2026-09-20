@@ -163,3 +163,24 @@ footer { margin: 60px 0 0; border-top: 1px solid var(--line); padding: 24px 0 40
   .btn { width: 100%; justify-content: center; }
 }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; } html { scroll-behavior: auto; } }
+
+/* landing additions — same tokens, no new palette */
+.badges { display: flex; align-items: center; justify-content: center; gap: 8px; flex-wrap: wrap; margin-bottom: 22px; }
+.badge-link img { display: block; height: 20px; }
+.btn.ghost { background: transparent; }
+.flow { display: grid; grid-template-columns: 1fr auto 1fr auto 1fr; gap: 12px; align-items: stretch; }
+.flow-step { background: var(--surface); border: 1px solid var(--line); padding: 16px 18px; display: flex; gap: 12px; }
+.flow-step h3 { font-size: 13.5px; margin-bottom: 4px; }
+.flow-step p { font-size: 13px; color: var(--text-dim); }
+.flow-n { font-family: var(--mono); font-size: 12px; color: var(--accent); border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent); width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.flow-arrow { color: var(--text-faint); font-family: var(--mono); align-self: center; }
+.table-wrap { overflow-x: auto; border: 1px solid var(--line); background: var(--surface); }
+table.plat { width: 100%; border-collapse: collapse; font-size: 13px; }
+table.plat th { font-family: var(--mono); font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--text-faint); text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--line); }
+table.plat td { padding: 10px 14px; color: var(--text-dim); border-bottom: 1px solid var(--line); }
+table.plat tr:last-child td { border-bottom: none; }
+.steps { list-style: none; display: grid; gap: 12px; }
+.steps li { background: var(--surface); border: 1px solid var(--line); padding: 16px 18px; display: flex; gap: 14px; font-size: 13.5px; color: var(--text-dim); }
+.steps strong { color: var(--text); font-weight: 600; }
+.step-n { font-family: var(--mono); font-size: 12px; color: var(--accent-bright); background: var(--accent-dim); border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent); width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+@media (max-width: 900px) { .flow { grid-template-columns: 1fr; } .flow-arrow { display: none; } }

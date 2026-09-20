@@ -106,7 +106,7 @@
       return;
     }
     box.innerHTML = list.map(function (rel, i) {
-      var assets = (rel.assets || []).filter(function (a) { return String(a.name || "").toLowerCase().slice(-4) !== ".msi"; }).map(function (a) {
+      var assets = (rel.assets || []).map(function (a) {
         return '<a class="chip" href="' + esc(a.browser_download_url) + '">' + esc(a.name) + (a.size ? " · " + esc(fmtSize(a.size)) : "") + "</a>";
       }).join("");
       return '<article class="rel-card' + (i === 0 ? " latest" : "") + '"><h2><span class="tag">' + esc(rel.tag_name) + "</span>" +

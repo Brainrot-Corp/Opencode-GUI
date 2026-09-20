@@ -9,6 +9,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="assets/style.css" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='5' fill='%237fd4d4'/%3E%3C/svg%3E" />
   <title>opencode-gui — Guide</title>
 </head>
 <body>
@@ -91,18 +92,21 @@
   "modes": { "dark": { "vars": { "--accent": "#e0a37f" } } }
 }</pre>
         <p>Unset keys inherit the cyan-dark fallback (<code>--accent: #7fd4d4</code>, <code>--danger: #e08f8f</code>, surfaces, plus <code>--syn-*</code> chat/editor syntax colors).</p>
+        <h2>Session loop</h2>
+        <p>Open a workspace (<code>Ctrl+O</code>, or an <code>ssh://user@host/path</code> remote) → new session (<code>Ctrl+N</code>) → pick model / agent / variant → prompt → approve permissions inline (<code>once</code> / <code>always</code> / <code>reject</code>) → abort mid-stream or revert a bad turn. Model, agent, and security picks persist per session and fall back to last-used globals.</p>
         <h2>Good to know</h2>
         <ul>
           <li><strong>Workspaces:</strong> up to 5 directories plus <code>ssh://user@host/path</code> remotes, each with its own session stream.</li>
           <li><strong>Permissions:</strong> approve/deny tool calls inline, abort mid-stream, revert with one click.</li>
           <li><strong>Slash commands:</strong> built-ins plus any <code>slash[]</code> your plugins contribute — dispatched locally, no server round-trip.</li>
           <li><strong>State:</strong> drafts, models, agents, and UI prefs persist per-session under <code>oc.*</code> localStorage keys.</li>
+          <li><strong>Voice:</strong> mic toggle (<code>Ctrl+M</code>) with VAD + Kokoro TTS. GPU voice DLLs are Windows-only; macOS/Linux are CPU-only.</li>
         </ul>
       </div>
     </section>
     <footer>
       <div class="foot-inner">
-        <span>opencode-gui · MIT · <a href="https://github.com/Brainrot-Corp/Opencode-GUI/releases">releases</a></span>
+        <span>opencode-gui · AGPL-3.0 · <a href="https://github.com/Brainrot-Corp/Opencode-GUI/releases">releases</a></span>
         <nav><a href="./index.html">Home</a><a href="./install.html">Install</a><a href="./changelog.html">Changelog</a><a href="https://github.com/Brainrot-Corp/Opencode-GUI">GitHub</a></nav>
       </div>
     </footer>

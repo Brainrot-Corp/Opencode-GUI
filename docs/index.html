@@ -4,16 +4,17 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="theme-color" content="#0a0e12" />
-  <meta name="description" content="opencode-gui — lightweight cross-platform GUI for opencode. Download for Windows, macOS, and Linux." />
-  <meta property="og:title" content="opencode-gui — Download" />
-  <meta property="og:description" content="Thin cross-platform GUI for opencode. Glass on Windows 11, native everywhere." />
+  <meta name="description" content="opencode-gui — thin cross-platform desktop GUI for opencode. Chat sessions, inline permissions, Monaco diffs, terminal, git, voice, and runtime plugins. Download for Windows, macOS, and Linux." />
+  <meta property="og:type" content="website" />
+  <meta property="og:title" content="opencode-gui — a thin GUI for opencode" />
+  <meta property="og:description" content="Tauri + React sidecar client — no fork, all agent logic reused from the server. Glass on Windows 11, native everywhere." />
   <meta property="og:image" content="assets/preview.png?v=66760cf" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="assets/style.css" />
-  <link rel="icon" href="assets/preview.png?v=66760cf" />
-  <title>opencode-gui — Download</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='5' fill='%237fd4d4'/%3E%3C/svg%3E" />
+  <title>opencode-gui — a thin GUI for opencode</title>
 </head>
 <body>
   <div class="noise" aria-hidden="true"></div>
@@ -33,16 +34,39 @@
       <div class="brand-mark">opencode-gui</div>
       <h1>A thin GUI for <span class="glow">opencode</span></h1>
       <p class="tagline">Tauri + React sidecar client — no fork, all agent logic reused from the server.</p>
+      <div class="badges" aria-label="Project badges">
+        <a class="badge-link" href="https://github.com/Brainrot-Corp/Opencode-GUI/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/Brainrot-Corp/Opencode-GUI?sort=semver&label=download" /></a>
+        <a class="badge-link" href="https://github.com/Brainrot-Corp/Opencode-GUI/blob/main/LICENSE"><img alt="License: AGPL-3.0" src="https://img.shields.io/badge/license-AGPL--3.0-7fd4d4" /></a>
+        <a class="badge-link" href="./install.html"><img alt="Platform: Windows, macOS, Linux" src="https://img.shields.io/badge/platform-Windows_%7C_macOS_%7C_Linux-0a0e12" /></a>
+      </div>
       <div class="cta-row">
         <a id="cta-primary" class="btn primary" href="https://github.com/Brainrot-Corp/Opencode-GUI/releases/latest"><span id="cta-label">Download for Windows 11</span><span class="caret" aria-hidden="true"></span></a>
+        <a class="btn ghost" href="./guide.html">User guide</a>
+        <a class="btn ghost" href="https://github.com/Brainrot-Corp/Opencode-GUI">Star on GitHub</a>
       </div>
       <p id="cta-version" class="ver-line">v2.2.5</p>
     </section>
 
     <figure class="shot">
       <img src="assets/preview.png?v=66760cf" alt="opencode-gui chat window with glass titlebar and session sidebar" loading="eager" />
-      <figcaption>Chat stage + composer · session sidebar · cyan accent — Windows 11 glass build.</figcaption>
+      <figcaption>Chat stage + composer · session sidebar · model picker — Windows 11 glass build.</figcaption>
     </figure>
+    <!-- Next captures that would help most (no placeholders shipped):
+         1. permission bar mid-run (once/always/reject) + question popup
+         2. Monaco diff + git panel + xterm dock in one frame
+         3. latte light theme next to default cyan-dark, same window -->
+
+    <section class="block">
+      <h2 class="sec-head">How it works</h2>
+      <p class="sec-sub">The app manages the server; you talk to your agent.</p>
+      <div class="flow" aria-label="Architecture">
+        <div class="flow-step"><span class="flow-n">1</span><div><h3>Sidecar</h3><p>App spawns <span class="mono">opencode serve</span> on a free port, locally or over SSH.</p></div></div>
+        <div class="flow-arrow" aria-hidden="true">→</div>
+        <div class="flow-step"><span class="flow-n">2</span><div><h3>HTTP / SSE</h3><p>SDK client + one event stream per workspace (≤5) keep sessions live.</p></div></div>
+        <div class="flow-arrow" aria-hidden="true">→</div>
+        <div class="flow-step"><span class="flow-n">3</span><div><h3>You</h3><p>Prompt, approve permissions inline, abort, revert — no terminal needed.</p></div></div>
+      </div>
+    </section>
 
     <section class="block">
       <h2 class="sec-head">Why a GUI</h2>
@@ -51,9 +75,27 @@
         <div class="card"><h3><span class="glyph">▣</span>Server reuse</h3><p>Spawns <span class="mono">opencode serve</span> as a sidecar and talks HTTP/SSE. No forked agent logic.</p></div>
         <div class="card"><h3><span class="glyph">⧉</span>Workspaces</h3><p>Up to 5 directories plus <span class="mono">ssh://</span> remote hosts, each with its own session stream.</p></div>
         <div class="card"><h3><span class="glyph">◈</span>Glass chrome</h3><p>Acrylic on Win11, vibrancy on macOS, opaque fallback on Linux. Square flush panels.</p></div>
-        <div class="card"><h3><span class="glyph">✦</span>Permissions</h3><p>Approve / deny tool calls inline, abort mid-stream, revert with one click.</p></div>
+        <div class="card"><h3><span class="glyph">✦</span>Permissions</h3><p>Approve / deny tool calls inline (<span class="mono">once</span> / <span class="mono">always</span> / <span class="mono">reject</span>), abort mid-stream, revert with one click.</p></div>
         <div class="card"><h3><span class="glyph">❖</span>Editor + terminal</h3><p>Monaco diffs, xterm dock, git panel, file watcher, voice control via plugins.</p></div>
         <div class="card"><h3><span class="glyph">⬣</span>Portable</h3><p>Portable zips ship exe + sidecar + relay. No admin install required.</p></div>
+        <div class="card"><h3><span class="glyph">◍</span>Models + agents</h3><p>Model / agent / variant / security pickers with per-session memory and subagent viewer.</p></div>
+        <div class="card"><h3><span class="glyph">☾</span>Voice + phone</h3><p>Mic, VAD + Kokoro TTS, and relay notifications to your phone when runs finish.</p></div>
+        <div class="card"><h3><span class="glyph">✎</span>Plugins + themes</h3><p>Runtime ESM plugins (7 bundled) and 14 themes, dark + light. <a href="./guide.html">Make it yours →</a></p></div>
+      </div>
+    </section>
+
+    <section class="block">
+      <h2 class="sec-head">Platforms</h2>
+      <p class="sec-sub">Identical design everywhere — one CSS system, custom titlebar, cyan accent.</p>
+      <div class="table-wrap">
+        <table class="plat">
+          <thead><tr><th>OS</th><th>Arch</th><th>Status</th><th>Bundle</th></tr></thead>
+          <tbody>
+            <tr><td>Windows 10/11</td><td>x64</td><td>Production</td><td>MSI + portable zip</td></tr>
+            <tr><td>macOS 13+</td><td>arm64</td><td>Production</td><td>DMG + .app.tar.gz (unsigned)</td></tr>
+            <tr><td>Linux (Ubuntu 22.04+)</td><td>x64 + arm64</td><td>Testing</td><td>deb + AppImage</td></tr>
+          </tbody>
+        </table>
       </div>
     </section>
 
@@ -69,6 +111,16 @@
     </section>
 
     <section class="block">
+      <h2 class="sec-head">Quickstart</h2>
+      <p class="sec-sub">From download to first prompt in three steps.</p>
+      <ol class="steps">
+        <li><span class="step-n">1</span><div><strong>Install for your OS.</strong> Unzip / drag to Applications / <span class="mono">chmod +x</span> the AppImage. <a href="./install.html">Install details →</a></div></li>
+        <li><span class="step-n">2</span><div><strong>Pick a workspace folder</strong> (empty = home). Add remotes as <span class="mono">ssh://user@host/path</span>.</div></li>
+        <li><span class="step-n">3</span><div><strong>New session → model → prompt.</strong> Approve permissions inline; abort or revert any time.</div></li>
+      </ol>
+    </section>
+
+    <section class="block">
       <h2 class="sec-head">Next steps</h2>
       <div class="grid">
         <div class="card"><h3><span class="glyph">→</span>Install guide</h3><p>Portable zips, Gatekeeper, Linux deps. <a href="./install.html">Read install →</a></p></div>
@@ -79,7 +131,7 @@
 
     <footer>
       <div class="foot-inner">
-        <span>opencode-gui · MIT · <a href="https://github.com/Brainrot-Corp/Opencode-GUI/releases">releases</a></span>
+        <span>opencode-gui · AGPL-3.0 · <a href="https://github.com/Brainrot-Corp/Opencode-GUI/releases">releases</a></span>
         <nav><a href="./install.html">Install</a><a href="./guide.html">Guide</a><a href="./changelog.html">Changelog</a><a href="https://github.com/Brainrot-Corp/Opencode-GUI">GitHub</a></nav>
       </div>
     </footer>
