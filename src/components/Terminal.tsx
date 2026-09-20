@@ -11,6 +11,7 @@ import { getAllWorkspaces, baseName } from "../lib/workspace";
 import { normWorkspace } from "../lib/platform";
 import { windowKey } from "../lib/windowScope";
 import { isRemoteDir, remoteLabel } from "../lib/remotes";
+import { useDragResize } from "../hooks/useDragResize";
 import TermInstanceView from "./TermInstanceView";
 import DropdownPortal from "./DropdownPortal";
 import "../styles/terminal.css";
@@ -165,8 +166,22 @@ export default function TerminalPanel({
   terminal?: { defaultProfileId: string | null; customShells: CustomShell[] };
   onSetDefault?: (id: string | null) => void;
 }) {
-  const [h, setH] = useState(() => clampH(Number(localStorage.getItem(H_KEY())) || 240));
-  const [dragging, setDragging] = useState(false);
+  // dock height drag via the shared hook — inverted vertical, row-resize
+  // cursor override (body.resizing CSS forces col-resize), same clampH bounds
+  const {
+    width: h, setWidth: setH, resizing: dockResizing, startResize,
+  } = useDragResize({
+    min: H_MIN,
+    max: Math.floor(window.innerHeight * 0.7),
+    initial: () => clampH(Number(localStorage.getItem(H_KEY())) || 240),
+    onTick: () => playSound("resize"),
+    orientation: "height",
+    invert: true,
+    cursor: "row-resize",
+    clamp: clampH,
+  });
+  const [sideDragging, setSideDragging] = useState(false);
+  const dragging = sideDragging || dockResizing;
   const [sideCollapsed, setSideCollapsed] = useState(() => localStorage.getItem(SIDE_KEY()) === "1");
   const [sideW, setSideW] = useState(() => {
     const v = Number(localStorage.getItem(SIDE_W_KEY())) || SIDE_W_DEFAULT;
@@ -554,48 +569,6 @@ export default function TerminalPanel({
     return () => window.removeEventListener("oc:terms-close-all", onCloseAll);
   }, [onClose]);
 
-  // vertical resize handle (same as single-terminal version).
-  // mousemove can fire far above display refresh — coalesce to one setH per
-  // frame or every event schedules its own render + xterm fit + repaint.
-  const startResize = useCallback((e: React.MouseEvent) => {
-    e.preventDefault();
-    const startY = e.clientY;
-    const startH = h;
-    let lastTick = 0;
-    let raf = 0;
-    let pending: number | null = null;
-    setDragging(true);
-    document.body.classList.add("resizing");
-    document.body.style.userSelect = "none";
-    document.body.style.cursor = "row-resize";
-    const move = (ev: MouseEvent) => {
-      pending = clampH(startH + (startY - ev.clientY));
-      if (raf) return;
-      raf = requestAnimationFrame(() => {
-        raf = 0;
-        if (pending === null) return;
-        setH(pending);
-        pending = null;
-      });
-      const now = performance.now();
-      if (now - lastTick > 70) { lastTick = now; playSound("resize"); }
-    };
-    const up = () => {
-      if (raf) { cancelAnimationFrame(raf); raf = 0; }
-      if (pending !== null) { setH(pending); pending = null; }
-      setDragging(false);
-      document.body.classList.remove("resizing");
-      document.body.style.userSelect = "";
-      document.body.style.cursor = "";
-      window.removeEventListener("mousemove", move);
-      window.removeEventListener("mouseup", up);
-      window.removeEventListener("blur", up);
-    };
-    window.addEventListener("mousemove", move);
-    window.addEventListener("mouseup", up);
-    window.addEventListener("blur", up);
-  }, [h]);
-
   const resetSize = useCallback(() => { setH(H_DEFAULT); playSound("click"); }, []);
 
   // horizontal resize for expanded side panel — mirrors sidebar drag,
@@ -611,7 +584,7 @@ export default function TerminalPanel({
     setSideResizing(true);
     // same frozen-visuals treatment as the vertical drag (xterm + blur
     // suspend while body.resizing; single settle pass on mouseup)
-    setDragging(true);
+    setSideDragging(true);
     document.body.classList.add("resizing");
     (document.body as any).__termSideResizing = true;
     document.body.style.userSelect = "none";
@@ -632,7 +605,7 @@ export default function TerminalPanel({
       if (raf) { cancelAnimationFrame(raf); raf = 0; }
       if (pending !== null) { setSideW(pending); pending = null; }
       setSideResizing(false);
-      setDragging(false);
+      setSideDragging(false);
       document.body.classList.remove("resizing");
       delete (document.body as any).__termSideResizing;
       document.body.style.userSelect = "";

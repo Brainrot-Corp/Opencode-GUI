@@ -146,9 +146,23 @@ pub(crate) fn resolve_opencode_exe(exe_dir: &std::path::Path) -> PathBuf {
     fallback
 }
 
-/// Poll 127.0.0.1:port until it answers a real HTTP 200 /health with a JSON
-/// body (TCP connect alone loses the port-steal race to unrelated services).
-pub(crate) fn wait_for_port(port: u16, timeout: std::time::Duration) -> bool {
+/// EH-07 reply predicate, split out for tests. Strict (`http_ok`): a real
+/// HTTP 200 + JSON body — TCP connect alone loses the port-steal race to
+/// unrelated services. Loose: any non-empty reply counts (whisper-server
+/// builds that serve plain 404 pages are still up for STT).
+fn reply_ok(resp: &str, http_ok: bool) -> bool {
+    if http_ok {
+        resp.contains("200") && resp.contains('{')
+    } else {
+        !resp.is_empty()
+    }
+}
+
+/// Poll 127.0.0.1:port until it answers. `http_ok=true` requires an HTTP 200
+/// `/health` with a JSON body (opencode serve — strict, beats port-steal
+/// races); `false` accepts any successful connect + reply (whisper-server
+/// STT, which may return plain 404 pages).
+pub(crate) fn wait_for_port(port: u16, timeout: std::time::Duration, http_ok: bool) -> bool {
     use std::io::{Read, Write};
     use std::net::TcpStream;
     use std::time::Instant;
@@ -158,15 +172,15 @@ pub(crate) fn wait_for_port(port: u16, timeout: std::time::Duration) -> bool {
             let _ = stream.set_read_timeout(Some(std::time::Duration::from_millis(400)));
             let _ = stream.set_write_timeout(Some(std::time::Duration::from_millis(400)));
             let req = format!(
-                "GET /health HTTP/1.0\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"
+                "GET {} HTTP/1.0\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n",
+                if http_ok { "/health" } else { "/" },
             );
             if stream.write_all(req.as_bytes()).is_ok() {
                 let mut buf = [0u8; 8192];
                 if let Ok(n) = stream.read(&mut buf) {
                     if n > 0 {
                         let resp = String::from_utf8_lossy(&buf[..n]);
-                        // EH-07: validate HTTP 200 + JSON payload, not just TCP connect (port-steal race)
-                        if resp.contains("200") && resp.contains('{') {
+                        if reply_ok(&resp, http_ok) {
                             std::thread::sleep(std::time::Duration::from_millis(80));
                             return true;
                         }
@@ -221,7 +235,7 @@ pub(crate) fn spawn_server(workspace: Option<PathBuf>) -> std::io::Result<(Child
 
         // wait until the server is actually listening; catches port races
         // where the child fails to bind (port taken) and exits early
-        let listening = wait_for_port(port, std::time::Duration::from_secs(8));
+        let listening = wait_for_port(port, std::time::Duration::from_secs(8), true);
         // if child died immediately, it's a bind failure — retry on next port
         match child.try_wait() {
             Ok(Some(status)) => {
@@ -236,7 +250,7 @@ pub(crate) fn spawn_server(workspace: Option<PathBuf>) -> std::io::Result<(Child
             }
             Ok(None) if !listening => {
                 // still not listening but child alive — could be slow start; give it a bit more
-                if wait_for_port(port, std::time::Duration::from_secs(3)) {
+                if wait_for_port(port, std::time::Duration::from_secs(3), true) {
                     return Ok((child, port));
                 }
                 let _ = child.kill();
@@ -264,5 +278,23 @@ pub fn server_url(state: State<'_, ServerState>) -> Result<String, String> {
     match state.error {
         Some(ref e) => Err(e.clone()),
         None => Ok(format!("http://127.0.0.1:{}", state.port)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::reply_ok;
+
+    #[test]
+    fn reply_strictness_matches_caller_semantics() {
+        // strict (spawn_server / remote tunnel): 200 + JSON body (EH-07 port-steal guard)
+        assert!(reply_ok("HTTP/1.0 200 OK\r\nContent-Type: application/json\r\n\r\n{\"status\":\"ok\"}", true));
+        assert!(!reply_ok("HTTP/1.0 404 Not Found\r\n\r\nnot found", true));
+        assert!(!reply_ok("HTTP/1.0 200 OK\r\n\r\nplain text, no braces", true));
+        assert!(!reply_ok("", true));
+        // loose (stt whisper-server): any non-empty reply counts — 404-serving builds are up
+        assert!(reply_ok("HTTP/1.0 404 Not Found\r\n\r\nnot found", false));
+        assert!(reply_ok("{\"status\":\"ok\"}", false));
+        assert!(!reply_ok("", false));
     }
 }

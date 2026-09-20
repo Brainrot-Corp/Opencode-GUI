@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { createContext, useContext, useMemo, useState } from "react";
 import type { Part } from "@opencode-ai/sdk/client";
 import type { QuestionInfo } from "../types";
 import { detectLang, extLang, stripAnsi } from "../lib/syntax";
@@ -267,22 +267,24 @@ function fmtTok(n: number) {
   return n >= 1000 ? `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k` : `${n}`;
 }
 
-// one tool call — streams through pending → running → completed|error as
-// part.updated replaces this part; default open/closed follows the global
-// /collapse flag (errors always force-expand), eye icon toggles THIS block
-export default function ToolBlock({
-  part,
-  collapsedDefault,
-  taskCosts,
-  dir,
-  onOpenSubagent,
-}: {
-  part: Part;
-  collapsedDefault: boolean;
+// shared render context for message parts — MessageList provides it so the
+// per-part config (collapse default, task costs, workspace dir, subagent
+// viewer opener) stops drilling through every row/part level. Lives here
+// (the deepest always-consumer) so MessageList ↔ ToolBlock stays a one-way
+// import; parts/TaskBlocks pulls the same value.
+export type PartCtxValue = {
+  collapsedDefault?: boolean;
   taskCosts?: Record<string, { cost: number; tokens: number }>;
   dir?: string;
   onOpenSubagent?: (id: string | null, part?: any) => void;
-}) {
+};
+export const PartCtx = createContext<PartCtxValue>({});
+
+// one tool call — streams through pending → running → completed|error as
+// part.updated replaces this part; default open/closed follows the global
+// /collapse flag (errors always force-expand), eye icon toggles THIS block
+export default function ToolBlock({ part }: { part: Part }) {
+  const { collapsedDefault, taskCosts, dir, onOpenSubagent } = useContext(PartCtx);
   const t = part as any;
   const st = t.state ?? {};
   const status: string = st.status ?? "";

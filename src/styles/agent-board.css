@@ -59,37 +59,6 @@
   margin-left:auto;
   flex-shrink:0;
 }
-.agent-sim-btn{
-  display:inline-flex;
-  align-items:center;
-  gap:6px;
-  padding:6px 10px;
-  font-family:var(--sans);
-  font-size:11px;
-  font-weight:500;
-  letter-spacing:0.04em;
-  color:var(--accent);
-  background:color-mix(in srgb, var(--accent) 7%, transparent);
-  border:1px solid color-mix(in srgb, var(--accent) 24%, transparent);
-  border-radius:0;
-  cursor:pointer;
-  transition: background 0.2s var(--ease), border-color 0.2s var(--ease), box-shadow 0.3s var(--ease), color 0.2s;
-  white-space:nowrap;
-}
-.agent-sim-btn:hover{
-  background:color-mix(in srgb, var(--accent) 12%, transparent);
-  border-color:color-mix(in srgb, var(--accent) 40%, transparent);
-  box-shadow:0 0 14px -6px var(--accent-glow);
-}
-.agent-sim-btn.on{
-  color:#0a1116;
-  background:var(--accent);
-  border-color:var(--accent);
-  box-shadow:0 0 14px -4px var(--accent-glow);
-}
-.agent-sim-btn.on:hover{
-  background:color-mix(in srgb, var(--accent) 85%, white);
-}
 .agent-board-body{
   flex:1;
   min-height:0;

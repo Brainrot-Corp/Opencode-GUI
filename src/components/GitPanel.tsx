@@ -14,6 +14,8 @@ import Dialog from "./Dialog";
 import { DiffLines } from "./DiffPanel";
 import DropdownPortal from "./DropdownPortal";
 import { useTranslation } from "../lib/i18n";
+import { useDragResize } from "../hooks/useDragResize";
+import { useTwoStepConfirm } from "../hooks/useTwoStepConfirm";
 import "../styles/git.css";
 
 const GH_KEY = () => windowKey("oc.git.h");
@@ -219,7 +221,24 @@ function GitWorkspacePanel({ dir, initial }: { dir: string; initial?: GitStatus 
   const [msg, setMsg] = useState(() => msgDrafts.get(dir) ?? "");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
-  const [confirmPath, setConfirmPath] = useState("");
+  // arm/cancel lifecycle owned by useTwoStepConfirm (ttlMs null = never
+  // expires — force-push stays armed across menu reopen, like the old
+  // string-state which had no timer at all). confirmPath only names the
+  // target: a row path, "*" (discard all) or "force-push".
+  const confirmCtl = useTwoStepConfirm(1000, { ttlMs: null });
+  const [confirmPath, setConfirmPathState] = useState("");
+  const confirmPathRef = useRef("");
+  const setConfirmPath = useCallback(
+    (p: string) => {
+      const cur = confirmPathRef.current;
+      confirmPathRef.current = p;
+      if (p === "") confirmCtl.cancel();
+      else if (!cur) confirmCtl.press();
+      else if (cur !== p) { confirmCtl.cancel(); confirmCtl.press(); }
+      setConfirmPathState(p);
+    },
+    [confirmCtl],
+  );
   const [gen, setGen] = useState(false);
   const [diff, setDiff] = useState<{ path: string; patch: string; staged: boolean } | null>(null);
   const settingsSnap = useSettingsSnap();
@@ -244,8 +263,18 @@ function GitWorkspacePanel({ dir, initial }: { dir: string; initial?: GitStatus 
     el.style.height = `${el.scrollHeight}px`;
   }, []);
   useEffect(() => { autosizeMsg(); }, [msg, settingsSnap.commitBody, open, autosizeMsg]);
-  const [gh, setGh] = useState(() => clampH(Number(localStorage.getItem(GH_KEY())) || GH_DEFAULT));
-  const [dragging, setDragging] = useState(false);
+  // height drag via the shared hook — inverted vertical, gp-resizing body
+  // class (git.css row-resize cursor), same clampH bounds/flooring
+  const { width: gh, setWidth: setGh, resizing: dragging, startResize } = useDragResize({
+    min: GH_MIN,
+    max: Math.floor(window.innerHeight * 0.6),
+    initial: () => clampH(Number(localStorage.getItem(GH_KEY())) || GH_DEFAULT),
+    onTick: () => playSound("resize"),
+    orientation: "height",
+    invert: true,
+    bodyClass: "gp-resizing",
+    clamp: clampH,
+  });
   useEffect(() => { localStorage.setItem(GH_KEY(), String(gh)); }, [gh]);
   const [stagedCollapsed, setStagedCollapsed] = useState(() => localStorage.getItem(STAGED_COLLAPSED_KEY()) === "1");
   const [changesCollapsed, setChangesCollapsed] = useState(() => localStorage.getItem(CHANGES_COLLAPSED_KEY()) === "1");
@@ -275,37 +304,6 @@ function GitWorkspacePanel({ dir, initial }: { dir: string; initial?: GitStatus 
     window.addEventListener("keydown", onKey);
     return () => { window.removeEventListener("mousedown", onDown); window.removeEventListener("keydown", onKey); };
   }, [commitMenuOpen, moreMenuOpen]);
-  const startResize = useCallback(
-    (e: React.MouseEvent) => {
-      e.preventDefault();
-      const startY = e.clientY;
-      const startH = gh;
-      let lastTick = 0;
-      setDragging(true);
-      document.body.classList.add("gp-resizing");
-      document.body.style.userSelect = "none";
-      const move = (ev: MouseEvent) => {
-        setGh(clampH(startH + (startY - ev.clientY)));
-        const now = performance.now();
-        if (now - lastTick > 70) {
-          lastTick = now;
-          playSound("resize");
-        }
-      };
-      const up = () => {
-        setDragging(false);
-        document.body.classList.remove("gp-resizing");
-        document.body.style.userSelect = "";
-        window.removeEventListener("mousemove", move);
-        window.removeEventListener("mouseup", up);
-        window.removeEventListener("blur", up);
-      };
-      window.addEventListener("mousemove", move);
-      window.addEventListener("mouseup", up);
-      window.addEventListener("blur", up);
-    },
-    [gh],
-  );
   const resetSize = useCallback(() => {
     setGh(GH_DEFAULT);
     playSound("click");

@@ -1,6 +1,11 @@
-// @ts-nocheck
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Session } from "@opencode-ai/sdk/client";
+import type {
+  FilePartInput,
+  OpencodeClient,
+  SessionPromptAsyncData,
+  TextPartInput,
+} from "@opencode-ai/sdk/client";
 import {
   opencode,
   opencodeFor,
@@ -27,7 +32,6 @@ import { createBusyTracker } from "../lib/busyTracker";
 import {
   buildCmdList,
   handleSlash,
-  type CmdEntry,
   type DialogState,
 } from "../lib/slashCommands";
 import { getPluginSlash } from "../lib/plugins";
@@ -43,8 +47,13 @@ import type { Msg, OpenCodeEvent, PermAsk, ProviderGroup, Attachment, QuestionAs
 // re-added to the sidebar on refreshes while their workspace stays open
 const debugSessions = new Map<string, { session: Session; dir: string }>();
 
-// resolve the right server client for a workspace dir ("" = server cwd)
-const clientFor = async (dir?: string) => (dir ? await opencodeFor(dir) : await opencode());
+// resolve the right server client for a workspace dir ("" = server cwd).
+// api.ts's Proxy wrap() erases the SDK shape in its return type but preserves
+// it at runtime — retype once here (same pattern as useProviders' OcClient)
+// instead of casting at every call site.
+type OcClient = OpencodeClient;
+const clientFor = async (dir?: string): Promise<{ base: string; client: OcClient }> =>
+  dir ? await opencodeFor(dir) : await opencode();
 
 // per-session agent memory + per-window global agent (mirrors useProviders model logic)
 const SESSION_AGENTS_KEY = "oc.sessionAgents";
@@ -57,8 +66,8 @@ function isAgentReachable(name: string, list: { name: string }[]): boolean {
 // re-exported: composer + command dialog import the type from here
 export type { CmdEntry } from "../lib/slashCommands";
 
-// remotes already toasted as down this session — the 2s SSE tick re-fails
-// a dead host constantly; notify once per outage, not once per tick
+// remotes already toasted as down this session — a dead host's dial retry
+// loop would toast constantly; notify once per outage, not once per retry
 const remoteDownToasted = new Set<string>();
 
 export function useOpencode() {
@@ -671,8 +680,8 @@ export function useOpencode() {
     try {
       const dir = dirHint ?? getDirectory();
       const { client } = await clientFor(dir);
-      const r = await (client.session as any).get({ path: { id: sid } });
-      const parent = (r as any)?.data?.parentID ?? (r as any)?.parentID;
+      const r = await client.session.get({ path: { id: sid } });
+      const parent = r.data?.parentID;
       if (typeof parent !== "string" || !parent) return;
       childParentRef.current.set(sid, parent);
       const top = topOfSession(sid);
@@ -712,7 +721,7 @@ export function useOpencode() {
     const dirFor = sessionDirRef.current.get(ask.sessionID) ?? getDirectory();
     try {
       const { client } = await clientFor(dirFor);
-      await (client as any).postSessionIdPermissionsPermissionId({
+      await client.postSessionIdPermissionsPermissionId({
         path: { id: ask.sessionID, permissionID: ask.id },
         body: { response },
       });
@@ -942,9 +951,9 @@ export function useOpencode() {
 
   const refreshSessionsFor = useCallback(async (dir: string) => {
     const { client } = await clientFor(dir);
-    const r = await (client.session as any).list();
-    const list = ((r.data ?? []) as Session[])
-      .filter((s) => !hiddenSessions.has(s.id) && s.title !== HIDDEN_TITLE && !(s as any).parentID)
+    const r = await client.session.list();
+    const list = (r.data ?? [])
+      .filter((s) => !hiddenSessions.has(s.id) && s.title !== HIDDEN_TITLE && !s.parentID)
       .map((s) => ({ ...s, _dir: dir } as Session & { _dir: string }));
     for (const s of list) sessionDirRef.current.set(s.id, dir);
     return applyOverrides(list);
@@ -1092,6 +1101,7 @@ export function useOpencode() {
   const refreshCommands = useCallback(async () => {
     const { client } = await opencode();
     const r = await client.command.list();
+    // ponytail: SDK command entry type is stale — no source/hints (types.ts Cmd)
     setCommands(((r.data ?? []) as any[]).map((c) => ({ ...(c as Cmd) })));
   }, []);
 
@@ -1099,6 +1109,7 @@ export function useOpencode() {
   const refreshAgents = useCallback(async () => {
     const { client } = await opencode();
     const r = await client.app.agents();
+    // ponytail: SDK agent entry type is stale — name/mode untyped
     setAgents(
       ((r.data ?? []) as any[])
         .filter(
@@ -1135,17 +1146,17 @@ export function useOpencode() {
   const loadMessagesIntoStore = useCallback(async (sid: string, dirFor: string): Promise<Msg[]> => {
     const seq = store.beginFetch(sid);
     const { client } = await clientFor(dirFor);
-    const r = (await (client.session as any).messages({ path: { id: sid } })) as { data?: Msg[] };
+    const r = await client.session.messages({ path: { id: sid } });
     if (store.isStale(sid, seq)) return store.cached(sid) ?? [];
     if (busyRef.current.has(sid)) {
       if (!store.cached(sid)?.length) {
-        const list = (r.data ?? []) as Msg[];
+        const list = r.data ?? [];
         store.setFetched(sid, list);
         return list;
       }
       return store.snapshot(sid);
     }
-    const list = (r.data ?? []) as Msg[];
+    const list = r.data ?? [];
     store.setFetched(sid, list);
     return list;
   }, []);
@@ -1234,7 +1245,8 @@ export function useOpencode() {
   useEffect(() => {
     const esMap = new Map<string, EventSource>();
     let disposed = false;
-    let wsInterval: number | undefined;
+    // assigned inside the boot IIFE; removed by the cleanup below
+    let onWsChange: (() => void) | null = null;
 
     // SSE dispatch lives in src/lib/opencodeEvents.ts — ctx wires the
     // per-boot callbacks/refs/state-setters it mutates (all stable).
@@ -1298,15 +1310,20 @@ export function useOpencode() {
       if (disposed) return;
 
       try {
-        const { base, client } = await opencode();
+        const { base } = await opencode();
         baseRef.current = base;
         let currentBase = base;
         // one live SSE per workspace (5 max) — each filtered by ?directory=.
         // SSH workspaces resolve their own tunnel base (?directory= is the
-        // remote-local path); dead tunnels evict + re-dial on the next tick.
+        // remote-local path); dead tunnels evict + re-dial via reconcile().
         let liveCount = 0;
         const updateLive = () => setLive(liveCount > 0);
         const resolving = new Set<string>();
+        const lastErrAt = new Map<string, number>();
+        let pendingTimer = 0;
+        let reconciling = false;
+        let reconcileAgain = false;
+        let lastProbeAt = 0;
         const addStream = async (d: string, baseVal: string) => {
           if (esMap.has(d) || resolving.has(d)) return;
           resolving.add(d);
@@ -1316,8 +1333,13 @@ export function useOpencode() {
             const sd = serverDir(d);
             const url = sd ? `${b}/event?directory=${encodeURIComponent(sd)}` : `${b}/event`;
             const es = new EventSource(url);
-            es.onopen = () => { liveCount++; updateLive(); };
-            es.onerror = () => { /* EventSource auto-reconnects; live reflects open count */ };
+            es.onopen = () => { liveCount++; updateLive(); lastErrAt.delete(d); };
+            es.onerror = () => {
+              // EventSource auto-reconnects — reconcile only recovers what a
+              // retry cannot (base change, dead SSH tunnel)
+              lastErrAt.set(d, Date.now());
+              scheduleReconcile(1200);
+            };
             es.onmessage = (ev) => {
               try { onEvent(JSON.parse(ev.data), d); } catch {}
             };
@@ -1328,6 +1350,9 @@ export function useOpencode() {
               remoteDownToasted.add(d);
               pushToast(`SSH workspace unreachable: ${e}`);
             }
+            // dial failed — retry on the next reconcile; baseFor's 15s
+            // negative cache paces this far slower than the old 2s tick
+            scheduleReconcile(200);
           } finally {
             resolving.delete(d);
           }
@@ -1335,42 +1360,73 @@ export function useOpencode() {
         const setupSSE = (baseVal: string) => {
           for (const d of getAllDirs()) void addStream(d, baseVal);
         };
-        setupSSE(currentBase);
-        // watch for workspace list changes — add/remove streams live; re-subscribes when base changes
-        const wsTick = async () => {
+        // SSE + workspace reconciliation — replaces the 2s tick. Runs when:
+        // an SSE errored (1.2s debounce), a workspace was added/removed
+        // (oc:workspaces-changed), or a stream dial failed. Healthy open
+        // streams are never touched; EventSource retries transient drops.
+        const reconcile = async () => {
           if (disposed) return;
-          let liveBase = baseRef.current || currentBase;
-          try {
-            const r = await opencode().catch(() => null as any);
-            if (r?.base) { liveBase = r.base; if (liveBase !== baseRef.current) baseRef.current = liveBase; }
-          } catch {}
-          if (liveBase !== currentBase) {
-            for (const es of esMap.values()) es.close();
-            esMap.clear();
-            currentBase = liveBase;
-            baseRef.current = liveBase;
-            liveCount = 0;
-            updateLive();
+          // base-change check — only after an SSE error (per-cycle opencode()
+          // awaits were the old 2s tick's main cost). resetOpencodeCache
+          // re-invokes server_url so a respawned sidecar on a new port is found.
+          let errored = false;
+          for (const t of lastErrAt.values()) if (t > lastProbeAt) { errored = true; break; }
+          if (errored) {
+            lastProbeAt = Date.now();
+            try { resetOpencodeCache(); } catch {}
+            const r = await opencode().catch(() => null);
+            if (r?.base && r.base !== baseRef.current) {
+              for (const es of esMap.values()) es.close();
+              esMap.clear();
+              currentBase = r.base;
+              baseRef.current = r.base;
+              liveCount = 0;
+              updateLive();
+              lastErrAt.clear();
+            }
           }
           const cur = getAllDirs();
-          // drop dead SSH tunnels so the add pass below re-dials them
+          // drop dead SSH tunnels so the add pass below re-dials them —
+          // only streams in a bad state (not open) are probed
           for (const d of cur) {
             if (!isRemoteDir(d) || !esMap.has(d) || resolving.has(d)) continue;
+            if (esMap.get(d)?.readyState === 1) continue;
             try {
               const st = await remoteStatus(d).catch(() => null);
               if (st && !st.alive) {
                 esMap.get(d)?.close();
                 esMap.delete(d);
                 evictRemoteBase(d);
+                lastErrAt.delete(d);
               }
             } catch {}
           }
           // add new
-          for (const d of cur) if (!esMap.has(d)) void addStream(d, liveBase);
+          for (const d of cur) if (!esMap.has(d)) void addStream(d, baseRef.current || currentBase);
           // remove gone (closed workspace)
           for (const [d, es] of [...esMap]) if (!(cur as string[]).includes(d)) { es.close(); esMap.delete(d); }
         };
-        wsInterval = window.setInterval(wsTick, 2000);
+        const runReconcile = async () => {
+          if (reconciling) { reconcileAgain = true; return; }
+          reconciling = true;
+          try { await reconcile(); }
+          finally {
+            reconciling = false;
+            if (reconcileAgain && !disposed) { reconcileAgain = false; void runReconcile(); }
+          }
+        };
+        const scheduleReconcile = (delay: number) => {
+          if (disposed) return;
+          if (pendingTimer) window.clearTimeout(pendingTimer);
+          pendingTimer = window.setTimeout(() => {
+            pendingTimer = 0;
+            void runReconcile();
+          }, delay);
+        };
+        const onWsChangeLocal = () => scheduleReconcile(0);
+        window.addEventListener("oc:workspaces-changed", onWsChangeLocal);
+        onWsChange = onWsChangeLocal;
+        setupSSE(currentBase);
 
         const lastId = localStorage.getItem(LAST_KEY);
         const target = list.find((s) => s.id === lastId) ?? list[0];
@@ -1471,7 +1527,7 @@ export function useOpencode() {
 
     return () => {
       disposed = true;
-      if (wsInterval) window.clearInterval(wsInterval);
+      if (onWsChange) window.removeEventListener("oc:workspaces-changed", onWsChange);
       for (const es of esMap.values()) es.close();
       esMap.clear();
     };
@@ -1505,7 +1561,7 @@ export function useOpencode() {
     const effDir = (dir ?? getDirectory()).trim();
     touchWorkspace(effDir);
     const { client } = await clientFor(effDir);
-    const r = await (client.session as any).create({ body: {} });
+    const r = await client.session.create({ body: {} });
     const s = r.data as Session;
     sessionDirRef.current.set(s.id, effDir);
     localStorage.setItem(LAST_KEY, s.id);
@@ -1552,27 +1608,25 @@ export function useOpencode() {
     try {
       const dir = sessionDirRef.current.get(sid) ?? getDirectory();
       const { client } = await clientFor(dir);
-      const r = await (client.session as any).children({ path: { id: sid } });
-      const raw = (r as any)?.data ?? (r as any)?.value ?? r;
-      const list: Session[] = Array.isArray(raw) ? raw : Array.isArray((r as any)?.data) ? (r as any).data : [];
-      for (const c of list) if ((c as any)?.id) childParentRef.current.set((c as any).id, (c as any).parentID ?? sid);
+      const r = await client.session.children({ path: { id: sid } });
+      const list: Session[] = r.data ?? [];
+      for (const c of list) childParentRef.current.set(c.id, c.parentID ?? sid);
       // ponytail: one-level fetch; recurse if nesting matters (rare)
       // fetch grandchildren best-effort so nested sub-agents are not missed
       if (list.length) {
         try {
-          const deeper = await Promise.all(list.map(async (c: any) => {
+          const deeper = await Promise.all(list.map(async (c) => {
             try {
-              const rr = await (client.session as any).children({ path: { id: c.id } });
-              const dd = (rr as any)?.data ?? (rr as any)?.value ?? [];
-              const arr = Array.isArray(dd) ? dd : [];
-              for (const g of arr) if ((g as any)?.id) childParentRef.current.set((g as any).id, c.id);
+              const rr = await client.session.children({ path: { id: c.id } });
+              const arr = rr.data ?? [];
+              for (const g of arr) childParentRef.current.set(g.id, c.id);
               return arr;
-            } catch { return []; }
+            } catch { return [] as Session[]; }
           }));
-          const extra = deeper.flat() as Session[];
+          const extra = deeper.flat();
           // dedup by id
-          const seen = new Set(list.map((s: any) => s.id));
-          for (const ch of extra) if (!seen.has((ch as any).id)) { seen.add((ch as any).id); list.push(ch); }
+          const seen = new Set(list.map((s) => s.id));
+          for (const ch of extra) if (!seen.has(ch.id)) { seen.add(ch.id); list.push(ch); }
         } catch {}
       }
       const sig = JSON.stringify(list);
@@ -1593,15 +1647,14 @@ export function useOpencode() {
     if (!activeId) { setActiveChildren([]); return; }
     void refreshActiveChildren(activeId);
   }, [activeId, refreshActiveChildren]);
-  // while the session is busy sub-agents may still be streaming — poll the
-  // children cost every 3s so the total climbs live instead of snapping at the end
-  useEffect(() => {
-    if (!activeId || !busyIds.has(activeId)) return;
-    const iv = window.setInterval(() => void refreshActiveChildren(activeId), 3000);
-    return () => clearInterval(iv);
-  }, [activeId, busyIds, refreshActiveChildren]);
+  // the 3s busy-children poll is gone — event triggers cover the real changes:
+  // message.part.updated(task completed) fires refreshChildrenRef 400ms later
+  // (opencodeEvents.ts), session.created/updated with parent===active refresh
+  // immediately, and the busy→idle settle edge below pulls the final cost.
+  // During a long-running subagent the live cost now lands at those moments
+  // instead of climbing every 3s.
   // when the turn settles (busy → idle) the last task's final cost lands right
-  // after the last delta — pull once more so total is not stale for 3s
+  // after the last delta — pull once more so total is not stale
   const prevBusyRef = useRef(false);
   useEffect(() => {
     const was = prevBusyRef.current;
@@ -1615,6 +1668,7 @@ export function useOpencode() {
     const s = activeId ? store.usageOf(activeId) : null;
     let cost = s?.cost ?? 0;
     let tokens = s?.tokens ?? 0;
+    // ponytail: SDK Session type is stale for children — server adds cost/tokens
     for (const ch of activeChildren) {
       const c = ch as any;
       cost += c.cost ?? 0;
@@ -1631,6 +1685,7 @@ export function useOpencode() {
   );
   const childTaskCosts = useMemo(() => {
     const m: Record<string, { cost: number; tokens: number; title?: string }> = {};
+    // ponytail: SDK Session type is stale for children — server adds cost/tokens
     for (const ch of activeChildren) {
       const c = ch as any;
       const t = c.tokens ?? {};
@@ -1658,10 +1713,11 @@ export function useOpencode() {
         // this the guard would fail open on them forever
         await ensureServerGroups(clientFor, dirFor);
         const { client } = await clientFor(dirFor);
-        const parts: any[] = [{ type: "text", text }];
+        const parts: (TextPartInput | FilePartInput)[] = [{ type: "text", text }];
         for (const f of files ?? [])
           parts.push({ type: "file", mime: f.mime, filename: f.filename, url: f.url });
-        const body: any = { parts };
+        // ponytail: SDK prompt body type is stale — no `variant` field (server supports it)
+        const body: NonNullable<SessionPromptAsyncData["body"]> & { variant?: string } = { parts };
         // the picker list is merged across servers — a model picked for one
         // may not exist on this session's. The server then dies SILENTLY
         // (no session.error, just idle), so fall back to its default instead
@@ -1683,7 +1739,7 @@ export function useOpencode() {
         }
         if (agentSel) body.agent = agentSel;
         if (effVariant) body.variant = effVariant;
-        await (client.session as any).promptAsync({ path: { id: sid }, body });
+        await client.session.promptAsync({ path: { id: sid }, body });
       } catch (e) {
         tracker.reset(sid);
         // surface it in the history (synthetic error bubble) + toast
@@ -1742,7 +1798,7 @@ export function useOpencode() {
     clearAttention(activeId);
     const dirFor = sessionDirRef.current.get(activeId) ?? getDirectory();
     const { client } = await clientFor(dirFor);
-    await (client.session as any).abort({ path: { id: activeId } }).catch(() => {});
+    await client.session.abort({ path: { id: activeId } }).catch(() => {});
   }, [activeId, markCompacting, clearAttention]);
 
   // respond to a specific ask — the main bar uses the active session's, the
@@ -1757,7 +1813,7 @@ export function useOpencode() {
       if (top !== perm.sessionID) syncTopBadge(top);
       const dirFor = sessionDirRef.current.get(perm.sessionID) ?? getDirectory();
       const { client } = await clientFor(dirFor);
-      await (client as any)
+      await client
         .postSessionIdPermissionsPermissionId({
           path: { id: perm.sessionID, permissionID: perm.id },
           body: { response },
@@ -1886,7 +1942,7 @@ export function useOpencode() {
       } catch {}
       const dirFor = sessionDirRef.current.get(id) ?? getDirectory();
       const { client } = await clientFor(dirFor);
-      await (client.session as any).revert({ path: { id }, body: { messageID } }).catch(() => {});
+      await client.session.revert({ path: { id }, body: { messageID } }).catch(() => {});
       await guardedRefresh().catch(() => {});
       await openSession(id).catch(() => {});
       if (pasteText) {
@@ -1902,7 +1958,7 @@ export function useOpencode() {
     if (!id) return;
     const dirFor = sessionDirRef.current.get(id) ?? getDirectory();
     const { client } = await clientFor(dirFor);
-    await (client.session as any).unrevert({ path: { id } }).catch(() => {});
+    await client.session.unrevert({ path: { id } }).catch(() => {});
     await guardedRefresh().catch(() => {});
     await openSession(id).catch(() => {});
   }, [guardedRefresh, openSession]);
@@ -2028,7 +2084,11 @@ export function useOpencode() {
         onRegistryCommand: () => {
           prov.sentExplicitModel.current = false;
         },
-        newSession,
+        // SlashCtx wants Promise<void>; the hook's newSession returns the id —
+        // nobody consumes it here, so adapt instead of narrowing the public API
+        newSession: async () => {
+          await newSession();
+        },
         revertTo,
         unrevert,
         cycleAgent,
@@ -2087,7 +2147,7 @@ export function useOpencode() {
       const dirFor = sessionDirRef.current.get(id) ?? getDirectory();
       if (dirFor) touchWorkspace(dirFor);
       const { client } = await clientFor(dirFor);
-      await (client.session as any).delete({ path: { id } }).catch(() => {});
+      await client.session.delete({ path: { id } }).catch(() => {});
       teardownSession(id);
       setSessions((prev) => prev.filter((s) => s.id !== id));
       if (activeRef.current === id) {
@@ -2107,18 +2167,11 @@ export function useOpencode() {
     try {
       const dirFor = sessionDirRef.current.get(id) ?? getDirectory();
       const { client } = await clientFor(dirFor);
-      // try server update — if available
-      const api: any = (client as any).session;
-      if (api && typeof api.update === "function") {
-        await api.update({ path: { id }, body: { title: trimmed } }).catch(async () => {
-          // fallback to overrides
-          throw new Error("update failed");
-        });
-        // server will emit session.updated — optimistically update too
-        setSessions((prev) => applyOverrides(prev.map((s) => s.id === id ? { ...s, title: trimmed } : s)));
-        return;
-      }
-      throw new Error("no update");
+      // try server update — on failure the fallback below wins
+      await client.session.update({ path: { id }, body: { title: trimmed } });
+      // server will emit session.updated — optimistically update too
+      setSessions((prev) => applyOverrides(prev.map((s) => s.id === id ? { ...s, title: trimmed } : s)));
+      return;
     } catch {
       // oc override — same validated reader the rest of the hook uses
       try {
@@ -2162,7 +2215,7 @@ export function useOpencode() {
   const duplicateSession = useCallback(async (id: string) => {
     const dirFor = sessionDirRef.current.get(id) ?? getDirectory();
     const { client } = await clientFor(dirFor);
-    const r: any = await (client.session as any).fork({ path: { id } });
+    const r = await client.session.fork({ path: { id } });
     const s = r.data as Session;
     sessionDirRef.current.set(s.id, dirFor);
     // duplicate inherits per-session chip values from source session
@@ -2190,7 +2243,7 @@ export function useOpencode() {
     } catch {}
     const dirFor = sessionDirRef.current.get(id) ?? getDirectory();
     const { client } = await clientFor(dirFor);
-    const r: any = await (client.session as any).fork({ path: { id }, body: { messageID } });
+    const r = await client.session.fork({ path: { id }, body: { messageID } });
     const s = r.data as Session;
     sessionDirRef.current.set(s.id, dirFor);
     // fork inherits per-session chip values from source session
@@ -2230,7 +2283,7 @@ export function useOpencode() {
       ids.map(async (id) => {
         const dirFor = sessionDirRef.current.get(id) ?? getDirectory();
         const { client } = await clientFor(dirFor);
-        return (client.session as any).delete({ path: { id } }).catch(() => {});
+        return client.session.delete({ path: { id } }).catch(() => {});
       }),
     );
     for (const id of ids) teardownSession(id);
@@ -2252,7 +2305,7 @@ export function useOpencode() {
       ids.map(async (id) => {
         const dirFor = sessionDirRef.current.get(id) ?? getDirectory();
         const { client } = await clientFor(dirFor);
-        return (client.session as any).delete({ path: { id } }).catch(() => {});
+        return client.session.delete({ path: { id } }).catch(() => {});
       }),
     );
     for (const id of ids) teardownSession(id);

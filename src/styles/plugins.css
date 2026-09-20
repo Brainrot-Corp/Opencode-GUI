@@ -258,3 +258,108 @@
 .toggle:hover:not(:disabled) {
   border-color: color-mix(in srgb, var(--accent) 40%, transparent);
 }
+
+/* /skill expanded body — chat markdown pipeline (tokens/text) rendered in a
+   scrollable pane; prose rules mirror .msg markdown (chat.css) at dialog size */
+.skill-body {
+  max-height: 45vh;
+  overflow-y: auto;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.65;
+  color: var(--text-dim);
+  background: color-mix(in srgb, var(--inset-bg) 60%, transparent);
+  border: 1px solid var(--line);
+  user-select: text;
+}
+.skill-body p {
+  margin: 0.45em 0;
+}
+.skill-body p:first-child {
+  margin-top: 0;
+}
+.skill-body p:last-child {
+  margin-bottom: 0;
+}
+.skill-body h1,
+.skill-body h2,
+.skill-body h3,
+.skill-body h4 {
+  font-size: 1em;
+  font-weight: 600;
+  color: var(--accent-bright);
+  margin: 0.9em 0 0.3em;
+  letter-spacing: 0.03em;
+}
+.skill-body ul,
+.skill-body ol {
+  margin: 0.4em 0;
+  padding-left: 1.4em;
+}
+.skill-body li {
+  margin: 0.2em 0;
+}
+.skill-body a {
+  color: var(--accent);
+  text-decoration: none;
+  border-bottom: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+}
+.skill-body blockquote {
+  border-left: 2px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  padding-left: 12px;
+  margin: 0.5em 0;
+  color: var(--text-faint);
+}
+.skill-body hr {
+  border: none;
+  border-top: 1px solid var(--line);
+  margin: 0.8em 0;
+}
+.skill-body table {
+  border-collapse: collapse;
+  margin: 0.5em 0;
+  font-size: 11.5px;
+}
+.skill-body th,
+.skill-body td {
+  border: 1px solid var(--line-strong);
+  padding: 4px 9px;
+  text-align: left;
+}
+.skill-body th {
+  color: var(--text-dim);
+  font-weight: 500;
+}
+.skill-body .md-table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  margin: 0.5em 0;
+}
+.skill-body .md-table table {
+  margin: 0;
+}
+.skill-body pre {
+  background: var(--inset-bg);
+  border: 1px solid var(--line);
+  padding: 10px 12px;
+  border-radius: 0;
+  overflow-x: auto;
+  font-size: 11.5px;
+  line-height: 1.6;
+  margin: 0.5em 0;
+}
+.skill-body code {
+  background: var(--inset-bg);
+  border: 1px solid var(--line);
+  padding: 1px 5px;
+  border-radius: 0;
+  font-size: 0.92em;
+  color: var(--accent-bright);
+}
+.skill-body pre code {
+  padding: 0;
+  border: none;
+  background: none;
+  color: inherit;
+}

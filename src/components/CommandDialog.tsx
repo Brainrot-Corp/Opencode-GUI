@@ -237,7 +237,7 @@ function mcpInfo(s: McpServerState): string {
   if (c.timeout) bits.push(`${c.timeout}ms`);
   return bits.join(" · ");
 }
-function shortDir(dir: string): string {
+export function shortDir(dir: string): string {
   const t = dir.trim();
   if (!t) return "(server directory)";
   const parts = t.split(/[/\\]+/).filter(Boolean);

@@ -1,4 +1,5 @@
 import { HelpDialog, McpDialog, ShareDialog, VariantsDialog } from "./CommandDialog";
+import { SkillDialog } from "./SkillDialog";
 import ConnectDialog from "./ConnectDialog";
 import type { useOpencode } from "../hooks/useOpencode";
 
@@ -22,6 +23,8 @@ export default function DialogHost({ oc }: { oc: Oc }) {
       );
     case "mcp":
       return <McpDialog onClose={oc.closeDialog} />;
+    case "skill":
+      return <SkillDialog onClose={oc.closeDialog} />;
     case "connect":
       return <ConnectDialog onClose={oc.closeDialog} onConnected={() => void (oc as any).refreshProviders?.()} />;
     default:

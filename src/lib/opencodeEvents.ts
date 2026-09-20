@@ -79,12 +79,8 @@ export function handleOpenCodeEvent(ev: OpenCodeEvent, ctx: OpenCodeEventCtx, di
         if (!ctx.busyRef.current.has(sid)) ctx.tracker.markBusy(sid, true);
       }
       // learn the server's real default from a reply we did NOT steer
-      if (
-        info.role === "assistant" &&
-        (info as any).providerID &&
-        (info as any).modelID
-      ) {
-        ctx.learnServerDefault((info as any).providerID, (info as any).modelID);
+      if (info.role === "assistant" && info.providerID && info.modelID) {
+        ctx.learnServerDefault(info.providerID, info.modelID);
       }
       ctx.store.applyMessage(info);
       break;
@@ -94,8 +90,7 @@ export function handleOpenCodeEvent(ev: OpenCodeEvent, ctx: OpenCodeEventCtx, di
       if (!part) return;
       ctx.store.applyPart(part);
       // sub-agent task finished — pull its cost so per-task chip + total update without waiting for poll
-      const ap = part as any;
-      if (ap.tool === "task" && ap.state?.status === "completed") {
+      if (part.tool === "task" && part.state?.status === "completed") {
         setTimeout(() => void ctx.refreshChildrenRef.current(ctx.activeRef.current), 400);
       }
       break;
@@ -228,7 +223,7 @@ export function handleOpenCodeEvent(ev: OpenCodeEvent, ctx: OpenCodeEventCtx, di
       // model idles silently — which the per-server model guard above
       // prevents instead.)
       const sid = p.sessionID as string | undefined;
-      const err = (p as any).error as any;
+      const err = p.error;
       if (err?.name === "MessageAbortedError") break; // ours — abort path owns it
       const msg = String(err?.data?.message ?? err?.message ?? "The server ended the turn with an error.");
       if (sid) {
@@ -258,7 +253,7 @@ export function handleOpenCodeEvent(ev: OpenCodeEvent, ctx: OpenCodeEventCtx, di
     case "session.created": {
       const s = p.info as Session | undefined;
       if (!s?.id) break;
-      const parent = (s as any).parentID;
+      const parent = s.parentID;
       if (parent) {
         ctx.childParentRef.current.set(s.id, parent);
         if (parent === ctx.activeRef.current) void ctx.refreshChildrenRef.current(ctx.activeRef.current);
@@ -279,7 +274,7 @@ export function handleOpenCodeEvent(ev: OpenCodeEvent, ctx: OpenCodeEventCtx, di
       // first reply, pin/archive flags — must reach the sidebar live
       const s = p.info as Session | undefined;
       if (!s?.id) break;
-      const parent2 = (s as any).parentID;
+      const parent2 = s.parentID;
       if (parent2) {
         if (parent2 === ctx.activeRef.current) void ctx.refreshChildrenRef.current(ctx.activeRef.current);
         break;

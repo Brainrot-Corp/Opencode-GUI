@@ -311,24 +311,6 @@ fn kill_server(s: &mut WhisperServer) {
     let _ = s.child.wait();
     eprintln!("[STT] kill_server done pid={}", pid);
 }
-fn wait_for_server(port: u16, timeout: Duration) -> bool {
-    use std::io::{Read, Write};
-    use std::net::TcpStream;
-    let deadline = Instant::now() + timeout;
-    while Instant::now() < deadline {
-        if let Ok(mut c) = TcpStream::connect(format!("127.0.0.1:{port}")) {
-            let _ = c.set_read_timeout(Some(Duration::from_millis(300)));
-            let _ = c.set_write_timeout(Some(Duration::from_millis(300)));
-            let req = format!("GET / HTTP/1.0\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n");
-            if c.write_all(req.as_bytes()).is_ok() {
-                let mut buf = [0u8; 1024];
-                if let Ok(n) = c.read(&mut buf) { if n > 0 { return true; } }
-            }
-        }
-        std::thread::sleep(Duration::from_millis(80));
-    }
-    false
-}
 fn ensure_whisper_server(model_path: &Path, use_gpu: bool) -> Result<u16, String> {
     let model_str = model_path.to_string_lossy().to_string();
     eprintln!("[STT] ensure_whisper_server start model={} gpu={}", model_str, use_gpu);
@@ -363,7 +345,9 @@ fn ensure_whisper_server(model_path: &Path, use_gpu: bool) -> Result<u16, String
     let child = cmd.spawn().map_err(|e| format!("failed to spawn whisper-server: {e}"))?;
     crate::server::job::assign(&child);
     let mut handle = WhisperServer { port, child, model: model_str.clone(), gpu: use_gpu };
-    let alive = wait_for_server(port, Duration::from_secs(10));
+    // loose probe (http_ok=false): whisper-server builds that serve plain 404
+    // pages are still up — a strict 200+/health check would degrade GPU STT to CLI
+    let alive = crate::server::wait_for_port(port, Duration::from_secs(10), false);
     match handle.child.try_wait() {
         Ok(Some(st)) => {
             eprintln!("[STT] ensure_whisper_server exited early status={} port={}", st, port);

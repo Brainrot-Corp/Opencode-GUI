@@ -1,5 +1,4 @@
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { createPortal } from "react-dom";
+import { memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
@@ -8,7 +7,8 @@ import type { Msg } from "../types";
 import { iconFor } from "../lib/attachments";
 import { loadMonaco } from "../lib/monaco";
 import { parseAnsweredSummary } from "../lib/qSummary";
-import ToolBlock from "./ToolBlock";
+import ToolBlock, { PartCtx } from "./ToolBlock";
+import Lightbox from "./Lightbox";
 import AnsweredSummary from "./parts/AnsweredSummary";
 import Reasoning, { STREAM_RAW_LIMIT } from "./parts/Reasoning";
 import { extractTaskEntries, SubtaskBlock, TaskMixed } from "./parts/TaskBlocks";
@@ -63,15 +63,18 @@ function fmtTok(n: number) {
   return n >= 1000 ? `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k` : `${n}`;
 }
 
+// reasoning part — /collapse default resolved from the shared PartCtx here
+// so Reasoning's own prop contract stays untouched
+function ReasoningPart({ part, streaming }: { part: Part; streaming?: boolean }) {
+  const { collapsedDefault } = useContext(PartCtx);
+  return <Reasoning part={part} defaultOpen={!collapsedDefault} streaming={streaming} />;
+}
+
 function renderPart(
   part: Part,
   key: number,
-  collapsedDefault?: boolean,
   onImage?: (url: string) => void,
-  taskCosts?: Record<string, { cost: number; tokens: number }>,
-  partDir?: string,
   streaming?: boolean,
-  onOpenSubagent?: (id: string | null, part?: any) => void,
 ) {
   if (!partVisible(part)) return null;
   const idKey = (part as any).id || key;
@@ -92,7 +95,7 @@ function renderPart(
       // agent final reports land as fenced <task> XML — render them in the
       // same collapsible tool-block chrome instead of raw code dump
       if (/<task\b/i.test(t) && extractTaskEntries(t)) {
-        return <TaskMixed key={key} text={t} collapsedDefault={!!collapsedDefault} taskCosts={taskCosts} onOpenSubagent={onOpenSubagent} />;
+        return <TaskMixed key={key} text={t} />;
       }
       return (
         <Markdown key={key} remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]} components={mdComponents}>
@@ -101,9 +104,9 @@ function renderPart(
       );
     }
     case "reasoning":
-      return <Reasoning key={idKey} part={part} defaultOpen={!collapsedDefault} streaming={streaming} />;
+      return <ReasoningPart key={idKey} part={part} streaming={streaming} />;
     case "tool":
-      return <ToolBlock key={idKey} part={part} collapsedDefault={!!collapsedDefault} taskCosts={taskCosts} dir={partDir} onOpenSubagent={onOpenSubagent} />;
+      return <ToolBlock key={idKey} part={part} />;
     case "step-finish": {
       const sf = part as any;
       const tk = sf.tokens ?? {};
@@ -152,7 +155,7 @@ function renderPart(
     }
     case "agent":
     case "subtask":
-      return <SubtaskBlock key={idKey} part={part as any} collapsedDefault={!!collapsedDefault} onOpenSubagent={onOpenSubagent} />;
+      return <SubtaskBlock key={idKey} part={part as any} />;
     case "file": {
       const f = part as any;
       const url: string = f.url ?? "";
@@ -212,26 +215,18 @@ const LazyMsgRow = memo(function LazyMsgRow({
   m,
   eager,
   onShift,
-  collapsed,
   onRevert,
   onFork,
   onImage,
-  taskCosts,
-  dir,
   readOnly,
-  onOpenSubagent,
 }: {
   m: Msg;
   eager: boolean;
   onShift: (dh: number, el: HTMLDivElement) => void;
-  collapsed?: boolean;
   onRevert?: (messageID: string) => void;
   onFork?: (messageID: string) => void;
   onImage?: (url: string) => void;
-  taskCosts?: Record<string, { cost: number; tokens: number }>;
-  dir?: string;
   readOnly?: boolean;
-  onOpenSubagent?: (id: string | null, part?: any) => void;
 }) {
   const [on, setOn] = useState(eager);
   const ref = useRef<HTMLDivElement>(null);
@@ -306,7 +301,7 @@ const LazyMsgRow = memo(function LazyMsgRow({
               <span>{errText(err)}</span>
             </div>
           )}
-          {m.parts.map((part, i) => renderPart(part, i, collapsed, onImage, taskCosts, dir, streaming, onOpenSubagent))}
+          {m.parts.map((part, i) => renderPart(part, i, onImage, streaming))}
           {short && (
             <div className="msg-time" data-tip={full} data-tip-cursor="">
               <i className="fa-solid fa-clock" />
@@ -386,12 +381,14 @@ export default function MessageList({
   onOpenSubagent?: (id: string | null, part?: any) => void;
 }) {
   const [lightbox, setLightbox] = useState<string | null>(null);
-  useEffect(() => {
-    if (!lightbox) return;
-    const k = (e: KeyboardEvent) => e.key === "Escape" && setLightbox(null);
-    window.addEventListener("keydown", k);
-    return () => window.removeEventListener("keydown", k);
-  }, [lightbox]);
+
+  // per-part render config distributed via PartCtx (see ToolBlock) instead of
+  // drilling through LazyMsgRow/renderPart; memoized so streaming re-renders
+  // keep the same identity and don't fan out to context consumers
+  const partCtx = useMemo(
+    () => ({ collapsedDefault: collapsed, taskCosts, dir, onOpenSubagent }),
+    [collapsed, taskCosts, dir, onOpenSubagent],
+  );
 
   const chatFindInputRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
@@ -961,7 +958,8 @@ export default function MessageList({
   }, []);
 
   return (
-    <div className="msgs-wrap">
+    <PartCtx.Provider value={partCtx}>
+      <div className="msgs-wrap">
       {findOpen && (
         <div className="chat-find" onMouseDown={(e) => e.preventDefault()}>
           <input
@@ -1026,14 +1024,10 @@ export default function MessageList({
               m={m}
               eager={winStart + i >= msgs.length - TAIL_FIRST}
               onShift={shiftForGrowth}
-              collapsed={collapsed}
               onRevert={readOnly ? undefined : onRevert}
               onFork={readOnly ? undefined : onFork}
               onImage={setLightbox}
-              taskCosts={taskCosts}
-              dir={dir}
               readOnly={readOnly}
-              onOpenSubagent={onOpenSubagent}
             />
           ) : null,
         )}
@@ -1067,13 +1061,8 @@ export default function MessageList({
       >
         <i className="fa-solid fa-arrow-down" />
       </button>
-      {lightbox &&
-        createPortal(
-          <div className="img-lightbox" onClick={() => setLightbox(null)} role="dialog" aria-label="Image preview">
-            <img src={lightbox} alt="" onClick={() => setLightbox(null)} />
-          </div>,
-          document.body,
-        )}
-    </div>
+      {lightbox && <Lightbox src={lightbox} onClose={() => setLightbox(null)} />}
+      </div>
+    </PartCtx.Provider>
   );
 }

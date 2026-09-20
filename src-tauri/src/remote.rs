@@ -550,7 +550,7 @@ fn store_conn(state: &State<'_, RemoteState>, uri: String, port: u16, child: Chi
 fn wait_for_tunnel(local: u16, child: &mut Child, timeout: std::time::Duration) -> bool {
     let slices = (timeout.as_millis() / 500).max(1);
     for _ in 0..slices {
-        if crate::server::wait_for_port(local, std::time::Duration::from_millis(500)) {
+        if crate::server::wait_for_port(local, std::time::Duration::from_millis(500), true) {
             return true;
         }
         match child.try_wait() {

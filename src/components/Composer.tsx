@@ -1,5 +1,4 @@
 import { memo, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
-import { createPortal } from "react-dom";
 import type { Attachment, ProviderGroup } from "../types";
 import { prettySize, iconFor } from "../lib/attachments";
 import type { CmdEntry } from "../hooks/useOpencode";
@@ -11,6 +10,7 @@ import { findMatches, highlightFindInHtml } from "../lib/find";
 import { matchesEvent } from "../lib/hotkeys";
 import { withHotkey } from "../lib/tip";
 import ModelMenu, { type ModelEntry } from "./ModelMenu";
+import Lightbox from "./Lightbox";
 import AgentMenu from "./AgentMenu";
 import VariantMenu from "./VariantMenu";
 import SecurityMenu from "./SecurityMenu";
@@ -479,12 +479,6 @@ export default memo(function Composer({
 
   const attach = useAttachments(sessionId);
   const [preview, setPreview] = useState<string | null>(null);
-  useEffect(() => {
-    if (!preview) return;
-    const k = (e: KeyboardEvent) => e.key === "Escape" && setPreview(null);
-    window.addEventListener("keydown", k);
-    return () => window.removeEventListener("keydown", k);
-  }, [preview]);
 
   // no selection and the server default is still unknown → require a pick
   const needsModel = !loadingModels && !modelSel && !defaultModel;
@@ -1289,13 +1283,7 @@ export default memo(function Composer({
                   </button>
                 )}
               </div>
-      {preview &&
-        createPortal(
-          <div className="img-lightbox" onClick={() => setPreview(null)} role="dialog" aria-label="Image preview">
-            <img src={preview} alt="" onClick={() => setPreview(null)} />
-          </div>,
-          document.body,
-        )}
+      {preview && <Lightbox src={preview} onClose={() => setPreview(null)} />}
     </div>
   );
 });

@@ -21,6 +21,7 @@ export type DialogState =
   | { kind: "share"; url: string }
   | { kind: "variants" }
   | { kind: "mcp" }
+  | { kind: "skill" }
   | { kind: "connect" }
   | null;
 
@@ -78,6 +79,10 @@ export async function handleSlash(text: string, ctx: SlashCtx): Promise<boolean>
     case "mcp":
       playSound("click");
       ctx.openDialog({ kind: "mcp" });
+      return true;
+    case "skill":
+      playSound("click");
+      ctx.openDialog({ kind: "skill" });
       return true;
     case "connect":
       playSound("click");
@@ -281,6 +286,7 @@ export function buildCmdList(
     { name: "settings", description: "Open settings", source: "built-in", takesArgs: false, builtin: true },
     { name: "close-workspace", description: "Close the active workspace", source: "built-in", takesArgs: false, builtin: true },
     { name: "mcp", description: "Show loaded MCP servers for this window's workspaces", source: "built-in", takesArgs: false, builtin: true },
+    { name: "skill", description: "Browse registered skills and their SKILL.md content", source: "built-in", takesArgs: false, builtin: true },
     { name: "connect", description: "Connect a provider — API key or browser sign-in", source: "built-in", takesArgs: false, builtin: true },
     { name: "debug-long-session", description: "Fill a throwaway fake session with N junk messages to test history loading (default 3000)", source: "built-in", takesArgs: true, builtin: true },
     { name: "help", description: "Show all available commands", source: "built-in", takesArgs: false, builtin: true },

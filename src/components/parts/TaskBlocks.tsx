@@ -1,9 +1,10 @@
-import { useState } from "react";
+import { useContext, useState } from "react";
 import type { ReactNode } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
 import { mdComponents, fmtTok } from "./mdParts";
+import { PartCtx } from "../ToolBlock";
 
 // <task id="..." state="completed"><task_result>...markdown...</task_result></task>
 // appears as a fenced perl block in text parts. Render it like other tool
@@ -29,17 +30,12 @@ export function TaskResultBlock({
   id,
   state,
   result,
-  collapsedDefault,
-  taskCosts,
-  onOpenSubagent,
 }: {
   id?: string;
   state?: string;
   result: string;
-  collapsedDefault?: boolean;
-  taskCosts?: Record<string, { cost: number; tokens: number }>;
-  onOpenSubagent?: (id: string | null, part?: any) => void;
 }) {
+  const { collapsedDefault, taskCosts, onOpenSubagent } = useContext(PartCtx);
   const [manual, setManual] = useState<boolean | null>(null);
   const isErr = state === "failed" || state === "error";
   const open = manual ?? (isErr || !collapsedDefault);
@@ -157,7 +153,7 @@ export function TaskResultBlock({
   );
 }
 
-export function TaskMixed({ text, collapsedDefault, taskCosts, onOpenSubagent }: { text: string; collapsedDefault: boolean; taskCosts?: Record<string, { cost: number; tokens: number }>; onOpenSubagent?: (id: string | null, part?: any) => void }) {
+export function TaskMixed({ text }: { text: string }) {
   const parts: ReactNode[] = [];
   let last = 0;
   let idx = 0;
@@ -189,9 +185,6 @@ export function TaskMixed({ text, collapsedDefault, taskCosts, onOpenSubagent }:
         id={id}
         state={state}
         result={result}
-        collapsedDefault={collapsedDefault}
-        taskCosts={taskCosts}
-        onOpenSubagent={onOpenSubagent}
       />,
     );
     last = re.lastIndex;
@@ -214,7 +207,8 @@ export function TaskMixed({ text, collapsedDefault, taskCosts, onOpenSubagent }:
 
 // subtask / agent part — name + description in the tool-head chrome, prompt
 // body collapsible; the chevron opens the subagent's child transcript
-export function SubtaskBlock({ part, collapsedDefault, onOpenSubagent }: { part: any; collapsedDefault: boolean; onOpenSubagent?: (id: string | null, part?: any) => void }) {
+export function SubtaskBlock({ part }: { part: any }) {
+  const { collapsedDefault, onOpenSubagent } = useContext(PartCtx);
   const [manual, setManual] = useState<boolean | null>(null);
   const prompt: string = typeof part.prompt === "string" ? part.prompt : "";
   const desc: string = typeof part.description === "string" ? part.description : "";

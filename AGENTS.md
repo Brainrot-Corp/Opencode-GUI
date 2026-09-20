@@ -91,6 +91,14 @@ Rule: new server talk → `hooks/`; new visuals → `components/` + `styles/`; n
 - **Platform files:** `src-tauri/src/platform.rs` + `src/lib/platform.ts` are the single source for OS branches — do not add new `USERPROFILE`/`xdg-open`/`where` scattered.
 - **No new deps** for what few lines / stdlib / CSS / native `<input>` / DB constraint can do. Reuse existing `lib/` helper before writing a new one.
 
+## Maintainability rules (keep the codebase clean)
+
+- **File size budget:** no file grows past ~800 lines (TS/TSX) / ~900 lines (Rust). The 2026-09 audit pulled the repo back from god-files (lib.rs 2441→513, ChatPage 1567→799, useOpencode 2654→2347) — do not rebuild them. A file approaching the budget must split along its existing seams (new hook, lib module, or Rust module) before gaining new features, not after.
+- **Extraction first:** new features follow the layout rule (hooks/ = server talk, components/ = visuals, pages/ = screens, lib/ = utils; Rust = its own focused module, registered in invoke_handler). Never append a new concern to an already-large file — create the focused file the layout prescribes and wire it in.
+- **Prefer maintainable over clever:** when two implementations are equal, choose the one easier to read/delete six months from now. Deliberate shortcuts carry a `ponytail:` comment naming the ceiling and upgrade path.
+- **Tests are not optional:** any new non-trivial logic in `src/lib/` ships with a sibling `*.test.ts` (framework-free runner, `scripts/run-tests.mjs`); parsing/edge-case Rust ships with `#[cfg(test)]` tests (git.rs/pty.rs/update.rs pattern). Pure-visual changes are exempt; everything else gets at least one runnable check.
+- **Verify before done:** `run.sh check` (or `npx tsc --noEmit && cargo check`) must pass. Dev-profile `cargo check` misses `#[cfg(not(debug_assertions))]` branches — release-only code needs `cargo check --release` too.
+
 ## Testing / API usage / Verify
 
 - **NEVER test using the user's own API keys or paid quotas** (`~/.local/share/opencode/auth.json` or provider keys in config).
