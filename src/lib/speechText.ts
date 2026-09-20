@@ -200,6 +200,22 @@ export function splitForSpeech(text: string): string[] {
   return out.filter(Boolean);
 }
 
+// piper voice id → TTS-friendly voice/locale/prompt language hint
+// (en_US-amy-medium → voice "en_US-amy-medium", locale "en_US", hint "English")
+export function voiceLang(voiceId: string): { voice: string; locale: string; hint: string } {
+  const voice = voiceId.replace(/\.onnx$/, "");
+  const locale = voice.split("-")[0] || "en_US";
+  const hint =
+    locale.startsWith("fr") ? "French" :
+    locale.startsWith("de") ? "German" :
+    locale.startsWith("es") ? "Spanish" :
+    locale.startsWith("zh") ? "Chinese" :
+    locale.startsWith("pt") ? "Portuguese" :
+    locale.startsWith("pl") ? "Polish" :
+    locale.startsWith("en_GB") ? "British English" : "English";
+  return { voice, locale, hint };
+}
+
 // all text-part content of a message, joined — streaming deltas included
 export function full_text(m: Msg): string {
   return m.parts

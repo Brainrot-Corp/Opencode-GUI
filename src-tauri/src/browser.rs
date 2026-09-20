@@ -116,11 +116,11 @@ pub async fn browser_open(
     let parsed = parse_http(&url)?;
 
     // already browsing — follow the link in place
-    let existing = state.0.lock().unwrap().as_ref().map(|b| b.webview.clone());
+    let existing = state.0.lock().unwrap_or_else(|e| e.into_inner()).as_ref().map(|b| b.webview.clone());
     if let Some(wv) = existing {
         let s = parsed.to_string();
         wv.navigate(parsed).map_err(|e| e.to_string())?;
-        if let Some(b) = state.0.lock().unwrap().as_mut() {
+        if let Some(b) = state.0.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
             b.hist.truncate(b.idx + 1);
             b.hist.push(s);
             b.idx = b.hist.len() - 1;
@@ -148,7 +148,7 @@ pub async fn browser_open(
         )
         .map_err(|e| e.to_string())?;
 
-    let mut guard = state.0.lock().unwrap();
+    let mut guard = state.0.lock().unwrap_or_else(|e| e.into_inner());
     if guard.is_some() {
         // lost a race with another opener — keep theirs, drop ours
         drop(guard);
@@ -179,7 +179,7 @@ pub async fn browser_forward(state: State<'_, BrowserState>) -> Result<(), Strin
 
 fn step(state: &State<'_, BrowserState>, dir: i32) -> Result<(), String> {
     let (wv, target) = {
-        let mut guard = state.0.lock().unwrap();
+        let mut guard = state.0.lock().unwrap_or_else(|e| e.into_inner());
         let Some(b) = guard.as_mut() else { return Ok(()) };
         let idx = b.idx as i64 + dir as i64;
         if idx < 0 || idx as usize >= b.hist.len() {
@@ -196,7 +196,7 @@ fn step(state: &State<'_, BrowserState>, dir: i32) -> Result<(), String> {
 pub async fn browser_navigate(state: State<'_, BrowserState>, url: String) -> Result<(), String> {
     let parsed = parse_http(&url)?;
     let (wv, existing) = {
-        let guard = state.0.lock().unwrap();
+        let guard = state.0.lock().unwrap_or_else(|e| e.into_inner());
         match guard.as_ref() {
             Some(b) => (b.webview.clone(), true),
             None => return Ok(()),
@@ -205,7 +205,7 @@ pub async fn browser_navigate(state: State<'_, BrowserState>, url: String) -> Re
     let s = parsed.to_string();
     wv.navigate(parsed).map_err(|e| e.to_string())?;
     if existing {
-        if let Some(b) = state.0.lock().unwrap().as_mut() {
+        if let Some(b) = state.0.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
             b.hist.truncate(b.idx + 1);
             b.hist.push(s);
             b.idx = b.hist.len() - 1;
@@ -217,7 +217,7 @@ pub async fn browser_navigate(state: State<'_, BrowserState>, url: String) -> Re
 #[tauri::command]
 pub async fn browser_reload(state: State<'_, BrowserState>) -> Result<(), String> {
     let wv = {
-        let guard = state.0.lock().unwrap();
+        let guard = state.0.lock().unwrap_or_else(|e| e.into_inner());
         guard.as_ref().map(|b| (b.webview.clone(), b.hist[b.idx].clone()))
     };
     if let Some((wv, target)) = wv {
@@ -229,7 +229,7 @@ pub async fn browser_reload(state: State<'_, BrowserState>) -> Result<(), String
 
 #[tauri::command]
 pub async fn browser_close(state: State<'_, BrowserState>) -> Result<(), String> {
-    let wv = state.0.lock().unwrap().take().map(|b| b.webview);
+    let wv = state.0.lock().unwrap_or_else(|e| e.into_inner()).take().map(|b| b.webview);
     if let Some(wv) = wv {
         let _ = wv.close();
     }
@@ -241,15 +241,12 @@ pub async fn open_external(url: String) -> Result<(), String> {
     parse_http(&url)?;
     #[cfg(windows)]
     {
-        let r = std::process::Command::new("rundll32")
+        let r = crate::platform::win_command("rundll32")
             .args(["url.dll,FileProtocolHandler", &url])
             .spawn();
         if r.is_err() {
-            use std::os::windows::process::CommandExt;
-            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-            std::process::Command::new("powershell")
+            crate::platform::win_command("powershell")
                 .args(["-NoProfile", "-Command", &format!("Start-Process \"{}\"", url.replace('"', "\"\""))])
-                .creation_flags(CREATE_NO_WINDOW)
                 .spawn()
                 .map_err(|e| e.to_string())?;
         }
@@ -270,12 +267,6 @@ pub async fn open_external(url: String) -> Result<(), String> {
 }
 
 // ---------- voice app launcher: removed — will become plugin (Windows-only impl kept) ----------
-#[cfg(windows)]
-use std::process::Command;
-#[cfg(windows)]
-use std::os::windows::process::CommandExt;
-#[cfg(windows)]
-const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 #[cfg(windows)]
 fn norm_app(s: &str) -> String {
@@ -327,7 +318,7 @@ pub async fn open_app(name: String) -> Result<String, String> {
     }
     for n in (1..=words.len()).rev() {
         let exe = format!("{}.exe", words[..n].join("-"));
-        let output = Command::new("where").arg(&exe).creation_flags(CREATE_NO_WINDOW).output();
+        let output = crate::platform::win_command("where").arg(&exe).output();
         if let Ok(o) = output { if o.status.success() { let full = String::from_utf8_lossy(&o.stdout).lines().next().unwrap_or("").trim().to_string(); if !full.is_empty() { launch_detached(&full)?; return Ok(exe.trim_end_matches(".exe").replace('-', " ")); } } }
     }
     Err(format!("no app found for '{phrase}'"))
@@ -339,7 +330,7 @@ pub async fn open_app(_name: String) -> Result<String, String> {
 }
 #[cfg(windows)]
 fn launch_detached(target: &str) -> Result<(), String> {
-    Command::new("cmd").args(["/c", "start", "", target]).creation_flags(CREATE_NO_WINDOW).spawn().map(|_| ()).map_err(|e| format!("failed to launch: {e}"))
+    crate::platform::win_command("cmd").args(["/c", "start", "", target]).spawn().map(|_| ()).map_err(|e| format!("failed to launch: {e}"))
 }
 #[cfg(windows)]
 fn sane_phrase(phrase: &str) -> bool {
@@ -361,7 +352,7 @@ pub async fn window_app(name: String, action: String) -> Result<String, String> 
     let add_type = if minimize { "if(-not('U.W' -as [type])){Add-Type -MemberDefinition '[DllImport(\"user32.dll\")] public static extern bool ShowWindow(IntPtr h,int c);' -Name W -Namespace U};" } else { "" };
     let act = if action == "kill" { "$ps|Select-Object -Unique -ExpandProperty ProcessName|ForEach-Object{& taskkill /F /IM ($_+'.exe')|Out-Null}".to_string() } else if minimize { "foreach($p in $ps){[void][U.W]::ShowWindow($p.MainWindowHandle,6)}".to_string() } else { "foreach($p in $ps){[void]$p.CloseMainWindow()}".to_string() };
     let script = format!("$ErrorActionPreference='SilentlyContinue';{add_type}$ps=$null;foreach($pat in @({ps_pats})){{$ps=Get-Process|Where-Object{{$_.MainWindowHandle -ne 0 -and $_.ProcessName -match $pat}};if($ps){{break}}}};{act};if($ps){{Write-Output $ps[0].ProcessName}}");
-    let out = Command::new("powershell").args(["-NoProfile", "-NonInteractive", "-Command", &script]).creation_flags(CREATE_NO_WINDOW).output().map_err(|e| format!("shell failed: {e}"))?;
+    let out = crate::platform::win_command("powershell").args(["-NoProfile", "-NonInteractive", "-Command", &script]).output().map_err(|e| format!("shell failed: {e}"))?;
     let proc_name = String::from_utf8_lossy(&out.stdout).trim().to_string();
     if proc_name.is_empty() { Err(format!("no app found for '{phrase}'")) } else { Ok(proc_name) }
 }
@@ -460,14 +451,14 @@ pub async fn tiktok_open(
         return Err("only tiktok.com urls are allowed".into());
     }
     // already open — just navigate + move
-    let existing = state.0.lock().unwrap().as_ref().map(|b| b.webview.clone());
+    let existing = state.0.lock().unwrap_or_else(|e| e.into_inner()).as_ref().map(|b| b.webview.clone());
     if let Some(wv) = existing {
         wv.navigate(parsed).map_err(|e| e.to_string())?;
         let _ = wv.set_bounds(tauri::Rect {
             position: LogicalPosition::new(x, y).into(),
             size: LogicalSize::new(w, h).into(),
         });
-        if let Some(b) = state.0.lock().unwrap().as_mut() {
+        if let Some(b) = state.0.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
             b.rect = (x, y, w, h);
         }
         return Ok(());
@@ -496,7 +487,7 @@ pub async fn tiktok_open(
             LogicalSize::new(w, h),
         )
         .map_err(|e| e.to_string())?;
-    let mut guard = state.0.lock().unwrap();
+    let mut guard = state.0.lock().unwrap_or_else(|e| e.into_inner());
     if guard.is_some() {
         drop(guard);
         let _ = webview.close();
@@ -510,7 +501,7 @@ pub async fn tiktok_open(
 
 #[tauri::command]
 pub async fn tiktok_close(state: State<'_, FloatingState>) -> Result<(), String> {
-    let wv = state.0.lock().unwrap().take().map(|b| b.webview);
+    let wv = state.0.lock().unwrap_or_else(|e| e.into_inner()).take().map(|b| b.webview);
     if let Some(wv) = wv {
         let _ = wv.close();
     }
@@ -526,7 +517,7 @@ pub async fn tiktok_set_bounds(
     h: f64,
 ) -> Result<(), String> {
     let wv = {
-        let mut guard = state.0.lock().unwrap();
+        let mut guard = state.0.lock().unwrap_or_else(|e| e.into_inner());
         let Some(b) = guard.as_mut() else { return Ok(()) };
         b.rect = (x, y, w, h);
         b.webview.clone()
@@ -540,7 +531,7 @@ pub async fn tiktok_set_bounds(
 #[tauri::command]
 pub async fn tiktok_set_glass(state: State<'_, FloatingState>, enabled: bool) -> Result<(), String> {
     let wv = {
-        let guard = state.0.lock().unwrap();
+        let guard = state.0.lock().unwrap_or_else(|e| e.into_inner());
         guard.as_ref().map(|b| b.webview.clone())
     };
     if let Some(wv) = wv {
@@ -565,7 +556,7 @@ pub async fn tiktok_navigate(state: State<'_, FloatingState>, url: String) -> Re
         return Err("only tiktok.com urls are allowed".into());
     }
     let wv = {
-        let guard = state.0.lock().unwrap();
+        let guard = state.0.lock().unwrap_or_else(|e| e.into_inner());
         guard.as_ref().map(|b| b.webview.clone())
     };
     if let Some(wv) = wv {
@@ -596,14 +587,11 @@ pub fn on_main_resize(app: &AppHandle, size: PhysicalSize<u32>) {
 
 #[cfg(all(test, windows))]
 mod tests {
-    use super::*;
-
     #[test]
     fn ps_quoting_survives_command_invocation() {
-        let out = Command::new("powershell")
+        let out = crate::platform::win_command("powershell")
             .args(["-NoProfile", "-NonInteractive", "-Command",
                 "$ErrorActionPreference='SilentlyContinue';$ps=Get-Process|Where-Object{$_.MainWindowHandle -ne 0};if($ps){Write-Output $ps[0].ProcessName}else{Write-Output 'none'}"])
-            .creation_flags(CREATE_NO_WINDOW)
             .output()
             .unwrap();
         let s = String::from_utf8_lossy(&out.stdout).trim().to_string();

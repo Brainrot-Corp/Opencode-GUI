@@ -431,19 +431,6 @@
   color: var(--text-faint);
 }
 
-/* command dialogs (help / share) */
-.cmd-group {
-  display: flex;
-  flex-direction: column;
-}
-.cmd-group-label {
-  font-family: var(--mono);
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.12em;
-  color: var(--text-faint);
-  padding: 7px 6px 3px;
-}
 .cmd-row {
   display: flex;
   align-items: baseline;

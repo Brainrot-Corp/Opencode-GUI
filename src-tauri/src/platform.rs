@@ -58,12 +58,7 @@ pub fn plugins_dir(app: &tauri::AppHandle) -> PathBuf {
 pub fn open_path(path: &str) -> std::io::Result<std::process::Child> {
     #[cfg(windows)]
     {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        std::process::Command::new("cmd")
-            .args(["/C", "start", "", path])
-            .creation_flags(CREATE_NO_WINDOW)
-            .spawn()
+        win_command("cmd").args(["/C", "start", "", path]).spawn()
     }
     #[cfg(target_os = "macos")]
     {
@@ -79,59 +74,11 @@ pub fn open_path(path: &str) -> std::io::Result<std::process::Child> {
     }
 }
 
-/// Reveal `path` in file manager (select file if not dir).
-pub fn reveal_path(path: &str) -> std::io::Result<std::process::Child> {
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        let p = std::path::Path::new(path);
-        if p.is_dir() {
-            std::process::Command::new("explorer")
-                .arg(path)
-                .creation_flags(CREATE_NO_WINDOW)
-                .spawn()
-        } else {
-            std::process::Command::new("explorer")
-                .args(["/select,", path])
-                .creation_flags(CREATE_NO_WINDOW)
-                .spawn()
-        }
-    }
-    #[cfg(target_os = "macos")]
-    {
-        let p = std::path::Path::new(path);
-        if p.is_dir() {
-            std::process::Command::new("open").arg(path).spawn()
-        } else {
-            // -R reveals in Finder and selects
-            std::process::Command::new("open").args(["-R", path]).spawn()
-        }
-    }
-    #[cfg(target_os = "linux")]
-    {
-        let p = std::path::Path::new(path);
-        let dir = if p.is_dir() { p } else { p.parent().unwrap_or(p) };
-        std::process::Command::new("xdg-open").arg(dir).spawn()
-    }
-    #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
-    {
-        let p = std::path::Path::new(path);
-        let dir = if p.is_dir() { p } else { p.parent().unwrap_or(p) };
-        std::process::Command::new("xdg-open").arg(dir).spawn()
-    }
-}
-
 /// Reveal a directory (ensure exists).
 pub fn reveal_dir(dir: &std::path::Path) -> std::io::Result<std::process::Child> {
     #[cfg(windows)]
     {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        std::process::Command::new("explorer")
-            .arg(dir)
-            .creation_flags(CREATE_NO_WINDOW)
-            .spawn()
+        win_command("explorer").arg(dir).spawn()
     }
     #[cfg(target_os = "macos")]
     {
@@ -211,15 +158,80 @@ pub fn curl_bin() -> &'static str {
     }
 }
 
-#[allow(dead_code)]
-pub fn which_bin() -> &'static str {
+/// Spawn a child process without flashing a console window on Windows
+/// (CREATE_NO_WINDOW). Other OS: plain Command — there is no console flash.
+pub fn win_command(program: &str) -> std::process::Command {
     #[cfg(windows)]
     {
-        "where"
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        let mut cmd = std::process::Command::new(program);
+        cmd.creation_flags(CREATE_NO_WINDOW);
+        cmd
     }
     #[cfg(not(windows))]
     {
-        "which"
+        std::process::Command::new(program)
+    }
+}
+
+/// Ephemeral loopback port for the sidecar server.
+pub fn free_port() -> std::io::Result<u16> {
+    Ok(std::net::TcpListener::bind("127.0.0.1:0")?.local_addr()?.port())
+}
+
+/// Quote-aware command-line tokenizer — single/double quotes group tokens,
+/// no escape sequences (matches the previous per-caller copies in pty.rs /
+/// terminals.rs). Callers needing %VAR% expansion do it before calling.
+pub fn split_cmdline(s: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut in_single = false;
+    let mut in_double = false;
+    for ch in s.chars() {
+        match ch {
+            '\'' if !in_double => in_single = !in_single,
+            '"' if !in_single => in_double = !in_double,
+            ' ' | '\t' if !in_single && !in_double => {
+                if !cur.is_empty() {
+                    out.push(std::mem::take(&mut cur));
+                }
+            }
+            _ => cur.push(ch),
+        }
+    }
+    if !cur.is_empty() {
+        out.push(cur);
+    }
+    out
+}
+
+/// Download `url` to `dest` via the OS curl binary (follows GitHub/HF
+/// release redirects; `--max-filesize` enforces `cap`). Blocking — call
+/// from spawn_blocking. Removes a partial `dest` on failure.
+pub fn curl_download(url: &str, dest: &std::path::Path, cap: u64) -> Result<(), String> {
+    let mut cmd = win_command(curl_bin());
+    cmd.args([
+        "-L",
+        "--fail",
+        "--silent",
+        "--show-error",
+        "--max-time",
+        "1800",
+        "--max-filesize",
+    ]);
+    cmd.arg(cap.to_string());
+    cmd.arg("-o").arg(dest).arg(url);
+    cmd.stdout(std::process::Stdio::null()).stderr(std::process::Stdio::piped());
+    let out = cmd.output().map_err(|e| format!("failed to run curl: {e}"))?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        let _ = std::fs::remove_file(dest);
+        Err(format!(
+            "download failed: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        ))
     }
 }
 

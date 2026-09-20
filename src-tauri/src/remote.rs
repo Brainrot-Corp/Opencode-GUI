@@ -420,7 +420,7 @@ pub fn exec_remote(
     // askpass answers the prompt; BatchMode would suppress prompting
     let argv = ssh_argv(t, key_file, !want_pw);
     let dest = ssh_destination(t);
-    let mut cmd = Command::new(&argv[0]);
+    let mut cmd = crate::platform::win_command(&argv[0]);
     for a in &argv[1..] {
         cmd.arg(a);
     }
@@ -436,12 +436,6 @@ pub fn exec_remote(
     // versions reject it and the command never starts with a flag anyway)
     cmd.arg(dest).arg(remote_cmd);
     cmd.env("LC_ALL", "C");
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        cmd.creation_flags(CREATE_NO_WINDOW);
-    }
     if stdin_bytes.is_some() {
         cmd.stdin(Stdio::piped());
     }
@@ -556,7 +550,7 @@ fn store_conn(state: &State<'_, RemoteState>, uri: String, port: u16, child: Chi
 fn wait_for_tunnel(local: u16, child: &mut Child, timeout: std::time::Duration) -> bool {
     let slices = (timeout.as_millis() / 500).max(1);
     for _ in 0..slices {
-        if crate::wait_for_port(local, std::time::Duration::from_millis(500)) {
+        if crate::server::wait_for_port(local, std::time::Duration::from_millis(500)) {
             return true;
         }
         match child.try_wait() {
@@ -587,11 +581,7 @@ fn dial_blocking(
     const RETRIES: u32 = 2;
     let mut last_err = String::from("failed to start remote opencode");
     for _ in 0..RETRIES {
-        let local = std::net::TcpListener::bind("127.0.0.1:0")
-            .map_err(|e| e.to_string())?
-            .local_addr()
-            .map_err(|e| e.to_string())?
-            .port();
+        let local = crate::platform::free_port().map_err(|e| e.to_string())?;
         // remote port mirrors the local pick (high ports are usually free on
         // both ends); a clash retries with a fresh local port
         let remote_port = local;
@@ -599,7 +589,7 @@ fn dial_blocking(
         let argv = ssh_argv(&t, key.as_deref(), askpass_guard.is_none());
         let dest = ssh_destination(&t);
         let serve = format!("opencode serve --port {remote_port} --hostname 127.0.0.1");
-        let mut cmd = Command::new(&argv[0]);
+        let mut cmd = crate::platform::win_command(&argv[0]);
         for a in &argv[1..] {
             cmd.arg(a);
         }
@@ -615,12 +605,6 @@ fn dial_blocking(
         // stderr is piped (not nulled) so an early death can be classified
         // below; no console window is created either way
         cmd.stdout(Stdio::null()).stderr(Stdio::piped());
-        #[cfg(all(windows, not(debug_assertions)))]
-        {
-            use std::os::windows::process::CommandExt;
-            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-            cmd.creation_flags(CREATE_NO_WINDOW);
-        }
         #[cfg(debug_assertions)]
         {
             // debug builds still surface the child on the console via stderr
@@ -633,7 +617,7 @@ fn dial_blocking(
                 return Err(format!("ssh: {e}"));
             }
         };
-        crate::job::assign(&child);
+        crate::server::job::assign(&child);
         let listening = wait_for_tunnel(local, &mut child, std::time::Duration::from_secs(10));
         if listening {
             note_transport(&t, true);
@@ -837,13 +821,22 @@ pub fn remote_get_key(app: AppHandle, uri: String) -> String {
 }
 
 #[tauri::command]
-pub fn remote_terminals(app: AppHandle, state: State<'_, RemoteState>, uri: String) -> Vec<crate::terminals::TerminalProfile> {
+pub async fn remote_terminals(app: AppHandle, state: State<'_, RemoteState>, uri: String) -> Result<Vec<crate::terminals::TerminalProfile>, String> {
     use crate::terminals::TerminalProfile;
-    let Ok(t) = target_from_uri(&uri) else { return vec![] };
+    let Ok(t) = target_from_uri(&uri) else { return Ok(vec![]) };
     let (key, pw) = creds_for(&app, &state, &t);
     // remote login shell + common shells; missing binaries are filtered
     let probe = "echo \"LOGIN_SHELL=$SHELL\"; for s in /bin/bash /usr/bin/bash /bin/zsh /usr/bin/zsh /bin/fish /usr/bin/fish /bin/sh; do [ -x \"$s\" ] && echo \"HAVE=$s\"; done";
-    let Ok(out) = exec_remote(&t, key.as_deref(), pw.as_deref(), probe, None) else { return vec![] };
+    // the ssh probe can block up to ConnectTimeout (10 s) — keep it off the
+    // async command pool / UI thread
+    let out = tauri::async_runtime::spawn_blocking(move || {
+        exec_remote(&t, key.as_deref(), pw.as_deref(), probe, None)
+    })
+    .await;
+    let out = match out {
+        Ok(Ok(out)) => out,
+        _ => return Ok(vec![]),
+    };
     let mut shells: Vec<String> = vec![];
     let mut login = String::new();
     for line in out.lines().map(str::trim) {
@@ -860,7 +853,7 @@ pub fn remote_terminals(app: AppHandle, state: State<'_, RemoteState>, uri: Stri
     if !login.is_empty() && !shells.contains(&login) {
         shells.insert(0, login.clone());
     }
-    shells
+    Ok(shells
         .into_iter()
         .enumerate()
         .map(|(i, s)| {
@@ -874,7 +867,7 @@ pub fn remote_terminals(app: AppHandle, state: State<'_, RemoteState>, uri: Stri
                 kind: "ssh".into(),
             }
         })
-        .collect()
+        .collect())
 }
 
 #[cfg(test)]

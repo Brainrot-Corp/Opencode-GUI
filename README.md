@@ -1,6 +1,6 @@
 # opencode-gui
 
-Lightweight Windows GUI client for [opencode](https://opencode.ai). Tauri v2 + React + TypeScript, spawns an `opencode serve` sidecar and talks to it over HTTP/SSE.
+Lightweight cross-platform GUI client for [opencode](https://opencode.ai). Tauri v2 + React + TypeScript, spawns an `opencode serve` sidecar and talks to it over HTTP/SSE.
 
 ![opencode-gui screenshot](./readme-ressources/opencode-gui-ressource.png)
 
@@ -12,16 +12,18 @@ Windows 10/11 (WebView2 ships with Windows), Node 20+, Rust stable + MSVC Build 
 
 ## Dev
 
+Run everything through `scripts/run.sh` (Git Bash on Windows, bash/WSL elsewhere):
+
 ```
-powershell -ExecutionPolicy Bypass -File scripts\run.ps1 setup    # first time: deps + sidecar binary
-powershell -ExecutionPolicy Bypass -File scripts\run.ps1 dev      # run the app
-powershell -ExecutionPolicy Bypass -File scripts\run.ps1 build    # MSI installer → src-tauri/target/release/bundle
-powershell -ExecutionPolicy Bypass -File scripts\run.ps1 portable # portable zip (exe + sidecar) → bundle/portable
-powershell -ExecutionPolicy Bypass -File scripts\run.ps1 check    # tsc + vite + cargo check
-powershell -ExecutionPolicy Bypass -File scripts\run.ps1 clean    # cargo clean + remove dist
+./scripts/run.sh setup    # first time: npm deps + rustup (if missing) + sidecar binary
+./scripts/run.sh dev      # run the app
+./scripts/run.sh build    # bundle → src-tauri/target/release/bundle
+./scripts/run.sh portable # portable zip (exe + sidecar) → bundle/portable
+./scripts/run.sh check    # unit tests + tsc + vite build + cargo check
+./scripts/run.sh clean    # cargo clean + remove dist
 ```
 
-`scripts/run.sh` is the same runner for bash/WSL (`./scripts/run.sh dev`). `build`/`portable` take an optional target `win11` (default, glass/acrylic) / `win10` (no-glass) / `both` and an optional bundle list (`msi`, `nsis`); e.g. `run.ps1 build win11 "msi nsis"`. The sidecar binary (`src-tauri/binaries/opencode-x86_64-pc-windows-msvc.exe`) is not committed; `setup` downloads it from [opencode releases](https://github.com/anomalyco/opencode/releases) automatically.
+`build`/`portable` take an optional target `native` (default, current OS) or — on Windows only — `win11` (glass/acrylic) / `win10` (no-glass) / `both`, plus an optional bundle list (`msi`, `nsis`); e.g. `./scripts/run.sh build win11 "msi nsis"`. A version bump before a release: `./scripts/run.sh build --version 2.3.0`. The sidecar binary (`src-tauri/binaries/opencode-*`) is not committed; `setup` downloads the correct triple from [opencode releases](https://github.com/anomalyco/opencode/releases) automatically.
 
 ## Structure
 

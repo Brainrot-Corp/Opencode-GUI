@@ -3,6 +3,7 @@ import type { Part } from "@opencode-ai/sdk/client";
 import type { QuestionInfo } from "../types";
 import { detectLang, extLang, stripAnsi } from "../lib/syntax";
 import { hlToMonacoLang } from "../lib/monaco";
+import { summaryPairs } from "../lib/qSummary";
 import { DiffLines } from "./DiffPanel";
 import MonacoBlock from "./MonacoBlock";
 
@@ -118,14 +119,7 @@ function cleanForCopy(tool: string, out: string): string {
 
 // answered question block — questions as cards, chosen answers as chips.
 // any shape mismatch falls back to the raw <pre> rendering
-function summaryPairs(out: string): { q: string; a: string }[] | null {
-  if (!out.trim().includes("User has answered your questions:")) return null;
-  const pairs: { q: string; a: string }[] = [];
-  const re = /"([^"]+)"\s*=\s*"([^"]+)"/g;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(out))) pairs.push({ q: m[1], a: m[2] });
-  return pairs.length ? pairs : null;
-}
+// (quoted-pair extraction is shared with MessageList via lib/qSummary)
 
 function QuestionView({ t }: { t: any }) {
   const qs: QuestionInfo[] = Array.isArray(t.state?.input?.questions)

@@ -8,8 +8,8 @@
 //   unmerged `U*`/`AA`/`DD` → conflict group, C-quote unescape in both modes.
 // - discard splits tracked (`restore`) vs untracked (`clean -f/-fd`).
 // - push supports `-u origin <branch>` + `--force-with-lease`; pull supports
-//   `--rebase/--merge`; commit supports `--no-verify`; stash/branch/resolve/
-//   merge-rebase/remote/reset helpers round out the panel.
+//   `--rebase/--merge`; commit supports `--no-verify`; stash push/pop and
+//   resolve/merge-rebase helpers round out the panel.
 // - runner is off the async pool (`spawn_blocking`), non-interactive
 //   (`GIT_TERMINAL_PROMPT=0`) with per-op timeouts so hung credential prompts
 //   surface instead of locking the UI.
@@ -55,47 +55,14 @@ pub struct GitStatus {
     pub files: Vec<GitFile>,
 }
 
-#[derive(Serialize, Clone)]
-pub struct GitBranch {
-    pub name: String,
-    pub current: bool,
-    pub upstream: Option<String>,
-}
-
-#[derive(Serialize, Clone)]
-pub struct GitRemote {
-    pub name: String,
-    pub url: String,
-}
-
-#[derive(Serialize, Clone)]
-pub struct GitStash {
-    pub index: u32,
-    pub message: String,
-}
-
 const STATUS_TIMEOUT: Duration = Duration::from_secs(15);
 const OP_TIMEOUT: Duration = Duration::from_secs(30);
 const NET_TIMEOUT: Duration = Duration::from_secs(120);
 
-fn base_dir(dir: &str) -> PathBuf {
-    let p = if dir.is_empty() {
-        crate::platform::home_dir()
-    } else {
-        PathBuf::from(dir)
-    };
-    if p.is_dir() {
-        p
-    } else {
-        crate::platform::home_dir()
-    }
-}
-
-/// Blocking git spawn — runs on Tauri's async pool thread (same discipline as
-/// the rest of this codebase, cf. browser.rs). Hung credential prompts can't
+/// Blocking git spawn — runs on Tauri's blocking pool (never on an async
+/// worker; every command goes through `run_root` which wraps in
+/// `spawn_blocking` + `tokio::time::timeout`). Hung credential prompts can't
 /// wedge it: `GIT_TERMINAL_PROMPT=0` fails fast instead of waiting on stdin.
-/// `git_status` additionally wraps in `spawn_blocking` + timeout since it
-/// fires on every poll/watch event.
 ///
 /// Remote workspaces (`ssh://…` pseudo-paths from repo_root) re-run over the
 /// ssh tunnel instead — same argv, `git -C <remote-path>`.
@@ -104,17 +71,11 @@ fn run_blocking(cwd: &std::path::Path, args: &[&str]) -> Result<String, String> 
     if crate::remote::is_remote(&s) {
         return crate::remote::exec_git_global(&s, args);
     }
-    let mut cmd = std::process::Command::new("git");
+    let mut cmd = crate::platform::win_command("git");
     cmd.args(args).current_dir(cwd);
     cmd.env("GIT_TERMINAL_PROMPT", "0");
     cmd.env("GIT_OPTIONAL_LOCKS", "0");
     cmd.env("LC_ALL", "C");
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        cmd.creation_flags(CREATE_NO_WINDOW);
-    }
     let out = cmd
         .output()
         .map_err(|e| format!("git {}: {e}", args.first().unwrap_or(&"")))?;
@@ -125,10 +86,32 @@ fn run_blocking(cwd: &std::path::Path, args: &[&str]) -> Result<String, String> 
     }
 }
 
-fn run_root(root: &std::path::Path, args: &[&str], _timeout: Duration) -> Result<String, String> {
-    // ponytail: timeout param kept for call-site uniformity; fail-fast comes
-    // from GIT_TERMINAL_PROMPT=0, status adds a real timeout via spawn_blocking
-    run_blocking(root, args)
+/// The single git-run boundary for every command: the blocking child process
+/// moves to the blocking pool and the (previously ignored) timeout actually
+/// kills the await — so a hung credential prompt or dead remote can never
+/// pin an async worker for NET_TIMEOUT=120s. `repo_root` calls stay inline
+/// only via `run_blocking` for rev-parse probes, which fail fast anyway.
+async fn run_root(
+    root: &std::path::Path,
+    args: &[&str],
+    timeout: Duration,
+) -> Result<String, String> {
+    let root = root.to_owned();
+    let args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+    let op = args.first().cloned().unwrap_or_else(|| "git".into());
+    let fut = tauri::async_runtime::spawn_blocking(move || {
+        let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        run_blocking(&root, &refs)
+    });
+    match tokio::time::timeout(timeout, fut).await {
+        Ok(Ok(inner)) => inner.map_err(|e| format!("git task failed: {e}")),
+        Ok(Err(e)) => Err(format!("git task failed: {e}")),
+        Err(_) => Err(format!(
+            "git {} timed out after {}s",
+            op,
+            timeout.as_secs()
+        )),
+    }
 }
 
 /// Resolve the enclosing repo root for `dir` (handles workspace = parent or
@@ -147,7 +130,7 @@ fn repo_root(dir: &str) -> Option<PathBuf> {
         }
         return crate::remote::pseudo_with_abs(dir, rp).map(PathBuf::from);
     }
-    let cwd = base_dir(dir);
+    let cwd = crate::platform::resolve_workdir(dir);
     let out = run_blocking(&cwd, &["rev-parse", "--show-toplevel"]).ok()?;
     let p = PathBuf::from(out.trim());
     if p.is_dir() {
@@ -488,15 +471,17 @@ fn enrich(root: &std::path::Path, mut st: GitStatus) -> GitStatus {
         path_exists(&path_join(&gd, "MERGE_HEAD")) || path_exists(&path_join(&gd, "CHERRY_PICK_HEAD"));
     st.in_rebase =
         path_exists(&path_join(&gd, "rebase-merge")) || path_exists(&path_join(&gd, "rebase-apply"));
+    // rev-parse probes fail fast (no network), so enrich() stays sync — it
+    // runs inside git_status's spawn_blocking + timeout wrapper
     if st.detached {
-        if let Ok(h) = run_root(root, &["rev-parse", "--short", "HEAD"], OP_TIMEOUT) {
+        if let Ok(h) = run_blocking(root, &["rev-parse", "--short", "HEAD"]) {
             let h = h.trim().to_string();
             if !h.is_empty() {
                 st.branch = h;
             }
         }
     }
-    if let Ok(s) = run_root(root, &["stash", "list", "--format=%gd"], OP_TIMEOUT) {
+    if let Ok(s) = run_blocking(root, &["stash", "list", "--format=%gd"]) {
         st.stash_count = s.lines().filter(|l| !l.trim().is_empty()).count() as u32;
     }
     st
@@ -567,14 +552,6 @@ pub async fn git_status(dir: String) -> Result<GitStatus, String> {
     }
 }
 
-/// Repo root for a workspace dir (lets the frontend show subfolder context).
-#[tauri::command]
-pub async fn git_root(dir: String) -> Result<String, String> {
-    repo_root(&dir)
-        .map(|p| p.to_string_lossy().into_owned())
-        .ok_or_else(|| "not a git repository".to_string())
-}
-
 #[tauri::command]
 pub async fn git_stage(dir: String, paths: Vec<String>) -> Result<(), String> {
     if paths.is_empty() {
@@ -584,7 +561,7 @@ pub async fn git_stage(dir: String, paths: Vec<String>) -> Result<(), String> {
     let mut args: Vec<String> = vec!["add".to_string(), "-A".to_string(), "--".to_string()];
     args.extend(paths);
     let refs: Vec<&str> = args.iter().map(String::as_str).collect();
-    run_root(&root, &refs, OP_TIMEOUT).map(|_| ())
+    run_root(&root, &refs, OP_TIMEOUT).await.map(|_| ())
 }
 
 #[tauri::command]
@@ -596,14 +573,14 @@ pub async fn git_unstage(dir: String, paths: Vec<String>) -> Result<(), String> 
     let mut args: Vec<String> = vec!["restore".to_string(), "--staged".to_string(), "--".to_string()];
     args.extend(paths.clone());
     let refs: Vec<&str> = args.iter().map(String::as_str).collect();
-    match run_root(&root, &refs, OP_TIMEOUT) {
+    match run_root(&root, &refs, OP_TIMEOUT).await {
         Ok(_) => Ok(()),
         Err(_) => {
             // git < 2.23 fallback
             let mut fb: Vec<String> = vec!["reset".to_string(), "HEAD".to_string(), "--".to_string()];
             fb.extend(paths);
             let r: Vec<&str> = fb.iter().map(String::as_str).collect();
-            run_root(&root, &r, OP_TIMEOUT).map(|_| ())
+            run_root(&root, &r, OP_TIMEOUT).await.map(|_| ())
         }
     }
 }
@@ -630,7 +607,7 @@ pub async fn git_discard(dir: String, paths: Vec<String>) -> Result<(), String> 
             continue;
         }
         // `ls-files --error-unmatch` distinguishes tracked (incl. staged) from untracked
-        let probe = run_root(&root, &["ls-files", "--error-unmatch", "--", p], OP_TIMEOUT).is_ok();
+        let probe = run_root(&root, &["ls-files", "--error-unmatch", "--", p], OP_TIMEOUT).await.is_ok();
         if probe {
             tracked.push(p.clone());
         } else {
@@ -647,14 +624,14 @@ pub async fn git_discard(dir: String, paths: Vec<String>) -> Result<(), String> 
         ];
         args.extend(tracked.clone());
         let refs: Vec<&str> = args.iter().map(String::as_str).collect();
-        if let Err(e) = run_root(&root, &refs, OP_TIMEOUT) {
+        if let Err(e) = run_root(&root, &refs, OP_TIMEOUT).await {
             if e.contains("unknown revision") || e.contains("bad revision") {
                 // initial commit: unstage + remove newly added files
                 let mut rm: Vec<String> =
                     vec!["rm".to_string(), "--cached".to_string(), "--".to_string()];
                 rm.extend(tracked.clone());
                 let r: Vec<&str> = rm.iter().map(String::as_str).collect();
-                let _ = run_root(&root, &r, OP_TIMEOUT);
+                let _ = run_root(&root, &r, OP_TIMEOUT).await;
                 for p in &tracked {
                     remove_path(&path_join(&root, p));
                 }
@@ -669,28 +646,15 @@ pub async fn git_discard(dir: String, paths: Vec<String>) -> Result<(), String> 
         let mut args: Vec<String> = vec!["clean".to_string(), "-f".to_string(), "--".to_string()];
         args.extend(untracked_files);
         let refs: Vec<&str> = args.iter().map(String::as_str).collect();
-        run_root(&root, &refs, OP_TIMEOUT).map(|_| ())?;
+        run_root(&root, &refs, OP_TIMEOUT).await.map(|_| ())?;
     }
     if !untracked_dirs.is_empty() {
         let mut args: Vec<String> = vec!["clean".to_string(), "-fd".to_string(), "--".to_string()];
         args.extend(untracked_dirs);
         let refs: Vec<&str> = args.iter().map(String::as_str).collect();
-        run_root(&root, &refs, OP_TIMEOUT).map(|_| ())?;
+        run_root(&root, &refs, OP_TIMEOUT).await.map(|_| ())?;
     }
     Ok(())
-}
-
-/// Explicit untracked delete (used by confirm-then-delete flows).
-#[tauri::command]
-pub async fn git_clean(dir: String, paths: Vec<String>) -> Result<(), String> {
-    if paths.is_empty() {
-        return Err("nothing to clean".to_string());
-    }
-    let root = repo_root(&dir).ok_or_else(|| "not a git repository".to_string())?;
-    let mut args: Vec<String> = vec!["clean".to_string(), "-fd".to_string(), "--".to_string()];
-    args.extend(paths);
-    let refs: Vec<&str> = args.iter().map(String::as_str).collect();
-    run_root(&root, &refs, OP_TIMEOUT).map(|_| ())
 }
 
 #[tauri::command]
@@ -714,10 +678,10 @@ pub async fn git_commit(
     // untracked. Staging here (not `-a`) also freezes the index so worktree
     // edits landing mid-commit aren't swept in.
     if use_all && !use_amend {
-        run_root(&root, &["add", "-A"], OP_TIMEOUT)?;
+        run_root(&root, &["add", "-A"], OP_TIMEOUT).await?;
     } else if use_all {
         // amend + all: stage all but keep --amend semantics
-        let _ = run_root(&root, &["add", "-A"], OP_TIMEOUT);
+        let _ = run_root(&root, &["add", "-A"], OP_TIMEOUT).await;
     }
     let build_args = |subject: &str, body: Option<&str>| -> Vec<String> {
         let mut a: Vec<String> = vec!["commit".to_string()];
@@ -756,11 +720,11 @@ pub async fn git_commit(
         build_args(trimmed, None)
     };
     let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-    run_root(&root, &refs, OP_TIMEOUT)
+    run_root(&root, &refs, OP_TIMEOUT).await
 }
 
-fn current_branch(root: &std::path::Path) -> Result<String, String> {
-    let b = run_root(root, &["rev-parse", "--abbrev-ref", "HEAD"], OP_TIMEOUT)?;
+async fn current_branch(root: &std::path::Path) -> Result<String, String> {
+    let b = run_root(root, &["rev-parse", "--abbrev-ref", "HEAD"], OP_TIMEOUT).await?;
     let b = b.trim().to_string();
     if b.is_empty() || b == "HEAD" {
         return Err("detached HEAD — checkout a branch first".to_string());
@@ -780,9 +744,10 @@ pub async fn git_push(
     // auto-detect missing upstream so first push just works
     let needs_upstream = want_upstream
         || run_root(&root, &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"], OP_TIMEOUT)
+            .await
             .is_err();
     if needs_upstream {
-        let branch = current_branch(&root)?;
+        let branch = current_branch(&root).await?;
         let mut args: Vec<&str> = vec!["push", "-u", "origin", &branch];
         let mut owned: Vec<String> = Vec::new();
         if lease {
@@ -793,7 +758,7 @@ pub async fn git_push(
         let extra: Vec<&str> = owned.iter().map(String::as_str).collect();
         full.extend(extra);
         args = full;
-        return run_root(&root, &args, NET_TIMEOUT);
+        return run_root(&root, &args, NET_TIMEOUT).await;
     }
     let mut owned: Vec<String> = vec!["push".to_string()];
     if lease {
@@ -801,7 +766,7 @@ pub async fn git_push(
     }
     owned.push("--follow-tags".to_string());
     let refs: Vec<&str> = owned.iter().map(String::as_str).collect();
-    run_root(&root, &refs, NET_TIMEOUT)
+    run_root(&root, &refs, NET_TIMEOUT).await
 }
 
 #[tauri::command]
@@ -812,16 +777,16 @@ pub async fn git_pull(dir: String, rebase: Option<bool>) -> Result<String, Strin
         Some(false) => vec!["pull", "--merge", "--no-edit"],
         None => vec!["pull", "--no-edit"],
     };
-    run_root(&root, &args, NET_TIMEOUT)
+    run_root(&root, &args, NET_TIMEOUT).await
 }
 
 #[tauri::command]
 pub async fn git_fetch(dir: String, prune: Option<bool>) -> Result<String, String> {
     let root = repo_root(&dir).ok_or_else(|| "not a git repository".to_string())?;
     if prune.unwrap_or(false) {
-        run_root(&root, &["fetch", "--prune"], NET_TIMEOUT)
+        run_root(&root, &["fetch", "--prune"], NET_TIMEOUT).await
     } else {
-        run_root(&root, &["fetch"], NET_TIMEOUT)
+        run_root(&root, &["fetch"], NET_TIMEOUT).await
     }
 }
 
@@ -829,7 +794,7 @@ pub async fn git_fetch(dir: String, prune: Option<bool>) -> Result<String, Strin
 #[tauri::command]
 pub async fn git_sync(dir: String) -> Result<String, String> {
     let root = repo_root(&dir).ok_or_else(|| "not a git repository".to_string())?;
-    run_root(&root, &["pull", "--rebase", "--no-edit"], NET_TIMEOUT)?;
+    run_root(&root, &["pull", "--rebase", "--no-edit"], NET_TIMEOUT).await?;
     // push reuses upstream auto-detect
     drop(root);
     git_push(dir, None, None).await
@@ -850,172 +815,30 @@ pub async fn git_diff(dir: String, path: String, staged: bool) -> Result<String,
         owned.push(path);
     }
     let refs: Vec<&str> = owned.iter().map(String::as_str).collect();
-    run_root(&root, &refs, OP_TIMEOUT)
+    run_root(&root, &refs, OP_TIMEOUT).await
 }
 
 #[tauri::command]
 pub async fn git_diff_stat(dir: String) -> Result<String, String> {
     let root = repo_root(&dir).ok_or_else(|| "not a git repository".to_string())?;
-    run_root(&root, &["diff", "--cached", "--stat", "--no-color"], OP_TIMEOUT)
+    run_root(&root, &["diff", "--cached", "--stat", "--no-color"], OP_TIMEOUT).await
 }
 
 #[tauri::command]
 pub async fn git_log(dir: String) -> Result<String, String> {
     let root = repo_root(&dir).ok_or_else(|| "not a git repository".to_string())?;
-    run_root(&root, &["log", "--oneline", "-n", "10"], OP_TIMEOUT)
+    run_root(&root, &["log", "--oneline", "-n", "10"], OP_TIMEOUT).await
 }
 
-// ---- branches / remotes / stash / conflicts ----
-
-#[tauri::command]
-pub async fn git_branches(dir: String) -> Result<Vec<GitBranch>, String> {
-    let root = repo_root(&dir).ok_or_else(|| "not a git repository".to_string())?;
-    let out = run_root(
-        &root,
-        &[
-            "for-each-ref",
-            "--format=%(refname:short)%00%(upstream:short)%00%(HEAD)",
-            "refs/heads",
-        ],
-        OP_TIMEOUT,
-    )?;
-    let mut v = Vec::new();
-    for line in out.lines() {
-        if line.trim().is_empty() {
-            continue;
-        }
-        let parts: Vec<&str> = line.split('\0').collect();
-        let name = parts.first().unwrap_or(&"").trim().to_string();
-        if name.is_empty() {
-            continue;
-        }
-        let up = parts.get(1).map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
-        let head = parts.get(2).map(|s| s.trim()).unwrap_or_default();
-        v.push(GitBranch {
-            name,
-            current: head == "*",
-            upstream: up,
-        });
-    }
-    v.sort_by(|a, b| a.name.cmp(&b.name));
-    Ok(v)
-}
-
-#[tauri::command]
-pub async fn git_branch_create(
-    dir: String,
-    name: String,
-    start_point: Option<String>,
-) -> Result<(), String> {
-    let name = name.trim().to_string();
-    if name.is_empty() {
-        return Err("enter a branch name".to_string());
-    }
-    let root = repo_root(&dir).ok_or_else(|| "not a git repository".to_string())?;
-    run_root(&root, &["check-ref-format", "--branch", &name], OP_TIMEOUT)
-        .map_err(|_| format!("invalid branch name: {name}"))?;
-    if let Some(sp) = start_point {
-        let sp = sp.trim().to_string();
-        if sp.is_empty() {
-            run_root(&root, &["branch", &name], OP_TIMEOUT).map(|_| ())
-        } else {
-            run_root(&root, &["branch", &name, &sp], OP_TIMEOUT).map(|_| ())
-        }
-    } else {
-        run_root(&root, &["branch", &name], OP_TIMEOUT).map(|_| ())
-    }
-}
-
-#[tauri::command]
-pub async fn git_checkout(dir: String, name: String) -> Result<(), String> {
-    let name = name.trim().to_string();
-    if name.is_empty() {
-        return Err("enter a branch name".to_string());
-    }
-    let root = repo_root(&dir).ok_or_else(|| "not a git repository".to_string())?;
-    run_root(&root, &["checkout", &name], OP_TIMEOUT).map(|_| ())
-}
-
-#[tauri::command]
-pub async fn git_branch_rename(dir: String, old: String, new: String) -> Result<(), String> {
-    let root = repo_root(&dir).ok_or_else(|| "not a git repository".to_string())?;
-    let (old, new) = (old.trim(), new.trim());
-    if old.is_empty() || new.is_empty() {
-        return Err("enter old and new branch names".to_string());
-    }
-    run_root(&root, &["branch", "-m", old, new], OP_TIMEOUT).map(|_| ())
-}
-
-#[tauri::command]
-pub async fn git_branch_delete(
-    dir: String,
-    name: String,
-    force: Option<bool>,
-) -> Result<(), String> {
-    let root = repo_root(&dir).ok_or_else(|| "not a git repository".to_string())?;
-    let name = name.trim();
-    if name.is_empty() {
-        return Err("enter a branch name".to_string());
-    }
-    if force.unwrap_or(false) {
-        run_root(&root, &["branch", "-D", name], OP_TIMEOUT).map(|_| ())
-    } else {
-        run_root(&root, &["branch", "-d", name], OP_TIMEOUT).map(|_| ())
-    }
-}
+// ---- publish / stash / conflicts ----
 
 #[tauri::command]
 pub async fn git_publish(dir: String, remote: Option<String>) -> Result<String, String> {
     let root = repo_root(&dir).ok_or_else(|| "not a git repository".to_string())?;
-    let branch = current_branch(&root)?;
+    let branch = current_branch(&root).await?;
     let r = remote.unwrap_or_else(|| "origin".to_string());
     let r = r.trim().to_string();
-    run_root(&root, &["push", "-u", &r, &branch], NET_TIMEOUT)
-}
-
-#[tauri::command]
-pub async fn git_remotes(dir: String) -> Result<Vec<GitRemote>, String> {
-    let root = repo_root(&dir).ok_or_else(|| "not a git repository".to_string())?;
-    let out = run_root(&root, &["remote", "-v"], OP_TIMEOUT)?;
-    let mut map = std::collections::BTreeMap::<String, String>::new();
-    for line in out.lines() {
-        // "origin\tgit@… (fetch)"
-        let mut it = line.split_whitespace();
-        let (Some(n), Some(u)) = (it.next(), it.next()) else {
-            continue;
-        };
-        if line.contains("(fetch)") {
-            map.entry(n.to_string()).or_insert_with(|| u.to_string());
-        }
-    }
-    Ok(map
-        .into_iter()
-        .map(|(name, url)| GitRemote { name, url })
-        .collect())
-}
-
-#[tauri::command]
-pub async fn git_stash_list(dir: String) -> Result<Vec<GitStash>, String> {
-    let root = repo_root(&dir).ok_or_else(|| "not a git repository".to_string())?;
-    let out = run_root(&root, &["stash", "list", "--format=%gd%x00%gs"], OP_TIMEOUT)?;
-    let mut v = Vec::new();
-    for line in out.lines() {
-        if line.trim().is_empty() {
-            continue;
-        }
-        let (id, msg) = line.split_once('\0').unwrap_or((line, ""));
-        let idx = id
-            .trim()
-            .strip_prefix("stash@{")
-            .and_then(|s| s.strip_suffix('}'))
-            .and_then(|s| s.parse::<u32>().ok())
-            .unwrap_or(0);
-        v.push(GitStash {
-            index: idx,
-            message: msg.trim().to_string(),
-        });
-    }
-    Ok(v)
+    run_root(&root, &["push", "-u", &r, &branch], NET_TIMEOUT).await
 }
 
 #[tauri::command]
@@ -1037,43 +860,17 @@ pub async fn git_stash_push(
         owned.push("--include-untracked".to_string());
     }
     let refs: Vec<&str> = owned.iter().map(String::as_str).collect();
-    run_root(&root, &refs, OP_TIMEOUT).map(|_| ())
+    run_root(&root, &refs, OP_TIMEOUT).await.map(|_| ())
 }
 
 #[tauri::command]
 pub async fn git_stash_pop(dir: String, index: Option<u32>) -> Result<(), String> {
     let root = repo_root(&dir).ok_or_else(|| "not a git repository".to_string())?;
     if let Some(n) = index {
-        run_root(&root, &["stash", "pop", &format!("stash@{{{n}}}")], OP_TIMEOUT).map(|_| ())
+        run_root(&root, &["stash", "pop", &format!("stash@{{{n}}}")], OP_TIMEOUT).await.map(|_| ())
     } else {
-        run_root(&root, &["stash", "pop"], OP_TIMEOUT).map(|_| ())
+        run_root(&root, &["stash", "pop"], OP_TIMEOUT).await.map(|_| ())
     }
-}
-
-#[tauri::command]
-pub async fn git_stash_apply(dir: String, index: Option<u32>) -> Result<(), String> {
-    let root = repo_root(&dir).ok_or_else(|| "not a git repository".to_string())?;
-    if let Some(n) = index {
-        run_root(&root, &["stash", "apply", &format!("stash@{{{n}}}")], OP_TIMEOUT).map(|_| ())
-    } else {
-        run_root(&root, &["stash", "apply"], OP_TIMEOUT).map(|_| ())
-    }
-}
-
-#[tauri::command]
-pub async fn git_stash_drop(dir: String, index: Option<u32>) -> Result<(), String> {
-    let root = repo_root(&dir).ok_or_else(|| "not a git repository".to_string())?;
-    if let Some(n) = index {
-        run_root(&root, &["stash", "drop", &format!("stash@{{{n}}}")], OP_TIMEOUT).map(|_| ())
-    } else {
-        run_root(&root, &["stash", "drop"], OP_TIMEOUT).map(|_| ())
-    }
-}
-
-#[tauri::command]
-pub async fn git_stash_clear(dir: String) -> Result<(), String> {
-    let root = repo_root(&dir).ok_or_else(|| "not a git repository".to_string())?;
-    run_root(&root, &["stash", "clear"], OP_TIMEOUT).map(|_| ())
 }
 
 /// Mark a conflict resolved with ours/theirs, then stage it.
@@ -1084,54 +881,32 @@ pub async fn git_resolve(dir: String, path: String, ours: bool) -> Result<(), St
         return Err("no path".to_string());
     }
     let side = if ours { "--ours" } else { "--theirs" };
-    run_root(&root, &["checkout", side, "--", &path], OP_TIMEOUT)?;
-    run_root(&root, &["add", "--", &path], OP_TIMEOUT).map(|_| ())
+    run_root(&root, &["checkout", side, "--", &path], OP_TIMEOUT).await?;
+    run_root(&root, &["add", "--", &path], OP_TIMEOUT).await.map(|_| ())
 }
 
 #[tauri::command]
 pub async fn git_merge_abort(dir: String) -> Result<(), String> {
     let root = repo_root(&dir).ok_or_else(|| "not a git repository".to_string())?;
-    run_root(&root, &["merge", "--abort"], OP_TIMEOUT).map(|_| ())
+    run_root(&root, &["merge", "--abort"], OP_TIMEOUT).await.map(|_| ())
 }
 
 #[tauri::command]
 pub async fn git_merge_continue(dir: String) -> Result<(), String> {
     let root = repo_root(&dir).ok_or_else(|| "not a git repository".to_string())?;
-    run_root(&root, &["merge", "--continue"], OP_TIMEOUT).map(|_| ())
+    run_root(&root, &["merge", "--continue"], OP_TIMEOUT).await.map(|_| ())
 }
 
 #[tauri::command]
 pub async fn git_rebase_abort(dir: String) -> Result<(), String> {
     let root = repo_root(&dir).ok_or_else(|| "not a git repository".to_string())?;
-    run_root(&root, &["rebase", "--abort"], OP_TIMEOUT).map(|_| ())
+    run_root(&root, &["rebase", "--abort"], OP_TIMEOUT).await.map(|_| ())
 }
 
 #[tauri::command]
 pub async fn git_rebase_continue(dir: String) -> Result<(), String> {
     let root = repo_root(&dir).ok_or_else(|| "not a git repository".to_string())?;
-    run_root(&root, &["rebase", "--continue"], OP_TIMEOUT).map(|_| ())
-}
-
-#[tauri::command]
-pub async fn git_rebase_skip(dir: String) -> Result<(), String> {
-    let root = repo_root(&dir).ok_or_else(|| "not a git repository".to_string())?;
-    run_root(&root, &["rebase", "--skip"], OP_TIMEOUT).map(|_| ())
-}
-
-#[tauri::command]
-pub async fn git_reset(dir: String, target: String, mode: Option<String>) -> Result<(), String> {
-    let root = repo_root(&dir).ok_or_else(|| "not a git repository".to_string())?;
-    let target = target.trim();
-    if target.is_empty() {
-        return Err("no target".to_string());
-    }
-    let m = mode.unwrap_or_else(|| "mixed".to_string());
-    let flag = match m.as_str() {
-        "soft" => "--soft",
-        "hard" => "--hard",
-        _ => "--mixed",
-    };
-    run_root(&root, &["reset", flag, target], OP_TIMEOUT).map(|_| ())
+    run_root(&root, &["rebase", "--continue"], OP_TIMEOUT).await.map(|_| ())
 }
 
 /// Watch `<root>/.git` and emit `git://changed` (debounced). The frontend also

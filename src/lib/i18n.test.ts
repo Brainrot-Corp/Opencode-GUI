@@ -1,5 +1,5 @@
 // runnable self-check: node --experimental-strip-types src/lib/i18n.test.ts
-import { translate, t, getLang, setLang, DEFAULT_LANG, registerPluginTranslations, LANGUAGES } from "./i18n.ts";
+import { translate, t, getLang, setLang, DEFAULT_LANG, registerPluginTranslations, LANGUAGES, bundles } from "./i18n.ts";
 
 const store = new Map<string, string>();
 (globalThis as any).localStorage = {
@@ -37,6 +37,18 @@ eq("overlay persists", translate("en", "plugins.autoUpdate"), "OVERRIDE");
 
 // --- params without placeholder → unchanged ---
 eq("no placeholders", translate("en", "plugins.autoUpdateTip", { x: 1 }), "When on, plugins update automatically as soon as a newer version is found");
+
+// --- core bundles: en/fr/es must stay in lockstep (same key set) ---
+{
+  const en = Object.keys(bundles.en);
+  for (const lang of ["fr", "es"] as const) {
+    const keys = Object.keys(bundles[lang]);
+    eq(`keys parity ${lang} size`, keys.length === en.length, true);
+    eq(`keys parity ${lang} set`, en.every((k) => k in bundles[lang]) && keys.every((k) => k in bundles.en), true);
+  }
+  eq("all fr keys translate", en.every((k) => translate("fr", k) !== k), true);
+  eq("all es keys translate", en.every((k) => translate("es", k) !== k), true);
+}
 
 // --- t() reads current lang ---
 store.set("oc.language", "es");

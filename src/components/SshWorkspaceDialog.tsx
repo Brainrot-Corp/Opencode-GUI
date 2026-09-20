@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import Dialog from "./Dialog";
+import DialogTabs from "./DialogTabs";
 import { addWorkspace, applyWorkspace } from "../lib/workspace";
 import { ensureRemote, getRemoteKey, setRemoteKey, testRemote } from "../lib/remotes";
 import "../styles/dialog.css";
@@ -203,13 +204,16 @@ export default function SshWorkspaceDialog({
         </div>
       </div>
       {uri && <div className="setting-desc mono-hint" style={{ padding: "2px 0" }}>{uri}</div>}
-      <div className="dlg-tabs" style={{ marginTop: 6 }}>
-        {(["auto", "key", "password"] as const).map((a) => (
-          <button key={a} type="button" className={`dlg-tab${auth === a ? " on" : ""}`} onClick={() => setAuth(a)}>
-            {a === "auto" ? "System ssh" : a === "key" ? "Key file" : "Password"}
-          </button>
-        ))}
-      </div>
+      <DialogTabs
+        style={{ marginTop: 6 }}
+        tabs={[
+          ["auto", "System ssh"],
+          ["key", "Key file"],
+          ["password", "Password"],
+        ] as const}
+        value={auth}
+        onChange={setAuth}
+      />
       {auth === "auto" && (
         <div className="setting-desc" style={{ padding: "2px 0" }}>Uses ~/.ssh/config, keys and ssh-agent. No secrets stored.</div>
       )}

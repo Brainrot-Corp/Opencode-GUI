@@ -14,6 +14,24 @@ export function lastWsKey(): string {
   return windowKey(LAST_WS_BASE);
 }
 
+/** Leaf display name for a workspace dir — `host:leaf` for `ssh://` remotes so
+ * two remotes with the same folder name stay distinct. */
+export function baseName(p: string): string {
+  if (!p) return "Server cwd";
+  if (p.startsWith("ssh://")) {
+    const rest = p.slice("ssh://".length);
+    const i = rest.indexOf("/");
+    const auth = i < 0 ? rest : rest.slice(0, i);
+    const rp = i < 0 ? "" : rest.slice(i).replace(/\/+$/, "");
+    const leaf = rp.slice(rp.lastIndexOf("/") + 1) || "/";
+    const host = auth.includes("@") ? auth.slice(auth.lastIndexOf("@") + 1) : auth;
+    return `${host}:${leaf}`;
+  }
+  const t = p.replace(/[\/\\]+$/, "");
+  const idx = Math.max(t.lastIndexOf("\\"), t.lastIndexOf("/"));
+  return idx >= 0 ? t.slice(idx + 1) : t;
+}
+
 function extrasKey(): string {
   return windowKey(SECONDARY_WS_KEY);
 }

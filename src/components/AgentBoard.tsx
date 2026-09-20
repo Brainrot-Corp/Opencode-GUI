@@ -3,6 +3,8 @@ import type { Session } from "@opencode-ai/sdk/client";
 import type { Msg } from "../types";
 import { playSound } from "../lib/sounds";
 import { formatBinding } from "../lib/hotkeys";
+import { baseName } from "../lib/workspace";
+import { overlayOpen } from "../lib/focus";
 import "../styles/agent-board.css";
 
 type Props = {
@@ -71,13 +73,6 @@ type SimNode = {
   phase: number; // 0..1 offset
 };
 
-function baseName(p: string): string {
-  if (!p) return "Server cwd";
-  const t = p.replace(/[\/\\]+$/, "");
-  const idx = Math.max(t.lastIndexOf("\\"), t.lastIndexOf("/"));
-  return idx >= 0 ? t.slice(idx + 1) : t;
-}
-
 function statusFor(progress: number): SimStatus {
   if (progress < 0.12) return "queued";
   if (progress < 0.88) return "working";
@@ -127,8 +122,7 @@ export default function AgentBoard({ open, onClose, sessions, busyIds, compactin
     const key = (e: KeyboardEvent) => {
       if (e.key === "Escape" && !e.defaultPrevented) {
         // if another overlay is open (dialog/drawer), let it handle Esc
-        const overlay = document.querySelector(".dlg-scrim, .drawer-scrim.open, .ctx-menu, .cmd-menu, .model-menu");
-        if (overlay) return;
+        if (overlayOpen()) return;
         e.preventDefault();
         onCloseRef.current();
       }

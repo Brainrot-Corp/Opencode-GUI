@@ -1,5 +1,4 @@
-import { Children, isValidElement, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { ReactNode } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -7,487 +6,15 @@ import rehypeHighlight from "rehype-highlight";
 import type { Part } from "@opencode-ai/sdk/client";
 import type { Msg } from "../types";
 import { iconFor } from "../lib/attachments";
+import { loadMonaco } from "../lib/monaco";
+import { parseAnsweredSummary } from "../lib/qSummary";
 import ToolBlock from "./ToolBlock";
-import MonacoBlock from "./MonacoBlock";
-import { hlToMonacoLang, loadMonaco } from "../lib/monaco";
-import { stripAnsi } from "../lib/syntax";
+import AnsweredSummary from "./parts/AnsweredSummary";
+import Reasoning, { STREAM_RAW_LIMIT } from "./parts/Reasoning";
+import { extractTaskEntries, SubtaskBlock, TaskMixed } from "./parts/TaskBlocks";
+import { mdComponents } from "./parts/mdParts";
 import "../styles/chat.css";
 import "../styles/find.css";
-
-// "User has answered your questions: "q"="a", ... . You can now continue ..."
-// appears as a synthetic text part after the question tool is answered —
-// render it with the same card+chip language as the ask (q-view/q-card)
-// instead of a raw mono dump. Pairs are extracted via the quoted "q"="a" shape.
-function parseAnsweredSummary(text: string): { q: string; a: string }[] | null {
-  if (!text.trim().startsWith("User has answered your questions:")) return null;
-  const pairs: { q: string; a: string }[] = [];
-  const re = /"([^"]+)"\s*=\s*"([^"]+)"/g;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(text))) pairs.push({ q: m[1], a: m[2] });
-  return pairs.length ? pairs : null;
-}
-
-function AnsweredSummary({ text }: { text: string }) {
-  const pairs = parseAnsweredSummary(text);
-  if (!pairs) return null;
-  return (
-    <div className="q-answered">
-      <div className="q-answered-head mono">
-        <i className="fa-solid fa-circle-check" />
-        User answers
-        <span className="q-answered-count">
-          {pairs.length} {pairs.length === 1 ? "answer" : "answers"}
-        </span>
-      </div>
-      <div className="q-view" style={{ padding: 0 }}>
-        {pairs.map((p, i) => (
-          <div key={i} className="q-card">
-            <div className="q-text">{p.q}</div>
-            <div className="q-opts">
-              <span className="q-chip on">
-                <i className="fa-solid fa-check" />
-                {p.a}
-              </span>
-            </div>
-          </div>
-        ))}
-      </div>
-      <div className="q-answered-foot mono">You can now continue with the user&apos;s answers in mind.</div>
-    </div>
-  );
-}
-
-// <task id="..." state="completed"><task_result>...markdown...</task_result></task>
-// appears as a fenced perl block in text parts. Render it like other tool
-// calls — tool-block chrome with markdown body instead of raw XML/dump.
-const TASK_RE = /(?:```\w*\s*)?<task\b[^>]*>[\s\S]*?<\/task>(?:\s*```)?/gi;
-
-function extractTaskEntries(text: string): { id?: string; state?: string; result: string; raw: string }[] | null {
-  const out: { id?: string; state?: string; result: string; raw: string }[] = [];
-  let m: RegExpExecArray | null;
-  const re = new RegExp(TASK_RE.source, "gi");
-  while ((m = re.exec(text))) {
-    const raw = m[0];
-    const id = raw.match(/\bid\s*=\s*["']([^"']+)["']/)?.[1] ?? raw.match(/\bid\s*=\s*([^\s>]+)/)?.[1];
-    const state = raw.match(/\bstate\s*=\s*["']([^"']+)["']/)?.[1] ?? raw.match(/\bstate\s*=\s*([^\s>]+)/)?.[1];
-    const inner = raw.match(/<task_result>([\s\S]*?)<\/task_result>/i)?.[1]
-      ?? raw.replace(/<task\b[^>]*>/i, "").replace(/<\/task>/i, "").replace(/```\w*\s*/g, "").replace(/```/g, "").trim();
-    out.push({ id, state, result: inner.trim(), raw });
-  }
-  return out.length ? out : null;
-}
-
-function TaskResultBlock({
-  id,
-  state,
-  result,
-  collapsedDefault,
-  taskCosts,
-  onOpenSubagent,
-}: {
-  id?: string;
-  state?: string;
-  result: string;
-  collapsedDefault?: boolean;
-  taskCosts?: Record<string, { cost: number; tokens: number }>;
-  onOpenSubagent?: (id: string | null, part?: any) => void;
-}) {
-  const [manual, setManual] = useState<boolean | null>(null);
-  const isErr = state === "failed" || state === "error";
-  const open = manual ?? (isErr || !collapsedDefault);
-  const [copied, setCopied] = useState(false);
-  const doCopy = () => {
-    if (!result.trim()) return;
-    navigator.clipboard.writeText(result).then(
-      () => {
-        setCopied(true);
-        setTimeout(() => setCopied(false), 1200);
-      },
-      () => {},
-    );
-  };
-  const shortId = id ? (id.length > 20 ? `${id.slice(0, 8)}…${id.slice(-4)}` : id) : "";
-  return (
-    <div className={`tool-block task-result ${state ?? ""}${open ? " open" : ""}${isErr ? " error" : ""}`}>
-      <div
-        role="button"
-        tabIndex={0}
-        className="tool-head mono"
-        onClick={() => setManual(!open)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" || e.key === " ") {
-            e.preventDefault();
-            setManual(!open);
-          }
-        }}
-      >
-        <i
-          className={`fa-solid ${isErr ? "fa-triangle-exclamation" : state === "completed" ? "fa-circle-check" : "fa-diagram-project"} tool-ico`}
-        />
-        <span className="tool-name">task</span>
-        {shortId &&
-          (id && onOpenSubagent ? (
-            <button
-              type="button"
-              className="tool-title link"
-              data-tip={`Open subagent transcript ${id}`}
-              aria-label="Open subagent transcript"
-              onClick={(e) => {
-                e.stopPropagation();
-                onOpenSubagent(id);
-              }}
-            >
-              {shortId}
-              <i className="fa-solid fa-arrow-up-right-from-square" style={{ marginLeft: 6 }} />
-            </button>
-          ) : (
-            <span className="tool-title" data-tip={id}>
-              {shortId}
-            </span>
-          ))}
-        {state && (
-          <span className="tool-stat mono">
-            <em className={isErr ? "del" : ""}>{state}</em>
-          </span>
-        )}
-        {(() => {
-          const tc = id ? taskCosts?.[id] : null;
-          if (!tc || (!tc.cost && !tc.tokens)) return null;
-          const tok = tc.tokens ? fmtTok(tc.tokens) : "";
-          return (
-            <span className="tool-cost mono" data-tip={`${tc.tokens.toLocaleString()} tokens${tc.cost ? ` · $${tc.cost.toFixed(4)}` : ""}`}>
-              {tok && `${tok} tok`}
-              {tok && tc.cost ? " · " : ""}
-              {tc.cost ? `$${tc.cost.toFixed(4)}` : ""}
-            </span>
-          );
-        })()}
-        <span style={{ flex: 1 }} />
-        {result.trim() && (
-          <button
-            type="button"
-            className="tool-eye"
-            data-tip={copied ? "Copied" : "Copy result"}
-            aria-label="Copy task result"
-            onClick={(e) => {
-              e.stopPropagation();
-              doCopy();
-            }}
-          >
-            <i className={`fa-solid ${copied ? "fa-check" : "fa-copy"}`} />
-          </button>
-        )}
-        <button
-          type="button"
-          className="tool-eye"
-          data-tip={open ? "Collapse" : "Expand"}
-          aria-label={open ? "Collapse" : "Expand"}
-          onClick={(e) => {
-            e.stopPropagation();
-            setManual(!open);
-          }}
-        >
-          <i className={`fa-solid ${open ? "fa-eye" : "fa-eye-slash"}`} />
-        </button>
-      </div>
-      {open && (
-        <div className="tool-body mono">
-          {result.trim() ? (
-            <div className="task-report">
-              <Markdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]} components={mdComponents}>
-                {result}
-              </Markdown>
-            </div>
-          ) : (
-            <span className="part-note mono" style={{ opacity: 0.6 }}>
-              no result
-            </span>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function TaskMixed({ text, collapsedDefault, taskCosts, onOpenSubagent }: { text: string; collapsedDefault: boolean; taskCosts?: Record<string, { cost: number; tokens: number }>; onOpenSubagent?: (id: string | null, part?: any) => void }) {
-  const parts: React.ReactNode[] = [];
-  let last = 0;
-  let idx = 0;
-  const re = new RegExp(TASK_RE.source, "gi");
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(text))) {
-    const before = text.slice(last, m.index);
-    if (before.trim()) {
-      parts.push(
-        <Markdown
-          key={`pre-${idx++}`}
-          remarkPlugins={[remarkGfm]}
-          rehypePlugins={[rehypeHighlight]}
-          components={mdComponents}
-        >
-          {before}
-        </Markdown>,
-      );
-    }
-    const raw = m[0];
-    const id = raw.match(/\bid\s*=\s*["']([^"']+)["']/)?.[1] ?? raw.match(/\bid\s*=\s*([^\s>]+)/)?.[1];
-    const state = raw.match(/\bstate\s*=\s*["']([^"']+)["']/)?.[1] ?? raw.match(/\bstate\s*=\s*([^\s>]+)/)?.[1];
-    const result =
-      raw.match(/<task_result>([\s\S]*?)<\/task_result>/i)?.[1]?.trim() ??
-      raw.replace(/<task\b[^>]*>/i, "").replace(/<\/task>/i, "").replace(/```\w*\s*/g, "").replace(/```/g, "").trim();
-    parts.push(
-      <TaskResultBlock
-        key={`task-${idx++}`}
-        id={id}
-        state={state}
-        result={result}
-        collapsedDefault={collapsedDefault}
-        taskCosts={taskCosts}
-        onOpenSubagent={onOpenSubagent}
-      />,
-    );
-    last = re.lastIndex;
-  }
-  const after = text.slice(last);
-  if (after.trim()) {
-    parts.push(
-      <Markdown
-        key={`post-${idx++}`}
-        remarkPlugins={[remarkGfm]}
-        rehypePlugins={[rehypeHighlight]}
-        components={mdComponents}
-      >
-        {after}
-      </Markdown>,
-    );
-  }
-  return <>{parts}</>;
-}
-
-function SubtaskBlock({ part, collapsedDefault, onOpenSubagent }: { part: any; collapsedDefault: boolean; onOpenSubagent?: (id: string | null, part?: any) => void }) {
-  const [manual, setManual] = useState<boolean | null>(null);
-  const prompt: string = typeof part.prompt === "string" ? part.prompt : "";
-  const desc: string = typeof part.description === "string" ? part.description : "";
-  const name: string = part.name ?? part.agent ?? "agent";
-  const isSub = part.type === "subtask";
-  const hasBody = !!prompt.trim();
-  const open = manual ?? (!collapsedDefault && hasBody);
-  return (
-    <div className={`tool-block subtask${open ? " open" : ""}`}>
-      <div
-        role="button"
-        tabIndex={0}
-        className="tool-head mono"
-        onClick={() => hasBody && setManual(!open)}
-        onKeyDown={(e) => {
-          if (!hasBody) return;
-          if (e.key === "Enter" || e.key === " ") {
-            e.preventDefault();
-            setManual(!open);
-          }
-        }}
-        style={!hasBody ? { cursor: "default" } : undefined}
-      >
-        <i className="fa-solid fa-diagram-project tool-ico" />
-        <span className="tool-name">{isSub ? "subtask" : "agent"}</span>
-        <span className="tool-title">{name}</span>
-        {desc && (
-          <span className="tool-title" style={{ opacity: 0.65 }}>
-            — {desc}
-          </span>
-        )}
-        {onOpenSubagent && (
-          <button
-            type="button"
-            className="tool-eye"
-            data-tip="Open subagent transcript"
-            aria-label="Open subagent transcript"
-            onClick={(e) => {
-              e.stopPropagation();
-              onOpenSubagent(null, part);
-            }}
-          >
-            <i className="fa-solid fa-arrow-up-right-from-square" />
-          </button>
-        )}
-        {hasBody && (
-          <button
-            type="button"
-            className="tool-eye"
-            data-tip={open ? "Collapse" : "Expand"}
-            aria-label={open ? "Collapse" : "Expand"}
-            onClick={(e) => {
-              e.stopPropagation();
-              setManual(!open);
-            }}
-          >
-            <i className={`fa-solid ${open ? "fa-eye" : "fa-eye-slash"}`} />
-          </button>
-        )}
-      </div>
-      {open && hasBody && (
-        <div className="tool-body mono">
-          <div className="task-report" style={{ whiteSpace: "pre-wrap" }}>
-            {prompt}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// markdown helpers shared by the pre renderer below
-function codeText(node: ReactNode): string {
-  let out = "";
-  Children.forEach(node, (c) => {
-    if (typeof c === "string" || typeof c === "number") out += String(c);
-    else if (isValidElement(c)) out += codeText((c.props as any).children);
-  });
-  return out;
-}
-// rehype-highlight tags the <code> with language-<id> (highlight.js ids)
-function codeLang(node: ReactNode): string | undefined {
-  const kids = Children.toArray(node);
-  for (const c of kids) {
-    if (!isValidElement(c)) continue;
-    if (c.type === "code") {
-      const m = /language-([\w-]+)/.exec((c.props as any).className ?? "");
-      if (m) return m[1];
-    }
-    const nested = codeLang((c.props as any).children);
-    if (nested) return nested;
-  }
-  return undefined;
-}
-
-// fenced code block with a fast copy button — Monaco rendering under the
-// same .code-wrap chrome; copy uses the raw source so rendered markup (or
-// monaco's gutter) can never corrupt it. Untagged fences stay plaintext,
-// exactly like the old rehype-only rendering. Monaco editors are heavy (one
-// per fence), so the editor only mounts once the block nears the viewport —
-// huge histories mount <pre> placeholders until scrolled to.
-function CodePre(props: { children?: ReactNode }) {
-  const { children } = props;
-  // strip terminal escapes: <pre> swallowed them invisibly, Monaco would
-  // draw them as glyphs; copy matches what's seen
-  const text = stripAnsi(codeText(children));
-  const lang = hlToMonacoLang(codeLang(children));
-  const [copied, setCopied] = useState(false);
-  const [near, setNear] = useState(false);
-  const boxRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (near) return;
-    const el = boxRef.current;
-    if (!el) return;
-    if (typeof IntersectionObserver === "undefined") {
-      setNear(true);
-      return;
-    }
-    const io = new IntersectionObserver(
-      (es) => {
-        if (es.some((e) => e.isIntersecting)) {
-          setNear(true);
-          io.disconnect();
-        }
-      },
-      // upgrade ahead of the viewport so the editor is ready on arrival
-      { rootMargin: "800px" },
-    );
-    io.observe(el);
-    return () => io.disconnect();
-  }, [near]);
-  const copy = () => {
-    navigator.clipboard.writeText(text).then(
-      () => {
-        setCopied(true);
-        setTimeout(() => setCopied(false), 1200);
-      },
-      () => {},
-    );
-  };
-  return (
-    <div className="code-wrap" ref={boxRef}>
-      <button
-        type="button"
-        className="copy-btn"
-        data-tip={copied ? "Copied" : "Copy"}
-        aria-label="Copy code"
-        onClick={copy}
-      >
-        <i className={`fa-solid ${copied ? "fa-check" : "fa-copy"}`} />
-      </button>
-      {near ? (
-        <MonacoBlock
-          value={text}
-          language={lang}
-          fontSize={12.5}
-          lineHeight={21}
-          padTop={12}
-          padBottom={12}
-          leftPad={14}
-          className="code-mono"
-          fallback={<pre>{text}</pre>}
-        />
-      ) : (
-        <pre>{text}</pre>
-      )}
-    </div>
-  );
-}
-
-const mdComponents = {
-  pre: CodePre,
-  // wide tables scroll inside their own wrapper — never force a horizontal
-  // scrollbar onto the whole history list
-  table: ({ node: _node, children, ...rest }: any) => (
-    <div className="md-table">
-      <table {...rest}>{children}</table>
-    </div>
-  ),
-};
-
-// one reasoning block — per-message visibility: the brain icon toggles THIS
-// block only; /collapse flips the default for blocks not manually toggled
-function Reasoning({ part, defaultOpen, streaming }: { part: Part; defaultOpen: boolean; streaming?: boolean }) {
-  const [manual, setManual] = useState<boolean | null>(null);
-  const open = manual ?? defaultOpen;
-  const t = (part as any).text ?? "";
-  if (!t.trim()) return null;
-  return (
-    <div className={`reasoning${open ? " open" : ""}`}>
-      <button
-        type="button"
-        className="reasoning-toggle"
-        data-tip={open ? "Hide thinking for this message" : "Show thinking for this message"}
-        onClick={() => setManual(!open)}
-      >
-        <i className="fa-solid fa-brain" />
-        {!open && <span className="reasoning-label">thinking</span>}
-      </button>
-      {/* same markdown+highlight pipeline as replies so fenced code in the
-          thinking stream gets colored instead of flat grey */}
-      {open && (
-        <div className="reasoning-body">
-          {streaming && t.length > STREAM_RAW_LIMIT ? (
-            <pre className="stream-raw">{t}</pre>
-          ) : (
-            <Markdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]} components={mdComponents}>
-              {t}
-            </Markdown>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// past this length a still-streaming part renders as plain text instead of
-// re-running markdown+highlight every delta (final render on completion)
-const STREAM_RAW_LIMIT = 12000;
-
-function fmtTok(n: number) {
-  return n >= 1000 ? `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k` : `${n}`;
-}
 
 function fmtTime(ts?: number): string {
   if (!ts) return "";
@@ -513,6 +40,29 @@ function fmtFull(ts?: number): string {
   return d.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "medium" } as any);
 }
 
+// does this part produce visible output? — single source shared by
+// renderPart's early return and rowVisible's row-skip so the two can't drift
+function partVisible(p: any): boolean {
+  switch (p.type) {
+    case "text":
+      return !!(p.text ?? "").trim();
+    case "file":
+      return true;
+    case "step-finish": {
+      const tk = p.tokens ?? {};
+      return !!((tk.input ?? 0) + (tk.output ?? 0) + (tk.reasoning ?? 0)) || !!p.cost;
+    }
+    case "patch":
+      return !!(p.files ?? []).length;
+    default:
+      return ["reasoning", "tool", "retry", "compaction", "agent", "subtask"].includes(p.type);
+  }
+}
+
+function fmtTok(n: number) {
+  return n >= 1000 ? `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k` : `${n}`;
+}
+
 function renderPart(
   part: Part,
   key: number,
@@ -523,116 +73,115 @@ function renderPart(
   streaming?: boolean,
   onOpenSubagent?: (id: string | null, part?: any) => void,
 ) {
-  if (part.type === "text") {
-    const t = (part as any).text ?? "";
-    if (!t.trim()) return null;
-    // a still-growing giant document re-parses markdown + highlight every
-    // delta — swap to plain text past the cap (final markdown renders once
-    // the message completes)
-    if (streaming && t.length > STREAM_RAW_LIMIT) {
+  if (!partVisible(part)) return null;
+  const idKey = (part as any).id || key;
+  switch (part.type) {
+    case "text": {
+      const t = (part as any).text ?? "";
+      // a still-growing giant document re-parses markdown + highlight every
+      // delta — swap to plain text past the cap (final markdown renders once
+      // the message completes)
+      if (streaming && t.length > STREAM_RAW_LIMIT) {
+        return (
+          <pre key={key} className="stream-raw">
+            {t}
+          </pre>
+        );
+      }
+      if (parseAnsweredSummary(t)) return <AnsweredSummary key={key} text={t} />;
+      // agent final reports land as fenced <task> XML — render them in the
+      // same collapsible tool-block chrome instead of raw code dump
+      if (/<task\b/i.test(t) && extractTaskEntries(t)) {
+        return <TaskMixed key={key} text={t} collapsedDefault={!!collapsedDefault} taskCosts={taskCosts} onOpenSubagent={onOpenSubagent} />;
+      }
       return (
-        <pre key={key} className="stream-raw">
+        <Markdown key={key} remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]} components={mdComponents}>
           {t}
-        </pre>
+        </Markdown>
       );
     }
-    if (parseAnsweredSummary(t)) return <AnsweredSummary key={key} text={t} />;
-    // agent final reports land as fenced <task> XML — render them in the
-    // same collapsible tool-block chrome instead of raw code dump
-    if (/<task\b/i.test(t) && extractTaskEntries(t)) {
-      return <TaskMixed key={key} text={t} collapsedDefault={!!collapsedDefault} taskCosts={taskCosts} onOpenSubagent={onOpenSubagent} />;
-    }
-    return (
-      <Markdown key={key} remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]} components={mdComponents}>
-        {t}
-      </Markdown>
-    );
-  }
-  if (part.type === "reasoning") {
-    return <Reasoning key={(part as any).id || key} part={part} defaultOpen={!collapsedDefault} streaming={streaming} />;
-  }
-  if (part.type === "tool") {
-    return <ToolBlock key={(part as any).id || key} part={part} collapsedDefault={!!collapsedDefault} taskCosts={taskCosts} dir={partDir} onOpenSubagent={onOpenSubagent} />;
-  }
-  if (part.type === "step-finish") {
-    const sf = part as any;
-    const tk = sf.tokens ?? {};
-    const total = (tk.input ?? 0) + (tk.output ?? 0) + (tk.reasoning ?? 0);
-    // an empty step (no tokens, no cost) is noise — hide it
-    if (!total && !sf.cost) return null;
-    return (
-      <div key={key} className="part-note mono">
-        <i className="fa-solid fa-shoe-prints" />
-        step · {fmtTok(total)} tok
-        {sf.cost > 0 && ` · $${sf.cost.toFixed(4)}`}
-      </div>
-    );
-  }
-  if (part.type === "retry") {
-    const r = part as any;
-    return (
-      <div key={key} className="part-note retry mono">
-        <i className="fa-solid fa-rotate-right" />
-        retrying (attempt {r.attempt})
-        {r.error?.message ? ` — ${r.error.message}` : ""}
-      </div>
-    );
-  }
-  if (part.type === "compaction") {
-    const c = part as any;
-    return (
-      <div key={key} className="part-note mono">
-        <i className="fa-solid fa-compress" />
-        context compacted{c.auto ? "" : " (manual)"}
-      </div>
-    );
-  }
-  if (part.type === "patch") {
-    const pt = part as any;
-    const files: string[] = pt.files ?? [];
-    if (!files.length) return null;
-    return (
-      <div key={key} className="patch-line">
-        <i className="fa-solid fa-code-pull-request" />
-        changed:
-        {files.map((f) => (
-          <span key={f} className="mono patch-file" data-tip={f}>
-            {f.split(/[\\/]/).pop()}
-          </span>
-        ))}
-      </div>
-    );
-  }
-  if (part.type === "agent" || part.type === "subtask") {
-    return <SubtaskBlock key={(part as any).id || key} part={part as any} collapsedDefault={!!collapsedDefault} onOpenSubagent={onOpenSubagent} />;
-  }
-  if (part.type === "file") {
-    const f = part as any;
-    const url: string = f.url ?? "";
-    const mime: string = f.mime ?? "";
-    const name = f.filename || "file";
-    if (mime.startsWith("image/") && url)
+    case "reasoning":
+      return <Reasoning key={idKey} part={part} defaultOpen={!collapsedDefault} streaming={streaming} />;
+    case "tool":
+      return <ToolBlock key={idKey} part={part} collapsedDefault={!!collapsedDefault} taskCosts={taskCosts} dir={partDir} onOpenSubagent={onOpenSubagent} />;
+    case "step-finish": {
+      const sf = part as any;
+      const tk = sf.tokens ?? {};
+      const total = (tk.input ?? 0) + (tk.output ?? 0) + (tk.reasoning ?? 0);
       return (
-        <img
-          key={key}
-          className="file-img"
-          src={url}
-          alt={name}
-          loading="lazy"
-          data-tip="Click to expand"
-          onClick={() => onImage?.(url)}
-        />
+        <div key={key} className="part-note mono">
+          <i className="fa-solid fa-shoe-prints" />
+          step · {fmtTok(total)} tok
+          {sf.cost > 0 && ` · $${sf.cost.toFixed(4)}`}
+        </div>
       );
-    if (mime.startsWith("video/") && url)
-      return <video key={key} className="file-video" src={url} controls preload="metadata" />;
-    return (
-      <div key={key} className="file-chip mono">
-        <i className={`fa-solid ${iconFor(mime)}`} />
-        {name}
-      </div>
-    );
+    }
+    case "retry": {
+      const r = part as any;
+      return (
+        <div key={key} className="part-note retry mono">
+          <i className="fa-solid fa-rotate-right" />
+          retrying (attempt {r.attempt})
+          {r.error?.message ? ` — ${r.error.message}` : ""}
+        </div>
+      );
+    }
+    case "compaction": {
+      const c = part as any;
+      return (
+        <div key={key} className="part-note mono">
+          <i className="fa-solid fa-compress" />
+          context compacted{c.auto ? "" : " (manual)"}
+        </div>
+      );
+    }
+    case "patch": {
+      const pt = part as any;
+      const files: string[] = pt.files ?? [];
+      return (
+        <div key={key} className="patch-line">
+          <i className="fa-solid fa-code-pull-request" />
+          changed:
+          {files.map((f) => (
+            <span key={f} className="mono patch-file" data-tip={f}>
+              {f.split(/[\\/]/).pop()}
+            </span>
+          ))}
+        </div>
+      );
+    }
+    case "agent":
+    case "subtask":
+      return <SubtaskBlock key={idKey} part={part as any} collapsedDefault={!!collapsedDefault} onOpenSubagent={onOpenSubagent} />;
+    case "file": {
+      const f = part as any;
+      const url: string = f.url ?? "";
+      const mime: string = f.mime ?? "";
+      const name = f.filename || "file";
+      if (mime.startsWith("image/") && url)
+        return (
+          <img
+            key={key}
+            className="file-img"
+            src={url}
+            alt={name}
+            loading="lazy"
+            data-tip="Click to expand"
+            onClick={() => onImage?.(url)}
+          />
+        );
+      if (mime.startsWith("video/") && url)
+        return <video key={key} className="file-video" src={url} controls preload="metadata" />;
+      return (
+        <div key={key} className="file-chip mono">
+          <i className={`fa-solid ${iconFor(mime)}`} />
+          {name}
+        </div>
+      );
+    }
+    default:
+      return null;
   }
-  return null;
 }
 
 // human-readable text from a NamedError-shaped message error
@@ -640,29 +189,15 @@ function errText(err: any): string {
   return err?.data?.message || err?.message || err?.name || "unknown error";
 }
 
-// cheap row-visibility check mirroring renderPart's null branches — without
-// building throwaway elements (the old .some(renderPart(…)) rendered every
-// message on every pass just to decide what to skip)
+// cheap row-visibility check — shares partVisible with renderPart's null
+// branches, so a rendered-but-empty row and a skipped row can never drift
+// apart (the old .some(renderPart(…)) rendered every message on every pass
+// just to decide what to skip)
 function rowVisible(m: Msg): boolean {
   if (m.info.role === "user") return true;
   const err = m.info.role === "assistant" ? (m.info as any).error : null;
   if (err && err.name !== "MessageAbortedError") return true;
-  return m.parts.some((p: any) => {
-    switch (p.type) {
-      case "text":
-        return !!(p.text ?? "").trim();
-      case "file":
-        return true;
-      case "step-finish": {
-        const tk = p.tokens ?? {};
-        return !!((tk.input ?? 0) + (tk.output ?? 0) + (tk.reasoning ?? 0)) || !!p.cost;
-      }
-      case "patch":
-        return !!(p.files ?? []).length;
-      default:
-        return ["reasoning", "tool", "retry", "compaction", "agent", "subtask"].includes(p.type);
-    }
-  });
+  return m.parts.some((p: any) => partVisible(p));
 }
 
 // history rows beyond the initial tail mount as a 44px skeleton and upgrade to
@@ -1336,69 +871,77 @@ export default function MessageList({
   // Gated on findOpen: while closed, msgs churn would still make the clear
   // pass scan the whole message DOM every streaming frame. Close cleans up
   // via oc:chat-find-clear instead.
+  // The DOM walk is trailing-debounced 150ms (mirrors GitPanel's
+  // scheduleRefresh): while find is open, every streaming delta re-fires
+  // this effect and re-walks the entire rendered tree — coalesce to one
+  // rebuild per 150ms pause instead. Clear + rebuild happen together in the
+  // trailing pass; next/prev/cur/wrap semantics inside the walk are unchanged.
   useEffect(() => {
     const root = listRef.current;
     if (!root) return;
     if (!findOpen) return;
-    // clear previous highlights
-    root.querySelectorAll(".find-hit").forEach((el) => {
-      const p = el.parentNode as HTMLElement | null;
-      if (!p) return;
-      const text = el.textContent ?? "";
-      p.replaceChild(document.createTextNode(text), el);
-      p.normalize();
-    });
-    if (!findOpen || !findQuery) {
-      onFindHits?.(0);
-      return;
-    }
-    const query = findQuery;
-    const lowerQuery = findCase ? query : query.toLowerCase();
-    const hits: HTMLElement[] = [];
-    let globalIdx = 0;
-    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
-      acceptNode: (node) => {
-        const parent = node.parentElement as HTMLElement | null;
-        if (!parent) return NodeFilter.FILTER_REJECT;
-        if (parent.closest(".find-hit, .copy-btn, .rewind, .fork, .jump-bottom, .chat-find, .img-lightbox, .reasoning-toggle")) return NodeFilter.FILTER_REJECT;
-        if (!node.nodeValue || !node.nodeValue.trim()) return NodeFilter.FILTER_REJECT;
-        return NodeFilter.FILTER_ACCEPT;
-      },
-    });
-    const textNodes: Text[] = [];
-    let n: Text | null;
-    while ((n = walker.nextNode() as Text | null)) textNodes.push(n);
-    for (const textNode of textNodes) {
-      const text = textNode.nodeValue ?? "";
-      const hay = findCase ? text : text.toLowerCase();
-      let pos = hay.indexOf(lowerQuery);
-      if (pos === -1) continue;
-      const frag = document.createDocumentFragment();
-      let last = 0;
-      let idx = pos;
-      while (idx !== -1) {
-        frag.appendChild(document.createTextNode(text.slice(last, idx)));
-        const span = document.createElement("span");
-        span.className = globalIdx === (findCur ?? 0) ? "find-hit active" : "find-hit";
-        span.textContent = text.slice(idx, idx + query.length);
-        frag.appendChild(span);
-        hits.push(span);
-        globalIdx++;
-        last = idx + query.length;
-        idx = hay.indexOf(lowerQuery, last);
+    const t = window.setTimeout(() => {
+      // clear previous highlights
+      root.querySelectorAll(".find-hit").forEach((el) => {
+        const p = el.parentNode as HTMLElement | null;
+        if (!p) return;
+        const text = el.textContent ?? "";
+        p.replaceChild(document.createTextNode(text), el);
+        p.normalize();
+      });
+      if (!findOpen || !findQuery) {
+        onFindHits?.(0);
+        return;
       }
-      frag.appendChild(document.createTextNode(text.slice(last)));
-      textNode.parentNode?.replaceChild(frag, textNode);
-    }
-    onFindHits?.(hits.length);
-    if (hits.length) {
-      const cur = ((findCur ?? 0) % hits.length + hits.length) % hits.length;
-      const active = hits[cur];
-      // find navigates the reader on purpose — never let a tail snap drag
-      // them back while they inspect a hit
-      stick.current = false;
-      active?.scrollIntoView({ block: "center", behavior: "smooth" });
-    }
+      const query = findQuery;
+      const lowerQuery = findCase ? query : query.toLowerCase();
+      const hits: HTMLElement[] = [];
+      let globalIdx = 0;
+      const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+        acceptNode: (node) => {
+          const parent = node.parentElement as HTMLElement | null;
+          if (!parent) return NodeFilter.FILTER_REJECT;
+          if (parent.closest(".find-hit, .copy-btn, .rewind, .fork, .jump-bottom, .chat-find, .img-lightbox, .reasoning-toggle")) return NodeFilter.FILTER_REJECT;
+          if (!node.nodeValue || !node.nodeValue.trim()) return NodeFilter.FILTER_REJECT;
+          return NodeFilter.FILTER_ACCEPT;
+        },
+      });
+      const textNodes: Text[] = [];
+      let n: Text | null;
+      while ((n = walker.nextNode() as Text | null)) textNodes.push(n);
+      for (const textNode of textNodes) {
+        const text = textNode.nodeValue ?? "";
+        const hay = findCase ? text : text.toLowerCase();
+        let pos = hay.indexOf(lowerQuery);
+        if (pos === -1) continue;
+        const frag = document.createDocumentFragment();
+        let last = 0;
+        let idx = pos;
+        while (idx !== -1) {
+          frag.appendChild(document.createTextNode(text.slice(last, idx)));
+          const span = document.createElement("span");
+          span.className = globalIdx === (findCur ?? 0) ? "find-hit active" : "find-hit";
+          span.textContent = text.slice(idx, idx + query.length);
+          frag.appendChild(span);
+          hits.push(span);
+          globalIdx++;
+          last = idx + query.length;
+          idx = hay.indexOf(lowerQuery, last);
+        }
+        frag.appendChild(document.createTextNode(text.slice(last)));
+        textNode.parentNode?.replaceChild(frag, textNode);
+      }
+      onFindHits?.(hits.length);
+      if (hits.length) {
+        const cur = ((findCur ?? 0) % hits.length + hits.length) % hits.length;
+        const active = hits[cur];
+        // find navigates the reader on purpose — never let a tail snap drag
+        // them back while they inspect a hit
+        stick.current = false;
+        active?.scrollIntoView({ block: "center", behavior: "smooth" });
+      }
+    }, 150);
+    return () => window.clearTimeout(t);
   }, [findOpen, findQuery, findCase, findCur, msgs, onFindHits]);
 
   // clear chat find when requested (ChatPage close)

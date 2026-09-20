@@ -251,10 +251,6 @@ export function useProviders(activeId: string) {
     setDefaultModel((prev) => (prev === resolved ? prev : resolved));
   }, []);
 
-  const markExplicit = useCallback(() => {
-    sentExplicitModel.current = !!modelSel;
-  }, [modelSel]);
-
   // record (or clear) which model a session last used. written ONLY from
   // the picker path (user hand action); "" clears (that session follows the
   // instance global again). nothing automatic touches the map
@@ -628,7 +624,6 @@ export function useProviders(activeId: string) {
     defaultModel,
     learnDefault,
     sentExplicitModel,
-    markExplicit,
     loadProviders,
     loadProvidersAll,
     isModelOn,

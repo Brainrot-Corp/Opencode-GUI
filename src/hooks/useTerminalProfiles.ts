@@ -55,12 +55,6 @@ export function fetchTerminalProfiles(force = false): Promise<TerminalProfile[]>
   return pending;
 }
 
-export function invalidateTerminalProfiles() {
-  cache = null;
-  err = null;
-  notify();
-}
-
 export function useTerminalProfiles() {
   const v = useSyncExternalStore(subscribe, getVersion, getVersion);
   void v; // trigger re-render on version change

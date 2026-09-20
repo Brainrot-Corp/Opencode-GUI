@@ -228,6 +228,18 @@ build_one() {
     fi
 }
 
+# zip <entry> from <dir> into <archive> — Git Bash often has no zip, fall back
+# to PowerShell's Compress-Archive on Windows (native Compress-Archive path)
+zip_dir() {
+    if command -v zip >/dev/null 2>&1; then
+        (cd "$2" && zip -qr "$1" "$3")
+    elif [ "$IS_WINDOWS" = true ]; then
+        powershell.exe -NoProfile -Command "Compress-Archive -Path '$(cygpath -m "$PWD/$2")/$3' -DestinationPath '$(cygpath -m "$PWD/$1")' -Force"
+    else
+        (cd "$2" && tar -czf "$1.tar.gz" "$3")
+    fi
+}
+
 case "${CMD}" in
     setup)
         ensure_rust
@@ -286,7 +298,7 @@ case "${CMD}" in
                 mkdir -p "$out/OpenCode"
                 cp "$rel/opencode-gui.exe" "$out/OpenCode/" 2>/dev/null || cp "$rel/opencode-gui" "$out/OpenCode/" 2>/dev/null || true
                 if [ -f "$rel/opencode.exe" ]; then cp "$rel/opencode.exe" "$out/OpenCode/"; elif [ -f "$rel/opencode" ]; then cp "$rel/opencode" "$out/OpenCode/"; elif [ -f "$SIDECAR" ]; then cp "$SIDECAR" "$out/OpenCode/opencode.exe" 2>/dev/null || cp "$SIDECAR" "$out/OpenCode/opencode" 2>/dev/null || true; fi
-                (cd "$out" && zip -qr "opencode-gui-$t-x64.zip" OpenCode)
+                zip_dir "opencode-gui-$t-x64.zip" "$out" OpenCode
                 echo ">> portable [$t]: $out/opencode-gui-$t-x64.zip"
                 ls -lh "$out/opencode-gui-$t-x64.zip" 2>/dev/null || true
             else

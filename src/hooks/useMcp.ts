@@ -3,7 +3,8 @@
 // servers from other OS windows (separate processes) are never fetched.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { opencodeFor, withDeadline } from "../api";
+import { withDeadline } from "../api";
+import { apiErr, getClientFor } from "../lib/apiErr";
 import { getAllWorkspaces } from "../lib/workspace";
 import { setMcpEnabled } from "../lib/mcpConfig";
 
@@ -52,10 +53,7 @@ const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 // opencodeFor has no deadline of its own — a dead SSH workspace dial would
 // hang one dir (and, via Promise.all, the whole dialog) indefinitely. The
 // second load then looks "faster" only because of the 15s negative dial cache.
-async function getClient(dir: string) {
-  const { client } = await withDeadline(opencodeFor(dir), 15_000, "mcp workspace");
-  return client;
-}
+const getClient = (dir: string) => getClientFor(dir, "mcp workspace");
 
 async function fetchCore(dir: string): Promise<McpDirState> {
   try {
@@ -96,17 +94,6 @@ async function fetchDir(dir: string): Promise<McpDirState> {
   const core = await fetchCore(dir);
   if (core.error) return core;
   return { ...core, tools: await fetchTools(dir) };
-}
-
-function apiErr(r: unknown, fallback: string): string {
-  const e = (r as any)?.error;
-  if (!e) return "";
-  if (typeof e === "string") return e;
-  try {
-    return (e as any)?.message ?? (e as any)?.data?.message ?? JSON.stringify(e);
-  } catch {
-    return fallback;
-  }
 }
 
 // persist the flag in <workspace>/opencode.jsonc — the server only honors

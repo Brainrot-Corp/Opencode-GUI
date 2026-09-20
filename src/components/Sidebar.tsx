@@ -5,7 +5,7 @@ import { playSound } from "../lib/sounds";
 import { useContextMenu } from "../hooks/useContextMenu";
 import { clipboardWrite } from "../lib/clipboard";
 import { getDirectory, opencodeFor } from "../api";
-import { addWorkspace, getAllWorkspaces, removeWorkspace, reorderWorkspaces, touchWorkspace } from "../lib/workspace";
+import { addWorkspace, baseName, getAllWorkspaces, removeWorkspace, reorderWorkspaces, touchWorkspace } from "../lib/workspace";
 import { normWorkspace } from "../lib/platform";
 import { isRemoteDir, remoteLabel } from "../lib/remotes";
 import SshWorkspaceDialog from "./SshWorkspaceDialog";
@@ -45,22 +45,6 @@ function getWsCollapsed(tab: "chats" | "files"): Record<string, boolean> {
 function setWsCollapsed(tab: "chats" | "files", map: Record<string, boolean>) {
   try { localStorage.setItem(WS_COLLAPSED_PREFIX + tab, JSON.stringify(map)); } catch {}
 }
-function baseName(p: string): string {
-  if (!p) return "Server cwd";
-  if (p.startsWith("ssh://")) {
-    // `host:leaf` so two remotes with the same folder name stay distinct
-    const rest = p.slice("ssh://".length);
-    const i = rest.indexOf("/");
-    const auth = i < 0 ? rest : rest.slice(0, i);
-    const rp = i < 0 ? "" : rest.slice(i).replace(/\/+$/, "");
-    const leaf = rp.slice(rp.lastIndexOf("/") + 1) || "/";
-    const host = auth.includes("@") ? auth.slice(auth.lastIndexOf("@") + 1) : auth;
-    return `${host}:${leaf}`;
-  }
-  const t = p.replace(/[\/\\]+$/, "");
-  const idx = Math.max(t.lastIndexOf("\\"), t.lastIndexOf("/"));
-  return idx >= 0 ? t.slice(idx + 1) : t;
-}
 
 export default memo(function Sidebar({
   sessions,
@@ -96,7 +80,8 @@ export default memo(function Sidebar({
   attentionIds?: Set<string>;
   attentionKinds?: Record<string, "permission" | "question" | "both">;
   queueCounts?: Record<string, number>;
-  width: number;
+  /** legacy: declared but unused; still passed at ChatPage.tsx:1323 — drop both together */
+  width?: number;
   collapsed: boolean;
   loading?: boolean;
   resizing?: boolean;

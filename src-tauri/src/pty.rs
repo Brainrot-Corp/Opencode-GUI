@@ -32,27 +32,7 @@ fn parse_shell_args(raw: Option<String>) -> Vec<String> {
         Some(v) if !v.trim().is_empty() => v,
         _ => return Vec::new(),
     };
-    let mut out = Vec::new();
-    let mut cur = String::new();
-    let mut in_single = false;
-    let mut in_double = false;
-    for ch in s.chars() {
-        match ch {
-            '\'' if !in_double => in_single = !in_single,
-            '"' if !in_single => in_double = !in_double,
-            ' ' | '\t' if !in_single && !in_double => {
-                if !cur.is_empty() {
-                    out.push(cur.clone());
-                    cur.clear();
-                }
-            }
-            _ => cur.push(ch),
-        }
-    }
-    if !cur.is_empty() {
-        out.push(cur);
-    }
-    out
+    crate::platform::split_cmdline(&s)
 }
 
 fn workdir(cwd: &str) -> std::path::PathBuf {
@@ -88,10 +68,11 @@ pub fn kill_all(state: &PtyState) {
     }
 }
 
-#[tauri::command]
-pub fn pty_spawn(
+// sync spawn body — runs on the blocking pool via pty_spawn (ConPTY
+// creation + spawn_command + reader threads can all block). Returns the
+// session so pty_spawn can insert it into the state map.
+fn pty_spawn_blocking(
     app: AppHandle,
-    state: State<'_, PtyState>,
     id: u32,
     cwd: String,
     gen: u64,
@@ -100,27 +81,13 @@ pub fn pty_spawn(
     shell: Option<String>,
     args: Option<Vec<String>>,
     shell_args: Option<String>,
-) -> Result<(), String> {
-    let shell_param = shell;
-    // don't hold PtyState lock during ConPTY creation — it janks the UI when 3-4 terminals start at once
-    let needs_sleep = {
-        let mut map = state.inner().0.lock().unwrap_or_else(|e| e.into_inner());
-        if id == 0 {
-            return Err("invalid terminal id".into());
-        }
-        if map.contains_key(&id) {
-            kill_and_close(&mut map, id);
-            true
-        } else if map.len() >= MAX_TERMS {
-            return Err(format!("max terminals ({MAX_TERMS}) reached"));
-        } else {
-            false
-        }
-    };
+    needs_sleep: bool,
+) -> Result<Arc<PtySession>, String> {
     if needs_sleep {
         std::thread::sleep(Duration::from_millis(90));
     }
 
+    let shell_param = shell;
     let init_cols = if cols >= 2 && cols <= 1000 { cols } else { 80 };
     let init_rows = if rows >= 2 && rows <= 1000 { rows } else { 24 };
     let pair = native_pty_system()
@@ -288,6 +255,45 @@ pub fn pty_spawn(
         });
     }
 
+    // session returned — pty_spawn does the final state-map insert
+    Ok(session)
+}
+
+#[tauri::command]
+pub async fn pty_spawn(
+    app: AppHandle,
+    state: State<'_, PtyState>,
+    id: u32,
+    cwd: String,
+    gen: u64,
+    cols: u16,
+    rows: u16,
+    shell: Option<String>,
+    args: Option<Vec<String>>,
+    shell_args: Option<String>,
+) -> Result<(), String> {
+    if id == 0 {
+        return Err("invalid terminal id".into());
+    }
+    // quick map check / replace-kill up front; the ConPTY creation, spawn and
+    // reader threads all run on the blocking pool — timing (incl. the 90 ms
+    // settle sleep) is unchanged, and the state lock is never held across them
+    let needs_sleep = {
+        let mut map = state.inner().0.lock().unwrap_or_else(|e| e.into_inner());
+        if map.contains_key(&id) {
+            kill_and_close(&mut map, id);
+            true
+        } else if map.len() >= MAX_TERMS {
+            return Err(format!("max terminals ({MAX_TERMS}) reached"));
+        } else {
+            false
+        }
+    };
+    let session = tauri::async_runtime::spawn_blocking(move || {
+        pty_spawn_blocking(app, id, cwd, gen, cols, rows, shell, args, shell_args, needs_sleep)
+    })
+    .await
+    .map_err(|e| format!("task join failed: {e}"))??;
     {
         let mut map = state.inner().0.lock().unwrap_or_else(|e| e.into_inner());
         if map.contains_key(&id) {
@@ -332,7 +338,7 @@ pub fn pty_resize(state: State<'_, PtyState>, id: u32, cols: u16, rows: u16) -> 
 }
 
 #[tauri::command]
-pub fn pty_kill(state: State<'_, PtyState>, id: u32, gen: u64) -> Result<(), String> {
+pub async fn pty_kill(state: State<'_, PtyState>, id: u32, gen: u64) -> Result<(), String> {
     let needs_sleep = {
         let mut map = state.inner().0.lock().unwrap_or_else(|e| e.into_inner());
         if map.get(&id).map(|s| s.gen) == Some(gen) {
@@ -347,7 +353,8 @@ pub fn pty_kill(state: State<'_, PtyState>, id: u32, gen: u64) -> Result<(), Str
         }
     };
     if needs_sleep {
-        std::thread::sleep(Duration::from_millis(90));
+        // same 90 ms settle sleep, but off the main/UI thread
+        let _ = tauri::async_runtime::spawn_blocking(|| std::thread::sleep(Duration::from_millis(90))).await;
     }
     Ok(())
 }

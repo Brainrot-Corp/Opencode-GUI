@@ -94,87 +94,6 @@
   transform: translateY(0);
 }
 
-/* slim workspace header above the chat stage — same glass surface,
-   full-bleed like the stage; its bottom edge is the separator */
-.stage-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  width: 100%;
-  padding: 8px 14px 6px;
-  font-family: var(--mono);
-  font-size: 11px;
-  color: var(--text-faint);
-  user-select: none;
-  background: linear-gradient(
-    180deg,
-    rgba(var(--surf-rgb), min(1, calc(var(--surf-a) * 1.15))),
-    rgba(var(--surf-rgb), var(--surf-a))
-  );
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  /* sides match the stage's own borders; stage drops its top border */
-  border: 1px solid var(--line);
-  border-top: none;
-}
-.stage-head i {
-  color: var(--accent);
-  opacity: 0.75;
-  flex-shrink: 0;
-}
-/* clickable variant — resting visual identical to .stage-head (button reset).
-   NOTE: no font/color reset here on purpose: .stage-head already sets the
-   mono font + faint color, and any inherit shorthand would override them. */
-.stage-head--action {
-  appearance: none;
-  border-radius: 0;
-  text-align: left;
-  cursor: pointer;
-}
-.stage-head--action:hover {
-  color: var(--accent);
-  background: linear-gradient(
-    180deg,
-    rgba(var(--surf-rgb), min(1, calc(var(--surf-a) * 1.15))),
-    color-mix(in srgb, var(--accent) 7%, transparent)
-  );
-}
-.stage-head--action:hover i {
-  opacity: 1;
-}
-.stage-head--action:focus-visible {
-  outline: 1px solid var(--accent);
-  outline-offset: -1px;
-  color: var(--accent);
-}
-/* close-workspace affordance: wrapper keeps the bar full-bleed, the x floats
-   at the right over reserved padding so the ellipsized path never underlaps */
-.stage-head-wrap {
-  display: block;
-  position: relative;
-}
-.stage-head--with-close {
-  padding-right: 34px;
-}
-.stage-head-close {
-  position: absolute;
-  right: 6px;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 24px;
-  height: 22px;
-  margin-right: 0;
-}
-.stage-head-close i {
-  font-size: 11px;
-}
-.stage-head-close.armed {
-  color: var(--danger);
-  background: rgba(224, 143, 143, 0.14);
-  box-shadow: 0 0 10px rgba(224, 143, 143, 0.35);
-}
-
 /* attachment parts inside messages */
 .msg .file-img {
   display: block;
@@ -243,14 +162,6 @@
 }
 .file-chip i {
   color: var(--accent);
-}
-.stage-head span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  /* keep the tail of the path visible instead of the head */
-  direction: rtl;
-  text-align: left;
 }
 
 .msg {

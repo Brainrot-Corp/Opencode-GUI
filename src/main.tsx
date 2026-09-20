@@ -8,6 +8,7 @@ import "./styles/syntax.css";
 import "./styles/layout.css";
 import "./styles/toast.css";
 import { getDirectory, setDirectory } from "./api";
+import { isMac } from "./lib/platform";
 import { initWindowScope, isSecondary, gcWindowScopes } from "./lib/windowScope";
 import { seedSecondaryGlobals } from "./lib/workspacePrefs";
 import { restoreThemeVars } from "./lib/themes";
@@ -87,9 +88,7 @@ invoke<boolean>("os_glass")
 
 // mac traffic-light inset — keep custom titlebar flush but clear stoplights
 try {
-  if (typeof navigator !== "undefined" && /Mac/i.test(navigator.platform || (navigator as any).userAgent || "")) {
-    document.documentElement.classList.add("mac");
-  }
+  if (isMac()) document.documentElement.classList.add("mac");
 } catch {}
 
 // sidebar resize cursor = the user's live Windows pointer scheme (WebView2

@@ -16,7 +16,7 @@ Design is identical on all platforms (single CSS/design system, custom titlebar,
 
 - **Tauri v2 + Vite + React 19 + TypeScript 5.8.** Node 20+, Rust stable. Windows: MSVC Build Tools; macOS: Xcode CLT; Linux: `libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf`. App version currently 2.2.0 (`package.json` + `src-tauri/Cargo.toml` + `tauri.conf.json` in sync).
 - **WebView:** WebView2 (Windows), WKWebView (macOS), WebKitGTK (Linux) — selected automatically by Tauri/wry, no bundled Chromium.
-- **Server lifecycle (Rust):** `src-tauri/src/lib.rs` spawns/kills `opencode serve --port <free-port>`, Windows Job Object (`KILL_ON_JOB_CLOSE`) so orphans die on crash. Modules: `platform`/`browser`/`voice`/`git`/`pty`/`terminals`/`discord`/`update`/`autostart`/`remote` — all registered in `invoke_handler`.
+- **Server lifecycle (Rust):** `src-tauri/src/lib.rs` spawns/kills `opencode serve --port <free-port>`, Windows Job Object (`KILL_ON_JOB_CLOSE`) so orphans die on crash. lib.rs is being split into focused modules — server lifecycle, input-repair, file commands, window control, and theme/plugin dirs live in their own `src-tauri/src/*.rs` files — alongside `platform`/`browser`/`voice`/`git`/`pty`/`terminals`/`discord`/`update`/`autostart`/`remote`; everything stays registered in `invoke_handler`.
 - **Platform abstraction:** `src-tauri/src/platform.rs` centralizes `home_dir()` (`HOME` → `USERPROFILE` → `temp_dir`), `config_dir()` (`app.path().app_config_dir()` — `~/Library/Application Support` on mac, `~/.config` on Linux, `%APPDATA%` on Windows), `themes_dir()`/`plugins_dir()`, `open_path()`/`reveal_path()`/`reveal_dir()` (`open`/`xdg-open`/`explorer`), `sidecar_candidates()`, `default_shell()`, `curl_bin()`, `which_bin()`, `resolve_workdir()`, `center_traffic_lights()` (mac). Do not reintroduce `USERPROFILE` or `xdg-open`-on-mac.
 - **Sidecar binary** `src-tauri/binaries/opencode-*` is **not committed**; `setup` downloads the correct triple from releases. Candidates per OS: `src-tauri/src/platform.rs:sidecar_candidates()` (`opencode-aarch64-apple-darwin`, `opencode-x86_64-unknown-linux-gnu`, etc.; `opencode-x86_64-pc-windows-msvc.exe` on Windows). `tauri.conf.json:bundle.externalBin` is `binaries/opencode` (Tauri appends triple).
 - **Single SDK client:** `src/api.ts:wrap()` wraps `createOpencodeClient` in a `Proxy` that injects `?directory=` on every call. Use `opencodeFor(dir)` / `serverFetchFor(dir, path)` for multi-workspace; empty `""` = server cwd (`home_dir()`). `baseFor(dir)` resolves per-workspace base (local = sidecar URL, SSH = tunnel port with dial cache + 15s negative cache); `serverFetch(path)` covers endpoints missing from stale SDK types; `resetOpencodeCache()` on server restart.
@@ -24,23 +24,18 @@ Design is identical on all platforms (single CSS/design system, custom titlebar,
 - **SSE:** one `EventSource` per workspace (≤5, `src/hooks/useOpencode.ts:1148+`), filtered by `?directory=`, polled/added/removed live; dead SSH tunnels evict their base and re-dial. Keep `useOpencode.ts` as the single source of server state.
 - **Glass:** `src-tauri/src/lib.rs:apply_glass()` — Windows `apply_acrylic`, macOS `apply_vibrancy(Sidebar)`, Linux no-op; `os_glass` command tells the frontend (`html.no-glass` fallback paints opaque). `noglass` cargo feature = Windows 10 build (no acrylic). `window-vibrancy` is gated `cfg(any(windows, macos))` in `src-tauri/Cargo.toml`.
 - **Tauri config:** `src-tauri/tauri.conf.json` (`targets: "all"`, `macOSPrivateApi`, `bundle` icons include `icon.icns` + `icon.ico`), mac-only `src-tauri/tauri.macos.conf.json` adds `titleBarStyle: Overlay` + `hiddenTitle`. Do not put mac keys in the base config. Rust plugins in use: global-shortcut, window-state, single-instance, autostart, dialog, clipboard-manager; tray + Windows JumpList in `lib.rs`.
-- **Heavier deps:** Monaco (`monaco-editor` — file editor/diffs, warmed up idle in `main.tsx`), xterm (`@xterm/xterm` + fit addon — terminal dock), `react-markdown`+`rehype-highlight`+`remark-gfm`+`lowlight` (chat rendering), voice: `@ozymandiasthegreat/vad` + `double-metaphone` + `an-array-of-english-words`. Optional `whisper` cargo feature (`whisper-rs`) for local STT; `kokoro-en` for TTS.
+- **Heavier deps:** Monaco (`monaco-editor` — file editor/diffs, warmed up idle in `main.tsx`), xterm (`@xterm/xterm` + fit addon — terminal dock), `react-markdown`+`rehype-highlight`+`remark-gfm`+`lowlight` (chat rendering), voice: `@ozymandiasthegreat/vad` + `double-metaphone` + `an-array-of-english-words`; `kokoro-en` for TTS.
 
 ## Commands
 
-Via `scripts/run.ps1` (Windows) or `scripts/run.sh` (macOS/Linux/bash) — `run.sh` is fully cross-platform (`uname -s`/`-m` → `opencode-darwin-arm64.zip` etc., `chmod +x`, BSD `sed -i.bak`):
-
 ```
-run.ps1 setup                          # Windows: npm + Rust deps + download sidecar (x64)
-run.sh setup                           # macOS/Linux: npm + download correct triple + chmod +x
-run.ps1 dev                            # Vite :1420 + Tauri window (Windows)
-run.sh dev                             # same on macOS/Linux (checks any opencode-* binary)
+run.sh setup                           # npm deps + rustup (if missing) + download correct sidecar triple + chmod +x
+run.sh dev                             # Vite :1420 + Tauri window (checks any opencode-* binary)
 run.sh build [native|win11|win10|both] [bundles] [--version X.Y.Z]  # native = current OS; win11/win10 only on Windows
-run.ps1 build [win11|win10|both] [msi nsis]       # MSI → src-tauri/target/release/bundle
-run.ps1 portable [win11|win10|both]    # zip (exe + sidecar) → bundle/portable (Windows only; mac/Linux use build)
-run.sh check | run.ps1 check           # node unit tests + tsc + vite build + cargo check
+run.sh portable [native|win11|win10|both]  # zip (exe + sidecar) → bundle/portable (Windows; mac/Linux build makes a .app/zip)
+run.sh check                           # node unit tests + tsc + vite build + cargo check
 npm run test                           # frontend unit tests only (scripts/run-tests.mjs, framework-free self-checks in src/lib/*.test.ts)
-run.sh clean | run.ps1 clean           # cargo clean + remove dist
+run.sh clean                           # cargo clean + remove dist
 ```
 
 Direct: `npm run dev` / `npm run build` / `npm run tauri build -- --target <triple>`.
@@ -56,7 +51,7 @@ Rule: new server talk → `hooks/`; new visuals → `components/` + `styles/`; n
 
 ## Backend (Rust) conventions
 
-- Every Tauri command is `async`, `CREATE_NO_WINDOW` in release (Windows), stderr surfaced verbatim. `dir=""` resolves to server cwd (`platform::home_dir()` / `platform::resolve_workdir()`). `git.rs` pattern: `git status --porcelain=v1 -b` + full stage/unstage/discard/commit/push/pull/fetch/sync/diff/diff_stat/log/branch/stash/merge-rebase resolve-abort-continue/reset/watch surface.
+- Every Tauri command is `async`, `CREATE_NO_WINDOW` in release (Windows), stderr surfaced verbatim. `dir=""` resolves to server cwd (`platform::home_dir()` / `platform::resolve_workdir()`). `git.rs` pattern: `git status --porcelain=v1 -b` + full stage/unstage/discard/commit/push/pull/fetch/sync/publish/diff/diff_stat/log/stash-push-pop/merge-rebase resolve-abort-continue/watch surface (branch/stash-list/reset commands were dead and are gone).
 - Frontend mirrors Rust persistence for workspace: `workspace_set`/`workspace_get` in `lib.rs` + `localStorage oc.settings.workspace`.
 - App-launching (`browser.rs:open_app`/`window_app` — Start Menu `.lnk` + `where`/`powershell`/`taskkill`) is **Windows-only** (`#[cfg(windows)]`), stubbed on other OS (`Err("moved to plugin")`) — will become a plugin, do not port to `.desktop`/`open -a`. `browser.rs` also hosts the embedded webview bar + `tiktok_*` mini-window commands.
 - Voice GPU (`voice.rs:voice_gpu`, `KOKORO_GPU_DLLS` `.dll`, `SetDllDirectoryW`) is Windows-only; macOS/Linux returns `nvidia:false` and CPU-only TTS/STT. CoreML/MPS deferred.
@@ -94,5 +89,5 @@ Rule: new server talk → `hooks/`; new visuals → `components/` + `styles/`; n
 
 - **NEVER test using the user's own API keys or paid quotas** (`~/.local/share/opencode/auth.json` or provider keys in config).
 - For any live-model test, use free models only: `opencode/x-preview-f-free` if available, else other OpenCode Zen free-tier models (`opencode/nemotron-3.5-lightning-free`, `opencode/mimo-v2.5-free`, etc. — check `/config/providers` → `opencode` provider). If none, ask before spending.
-- **Verify:** `run.ps1 check` / `run.sh check` (or `npx tsc --noEmit && cargo check`). Unit tests: `npm run test` (`scripts/run-tests.mjs`, framework-free self-checks in `src/lib/*.test.ts`). Smoke: create session → `prompt_async` → streamed SSE reply → permission approve/deny → abort mid-stream.
+- **Verify:** `run.sh check` (or `npx tsc --noEmit && cargo check`). Unit tests: `npm run test` (`scripts/run-tests.mjs`, framework-free self-checks in `src/lib/*.test.ts`). Smoke: create session → `prompt_async` → streamed SSE reply → permission approve/deny → abort mid-stream.
 - **Cross-platform verify:** `run.sh setup` on mac arm64 / Linux x64+arm64 → `run.sh build` → `bundle/{dmg,app.tar.gz,deb,AppImage}`; `cargo check --target aarch64-apple-darwin` / `x86_64-unknown-linux-gnu` on CI. CI in `.github/workflows/release.yml` (tag `Version-*`): Windows `x64` MSI + win10/win11 portable zips, macOS `aarch64-apple-darwin` DMG + .app.tar.gz, Linux `x64`+`arm64` deb/AppImage — unsigned, no notarization yet.

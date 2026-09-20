@@ -2,17 +2,14 @@ import { useCallback, useEffect, useRef, useState, Component, type ReactNode } f
 import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { getDirectory, opencodeFor, tempSession, dropSession } from "../api";
+import { getDirectory, opencodeFor, dropSession } from "../api";
 import { getAllWorkspaces } from "../lib/workspace";
 import { isRemoteDir, remoteLabel } from "../lib/remotes";
 import { normWorkspace } from "../lib/platform";
-import { isModelOnServer } from "../hooks/useProviders";
-import { splitModel } from "../lib/models";
 import { extLang } from "../lib/syntax";
 import { playSound } from "../lib/sounds";
 import { windowKey } from "../lib/windowScope";
-import { heuristicCommit } from "../lib/commitHeuristic";
-import { buildCommitPrompt, cleanCommitMessage } from "../lib/commitPrompt";
+import { generateCommitMessage } from "../lib/commitGen";
 import Dialog from "./Dialog";
 import { DiffLines } from "./DiffPanel";
 import DropdownPortal from "./DropdownPortal";
@@ -91,42 +88,68 @@ function loadPrimary(): PrimaryAction {
   return "staged";
 }
 
-// secondary model + commitBody from the settings blob — read at click time
-function secondaryModel(): string {
+// module-level: independent of props. Labels are i18n KEYS resolved with the
+// hook's t at render (language switches still re-render); hints are plain.
+const PRIMARY_LABELS: Record<PrimaryAction, string> = {
+  staged: "git.commit.staged",
+  all: "git.commit.all",
+  stagedPush: "git.commit.stagedPush",
+  allPush: "git.commit.allPush",
+  stagedSync: "git.commit.stagedSync",
+  allSync: "git.commit.allSync",
+};
+const PRIMARY_HINTS: Record<PrimaryAction, string> = {
+  staged: "Commit staged changes",
+  all: "Commit all changes (staged + unstaged, incl. untracked)",
+  stagedPush: "Commit staged and push",
+  allPush: "Commit all changes and push",
+  stagedSync: "Commit staged and sync (pull then push)",
+  allSync: "Commit all changes and sync",
+};
+
+// settings snapshot — the ONE 1s tick (same storage/focus listeners as
+// before), parsing oc.settings once per tick into a memoized snapshot
+// instead of re-parsing per getter call / per render. No settings-changed
+// event exists (useSettings persists silently; `oc:settings` is the
+// open-drawer command, `oc:language-changed` is language-only), so the poll
+// stays. cachedVariant deliberately stays a click-time read — it must see
+// the composer's latest variant pick, not a ≤1s-old one.
+type SettingsSnap = { secondaryModel: string; commitBody: boolean };
+function readSettingsSnap(): SettingsSnap {
   try {
-    const v = JSON.parse(localStorage.getItem("oc.settings") ?? "{}").secondaryModel;
-    return typeof v === "string" ? v : "";
+    const s = JSON.parse(localStorage.getItem("oc.settings") ?? "{}");
+    return {
+      secondaryModel: typeof s.secondaryModel === "string" ? s.secondaryModel : "",
+      commitBody: !!s.commitBody,
+    };
   } catch {
-    return "";
+    return { secondaryModel: "", commitBody: false };
   }
 }
-function commitBodyEnabled(): boolean {
-  try {
-    return !!JSON.parse(localStorage.getItem("oc.settings") ?? "{}").commitBody;
-  } catch {
-    return false;
-  }
+function useSettingsSnap(): SettingsSnap {
+  const [snap, setSnap] = useState<SettingsSnap>(readSettingsSnap);
+  useEffect(() => {
+    const sync = () =>
+      setSnap((prev) => {
+        const next = readSettingsSnap();
+        return prev.secondaryModel === next.secondaryModel && prev.commitBody === next.commitBody ? prev : next;
+      });
+    window.addEventListener("storage", sync);
+    window.addEventListener("focus", sync);
+    const id = window.setInterval(sync, 1000);
+    return () => {
+      window.removeEventListener("storage", sync);
+      window.removeEventListener("focus", sync);
+      window.clearInterval(id);
+    };
+  }, []);
+  return snap;
 }
 function cachedVariant(sel: string): string | undefined {
   try {
     const m = JSON.parse(localStorage.getItem(windowKey("oc.variants")) ?? "{}");
     const v = m?.[sel];
     if (typeof v === "string" && v) return v;
-  } catch {}
-  return undefined;
-}
-async function variantFast(client: any, providerID: string, modelID: string, fallback?: string): Promise<string | undefined> {
-  if (fallback) return fallback;
-  try {
-    const pr: any = await Promise.race([
-      client.config.providers(),
-      new Promise((_, rej) => setTimeout(() => rej(new Error("variant timeout")), 700)),
-    ]);
-    const prov = (pr.data?.providers ?? []).find((p: any) => p.id === providerID);
-    const vars = Object.keys(prov?.models?.[modelID]?.variants ?? {});
-    if (vars.includes("low")) return "low";
-    if (vars.includes("minimal")) return "minimal";
-    if (vars.includes("fast")) return "fast";
   } catch {}
   return undefined;
 }
@@ -149,20 +172,28 @@ function dedupFiles(files: GitFile[]): GitFile[] {
   return [...m.values()];
 }
 
-function useCommitBody(): boolean {
-  const [v, setV] = useState(() => commitBodyEnabled());
-  useEffect(() => {
-    const sync = () => setV(commitBodyEnabled());
-    window.addEventListener("storage", sync);
-    window.addEventListener("focus", sync);
-    const id = window.setInterval(sync, 1000);
-    return () => {
-      window.removeEventListener("storage", sync);
-      window.removeEventListener("focus", sync);
-      window.clearInterval(id);
-    };
-  }, []);
-  return v;
+// shared file-row frame for staged / changes / conflict rows — the
+// per-variant letter, tip and action buttons are passed in
+function FileRow(props: {
+  f: GitFile;
+  letter: string;
+  tip: string;
+  disabled?: boolean;
+  onOpen: () => void;
+  confirming?: boolean;
+  actions: ReactNode;
+}) {
+  const { f, letter, tip, disabled, onOpen, confirming, actions } = props;
+  const d = dirOf(f.path);
+  return (
+    <div className={`gp-row${confirming ? " confirming" : ""}`}>
+      <span className={`gp-x ${xcls(letter)} mono`}>{letter}</span>
+      <button className="gp-file mono" data-tip={tip} onClick={onOpen} disabled={disabled}>
+        {d ? <span className="gp-dir">{d}/</span> : null}{base(f.path)}
+      </button>
+      <span className="gp-acts">{actions}</span>
+    </div>
+  );
 }
 
 const xcls = (l: string) =>
@@ -191,7 +222,7 @@ function GitWorkspacePanel({ dir, initial }: { dir: string; initial?: GitStatus 
   const [confirmPath, setConfirmPath] = useState("");
   const [gen, setGen] = useState(false);
   const [diff, setDiff] = useState<{ path: string; patch: string; staged: boolean } | null>(null);
-  const bodyOpt = useCommitBody();
+  const settingsSnap = useSettingsSnap();
   const msgRef = useRef<HTMLTextAreaElement>(null);
   const genIdRef = useRef(0);
   const genSidRef = useRef<string | null>(null);
@@ -212,7 +243,7 @@ function GitWorkspacePanel({ dir, initial }: { dir: string; initial?: GitStatus 
     el.style.height = "auto";
     el.style.height = `${el.scrollHeight}px`;
   }, []);
-  useEffect(() => { autosizeMsg(); }, [msg, bodyOpt, open, autosizeMsg]);
+  useEffect(() => { autosizeMsg(); }, [msg, settingsSnap.commitBody, open, autosizeMsg]);
   const [gh, setGh] = useState(() => clampH(Number(localStorage.getItem(GH_KEY())) || GH_DEFAULT));
   const [dragging, setDragging] = useState(false);
   useEffect(() => { localStorage.setItem(GH_KEY(), String(gh)); }, [gh]);
@@ -372,123 +403,32 @@ function GitWorkspacePanel({ dir, initial }: { dir: string; initial?: GitStatus 
   const canCommitStaged = !!msg.trim() && staged.length > 0 && !busy;
   const canCommitAll = !!msg.trim() && allDirty.length > 0 && !busy;
 
-  // unified commit helper covering VS variants: staged vs all (stage snapshot then commit), amend, push, sync
+  // gen core lives in lib/commitGen.ts — this wrapper only does the button
+  // wiring: file snapshot, busy/gen guards, then the deps object (client
+  // accessor, dir, settings getters, announce callbacks, abort-token refs).
+  // The abort handle (abortGen below) keeps genIdRef/genSidRef ownership.
   const genMessage = async (opts?: { all?: boolean }): Promise<string> => {
     const useAll = !!opts?.all;
-    const srcFiles = useAll ? [...allDirty] : [...staged];
-    const genFiles = srcFiles;
+    const genFiles = useAll ? [...allDirty] : [...staged];
     if (gen || busy || !genFiles.length) {
       if (!genFiles.length) setErr(useAll ? "Nothing to commit." : "Nothing staged to generate from.");
       return "";
     }
-    const model = secondaryModel();
-    const includeBody = commitBodyEnabled();
-    const myId = ++genIdRef.current;
-    setGen(true);
-    setErr("");
-    const stagedSnap = [...genFiles];
-    const branchSnap = st.branch;
-    let heuristicFallback = heuristicCommit({ staged: stagedSnap, branch: branchSnap });
-    try {
-      const diffPromises: Promise<string>[] = [];
-      if (useAll) {
-        diffPromises.push(
-          invoke<string>("git_diff", { dir: curDir(), path: "", staged: true }).catch(() => ""),
-          invoke<string>("git_diff", { dir: curDir(), path: "", staged: false }).catch(() => ""),
-        );
-      } else {
-        diffPromises.push(invoke<string>("git_diff", { dir: curDir(), path: "", staged: true }).catch(() => ""));
-      }
-      const diffRaws = await Promise.all(diffPromises);
-      const diffRaw = diffRaws.join("\n");
-      const [statRaw, logRaw] = await Promise.all([
-        invoke<string>("git_diff_stat", { dir: curDir() }).catch(() => ""),
-        invoke<string>("git_log", { dir: curDir() }).catch(() => ""),
-      ]);
-      if (!diffRaw.trim() && !statRaw.trim()) {
-        setErr("Diff is empty.");
-        return "";
-      }
-      const heuristic = heuristicCommit({ staged: stagedSnap, stat: statRaw, diff: diffRaw.slice(0, 4000), branch: branchSnap });
-      heuristicFallback = heuristic;
-      setMsg(heuristic);
-      if (!model) return heuristic;
-      const dir = curDir();
-      // a foreign model dies silently server-side (no session.error, just
-      // idle) — fall back to the heuristic with a visible note instead
-      if (!isModelOnServer(model, dir)) {
-        setErr(`Model ${model} isn't on this server — heuristic used.`);
-        return heuristic;
-      }
-      const { client } = await opencodeFor(dir);
-      const [providerID, modelID] = splitModel(model);
-      const cached = cachedVariant(model);
-      const variant = await variantFast(client, providerID, modelID, cached);
-      const promptText = buildCommitPrompt({
-        staged: stagedSnap.map((f) => ({ path: f.path, x: f.x })),
-        branch: branchSnap,
-        stat: statRaw,
-        diff: diffRaw,
-        log: logRaw,
-        includeBody,
-      });
-      const sid = await tempSession(dir);
-      genSidRef.current = sid;
-      let best = heuristic;
-      let streamed = "";
-      try {
-        await client.session.promptAsync({
-          path: { id: sid },
-          body: {
-            parts: [{ type: "text", text: promptText }],
-            model: { providerID, modelID },
-            ...(variant ? { variant } : {}),
-          },
-        } as any);
-        const start = Date.now();
-        const deadline = 60000;
-        while (Date.now() - start < deadline) {
-          if (genIdRef.current !== myId) break;
-          await new Promise((r) => setTimeout(r, 260));
-          if (genIdRef.current !== myId) break;
-          try {
-            const r: any = await client.session.messages({ path: { id: sid } });
-            const list: any[] = (r.data ?? []) as any[];
-            const assistants = list.filter((m: any) => m.info?.role === "assistant");
-            const last = assistants[assistants.length - 1];
-            if (!last) continue;
-            const parts: any[] = (last.parts ?? []) as any[];
-            const raw = parts.filter((p: any) => p.type === "text").map((p: any) => p.text ?? "").join("").trim();
-            if (!raw) continue;
-            const cleaned = cleanCommitMessage(raw, includeBody);
-            if (cleaned && cleaned !== streamed) {
-              if (genIdRef.current !== myId) break;
-              streamed = cleaned;
-              best = cleaned;
-              setMsg(cleaned);
-            }
-            if (last.info?.time?.completed) break;
-            if (streamed && Date.now() - start > 5000 && last.info?.time?.completed) break;
-          } catch {}
-        }
-        if (genIdRef.current !== myId) return heuristicFallback;
-        if (!streamed) {
-          setErr("AI slow — using heuristic. Edit or retry.");
-          return heuristic;
-        }
-        return best;
-      } finally {
-        if (genSidRef.current === sid) genSidRef.current = null;
-        await dropSession(sid, dir);
-      }
-    } catch (e) {
-      if (genIdRef.current !== myId) return heuristicFallback;
-      const m = String(e).replace(/^Error:\s*/, "");
-      setErr(m);
-      return heuristicFallback;
-    } finally {
-      if (genIdRef.current === myId) setGen(false);
-    }
+    return generateCommitMessage({
+      all: useAll,
+      dir,
+      files: genFiles,
+      branch: st.branch,
+      client: () => opencodeFor(dir),
+      secondaryModel: () => settingsSnap.secondaryModel,
+      commitBody: () => settingsSnap.commitBody,
+      cachedVariant,
+      genIdRef,
+      genSidRef,
+      onMessage: setMsg,
+      onError: setErr,
+      setGenerating: setGen,
+    });
   };
   const genMsg = (useAll?: boolean) => void genMessage({ all: !!useAll });
 
@@ -674,22 +614,6 @@ function GitWorkspacePanel({ dir, initial }: { dir: string; initial?: GitStatus 
       </div>
     );
 
-  const primaryLabelMap: Record<PrimaryAction, string> = {
-    staged: t("git.commit.staged"),
-    all: t("git.commit.all"),
-    stagedPush: t("git.commit.stagedPush"),
-    allPush: t("git.commit.allPush"),
-    stagedSync: t("git.commit.stagedSync"),
-    allSync: t("git.commit.allSync"),
-  };
-  const primaryHintMap: Record<PrimaryAction, string> = {
-    staged: "Commit staged changes",
-    all: "Commit all changes (staged + unstaged, incl. untracked)",
-    stagedPush: "Commit staged and push",
-    allPush: "Commit all changes and push",
-    stagedSync: "Commit staged and sync (pull then push)",
-    allSync: "Commit all changes and sync",
-  };
   const runPrimary = () => {
     switch (primary) {
       case "staged": void doCommit({ all: false }); break;
@@ -700,14 +624,13 @@ function GitWorkspacePanel({ dir, initial }: { dir: string; initial?: GitStatus 
       case "allSync": void doCommit({ all: true, sync: true }); break;
     }
   };
-  const hint = (() => {
-    if (busy || gen) return "";
-    if (!msg.trim() && allDirty.length > 0 && staged.length === 0) return "No staged changes — use Commit All or Stage All.";
-    if (!staged.length && allDirty.length > 0) return "No staged changes. Commit All will commit all changes (incl. untracked).";
-    if (!allDirty.length && !staged.length && st.files.length === 0) return "";
-    if (!allDirty.length) return "";
-    return "";
-  })();
+  // real hint conditions only — the old IIFE had four empty branches
+  const hint =
+    busy || gen || staged.length || !allDirty.length
+      ? ""
+      : msg.trim()
+        ? "No staged changes. Commit All will commit all changes (incl. untracked)."
+        : "No staged changes — use Commit All or Stage All.";
 
   gitCmdRef.current = (cmd: string) => {
     setOpen(true);
@@ -747,21 +670,17 @@ function GitWorkspacePanel({ dir, initial }: { dir: string; initial?: GitStatus 
     // conflicts never reach here (own section) but stay purple if they do.
     const raw = isStaged ? f.x : f.y;
     const letter = untracked ? "A" : isConflict(f) ? "U" : raw === "?" ? "A" : raw;
-    const confirming = confirmPath === f.path;
-    const d = dirOf(f.path);
     return (
-      <div key={f.path + (isStaged ? "~s" : "~w")} className={`gp-row${confirming ? " confirming" : ""}`}>
-        <span className={`gp-x ${xcls(letter)} mono`}>{letter}</span>
-        <button
-          className="gp-file mono"
-          data-tip={f.orig_path ? `${f.orig_path} → ${f.path}` : f.path}
-          onClick={() => !untracked && openDiff(f, isStaged)}
-          disabled={untracked}
-        >
-          {d ? <span className="gp-dir">{d}/</span> : null}{base(f.path)}
-        </button>
-        <span className="gp-acts">
-          {confirming ? (
+      <FileRow
+        key={f.path + (isStaged ? "~s" : "~w")}
+        f={f}
+        letter={letter}
+        tip={f.orig_path ? `${f.orig_path} → ${f.path}` : f.path}
+        disabled={untracked}
+        onOpen={() => !untracked && openDiff(f, isStaged)}
+        confirming={confirmPath === f.path}
+        actions={
+          confirmPath === f.path ? (
             <>
               <button className="gp-act danger" data-tip={untracked ? "Really delete file" : "Really discard"} onClick={() => rowAct("git_discard", f.path)}>
                 <i className="fa-solid fa-check" />
@@ -770,53 +689,49 @@ function GitWorkspacePanel({ dir, initial }: { dir: string; initial?: GitStatus 
                 <i className="fa-solid fa-xmark" />
               </button>
             </>
+          ) : isStaged ? (
+            <button className="gp-act" data-tip="Unstage" onClick={() => rowAct("git_unstage", f.path)}>
+              <i className="fa-solid fa-minus" />
+            </button>
           ) : (
             <>
-              {isStaged ? (
-                <button className="gp-act" data-tip="Unstage" onClick={() => rowAct("git_unstage", f.path)}>
-                  <i className="fa-solid fa-minus" />
-                </button>
-              ) : (
-                <button className="gp-act" data-tip="Stage" onClick={() => rowAct("git_stage", f.path)}>
-                  <i className="fa-solid fa-plus" />
-                </button>
-              )}
-              {!isStaged && (
-                <button
-                  className="gp-act"
-                  data-tip={untracked ? "Delete file" : "Discard changes"}
-                  onClick={() => setConfirmPath(f.path)}
-                >
-                  <i className="fa-solid fa-rotate-left" />
-                </button>
-              )}
+              <button className="gp-act" data-tip="Stage" onClick={() => rowAct("git_stage", f.path)}>
+                <i className="fa-solid fa-plus" />
+              </button>
+              <button
+                className="gp-act"
+                data-tip={untracked ? "Delete file" : "Discard changes"}
+                onClick={() => setConfirmPath(f.path)}
+              >
+                <i className="fa-solid fa-rotate-left" />
+              </button>
             </>
-          )}
-        </span>
-      </div>
+          )
+        }
+      />
     );
   };
 
-  const conflictRow = (f: GitFile) => {
-    const confirming = confirmPath === f.path;
-    const d = dirOf(f.path);
-    return (
-      <div key={f.path + "~c"} className={`gp-row${confirming ? " confirming" : ""}`}>
-        <span className="gp-x conf mono">U</span>
-        <button className="gp-file mono" data-tip={f.path} onClick={() => openDiff(f, false)}>
-          {d ? <span className="gp-dir">{d}/</span> : null}{base(f.path)}
-        </button>
-        <span className="gp-acts">
+  const conflictRow = (f: GitFile) => (
+    <FileRow
+      key={f.path + "~c"}
+      f={f}
+      letter="U"
+      tip={f.path}
+      onOpen={() => openDiff(f, false)}
+      confirming={confirmPath === f.path}
+      actions={
+        <>
           <button className="gp-act" data-tip="Accept ours" onClick={() => rowAct2("git_resolve", f.path, true)}>
             <i className="fa-solid fa-arrow-left" />
           </button>
           <button className="gp-act" data-tip="Accept theirs" onClick={() => rowAct2("git_resolve", f.path, false)}>
             <i className="fa-solid fa-arrow-right" />
           </button>
-        </span>
-      </div>
-    );
-  };
+        </>
+      }
+    />
+  );
 
   const rowAct2 = (cmd: string, path: string, ours: boolean) => {
     setConfirmPath("");
@@ -949,7 +864,7 @@ function GitWorkspacePanel({ dir, initial }: { dir: string; initial?: GitStatus 
               ref={msgRef}
               className="gp-msg"
               placeholder={
-                bodyOpt
+                settingsSnap.commitBody
                   ? `Message + body (${staged.length} staged, ${allDirty.length} changed) — Ctrl+Enter to commit`
                   : `Message (${staged.length} staged / ${allDirty.length} changed)`
               }
@@ -959,7 +874,7 @@ function GitWorkspacePanel({ dir, initial }: { dir: string; initial?: GitStatus 
               onInput={autosizeMsg}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && !e.shiftKey) {
-                  if (bodyOpt) {
+                  if (settingsSnap.commitBody) {
                     if ((e.ctrlKey || e.metaKey)) {
                       const can = primary.includes("all") ? canCommitAll || amend : canCommitStaged || amend;
                       if (can || msg.trim()) { e.preventDefault(); runPrimary(); }
@@ -977,8 +892,8 @@ function GitWorkspacePanel({ dir, initial }: { dir: string; initial?: GitStatus 
               data-tip={
                 gen
                   ? "Stop generation"
-                  : secondaryModel()
-                    ? `Generate message (${secondaryModel()})${bodyOpt ? " + body" : ""} — for ${primary.includes("all") ? "All" : "Staged"}`
+                  : settingsSnap.secondaryModel
+                    ? `Generate message (${settingsSnap.secondaryModel})${settingsSnap.commitBody ? " + body" : ""} — for ${primary.includes("all") ? "All" : "Staged"}`
                     : "Heuristic only — pick a Secondary model for AI"
               }
               disabled={busy || (!gen && !(primary.includes("all") ? allDirty.length : staged.length))}
@@ -999,12 +914,12 @@ function GitWorkspacePanel({ dir, initial }: { dir: string; initial?: GitStatus 
             <div className="gp-split" ref={commitAnchorRef}>
               <button
                 className="gp-commit-main"
-                data-tip={primaryHintMap[primary] + (amend ? " — amend" : "")}
+                data-tip={PRIMARY_HINTS[primary] + (amend ? " — amend" : "")}
                 disabled={busy || (!amend && (primary.includes("all") ? !allDirty.length : !staged.length))}
                 onClick={runPrimary}
               >
                 <i className={`fa-solid ${primary.includes("Push") ? "fa-cloud-arrow-up" : primary.includes("Sync") ? "fa-rotate" : "fa-check"}`} />
-                {primaryLabelMap[primary]}{amend ? " (Amend)" : ""}
+                {t(PRIMARY_LABELS[primary])}{amend ? " (Amend)" : ""}
               </button>
               <button
                 className="gp-commit-drop"
@@ -1265,6 +1180,11 @@ function GitPanelMulti() {
     }
   });
   const badgesBusy = useRef(false);
+  // git_watch once per repo — the first successful cycle registers the Rust
+  // watcher; later 5s cycles only refresh badge counts. Closed dirs are
+  // pruned so re-adding a workspace re-watches it, and a failed fire is
+  // retried on the next cycle.
+  const watchRegistered = useRef(new Set<string>());
 
   const refreshBadges = useCallback(async () => {
     if (badgesBusy.current) return;
@@ -1272,8 +1192,13 @@ function GitPanelMulti() {
     try {
       const list = getAllWorkspaces().filter((d) => (d ?? "").trim() !== "");
       if (!list.length) {
+        watchRegistered.current.clear();
         setBadges({});
         return;
+      }
+      const live = new Set(list);
+      for (const d of watchRegistered.current) {
+        if (!live.has(d)) watchRegistered.current.delete(d);
       }
       const results = await Promise.allSettled(
         list.map((d) => invoke<GitStatus>("git_status", { dir: d })),
@@ -1284,7 +1209,12 @@ function GitPanelMulti() {
           const r = results[i];
           if (r.status === "fulfilled") {
             next[d] = r.value;
-            if (r.value.repo && r.value.root) invoke("git_watch", { dir: d }).catch(() => {});
+            if (r.value.repo && r.value.root && !watchRegistered.current.has(d)) {
+              watchRegistered.current.add(d);
+              invoke("git_watch", { dir: d }).catch(() => {
+                watchRegistered.current.delete(d);
+              });
+            }
           } else if (prev[d]) {
             // ssh blip / slow host — keep the stale badge, don't flash tabs
             next[d] = prev[d];

@@ -14,11 +14,20 @@ fn staging_dir(version: &str) -> PathBuf {
     std::env::temp_dir().join("oc-update").join(version)
 }
 
-fn sha256_of(path: &PathBuf) -> Result<String, String> {
+// streams the file through the hash so a 300 MB release zip never lands in
+// RAM twice (audit: the old version read the whole file for sha256 AND again
+// for zip parsing)
+fn sha256_of_reader(r: &mut dyn std::io::Read) -> Result<String, String> {
     use sha2::{Digest, Sha256};
-    let data = std::fs::read(path).map_err(|e| e.to_string())?;
     let mut h = Sha256::new();
-    h.update(&data);
+    let mut buf = [0u8; 64 * 1024];
+    loop {
+        let n = r.read(&mut buf).map_err(|e| e.to_string())?;
+        if n == 0 {
+            break;
+        }
+        h.update(&buf[..n]);
+    }
     Ok(format!("{:x}", h.finalize()))
 }
 
@@ -50,69 +59,72 @@ pub async fn update_download(url: String, sha256: String, version: String) -> Re
     }
     let dir = staging_dir(&version);
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let zip_path = dir.join("update.zip");
+    // curl can run up to 30 min and the zip pass streams ~300 MB — run the
+    // whole pipeline on the blocking pool instead of pinning an async worker
+    tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
+        let zip_path = dir.join("update.zip");
 
-    let mut cmd = std::process::Command::new(crate::platform::curl_bin());
-    cmd.args(["-L", "--fail", "--silent", "--show-error", "--max-time", "1800", "-o"]);
-    cmd.arg(&zip_path).arg(&url);
-    // release: no console flash next to the frameless window
-    #[cfg(all(windows, not(debug_assertions)))]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        cmd.creation_flags(CREATE_NO_WINDOW);
-    }
-    cmd.stdout(std::process::Stdio::null()).stderr(std::process::Stdio::piped());
-    let out = cmd.output().map_err(|e| format!("failed to run curl: {e}"))?;
-    if !out.status.success() {
-        let _ = std::fs::remove_dir_all(&dir);
-        let err = String::from_utf8_lossy(&out.stderr);
-        return Err(format!("download failed: {}", err.trim()));
-    }
+        // curl can run up to 30 min — platform::curl_download enforces the
+        // timeout, cleans a partial file on failure and hides the console in
+        // release builds. (No size cap here: the release zip's sha256 gate
+        // + streaming extraction bound memory; cap would need a per-release
+        // constant.)
+        crate::platform::curl_download(&url, &zip_path, u64::MAX)?;
 
-    let actual = sha256_of(&zip_path)?;
-    if !actual.eq_ignore_ascii_case(&sha256) {
-        let _ = std::fs::remove_dir_all(&dir);
-        return Err("checksum mismatch — download corrupted or tampered".into());
-    }
+        // pass 1: sha256 streamed off disk
+        let file = std::fs::File::open(&zip_path).map_err(|e| e.to_string())?;
+        let actual = sha256_of_reader(&mut std::io::BufReader::new(file))?;
+        if !actual.eq_ignore_ascii_case(&sha256) {
+            let _ = std::fs::remove_dir_all(&dir);
+            return Err("checksum mismatch — download corrupted or tampered".into());
+        }
 
-    let data = std::fs::read(&zip_path).map_err(|e| e.to_string())?;
-    let _ = std::fs::remove_file(&zip_path);
-    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(data)).map_err(|e| e.to_string())?;
-    // flatten: both zips pack the exes at the root; tolerate wrapper dirs
-    let (mut has_exe, mut has_sidecar) = (false, false);
-    for i in 0..archive.len() {
-        let mut f = archive.by_index(i).map_err(|e| e.to_string())?;
-        if f.is_dir() {
-            continue;
+        // pass 2: extraction streamed via File+BufReader (no read-to-RAM)
+        let (mut has_exe, mut has_sidecar) = (false, false);
+        {
+            let file = std::fs::File::open(&zip_path).map_err(|e| e.to_string())?;
+            let mut archive = zip::ZipArchive::new(std::io::BufReader::new(file)).map_err(|e| e.to_string())?;
+            // flatten: both zips pack the exes at the root; tolerate wrapper dirs
+            for i in 0..archive.len() {
+                let mut f = archive.by_index(i).map_err(|e| e.to_string())?;
+                if f.is_dir() {
+                    continue;
+                }
+                let name = f.name();
+                let fname = name.rsplit(['/', '\\']).next().unwrap_or(name);
+                if fname.is_empty() || fname.starts_with('.') {
+                    continue;
+                }
+                if fname.eq_ignore_ascii_case("opencode-gui.exe") {
+                    has_exe = true;
+                }
+                if fname.eq_ignore_ascii_case("opencode.exe") {
+                    has_sidecar = true;
+                }
+                let mut w = std::fs::File::create(dir.join(fname)).map_err(|e| e.to_string())?;
+                std::io::copy(&mut f, &mut w).map_err(|e| e.to_string())?;
+            }
         }
-        let name = f.name();
-        let fname = name.rsplit(['/', '\\']).next().unwrap_or(name);
-        if fname.is_empty() || fname.starts_with('.') {
-            continue;
+        let _ = std::fs::remove_file(&zip_path);
+        if !has_exe || !has_sidecar {
+            let _ = std::fs::remove_dir_all(&dir);
+            return Err("release zip missing opencode-gui.exe or opencode.exe".into());
         }
-        if fname.eq_ignore_ascii_case("opencode-gui.exe") {
-            has_exe = true;
-        }
-        if fname.eq_ignore_ascii_case("opencode.exe") {
-            has_sidecar = true;
-        }
-        let mut w = std::fs::File::create(dir.join(fname)).map_err(|e| e.to_string())?;
-        std::io::copy(&mut f, &mut w).map_err(|e| e.to_string())?;
-    }
-    if !has_exe || !has_sidecar {
-        let _ = std::fs::remove_dir_all(&dir);
-        return Err("release zip missing opencode-gui.exe or opencode.exe".into());
-    }
 
-    *STAGED.lock().unwrap_or_else(|e| e.into_inner()) = Some(dir);
-    Ok(())
+        *STAGED.lock().unwrap_or_else(|e| e.into_inner()) = Some(dir);
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("task join failed: {e}"))?
 }
 
 // debug: stage a local folder containing opencode-gui.exe (and optionally
 // opencode.exe) as an update. Folder can be a direct file path to the exe
 // as well — we normalize to its parent. Version defaults to "debug-local"
 // if empty. Verifies the exe exists and stages it under %TEMP%\oc-update.
+// Debug-only: release builds get an Err stub (zero staging code ships) —
+// the invoke_handler entry in lib.rs:2105 can be dropped later.
+#[cfg(debug_assertions)]
 #[tauri::command]
 pub fn update_stage_local(folder: String, version: String) -> Result<(), String> {
     if !cfg!(windows) {
@@ -178,6 +190,16 @@ pub fn update_stage_local(folder: String, version: String) -> Result<(), String>
     }
     *STAGED.lock().unwrap_or_else(|e| e.into_inner()) = Some(dir);
     Ok(())
+}
+
+// release stub — keeps the lib.rs generate_handler! entry compiling while
+// shipping none of the staging code; same signature/arg names as the debug
+// command so invoke({folder, version}) still resolves
+#[cfg(not(debug_assertions))]
+#[tauri::command]
+pub fn update_stage_local(folder: String, version: String) -> Result<(), String> {
+    let _ = (&folder, &version);
+    Err("update_stage_local is debug-only".into())
 }
 
 // arm the staged update and exit — the RunEvent::Exit handler does the swap
@@ -338,7 +360,7 @@ pub fn apply_on_exit() {
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         const DETACHED_PROCESS: u32 = 0x0000_0008;
         const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
-        // 2.0.5+: the GUI puts itself in its own KILL_ON_JOB_CLOSE job (lib.rs
+        // 2.0.5+: the GUI puts itself in its own KILL_ON_JOB_CLOSE job (server.rs
         // job::assign); helpers spawned while dying would inherit that job and
         // be killed when the old process's last job handle closes — break away
         // so the relaunch survives (BREAKAWAY_OK is set on the job)
@@ -374,60 +396,19 @@ pub fn apply_on_exit() {
             trace("batch write failed");
         }
         if !spawned {
-            trace("batch not spawned, trying powershell");
-            // Fallback: fixed 2s sleep then Start-Process --new-instance (same semantics as batch)
-            let exe_str = exe_path.to_string_lossy().replace('\'', "''");
-            let ps_cmd = format!(
-                "Start-Sleep -Seconds 2; Start-Process -FilePath '{}' -ArgumentList '--new-instance','--restore-workspace'",
-                exe_str
+            // batch write/spawn failed — last resort: direct detached launch
+            // (no delay; the old powershell/pwsh tiers were cut — the batch
+            // covers the mutex race and direct spawn covers a failed batch)
+            trace("batch not spawned, trying direct spawn");
+            let mut fallback = std::process::Command::new(&exe_path);
+            fallback.arg("--new-instance");
+            fallback.arg("--restore-workspace");
+            fallback.creation_flags(
+                CREATE_NO_WINDOW | DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_BREAKAWAY_FROM_JOB,
             );
-            trace(&format!("ps_cmd: {ps_cmd}"));
-            let mut cmd = std::process::Command::new("powershell");
-            cmd.args([
-                "-NoProfile",
-                "-NonInteractive",
-                "-WindowStyle",
-                "Hidden",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-Command",
-                &ps_cmd,
-            ]);
-            cmd.creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_BREAKAWAY_FROM_JOB);
-            match cmd.spawn() {
-                Ok(_) => { trace("powershell spawn ok"); spawned = true; }
-                Err(e) => {
-                    trace(&format!("powershell spawn failed: {e}"));
-                    let mut alt = std::process::Command::new("pwsh");
-                    alt.args([
-                        "-NoProfile",
-                        "-NonInteractive",
-                        "-WindowStyle",
-                        "Hidden",
-                        "-ExecutionPolicy",
-                        "Bypass",
-                        "-Command",
-                        &ps_cmd,
-                    ]);
-                    alt.creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_BREAKAWAY_FROM_JOB);
-                    match alt.spawn() {
-                        Ok(_) => { trace("pwsh spawn ok"); spawned = true; }
-                        Err(e2) => {
-                            trace(&format!("pwsh spawn failed: {e2}"));
-                            // Last resort: direct detached launch (no delay)
-                            let mut fallback = std::process::Command::new(&exe_path);
-                            fallback.arg("--new-instance");
-                            fallback.arg("--restore-workspace");
-                            fallback.creation_flags(
-                                CREATE_NO_WINDOW | DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_BREAKAWAY_FROM_JOB,
-                            );
-                            match fallback.spawn() {
-                                Ok(_) => { trace("direct fallback spawn ok"); spawned = true; }
-                                Err(e3) => trace(&format!("direct fallback spawn failed: {e3}")),
-                            }
-                        }
-                    }
-                }
+            match fallback.spawn() {
+                Ok(_) => { trace("direct fallback spawn ok"); spawned = true; }
+                Err(e) => trace(&format!("direct fallback spawn failed: {e}")),
             }
         }
         trace(&format!("apply_on_exit done spawned={spawned}"));

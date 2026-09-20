@@ -5,9 +5,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { playSound } from "../lib/sounds";
-import { isLiveFocusTarget, releaseTrapFocus } from "../lib/focus";
+import { isLiveFocusTarget, overlayOpen, releaseTrapFocus } from "../lib/focus";
 import { useTerminalProfilesFor, type TerminalProfile } from "../hooks/useTerminalProfiles";
-import { getAllWorkspaces } from "../lib/workspace";
+import { getAllWorkspaces, baseName } from "../lib/workspace";
 import { normWorkspace } from "../lib/platform";
 import { windowKey } from "../lib/windowScope";
 import { isRemoteDir, remoteLabel } from "../lib/remotes";
@@ -68,9 +68,7 @@ function wsLabel(d: string): string {
   const t = (d ?? "").trim();
   if (!t) return "Server cwd";
   if (isRemoteDir(t)) return remoteLabel(t);
-  const s = t.replace(/[\/\\]+$/, "");
-  const idx = Math.max(s.lastIndexOf("\\"), s.lastIndexOf("/"));
-  return idx >= 0 ? s.slice(idx + 1) : s;
+  return baseName(t);
 }
 
 // shell-switch menu scoped to one terminal's own cwd — remote instances
@@ -726,7 +724,7 @@ export default function TerminalPanel({
         });
       } else {
         // hidden → reopen from anywhere in the main/chat area (not an overlay)
-        if (document.querySelector(".dlg-scrim, .drawer-scrim.open, .ctx-menu, .cmd-menu, .model-menu")) {
+        if (overlayOpen()) {
           e.preventDefault();
           e.stopPropagation();
           (e as any).stopImmediatePropagation?.();

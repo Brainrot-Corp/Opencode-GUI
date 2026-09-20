@@ -1,5 +1,6 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import Dialog from "./Dialog";
+import DialogTabs from "./DialogTabs";
 import { CommandRows } from "./CommandDialog";
 import type { CmdEntry } from "../hooks/useOpencode";
 import type { AppSettings } from "../hooks/useSettings";
@@ -151,23 +152,6 @@ const EDITOR_KEYS: Row[] = [
   ["Ctrl+S / Ctrl+F", "save / find (File Editor)"],
 ];
 
-const Groups = ({ data }: { data: Group[] }) => (
-  <>
-    {data.map(([g, rows]) => (
-      <div key={g} className="cmd-group">
-        <div className="cmd-group-label">{g}</div>
-        {rows.map(([l, r]) => (
-          <div key={l} className="cmd-row">
-            <span className="mono cmd-name">{l}</span>
-            <span className="cmd-desc">{r}</span>
-          </div>
-        ))}
-      </div>
-    ))}
-  </>
-);
-void Groups; // kept for external use / legacy — info tab now uses vc-row cards
-
 const PillGroups = ({ data }: { data: Group[] }) => (
   <div className="vc-frame">
     {data.map(([g, rows]) => (
@@ -269,43 +253,6 @@ function VoiceList({ data, filter }: { data: Group[]; filter: string }) {
     </div>
   );
 }
-
-function useEqualPills(deps: React.DependencyList) {
-  const ref = useRef<HTMLDivElement>(null);
-  useLayoutEffect(() => {
-    const root = ref.current;
-    if (!root) return;
-    const update = () => {
-      const pills = Array.from(root.querySelectorAll<HTMLElement>(".hk-pill"));
-      if (!pills.length) return;
-      pills.forEach((p) => (p.style.width = ""));
-      let max = 0;
-      pills.forEach((p) => { max = Math.max(max, p.offsetWidth); });
-      max = Math.min(max, 220);
-      if (max > 0) pills.forEach((p) => (p.style.width = `${max}px`));
-    };
-    update();
-    const ro = new ResizeObserver(update);
-    ro.observe(root);
-    // watch for pills added/removed (plugin on/off) without size change
-    const mo = new MutationObserver(update);
-    mo.observe(root, { childList: true, subtree: true });
-    window.addEventListener("resize", update);
-    (document as any).fonts?.ready?.then?.(update);
-    return () => {
-      ro.disconnect();
-      mo.disconnect();
-      window.removeEventListener("resize", update);
-    };
-  }, deps);
-  return ref;
-}
-
-function EqualWrap({ children, deps }: { children: React.ReactNode; deps?: React.DependencyList }) {
-  const ref = useEqualPills(deps ?? []);
-  return <div ref={ref}>{children}</div>;
-}
-void EqualWrap; // kept for legacy — hotkeys now use keycaps + vc-frame
 
 // keycap helpers — each physical key is its own cap with + between
 function KcCaps({ raw, isOff }: { raw: string; isOff?: boolean }) {
@@ -471,7 +418,7 @@ export function HotkeysTab({
     // mousedown outside cancels
     const onMouse = (e: MouseEvent) => {
       const t = e.target as HTMLElement | null;
-      if (t?.closest?.(".kc-btn") || t?.closest?.(".hk-pill") || t?.closest?.(".kc")) return;
+      if (t?.closest?.(".kc-btn") || t?.closest?.(".kc")) return;
       setRec(null);
     };
     window.addEventListener("keydown", onDown, { capture: true } as any);
@@ -857,20 +804,16 @@ export default function InfoDialog({
   const voiceData = [...VOICE, ...docGroups(pluginDocs, "voice")] as Group[];
   return (
     <Dialog title="Info" onClose={onClose} top wide>
-      <div className="dlg-tabs">
-        {(
-          [
-            ["info", "Info"],
-            ["voice", "Voice commands"],
-            ["cmds", "Commands"],
-            ["keys", "Hotkeys"],
-          ] as const
-        ).map(([id, label]) => (
-          <button key={id} type="button" className={`dlg-tab${tab === id ? " on" : ""}`} onClick={() => setTab(id as any)}>
-            {label}
-          </button>
-        ))}
-      </div>
+      <DialogTabs
+        tabs={[
+          ["info", "Info"],
+          ["voice", "Voice commands"],
+          ["cmds", "Commands"],
+          ["keys", "Hotkeys"],
+        ] as const}
+        value={tab}
+        onChange={setTab}
+      />
       {tab === "info" && (
         <>
           <div className="vc-tip">

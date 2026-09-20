@@ -1,6 +1,6 @@
 // @ts-nocheck
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { Message, Session } from "@opencode-ai/sdk/client";
+import type { Session } from "@opencode-ai/sdk/client";
 import {
   opencode,
   opencodeFor,
@@ -31,6 +31,7 @@ import {
   type DialogState,
 } from "../lib/slashCommands";
 import { getPluginSlash } from "../lib/plugins";
+import { handleOpenCodeEvent, type OpenCodeEventCtx } from "../lib/opencodeEvents";
 import { ensureServerGroups, useProviders } from "./useProviders";
 import { clearDraft, getDraft, setDraft } from "../lib/drafts";
 import { clearAttachmentDraft, restoreAttachmentDraft } from "./useAttachments";
@@ -41,6 +42,9 @@ import type { Msg, OpenCodeEvent, PermAsk, ProviderGroup, Attachment, QuestionAs
 // fake filler sessions created by /debug-long-session — client-side only,
 // re-added to the sidebar on refreshes while their workspace stays open
 const debugSessions = new Map<string, { session: Session; dir: string }>();
+
+// resolve the right server client for a workspace dir ("" = server cwd)
+const clientFor = async (dir?: string) => (dir ? await opencodeFor(dir) : await opencode());
 
 // per-session agent memory + per-window global agent (mirrors useProviders model logic)
 const SESSION_AGENTS_KEY = "oc.sessionAgents";
@@ -75,9 +79,10 @@ export function useOpencode() {
   // sessions already warned about model fallback (model → warned model id)
   const modelFallbackWarned = useRef(new Map<string, string>());
   const [permission, setPermission] = useState<PermAsk | null>(null);
-  // sidebar attention: which sessions need a click (permission or question)
-  const [attentionIds, setAttentionIds] = useState<Set<string>>(new Set());
+  // sidebar attention: which sessions need a click (permission or question).
+  // One map, sid -> kind; attentionIds is the derived key set (same public shape)
   const [attentionKinds, setAttentionKinds] = useState<Record<string, "permission" | "question" | "both">>({});
+  const attentionIds = useMemo(() => new Set(Object.keys(attentionKinds)), [attentionKinds]);
   // security mode: per-session override + global last (mirrors model/agent)
   type SecurityMode = "full" | "user" | "block";
   const SECURITY_KEY = windowKey("oc.securityMode");
@@ -247,8 +252,6 @@ export function useOpencode() {
   const sessionsRef = useRef(sessions);
   sessionsRef.current = sessions;
   // command-registry refetch throttle for file-watcher bursts
-  const cmdFetchAt = useRef(0);
-  const agentFetchAt = useRef(0);
   const baseRef = useRef("");
 
   // authoritative per-session message stores (SSE mutations land here
@@ -633,14 +636,6 @@ export function useOpencode() {
   }, []);
 
   const setAttentionFor = useCallback((sid: string, kind: "permission" | "question" | "both" | null) => {
-    setAttentionIds((prev) => {
-      const has = prev.has(sid);
-      if (!!kind === has) return prev;
-      const next = new Set(prev);
-      if (kind) next.add(sid);
-      else next.delete(sid);
-      return next;
-    });
     setAttentionKinds((prev) => {
       if (!kind) {
         if (!(sid in prev)) return prev;
@@ -675,7 +670,7 @@ export function useOpencode() {
     if (!sid || childParentRef.current.has(sid)) return;
     try {
       const dir = dirHint ?? getDirectory();
-      const { client } = dir ? await opencodeFor(dir) : await opencode();
+      const { client } = await clientFor(dir);
       const r = await (client.session as any).get({ path: { id: sid } });
       const parent = (r as any)?.data?.parentID ?? (r as any)?.parentID;
       if (typeof parent !== "string" || !parent) return;
@@ -705,12 +700,6 @@ export function useOpencode() {
   }, [setAttentionFor]);
   const clearAttention = useCallback((sid: string) => {
     if (!sid) return;
-    setAttentionIds((prev) => {
-      if (!prev.has(sid)) return prev;
-      const next = new Set(prev);
-      next.delete(sid);
-      return next;
-    });
     setAttentionKinds((prev) => {
       if (!(sid in prev)) return prev;
       const { [sid]: _omit, ...rest } = prev as Record<string, unknown>;
@@ -722,7 +711,7 @@ export function useOpencode() {
   const autoRespondPermission = useCallback(async (ask: PermAsk, response: "always" | "reject") => {
     const dirFor = sessionDirRef.current.get(ask.sessionID) ?? getDirectory();
     try {
-      const { client } = dirFor ? await opencodeFor(dirFor) : await opencode();
+      const { client } = await clientFor(dirFor);
       await (client as any).postSessionIdPermissionsPermissionId({
         path: { id: ask.sessionID, permissionID: ask.id },
         body: { response },
@@ -731,6 +720,37 @@ export function useOpencode() {
       pushToast(String(e));
     }
   }, []);
+
+  // shared permission-ask path — security mode short-circuits (full/block),
+  // else store + badge + emit + (optionally) sound, then surface on the
+  // visible parent or the active session's popup bar
+  const handlePermAsk = useCallback(
+    (ask: PermAsk, dirHint?: string, sound = false) => {
+      if (!ask.sessionID || !ask.id) return;
+      const mode = getSecurityModeFor(ask.sessionID);
+      if (mode === "full") {
+        void autoRespondPermission(ask, "always");
+        return;
+      }
+      if (mode === "block") {
+        void autoRespondPermission(ask, "reject");
+        return;
+      }
+      permissionsRef.current.set(ask.sessionID, ask);
+      syncAttention(ask.sessionID);
+      emitPermission(ask.sessionID);
+      if (sound) playSound("attention");
+      // subagent approvals stay in the subagent viewer — the visible
+      // parent only gets the sidebar badge
+      const top = topOfSession(ask.sessionID);
+      if (top !== ask.sessionID) {
+        syncTopBadge(top);
+        if (!childParentRef.current.has(ask.sessionID)) void resolveParent(ask.sessionID, dirHint);
+      } else if (ask.sessionID === activeRef.current) setPermission(ask);
+    },
+    [getSecurityModeFor, autoRespondPermission, syncAttention, emitPermission, topOfSession, syncTopBadge, resolveParent],
+  );
+
   useEffect(() => {
     for (const ask of [...permissionsRef.current.values()]) {
       const mode = getSecurityModeFor(ask.sessionID);
@@ -793,24 +813,39 @@ export function useOpencode() {
   const LAST_KEY = windowKey("oc.lastSes");
   const PINNED_KEY = "oc.pinnedSessions";
   const TITLE_OVERRIDES_KEY = "oc.sessionTitles";
+  // localStorage maps are cached in refs — session.created/updated bursts
+  // would otherwise re-JSON.parse both on every SSE event. Invalidate on
+  // every write (togglePin/rename) and on cross-window storage events.
+  const pinnedCacheRef = useRef<Set<string> | null>(null);
+  const titleOverridesCacheRef = useRef<Record<string, string> | null>(null);
 
-  function getPinned(): Set<string> {
+  const getPinned = useCallback((): Set<string> => {
+    if (pinnedCacheRef.current) return pinnedCacheRef.current;
+    let out = new Set<string>();
     try {
       const raw = localStorage.getItem(PINNED_KEY);
-      if (!raw) return new Set();
-      const arr = JSON.parse(raw);
-      return new Set(Array.isArray(arr) ? arr.filter((x: unknown) => typeof x === "string") : []);
-    } catch { return new Set(); }
-  }
-  function getTitleOverrides(): Record<string, string> {
+      if (raw) {
+        const arr = JSON.parse(raw);
+        if (Array.isArray(arr)) out = new Set(arr.filter((x: unknown) => typeof x === "string"));
+      }
+    } catch {}
+    pinnedCacheRef.current = out;
+    return out;
+  }, []);
+  const getTitleOverrides = useCallback((): Record<string, string> => {
+    if (titleOverridesCacheRef.current) return titleOverridesCacheRef.current;
+    let out: Record<string, string> = {};
     try {
       const raw = localStorage.getItem(TITLE_OVERRIDES_KEY);
-      if (!raw) return {};
-      const obj = JSON.parse(raw);
-      return obj && typeof obj === "object" && !Array.isArray(obj) ? obj as Record<string,string> : {};
-    } catch { return {}; }
-  }
-  function applyOverrides(list: Session[]): Session[] {
+      if (raw) {
+        const obj = JSON.parse(raw);
+        if (obj && typeof obj === "object" && !Array.isArray(obj)) out = obj as Record<string, string>;
+      }
+    } catch {}
+    titleOverridesCacheRef.current = out;
+    return out;
+  }, []);
+  const applyOverrides = useCallback((list: Session[]): Session[] => {
     const overrides = getTitleOverrides();
     const pinned = getPinned();
     const mapped = list.map((s) => overrides[s.id] ? { ...s, title: overrides[s.id] } : s);
@@ -824,7 +859,15 @@ export function useOpencode() {
       if (pa !== pb) return pb - pa;
       return (b.time?.created ?? 0) - (a.time?.created ?? 0);
     });
-  }
+  }, [getPinned, getTitleOverrides]);
+  useEffect(() => {
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === PINNED_KEY) pinnedCacheRef.current = null;
+      else if (e.key === TITLE_OVERRIDES_KEY) titleOverridesCacheRef.current = null;
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
 
   // --- multi-workspace helpers ---
   const sessionDirRef = useRef<Map<string, string>>(new Map());
@@ -860,8 +903,45 @@ export function useOpencode() {
     return sessionDirRef.current.get(id) ?? getDirectory();
   }, []);
 
+  // one per-session teardown ritual — the single source for delete paths
+  // (server event, sidebar remove, workspace/clear-all wipes). Also prunes
+  // the maps older copies missed: childParentRef, debugSessions,
+  // modelFallbackWarned, lastSentRef.
+  const teardownSession = useCallback((id: string) => {
+    if (!id) return;
+    sessionDirRef.current.delete(id);
+    debugSessions.delete(id);
+    modelFallbackWarned.current.delete(id);
+    lastSentRef.current.delete(id);
+    for (const [child, parent] of [...childParentRef.current]) {
+      if (child === id || parent === id) childParentRef.current.delete(child);
+    }
+    store.remove(id);
+    tracker.reset(id);
+    markCompacting(id, false);
+    clearDraft(id);
+    clearAttachmentDraft(id);
+    questionsRef.current.delete(id);
+    permissionsRef.current.delete(id);
+    clearAttention(id);
+    setSessionSecurity((prev) => {
+      if (!(id in prev)) return prev;
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+    setSessionAgents((prev) => {
+      if (!(id in prev)) return prev;
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+    prov.rememberSession(id, "");
+    prov.forgetVariantSession(id);
+  }, [store, tracker, markCompacting, clearAttention, prov.rememberSession, prov.forgetVariantSession]);
+
   const refreshSessionsFor = useCallback(async (dir: string) => {
-    const { client } = dir ? await opencodeFor(dir) : await opencode();
+    const { client } = await clientFor(dir);
     const r = await (client.session as any).list();
     const list = ((r.data ?? []) as Session[])
       .filter((s) => !hiddenSessions.has(s.id) && s.title !== HIDDEN_TITLE && !(s as any).parentID)
@@ -1030,14 +1110,20 @@ export function useOpencode() {
     );
   }, []);
 
+  // learn the server's real default from a reply we did NOT steer
+  // (encapsulates prov.sentExplicitModel + prov.learnDefault for the SSE layer)
+  const learnServerDefault = useCallback((providerID: string, modelID: string) => {
+    if (prov.sentExplicitModel.current) return;
+    prov.learnDefault(`${providerID}/${modelID}`);
+  }, [prov.sentExplicitModel, prov.learnDefault]);
+
   // re-read provider/model lists after /connect saves credentials —
   // loadProvidersAll overwrites the per-server cache, so a new key shows
   // up in /models without a restart
   const refreshProviders = useCallback(async () => {
     try {
       const dirs = getAllDirs().filter((d) => d);
-      const getClient = (d: string) => (d ? opencodeFor(d) : opencode());
-      await (prov as any).loadProvidersAll(getClient, dirs).catch(() => {});
+      await (prov as any).loadProvidersAll(clientFor, dirs).catch(() => {});
     } catch {}
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [getAllDirs]);
@@ -1048,7 +1134,7 @@ export function useOpencode() {
   // busy session keeps its live store and seeds from fetch only if empty.
   const loadMessagesIntoStore = useCallback(async (sid: string, dirFor: string): Promise<Msg[]> => {
     const seq = store.beginFetch(sid);
-    const { client } = dirFor ? await opencodeFor(dirFor) : await opencode();
+    const { client } = await clientFor(dirFor);
     const r = (await (client.session as any).messages({ path: { id: sid } })) as { data?: Msg[] };
     if (store.isStale(sid, seq)) return store.cached(sid) ?? [];
     if (busyRef.current.has(sid)) {
@@ -1148,357 +1234,42 @@ export function useOpencode() {
   useEffect(() => {
     const esMap = new Map<string, EventSource>();
     let disposed = false;
+    let wsInterval: number | undefined;
 
-    const onEvent = (e: OpenCodeEvent, dirHint?: string) => {
-      const p = e.properties;
-      if (typeof e.type === "string" && e.type.includes("compaction")) {
-        const sid = p.sessionID ?? p.id;
-        if (sid) {
-          if (e.type.endsWith(".started") || e.type.endsWith(".delta")) markCompacting(sid, true);
-          else if (e.type.endsWith(".ended") || e.type === "session.compacted") markCompacting(sid, false);
-        }
-      }
-      switch (e.type) {
-        case "message.updated": {
-          const info = p.info as Message;
-          const sid = info.sessionID;
-          if (info.role === "assistant" && info.time?.completed) {
-            // last live message done — but the turn may continue with a
-            // new message any moment; settle only after the grace window
-            if (tracker.dropInflight(sid, info.id)) tracker.settle(sid);
-          } else if (info.role === "assistant") {
-            tracker.cancelSettle(sid);
-            tracker.addInflight(sid, info.id);
-            // a live message means definitely working — restore the
-            // indicators even if an early idle/completion cleared them
-            if (!busyRef.current.has(sid)) tracker.markBusy(sid, true);
-          }
-          // learn the server's real default from a reply we did NOT steer
-          if (
-            !prov.sentExplicitModel.current &&
-            info.role === "assistant" &&
-            (info as any).providerID &&
-            (info as any).modelID
-          ) {
-            prov.learnDefault(`${(info as any).providerID}/${(info as any).modelID}`);
-          }
-          store.applyMessage(info);
-          break;
-        }
-        case "message.part.updated": {
-          const part = p.part;
-          if (!part) return;
-          store.applyPart(part);
-          // sub-agent task finished — pull its cost so per-task chip + total update without waiting for poll
-          const ap = part as any;
-          if (ap.tool === "task" && ap.state?.status === "completed") {
-            setTimeout(() => void refreshChildrenRef.current(activeRef.current), 400);
-          }
-          break;
-        }
-        case "message.part.delta": {
-          // incremental stream chunk: {sessionID, messageID, partID, field, delta}
-          if (p.field !== "text") return;
-          store.applyDelta(p);
-          break;
-        }
-        case "permission.asked":
-        case "permission.v2.asked": {
-          // {id, sessionID, permission|action|type, metadata, patterns}
-          const ask: PermAsk = {
-            id: p.id,
-            sessionID: p.sessionID,
-            type: p.permission ?? p.action ?? p.type ?? "permission",
-            title:
-              p.metadata?.command ||
-              p.metadata?.title ||
-              p.title ||
-              (p.patterns ?? []).join(", ") ||
-              (p.permission ?? p.action ?? p.type ?? "permission"),
-          };
-          const mode = getSecurityModeFor(p.sessionID);
-          if (mode === "full") {
-            void autoRespondPermission(ask, "always");
-            break;
-          }
-          if (mode === "block") {
-            void autoRespondPermission(ask, "reject");
-            break;
-          }
-          permissionsRef.current.set(p.sessionID, ask);
-          syncAttention(p.sessionID);
-          emitPermission(p.sessionID);
-          playSound("attention");
-          // subagent approvals stay in the subagent viewer — the visible
-          // parent only gets the sidebar badge
-          const ptop = topOfSession(p.sessionID);
-          if (ptop !== p.sessionID) {
-            syncTopBadge(ptop);
-            if (!childParentRef.current.has(p.sessionID)) void resolveParent(p.sessionID, dirHint);
-          } else if (p.sessionID === activeRef.current) setPermission(ask);
-          break;
-        }
-        case "permission.updated": {
-          const ask: PermAsk = {
-            id: p.id ?? p.permissionID ?? p.requestID,
-            sessionID: p.sessionID,
-            type: p.type ?? p.permission ?? "permission",
-            title: p.title ?? p.type ?? p.permission ?? "permission",
-          };
-          if (!ask.sessionID || !ask.id) break;
-          const mode2 = getSecurityModeFor(p.sessionID);
-          if (mode2 === "full") {
-            void autoRespondPermission(ask, "always");
-            break;
-          }
-          if (mode2 === "block") {
-            void autoRespondPermission(ask, "reject");
-            break;
-          }
-          permissionsRef.current.set(ask.sessionID, ask);
-          syncAttention(ask.sessionID);
-          emitPermission(ask.sessionID);
-          const utop = topOfSession(ask.sessionID);
-          if (utop !== ask.sessionID) {
-            syncTopBadge(utop);
-            if (!childParentRef.current.has(ask.sessionID)) void resolveParent(ask.sessionID, dirHint);
-          } else if (ask.sessionID === activeRef.current) setPermission(ask);
-          break;
-        }
-        case "permission.replied":
-        case "permission.v2.replied": {
-          const pid = p.permissionID ?? p.requestID ?? p.id;
-          const sid = p.sessionID;
-          const affected = new Set<string>();
-          if (pid) {
-            for (const [s, perm] of [...permissionsRef.current])
-              if (perm.id === pid) { permissionsRef.current.delete(s); affected.add(s); }
-          } else if (sid) {
-            if (permissionsRef.current.has(sid)) affected.add(sid);
-            permissionsRef.current.delete(sid);
-          }
-          for (const s of affected) {
-            syncAttention(s);
-            emitPermission(s);
-            const rtop = topOfSession(s);
-            if (rtop !== s) syncTopBadge(rtop);
-          }
-          if (!affected.size && sid) {
-            syncAttention(sid);
-            emitPermission(sid);
-            const rtop2 = topOfSession(sid);
-            if (rtop2 !== sid) syncTopBadge(rtop2);
-          }
-          setPermission((cur) =>
-            cur && (cur.id === pid || (sid && cur.sessionID === sid)) ? null : cur,
-          );
-          break;
-        }
-        case "question.asked":
-        case "question.v2.asked": {
-          // question tool ask: {id, sessionID, questions:[{question,header,options,multiple?,custom?}]}
-          const ask: QuestionAsk = {
-            id: p.id ?? p.requestID,
-            sessionID: p.sessionID,
-            questions: Array.isArray(p.questions) ? p.questions : [],
-          };
-          if (!ask.sessionID || !ask.id) break;
-          questionsRef.current.set(p.sessionID, ask);
-          syncAttention(p.sessionID);
-          emitQuestion(p.sessionID);
-          playSound("attention");
-          // subagent asks stay in the subagent's history — never popped into
-          // the parent chat. The visible parent only gets the sidebar badge
-          // (the child row itself is filtered from the sidebar).
-          const top = topOfSession(p.sessionID);
-          if (top !== p.sessionID) {
-            syncTopBadge(top);
-            if (!childParentRef.current.has(p.sessionID)) void resolveParent(p.sessionID, dirHint);
-          } else if (p.sessionID === activeRef.current) setQuestion(ask);
-          break;
-        }
-        case "question.replied":
-        case "question.v2.replied":
-        case "question.rejected":
-        case "question.v2.rejected": {
-          const qid = p.requestID ?? p.id;
-          const affected = new Set<string>();
-          if (qid) {
-            for (const [sid, q] of [...questionsRef.current])
-              if (q.id === qid) { questionsRef.current.delete(sid); affected.add(sid); }
-            setQuestion((cur) => (cur && cur.id === qid ? null : cur));
-          } else if (p.sessionID) {
-            if (questionsRef.current.has(p.sessionID)) affected.add(p.sessionID);
-            questionsRef.current.delete(p.sessionID);
-            setQuestion((cur) => (cur && cur.sessionID === p.sessionID ? null : cur));
-          }
-          for (const s of affected) {
-            syncAttention(s);
-            emitQuestion(s);
-            const top = topOfSession(s);
-            if (top !== s) syncTopBadge(top);
-          }
-          if (!affected.size && p.sessionID) {
-            syncAttention(p.sessionID);
-            emitQuestion(p.sessionID);
-            const top = topOfSession(p.sessionID);
-            if (top !== p.sessionID) syncTopBadge(top);
-          }
-          break;
-        }
-        case "session.idle":
-          // settles the turn only when no assistant message is still live —
-          // mid-turn idles in heavier tasks are ignored
-          if (!tracker.hasInflight(p.sessionID)) tracker.settle(p.sessionID);
-          break;
-        case "session.error": {
-          // runtime turn failure (provider auth, API errors…) — the prompt
-          // call already succeeded, so this event is the ONLY signal. Mirror
-          // the prompt-failure path: visible bubble + toast, then settle.
-          // (Upstream still skips this event for some paths — e.g. a missing
-          // model idles silently — which the per-server model guard above
-          // prevents instead.)
-          const sid = p.sessionID as string | undefined;
-          const err = (p as any).error as any;
-          if (err?.name === "MessageAbortedError") break; // ours — abort path owns it
-          const msg = String(err?.data?.message ?? err?.message ?? "The server ended the turn with an error.");
-          if (sid) {
-            store.addError(sid, msg);
-            tracker.settle(sid);
-            // put the failed prompt back in the composer (text + pictures).
-            // Guarded: new typing since the send wins over the failed text.
-            const last = lastSentRef.current.get(sid);
-            if (last) {
-              lastSentRef.current.delete(sid);
-              if (last.text) {
-                try { if (!getDraft(sid)) setDraft(sid, last.text); } catch {}
-              }
-              if (last.files?.length) restoreAttachmentDraft(sid, last.files);
-              if (sid === activeRef.current && last.text) {
-                window.dispatchEvent(new CustomEvent("oc:restore-input", { detail: last.text }));
-              }
-            }
-          }
-          pushToast(msg);
-          break;
-        }
-        // compaction live indicator — server decides when to compact (auto
-        // or manual /compact); we just surface its progress per-session
-        case "session.compacted":
-          if (p.sessionID) markCompacting(p.sessionID, false);
-          break;
-        case "session.next.compaction.started":
-          if (p.sessionID) markCompacting(p.sessionID, true);
-          break;
-        case "session.next.compaction.delta":
-          if (p.sessionID) markCompacting(p.sessionID, true);
-          break;
-        case "session.next.compaction.ended":
-          if (p.sessionID) markCompacting(p.sessionID, false);
-          break;
-        case "session.created": {
-          const s = p.info as Session | undefined;
-          if (!s?.id) break;
-          const parent = (s as any).parentID;
-          if (parent) {
-            childParentRef.current.set(s.id, parent);
-            if (parent === activeRef.current) void refreshChildrenRef.current(activeRef.current);
-            break;
-          }
-          if (hiddenSessions.has(s.id) || s.title === HIDDEN_TITLE) break;
-          const dir = dirHint ?? getDirectory();
-          sessionDirRef.current.set(s.id, dir);
-          const overrides = getTitleOverrides();
-          const patched = overrides[s.id] ? { ...s, title: overrides[s.id], _dir: dir } as any : { ...s, _dir: dir } as any;
-          setSessions((prev) => {
-            if (prev.some((x) => x.id === patched.id)) return prev;
-            return applyOverrides([...prev, patched]);
-          });
-          break;
-        }
-        case "session.updated": {
-          // server-side metadata changes — auto-generated titles after the
-          // first reply, pin/archive flags — must reach the sidebar live
-          const s = p.info as Session | undefined;
-          if (!s?.id) break;
-          const parent2 = (s as any).parentID;
-          if (parent2) {
-            if (parent2 === activeRef.current) void refreshChildrenRef.current(activeRef.current);
-            break;
-          }
-          if (hiddenSessions.has(s.id) || s.title === HIDDEN_TITLE) break;
-          const overrides = getTitleOverrides();
-          const pinned = getPinned();
-          const patched = overrides[s.id] ? { ...s, title: overrides[s.id] } : s;
-          setSessions((prev) => {
-            const i = prev.findIndex((x) => x.id === patched.id);
-            if (i < 0) return prev;
-            const next = prev.map((x, j) => (j === i ? patched : (overrides[x.id] ? { ...x, title: overrides[x.id] } : x)));
-            return next.sort((a, b) => {
-              const pa = pinned.has(a.id) ? 1 : 0;
-              const pb = pinned.has(b.id) ? 1 : 0;
-              if (pa !== pb) return pb - pa;
-              return (b.time?.created ?? 0) - (a.time?.created ?? 0);
-            });
-          });
-          break;
-        }
-        case "session.deleted": {
-          const delId = p.sessionID ?? p.id;
-          if (delId) {
-            sessionDirRef.current.delete(delId);
-            modelFallbackWarned.current.delete(delId);
-            store.remove(delId);
-            tracker.reset(delId);
-            markCompacting(delId, false);
-            clearDraft(delId);
-            clearAttachmentDraft(delId);
-            questionsRef.current.delete(delId);
-            permissionsRef.current.delete(delId);
-            clearAttention(delId);
-            setSessionSecurity((prev) => {
-              if (!(delId in prev)) return prev;
-              const next = { ...prev };
-              delete next[delId];
-              return next;
-            });
-            setSessionAgents((prev) => {
-              if (!(delId in prev)) return prev;
-              const next = { ...prev };
-              delete next[delId];
-              return next;
-            });
-            prov.rememberSession(delId, "");
-            prov.forgetVariantSession(delId);
-            if (delId === activeRef.current) {
-              setQuestion(null);
-              setPermission(null);
-            }
-          }
-          refreshSessions().catch(() => {});
-          break;
-        }
-        case "file.watcher.updated":
-          // something changed under the workspace — if it could be a command
-          // or agent file, refresh the registry (debounced; new files may need
-          // an app restart per server behavior, edits/deletes show up)
-          {
-            const path = `${p.file ?? p.path ?? ""}`;
-            // relay for the file viewer's external-change detection
-            window.dispatchEvent(new CustomEvent("oc:file-changed", { detail: path }));
-            if (path.includes(".opencode") && Date.now() - cmdFetchAt.current > 1000) {
-              cmdFetchAt.current = Date.now();
-              refreshCommands().catch(() => {});
-            }
-            const isAgentPath = path.includes("agent") || path.endsWith(".md");
-            if (isAgentPath && Date.now() - agentFetchAt.current > 1000) {
-              agentFetchAt.current = Date.now();
-              refreshAgents().catch(() => {});
-            }
-          }
-          break;
-      }
+    // SSE dispatch lives in src/lib/opencodeEvents.ts — ctx wires the
+    // per-boot callbacks/refs/state-setters it mutates (all stable).
+    const ctx: OpenCodeEventCtx = {
+      store,
+      tracker,
+      busyRef,
+      activeRef,
+      childParentRef,
+      sessionDirRef,
+      permissionsRef,
+      questionsRef,
+      getSecurityModeFor,
+      autoRespondPermission,
+      resolveParent,
+      restoreFailedInput,
+      handlePermAsk,
+      syncAttention,
+      emitPermission,
+      emitQuestion,
+      syncTopBadge,
+      topOfSession,
+      setPermission,
+      setQuestion,
+      setSessions,
+      markCompacting,
+      applyOverrides,
+      teardownSession,
+      refreshSessions,
+      refreshCommands,
+      refreshAgents,
+      refreshChildrenRef,
+      learnServerDefault,
     };
+    const onEvent = (e: OpenCodeEvent, dirHint?: string) => handleOpenCodeEvent(e, ctx, dirHint);
 
     (async () => {
       // the UI renders immediately on skeletons. Phase 1: poll silently
@@ -1566,7 +1337,7 @@ export function useOpencode() {
         };
         setupSSE(currentBase);
         // watch for workspace list changes — add/remove streams live; re-subscribes when base changes
-        const wsInterval = window.setInterval(async () => {
+        const wsTick = async () => {
           if (disposed) return;
           let liveBase = baseRef.current || currentBase;
           try {
@@ -1598,9 +1369,8 @@ export function useOpencode() {
           for (const d of cur) if (!esMap.has(d)) void addStream(d, liveBase);
           // remove gone (closed workspace)
           for (const [d, es] of [...esMap]) if (!(cur as string[]).includes(d)) { es.close(); esMap.delete(d); }
-        }, 2000);
-        // store interval for cleanup via closure
-        (esMap as any)._interval = wsInterval;
+        };
+        wsInterval = window.setInterval(wsTick, 2000);
 
         const lastId = localStorage.getItem(LAST_KEY);
         const target = list.find((s) => s.id === lastId) ?? list[0];
@@ -1609,9 +1379,8 @@ export function useOpencode() {
 
         // models from every server (local + SSH remotes carry their own auth)
         if (!disposed) {
-          const dirs = getAllDirs().filter((d) => d);
-          const getClient = (d: string) => (d ? opencodeFor(d) : opencode());
-          await (prov as any).loadProvidersAll(getClient, dirs).catch(() => {});
+        const dirs = getAllDirs().filter((d) => d);
+        await (prov as any).loadProvidersAll(clientFor, dirs).catch(() => {});
         }
       } catch (e) {
         if (!disposed) pushToast(`Connection error: ${e}`);
@@ -1641,6 +1410,8 @@ export function useOpencode() {
           })
           .catch(() => {});
         // same for permissions — best-effort (endpoint may not exist in older server)
+        const bootPermTitle = (pr: any): string =>
+          pr.metadata?.command ?? pr.metadata?.title ?? pr.title ?? pr.type ?? "permission";
         const handleBootPerms = (arr: any[]) => {
           const touched = new Set<string>();
           for (const p of arr) {
@@ -1652,7 +1423,7 @@ export function useOpencode() {
                 id: p.id,
                 sessionID: p.sessionID,
                 type: p.permission ?? p.type ?? p.action ?? "permission",
-                title: p.metadata?.command ?? p.metadata?.title ?? p.title ?? p.type ?? "permission",
+                title: bootPermTitle(p),
               };
               void autoRespondPermission(ask, resp);
               continue;
@@ -1661,7 +1432,7 @@ export function useOpencode() {
               id: p.id,
               sessionID: p.sessionID,
               type: p.permission ?? p.type ?? "permission",
-              title: p.metadata?.command ?? p.metadata?.title ?? p.title ?? p.type ?? "permission",
+              title: bootPermTitle(p),
             };
             permissionsRef.current.set(ask.sessionID, ask); touched.add(ask.sessionID);
           }
@@ -1700,8 +1471,7 @@ export function useOpencode() {
 
     return () => {
       disposed = true;
-      const iv = (esMap as any)._interval as number | undefined;
-      if (iv) window.clearInterval(iv);
+      if (wsInterval) window.clearInterval(wsInterval);
       for (const es of esMap.values()) es.close();
       esMap.clear();
     };
@@ -1734,7 +1504,7 @@ export function useOpencode() {
   const newSession = useCallback(async (dir?: string) => {
     const effDir = (dir ?? getDirectory()).trim();
     touchWorkspace(effDir);
-    const { client } = effDir ? await opencodeFor(effDir) : await opencode();
+    const { client } = await clientFor(effDir);
     const r = await (client.session as any).create({ body: {} });
     const s = r.data as Session;
     sessionDirRef.current.set(s.id, effDir);
@@ -1781,7 +1551,7 @@ export function useOpencode() {
     if (!sid) { childrenSigRef.current = ""; setActiveChildren([]); return; }
     try {
       const dir = sessionDirRef.current.get(sid) ?? getDirectory();
-      const { client } = dir ? await opencodeFor(dir) : await opencode();
+      const { client } = await clientFor(dir);
       const r = await (client.session as any).children({ path: { id: sid } });
       const raw = (r as any)?.data ?? (r as any)?.value ?? r;
       const list: Session[] = Array.isArray(raw) ? raw : Array.isArray((r as any)?.data) ? (r as any).data : [];
@@ -1883,12 +1653,11 @@ export function useOpencode() {
       tracker.markBusy(sid, true);
       try {
         const dirFor = sessionDirRef.current.get(sid) ?? getDirectory();
-        const getClient = (d: string) => (d ? opencodeFor(d) : opencode());
         // make sure this server's models are known before the guard below
         // runs — boot skips servers whose tunnel isn't up yet, and without
         // this the guard would fail open on them forever
-        await ensureServerGroups(getClient, dirFor);
-        const { client } = await getClient(dirFor);
+        await ensureServerGroups(clientFor, dirFor);
+        const { client } = await clientFor(dirFor);
         const parts: any[] = [{ type: "text", text }];
         for (const f of files ?? [])
           parts.push({ type: "file", mime: f.mime, filename: f.filename, url: f.url });
@@ -1972,7 +1741,7 @@ export function useOpencode() {
     setPermission((cur) => (cur?.sessionID === activeId ? null : cur));
     clearAttention(activeId);
     const dirFor = sessionDirRef.current.get(activeId) ?? getDirectory();
-    const { client } = dirFor ? await opencodeFor(dirFor) : await opencode();
+    const { client } = await clientFor(dirFor);
     await (client.session as any).abort({ path: { id: activeId } }).catch(() => {});
   }, [activeId, markCompacting, clearAttention]);
 
@@ -1987,7 +1756,7 @@ export function useOpencode() {
       const top = topOfSession(perm.sessionID);
       if (top !== perm.sessionID) syncTopBadge(top);
       const dirFor = sessionDirRef.current.get(perm.sessionID) ?? getDirectory();
-      const { client } = dirFor ? await opencodeFor(dirFor) : await opencode();
+      const { client } = await clientFor(dirFor);
       await (client as any)
         .postSessionIdPermissionsPermissionId({
           path: { id: perm.sessionID, permissionID: perm.id },
@@ -2116,7 +1885,7 @@ export function useOpencode() {
         }
       } catch {}
       const dirFor = sessionDirRef.current.get(id) ?? getDirectory();
-      const { client } = dirFor ? await opencodeFor(dirFor) : await opencode();
+      const { client } = await clientFor(dirFor);
       await (client.session as any).revert({ path: { id }, body: { messageID } }).catch(() => {});
       await guardedRefresh().catch(() => {});
       await openSession(id).catch(() => {});
@@ -2132,7 +1901,7 @@ export function useOpencode() {
     const id = activeRef.current;
     if (!id) return;
     const dirFor = sessionDirRef.current.get(id) ?? getDirectory();
-    const { client } = dirFor ? await opencodeFor(dirFor) : await opencode();
+    const { client } = await clientFor(dirFor);
     await (client.session as any).unrevert({ path: { id } }).catch(() => {});
     await guardedRefresh().catch(() => {});
     await openSession(id).catch(() => {});
@@ -2317,33 +2086,10 @@ export function useOpencode() {
     async (id: string) => {
       const dirFor = sessionDirRef.current.get(id) ?? getDirectory();
       if (dirFor) touchWorkspace(dirFor);
-      const { client } = dirFor ? await opencodeFor(dirFor) : await opencode();
+      const { client } = await clientFor(dirFor);
       await (client.session as any).delete({ path: { id } }).catch(() => {});
-      sessionDirRef.current.delete(id);
-      debugSessions.delete(id);
+      teardownSession(id);
       setSessions((prev) => prev.filter((s) => s.id !== id));
-      store.remove(id);
-      questionsRef.current.delete(id);
-      permissionsRef.current.delete(id);
-      clearAttention(id);
-      markCompacting(id, false);
-      tracker.reset(id);
-      clearDraft(id);
-      clearAttachmentDraft(id);
-      setSessionSecurity((prev) => {
-        if (!(id in prev)) return prev;
-        const next = { ...prev };
-        delete next[id];
-        return next;
-      });
-      setSessionAgents((prev) => {
-        if (!(id in prev)) return prev;
-        const next = { ...prev };
-        delete next[id];
-        return next;
-      });
-      prov.rememberSession(id, "");
-      prov.forgetVariantSession(id);
       if (activeRef.current === id) {
         setActiveId("");
         store.clearStashes();
@@ -2352,8 +2098,7 @@ export function useOpencode() {
         setPermission(null);
       }
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [markCompacting, clearAttention],
+    [teardownSession],
   );
 
   const renameSession = useCallback(async (id: string, title: string) => {
@@ -2361,7 +2106,7 @@ export function useOpencode() {
     if (!trimmed) return;
     try {
       const dirFor = sessionDirRef.current.get(id) ?? getDirectory();
-      const { client } = dirFor ? await opencodeFor(dirFor) : await opencode();
+      const { client } = await clientFor(dirFor);
       // try server update — if available
       const api: any = (client as any).session;
       if (api && typeof api.update === "function") {
@@ -2375,48 +2120,57 @@ export function useOpencode() {
       }
       throw new Error("no update");
     } catch {
-      // oc override
+      // oc override — same validated reader the rest of the hook uses
       try {
-        const raw = localStorage.getItem(TITLE_OVERRIDES_KEY);
-        const obj = raw ? JSON.parse(raw) : {};
-        const map = obj && typeof obj === "object" ? obj : {};
+        const map = { ...getTitleOverrides() };
         map[id] = trimmed;
         localStorage.setItem(TITLE_OVERRIDES_KEY, JSON.stringify(map));
+        titleOverridesCacheRef.current = map;
       } catch {}
       setSessions((prev) => applyOverrides(prev.map((s) => s.id === id ? { ...s, title: trimmed } : s)));
     }
-  }, []);
+  }, [getTitleOverrides]);
+
+  // copy per-session chip values (model/agent/security/variant) from the
+  // source session onto the new one, falling back to the current globals —
+  // shared by duplicate + fork
+  const inheritChips = useCallback(
+    (srcId: string, newId: string) => {
+      try {
+        const srcModel = (prov as any).sessionModels?.[srcId];
+        if (srcModel) prov.rememberSession(newId, srcModel);
+        else {
+          let m: string = prov.modelSel || "";
+          if (!m) try { m = localStorage.getItem(windowKey("oc.lastModel")) || ""; } catch {}
+          if (!m) m = prov.defaultModel || "";
+          if (m) prov.rememberSession(newId, m);
+        }
+        const srcAgent = sessionAgents[srcId];
+        if (srcAgent) rememberAgentSession(newId, srcAgent);
+        else if (agentSel) rememberAgentSession(newId, agentSel);
+        const srcSec = sessionSecurity[srcId] as SecurityMode | undefined;
+        if (srcSec) rememberSecuritySession(newId, srcSec);
+        else if (securityModeRef.current) rememberSecuritySession(newId, securityModeRef.current);
+        const srcVariant = (prov as any).sessionVariants?.[srcId];
+        if (srcVariant) prov.rememberVariantSession(newId, srcVariant);
+        else if (prov.variantSel) prov.rememberVariantSession(newId, prov.variantSel);
+      } catch {}
+    },
+    [sessionAgents, sessionSecurity, agentSel, prov.modelSel, prov.defaultModel, prov.variantSel, prov.rememberSession, prov.rememberVariantSession, rememberAgentSession, rememberSecuritySession],
+  );
 
   const duplicateSession = useCallback(async (id: string) => {
     const dirFor = sessionDirRef.current.get(id) ?? getDirectory();
-    const { client } = dirFor ? await opencodeFor(dirFor) : await opencode();
+    const { client } = await clientFor(dirFor);
     const r: any = await (client.session as any).fork({ path: { id } });
     const s = r.data as Session;
     sessionDirRef.current.set(s.id, dirFor);
-    // copy per-session chip values from source session so duplicate inherits
-    try {
-      const srcModel = (prov as any).sessionModels?.[id];
-      if (srcModel) prov.rememberSession(s.id, srcModel);
-      else {
-        let m: string = prov.modelSel || "";
-        if (!m) try { m = localStorage.getItem(windowKey("oc.lastModel")) || ""; } catch {}
-        if (!m) m = prov.defaultModel || "";
-        if (m) prov.rememberSession(s.id, m);
-      }
-      const srcAgent = sessionAgents[id];
-      if (srcAgent) rememberAgentSession(s.id, srcAgent);
-      else if (agentSel) rememberAgentSession(s.id, agentSel);
-      const srcSec = sessionSecurity[id] as SecurityMode | undefined;
-      if (srcSec) rememberSecuritySession(s.id, srcSec);
-      else if (securityModeRef.current) rememberSecuritySession(s.id, securityModeRef.current);
-      const srcVariant = (prov as any).sessionVariants?.[id];
-      if (srcVariant) prov.rememberVariantSession(s.id, srcVariant);
-      else if (prov.variantSel) prov.rememberVariantSession(s.id, prov.variantSel);
-    } catch {}
+    // duplicate inherits per-session chip values from source session
+    inheritChips(id, s.id);
     await guardedRefresh();
     await openSession(s.id);
     return s.id;
-  }, [guardedRefresh, openSession, sessionAgents, sessionSecurity, agentSel, prov.modelSel, prov.defaultModel, prov.variantSel]);
+  }, [guardedRefresh, openSession, inheritChips]);
 
   const forkFrom = useCallback(async (messageID: string) => {
     const id = activeRef.current;
@@ -2435,30 +2189,12 @@ export function useOpencode() {
       }
     } catch {}
     const dirFor = sessionDirRef.current.get(id) ?? getDirectory();
-    const { client } = dirFor ? await opencodeFor(dirFor) : await opencode();
+    const { client } = await clientFor(dirFor);
     const r: any = await (client.session as any).fork({ path: { id }, body: { messageID } });
     const s = r.data as Session;
     sessionDirRef.current.set(s.id, dirFor);
     // fork inherits per-session chip values from source session
-    try {
-      const srcModel = (prov as any).sessionModels?.[id];
-      if (srcModel) prov.rememberSession(s.id, srcModel);
-      else {
-        let m: string = prov.modelSel || "";
-        if (!m) try { m = localStorage.getItem(windowKey("oc.lastModel")) || ""; } catch {}
-        if (!m) m = prov.defaultModel || "";
-        if (m) prov.rememberSession(s.id, m);
-      }
-      const srcAgent = sessionAgents[id];
-      if (srcAgent) rememberAgentSession(s.id, srcAgent);
-      else if (agentSel) rememberAgentSession(s.id, agentSel);
-      const srcSec = sessionSecurity[id] as SecurityMode | undefined;
-      if (srcSec) rememberSecuritySession(s.id, srcSec);
-      else if (securityModeRef.current) rememberSecuritySession(s.id, securityModeRef.current);
-      const srcVariant = (prov as any).sessionVariants?.[id];
-      if (srcVariant) prov.rememberVariantSession(s.id, srcVariant);
-      else if (prov.variantSel) prov.rememberVariantSession(s.id, prov.variantSel);
-    } catch {}
+    inheritChips(id, s.id);
     if (pasteText) {
       try { setDraft(s.id, pasteText); } catch {}
     }
@@ -2469,16 +2205,17 @@ export function useOpencode() {
       window.dispatchEvent(new CustomEvent("oc:rewind-input", { detail: pasteText }));
     }
     return s.id;
-  }, [guardedRefresh, openSession, sessionAgents, sessionSecurity, agentSel, prov.modelSel, prov.defaultModel, prov.variantSel]);
+  }, [guardedRefresh, openSession, inheritChips]);
 
   const togglePin = useCallback((id: string) => {
     try {
       const set = getPinned();
       if (set.has(id)) set.delete(id); else set.add(id);
       localStorage.setItem(PINNED_KEY, JSON.stringify([...set]));
+      pinnedCacheRef.current = set;
       setSessions((prev) => applyOverrides([...prev]));
     } catch {}
-  }, []);
+  }, [getPinned, applyOverrides]);
 
   const isPinned = useCallback((id: string) => getPinned().has(id), []);
 
@@ -2492,37 +2229,11 @@ export function useOpencode() {
     await Promise.all(
       ids.map(async (id) => {
         const dirFor = sessionDirRef.current.get(id) ?? getDirectory();
-        const { client } = dirFor ? await opencodeFor(dirFor) : await opencode();
+        const { client } = await clientFor(dirFor);
         return (client.session as any).delete({ path: { id } }).catch(() => {});
       }),
     );
-    for (const id of ids) {
-      sessionDirRef.current.delete(id);
-      store.remove(id);
-      questionsRef.current.delete(id);
-      permissionsRef.current.delete(id);
-      clearAttention(id);
-      markCompacting(id, false);
-      tracker.reset(id);
-      clearDraft(id);
-      clearAttachmentDraft(id);
-    }
-    setSessionSecurity((prev) => {
-      let changed = false;
-      const next = { ...prev };
-      for (const id of ids) if (id in next) { delete next[id]; changed = true; }
-      return changed ? next : prev;
-    });
-    setSessionAgents((prev) => {
-      let changed = false;
-      const next = { ...prev };
-      for (const id of ids) if (id in next) { delete next[id]; changed = true; }
-      return changed ? next : prev;
-    });
-    for (const id of ids) {
-      prov.rememberSession(id, "");
-      prov.forgetVariantSession(id);
-    }
+    for (const id of ids) teardownSession(id);
     setSessions((prev) => prev.filter((s) => !ids.includes(s.id)));
     if (activeRef.current && ids.includes(activeRef.current)) {
       setActiveId("");
@@ -2532,8 +2243,7 @@ export function useOpencode() {
       setPermission(null);
       setCompactingIds(new Set());
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [store, tracker, markCompacting, clearAttention]);
+  }, [teardownSession]);
 
   // clear every session across all workspaces
   const clearSessions = useCallback(async () => {
@@ -2541,34 +2251,18 @@ export function useOpencode() {
     await Promise.all(
       ids.map(async (id) => {
         const dirFor = sessionDirRef.current.get(id) ?? getDirectory();
-        const { client } = dirFor ? await opencodeFor(dirFor) : await opencode();
+        const { client } = await clientFor(dirFor);
         return (client.session as any).delete({ path: { id } }).catch(() => {});
       }),
     );
-    for (const id of ids) {
-      store.remove(id);
-      questionsRef.current.delete(id);
-      permissionsRef.current.delete(id);
-      clearAttention(id);
-      markCompacting(id, false);
-      tracker.reset(id);
-      clearDraft(id);
-      clearAttachmentDraft(id);
-    }
-    setSessionSecurity((prev) => (Object.keys(prev).length ? {} : prev));
-    setSessionAgents((prev) => (Object.keys(prev).length ? {} : prev));
-    for (const id of ids) {
-      prov.rememberSession(id, "");
-      prov.forgetVariantSession(id);
-    }
+    for (const id of ids) teardownSession(id);
     setActiveId("");
     store.clearStashes();
     setMsgs([]);
     setQuestion(null);
     setPermission(null);
     setCompactingIds(new Set());
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [store, tracker, markCompacting, clearAttention]);
+  }, [teardownSession]);
 
   // the active session's busy/compacting state, derived from per-session sets
   const busy = busyIds.has(activeId);
@@ -2647,7 +2341,6 @@ export function useOpencode() {
     isPinned,
     getDirForSession,
     refreshSessions,
-    refreshSessionsFor,
     clearSessionsFor,
   };
 }

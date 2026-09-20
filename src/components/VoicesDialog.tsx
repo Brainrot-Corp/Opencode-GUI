@@ -4,6 +4,7 @@ import type { AppSettings } from "../hooks/useSettings";
 import { useVoiceInstall } from "../hooks/useVoiceInstall";
 import PickerMenu from "./PickerMenu";
 import Dialog from "./Dialog";
+import DialogTabs from "./DialogTabs";
 import InlineNumberInput from "./InlineNumberInput";
 import { kokoroLabel, loadKokoroCatalog, loadWhisperCatalog, wmGroup, type WhisperModel, kokoroGpuMbFor } from "../lib/kokoro";
 
@@ -115,20 +116,16 @@ export default function VoicesDialog({
 
   return (
     <Dialog title="Voice & speech" top wide onClose={onClose}>
-      <div className="dlg-tabs">
-        {(
-          [
-            ["stt", "STT"],
-            ["tts", "TTS"],
-            ["models", "Models"],
-            ["voices", "Voices"],
-          ] as const
-        ).map(([id, label]) => (
-          <button key={id} type="button" className={`dlg-tab${tab === id ? " on" : ""}`} onClick={() => setTab(id)}>
-            {label}
-          </button>
-        ))}
-      </div>
+      <DialogTabs
+        tabs={[
+          ["stt", "STT"],
+          ["tts", "TTS"],
+          ["models", "Models"],
+          ["voices", "Voices"],
+        ] as const}
+        value={tab}
+        onChange={setTab}
+      />
 
       {dl && (
         <div className="dl-live" role="status">

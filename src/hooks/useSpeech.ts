@@ -20,8 +20,10 @@ import {
   playPcm,
   playWav,
   splitForSpeech,
+  voiceLang,
   wordCount,
 } from "../lib/speechText";
+import { TTS_LIVE, TTS_STOP } from "../lib/voiceEvents";
 import type { AppSettings } from "./useSettings";
 import type { Msg, PermAsk, ProviderGroup } from "../types";
 
@@ -118,12 +120,9 @@ export function useSpeech(oc: SpeechOc, settings: AppSettings) {
   const summarizeWithCommitModel = useCallback(
     async (raw: string) => {
       if (ttsHushed.current || debriefing) return;
-      let secondaryModel = "";
-      try {
-        secondaryModel = JSON.parse(localStorage.getItem("oc.settings") ?? "{}").secondaryModel ?? "";
-      } catch {}
       const st = settingsNow.current;
       if (!st.ttsVoice) return;
+      const secondaryModel = st.secondaryModel ?? "";
       if (!secondaryModel) {
         // no model → fall back to queuing raw (short enough to speak directly)
         queueSpeech(raw);
@@ -131,16 +130,7 @@ export function useSpeech(oc: SpeechOc, settings: AppSettings) {
       }
       // announce waiting for answer — queued, never cuts
       queueSpeech("One sec — summarizing.");
-      const rawVoice = st.ttsVoice.replace(/\.onnx$/, "");
-      const locale = rawVoice.split("-")[0] || "en_US";
-      const langHint =
-        locale.startsWith("fr") ? "French" :
-        locale.startsWith("de") ? "German" :
-        locale.startsWith("es") ? "Spanish" :
-        locale.startsWith("zh") ? "Chinese" :
-        locale.startsWith("pt") ? "Portuguese" :
-        locale.startsWith("pl") ? "Polish" :
-        locale.startsWith("en_GB") ? "British English" : "English";
+      const { voice: rawVoice, locale, hint: langHint } = voiceLang(st.ttsVoice);
       const prompt =
         `You are an ultra-concise spoken-summary assistant. Summarize the ASSISTANT ANSWER below in a single short paragraph, spoken aloud. ` +
         `Keep total under 30 words, 1-2 short sentences, only the essential outcome. Be extremely terse, no filler, no intro, no repetition. ` +
@@ -185,16 +175,14 @@ export function useSpeech(oc: SpeechOc, settings: AppSettings) {
   // pipelined synth→play: synthesis of chunk N+1 starts while N plays,
   // and PCM path bypasses WAV/Blob overhead. Falls back to WAV on failure.
   // ponytail: 30s cap guards against wedged Rust synth hanging pump forever (ttsPumping stays true)
-  const withSynthTimeout = <T>(p: Promise<T>, ms = 30000) =>
-    Promise.race([p, new Promise<never>((_, rej) => setTimeout(() => rej(new Error("TTS synth timed out")), ms))]) as Promise<T>;
   const synthOne = async (phrase: string, st: AppSettings): Promise<{ bytes: number[]; isPcm: boolean } | null> => {
     // prefer PCM (i16 LE, no WAV header) — smaller IPC, no browser WAV decode
     try {
-      const pcm = await withSynthTimeout(invoke<number[]>("tts_speak_pcm", { text: phrase, voice: st.ttsVoice, speed: st.ttsSpeed }));
+      const pcm = await withDeadline(invoke<number[]>("tts_speak_pcm", { text: phrase, voice: st.ttsVoice, speed: st.ttsSpeed }), 30_000, "TTS synth");
       if (pcm && pcm.length >= 200) return { bytes: pcm, isPcm: true };
     } catch {}
     try {
-      const wav = await withSynthTimeout(invoke<number[]>("tts_speak", { text: phrase, voice: st.ttsVoice, speed: st.ttsSpeed }));
+      const wav = await withDeadline(invoke<number[]>("tts_speak", { text: phrase, voice: st.ttsVoice, speed: st.ttsSpeed }), 30_000, "TTS synth");
       if (wav && wav.length >= 1000) return { bytes: wav, isPcm: false };
     } catch (e) { pushToast(String(e)); }
     return null;
@@ -356,49 +344,62 @@ export function useSpeech(oc: SpeechOc, settings: AppSettings) {
 
   // no streaming speech — only when an answer finishes (even mid-turn) we decide
   // to queue it raw or via the commit-model summary, never cutting.
-  // tail lookups scan backward in place: msgs identity changes per streaming
-  // delta, and [...msgs].reverse() copies the whole history each time
-  useEffect(() => {
-    let last: Msg | undefined;
-    for (let i = oc.msgs.length - 1; i >= 0; i--) {
-      if ((oc.msgs[i].info as any).role === "assistant") { last = oc.msgs[i]; break; }
-    }
-    if (!last) return;
-    const id = last.info.id;
-    const info = last.info as any;
-    const done = !!info.time?.completed;
-    if (!done) {
-      seenLive.current.add(id);
-      return;
-    }
-    if (!settings.speakReplies || !settings.ttsVoice) return;
-    if (lastSpoken.current === id) return;
-    if (debriefing) return; // debrief owns the voice — suppress base message
-    if (!seenLive.current.has(id)) return;
-    lastSpoken.current = id;
-    const raw = full_text(last);
-    if (!raw.trim()) return;
-    // if we already streamed parts of this message, only speak the tail
-    let toSpeak = raw;
-    const wasStreamed = lastStreamIdRef.current === id;
-    if (wasStreamed) {
-      const prev = lastStreamTextRef.current;
-      if (raw.startsWith(prev)) {
-        toSpeak = raw.slice(prev.length).trim();
-        lastStreamIdRef.current = "";
-        lastStreamTextRef.current = "";
-        if (!toSpeak) return;
-      } else {
-        lastStreamIdRef.current = "";
-        lastStreamTextRef.current = "";
+  // shared tail-trim + word-count gate for both completion paths
+  const speakCompleted = useCallback(
+    (m: Msg) => {
+      const id = m.info.id;
+      if (lastSpoken.current === id) return;
+      if (!seenLive.current.has(id)) return;
+      lastSpoken.current = id;
+      const raw = full_text(m);
+      if (!raw.trim()) return;
+      // if we already streamed parts of this message, only speak the tail
+      let toSpeak = raw;
+      const wasStreamed = lastStreamIdRef.current === id;
+      if (wasStreamed) {
+        const prev = lastStreamTextRef.current;
+        if (raw.startsWith(prev)) {
+          toSpeak = raw.slice(prev.length).trim();
+          lastStreamIdRef.current = "";
+          lastStreamTextRef.current = "";
+          if (!toSpeak) return;
+        } else {
+          lastStreamIdRef.current = "";
+          lastStreamTextRef.current = "";
+        }
       }
+      if (!wasStreamed && wordCount(toSpeak) > 30) {
+        void summarizeWithCommitModel(toSpeak);
+      } else {
+        for (const chunk of splitForSpeech(toSpeak)) queueSpeech(chunk);
+      }
+    },
+    [queueSpeech, summarizeWithCommitModel],
+  );
+
+  // completed-reply effect. Backward scan in place: msgs identity changes per
+  // streaming delta, and [...msgs].reverse() copies the whole history each
+  // time. Watches the tail assistant (streaming → mark seenLive) AND the most
+  // recently completed one — a previous answer finishing mid-turn while the
+  // tail already streams the next message must still be spoken.
+  useEffect(() => {
+    let tail: Msg | undefined;
+    let completed: Msg | undefined;
+    for (let i = oc.msgs.length - 1; i >= 0; i--) {
+      const m = oc.msgs[i];
+      if ((m.info as any).role !== "assistant") continue;
+      if (!tail) tail = m;
+      if (!completed && (m.info as any).time?.completed) { completed = m; break; }
     }
-    if (!wasStreamed && wordCount(toSpeak) > 30) {
-      void summarizeWithCommitModel(toSpeak);
-    } else {
-      for (const chunk of splitForSpeech(toSpeak)) queueSpeech(chunk);
-    }
-  }, [oc.msgs, oc.busy, settings.speakReplies, settings.ttsVoice, debriefing, queueSpeech, summarizeWithCommitModel]);
+    if (!tail) return;
+    const tailDone = !!(tail.info as any).time?.completed;
+    if (!tailDone) seenLive.current.add(tail.info.id);
+    if (!settings.speakReplies || !settings.ttsVoice) return;
+    if (debriefing) return; // debrief owns the voice — suppress base message
+    if (tailDone) speakCompleted(tail);
+    // tail is streaming but an older answer completed mid-turn — fallback speaks it
+    else if (completed && !ttsHushed.current) speakCompleted(completed);
+  }, [oc.msgs, oc.busy, settings.speakReplies, settings.ttsVoice, debriefing, speakCompleted]);
 
   // top-bar stop-speech button pauses piper playback from anywhere; the
   // volume slider retunes a running reply via oc:tts-vol
@@ -422,11 +423,11 @@ export function useSpeech(oc: SpeechOc, settings: AppSettings) {
       try { pcmHandle.current?.setVolume(n); } catch {}
     };
     const reset = () => { forceResetTTS(); };
-    window.addEventListener("oc:tts-stop", stop);
+    window.addEventListener(TTS_STOP, stop);
     window.addEventListener("oc:tts-vol", vol);
     window.addEventListener("oc:tts-reset", reset as EventListener);
     return () => {
-      window.removeEventListener("oc:tts-stop", stop);
+      window.removeEventListener(TTS_STOP, stop);
       window.removeEventListener("oc:tts-vol", vol);
       window.removeEventListener("oc:tts-reset", reset as EventListener);
     };
@@ -450,44 +451,14 @@ export function useSpeech(oc: SpeechOc, settings: AppSettings) {
       wait = window.setTimeout(beat, 20000);
     };
     const shut = () => clearTimeout(wait);
-    window.addEventListener("oc:tts-live", hush);
-    window.addEventListener("oc:tts-stop", shut);
+    window.addEventListener(TTS_LIVE, hush);
+    window.addEventListener(TTS_STOP, shut);
     return () => {
       clearTimeout(wait);
-      window.removeEventListener("oc:tts-live", hush);
-      window.removeEventListener("oc:tts-stop", shut);
+      window.removeEventListener(TTS_LIVE, hush);
+      window.removeEventListener(TTS_STOP, shut);
     };
   }, [oc.busy, settings.speakReplies]);
-  // fallback for silent completions — same word-count gate, queued never cuts
-  useEffect(() => {
-    if (!settings.speakReplies || !settings.ttsVoice || ttsHushed.current || debriefing) return;
-    let last: Msg | undefined;
-    for (let i = oc.msgs.length - 1; i >= 0; i--) {
-      const m = oc.msgs[i];
-      if ((m.info as any).role === "assistant" && (m.info as any).time?.completed) { last = m; break; }
-    }
-    if (!last || last.info.id === lastSpoken.current) return;
-    if (!seenLive.current.has(last.info.id)) return;
-    lastSpoken.current = last.info.id;
-    const raw = full_text(last);
-    if (!raw.trim()) return;
-    let toSpeak = raw;
-    const wasStreamed = lastStreamIdRef.current === last.info.id;
-    if (wasStreamed) {
-      const prev = lastStreamTextRef.current;
-      if (raw.startsWith(prev)) {
-        toSpeak = raw.slice(prev.length).trim();
-        lastStreamIdRef.current = "";
-        lastStreamTextRef.current = "";
-        if (!toSpeak) return;
-      } else {
-        lastStreamIdRef.current = "";
-        lastStreamTextRef.current = "";
-      }
-    }
-    if (!wasStreamed && wordCount(toSpeak) > 30) void summarizeWithCommitModel(toSpeak);
-    else { for (const chunk of splitForSpeech(toSpeak)) queueSpeech(chunk); }
-  }, [settings.speakReplies, settings.ttsVoice, oc.msgs, debriefing, queueSpeech, summarizeWithCommitModel]);
 
   // status cues: turn start is spoken via same queued FIFO — never cuts.
   // An explicit announcement REVIVES speech after stop-speech: the stop
@@ -506,7 +477,7 @@ export function useSpeech(oc: SpeechOc, settings: AppSettings) {
   const toolSeen = useRef<Set<string>>(new Set());
   const toolCounts = useRef<Map<string, number>>(new Map());
   // tail signature of the last collector scan — skips O(parts) rescans on deltas
-  const collectorSig = useRef(" init");
+  const collectorSig = useRef("init");
 
   const prevBusy = useRef(false);
   const lastPromptId = useRef("");
@@ -710,11 +681,7 @@ export function useSpeech(oc: SpeechOc, settings: AppSettings) {
         let dir = "";
         try {
           const st = settingsNow.current;
-          // prefer live settings, fallback to localStorage for hot reload edge
-          let secondaryModel = st.secondaryModel ?? "";
-          if (!secondaryModel) {
-            try { secondaryModel = JSON.parse(localStorage.getItem("oc.settings") ?? "{}").secondaryModel ?? ""; } catch {}
-          }
+          const secondaryModel = st.secondaryModel ?? "";
           if (!secondaryModel) {
             { const c = cleanSpeech("Pick a Secondary model in Settings, then try debrief again."); if (c) { ttsQ.current.push(c); capQueue(); pumpTTS(); } }
             window.dispatchEvent(new Event("oc:settings"));
@@ -745,16 +712,7 @@ export function useSpeech(oc: SpeechOc, settings: AppSettings) {
             return;
           }
           // locale from piper voice id: en_US-amy-medium -> en_US
-          const rawVoice = st.ttsVoice.replace(/\.onnx$/, "");
-          const locale = rawVoice.split("-")[0] || "en_US";
-          const langHint =
-            locale.startsWith("fr") ? "French" :
-            locale.startsWith("de") ? "German" :
-            locale.startsWith("es") ? "Spanish" :
-            locale.startsWith("zh") ? "Chinese" :
-            locale.startsWith("pt") ? "Portuguese" :
-            locale.startsWith("pl") ? "Polish" :
-            locale.startsWith("en_GB") ? "British English" : "English";
+          const { voice: rawVoice, locale, hint: langHint } = voiceLang(st.ttsVoice);
           const prompt =
             `You are a debrief assistant. Summarize WHAT changed and WHY in exactly 2 concise paragraphs max, spoken aloud. ` +
             `Respond in ${langHint} (locale ${locale}, TTS voice ${rawVoice}). No markdown, no bullets, no code, no preface.` +

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import Dialog from "./Dialog";
+import DialogTabs from "./DialogTabs";
 import PluginSettingsDialog from "./PluginSettingsDialog";
 import type { LoadedPlugin } from "../lib/plugins";
 import { isNewer } from "../lib/plugins";
@@ -221,18 +222,14 @@ export default function PluginsDialog({
         </button>
       }
     >
-      <div className="dlg-tabs">
-        {(["installed", "browse"] as const).map((id) => (
-          <button
-            key={id}
-            type="button"
-            className={`dlg-tab${tab === id ? " on" : ""}`}
-            onClick={() => setTab(id)}
-          >
-            {id === "installed" ? `Installed (${plugins.length})` : "Browse"}
-          </button>
-        ))}
-      </div>
+      <DialogTabs
+        tabs={[
+          ["installed", `Installed (${plugins.length})`],
+          ["browse", "Browse"],
+        ] as const}
+        value={tab}
+        onChange={setTab}
+      />
 
       {err && <div className="voice-err">{err}</div>}
 

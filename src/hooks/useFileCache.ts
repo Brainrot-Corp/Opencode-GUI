@@ -117,12 +117,6 @@ async function fetchKids(path: string, retries = 2, dir = ""): Promise<FileNode[
 export function getFileKids() {
   return kids;
 }
-export function getFileError() {
-  return err;
-}
-export function getFileLoading() {
-  return loadingPath;
-}
 export function invalidateFileCache(path?: string, dir = "") {
   if (path === undefined) {
     kids = new Map();

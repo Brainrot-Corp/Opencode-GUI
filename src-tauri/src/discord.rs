@@ -65,7 +65,10 @@ fn truncate128(s: &str) -> String {
     }
 }
 
-fn ensure_client(state: &DiscordState, requested_id: Option<&str>) -> Result<(), String> {
+// cheap part of the old ensure_client: reset on client-id change + create
+// the client if missing — no IO, safe to run inline on the async command.
+// The blocking connect lives in discord_set's spawn_blocking body.
+fn ensure_client_created(state: &DiscordState, requested_id: Option<&str>) -> Result<(), String> {
     let want_id = requested_id
         .filter(|s| !s.trim().is_empty())
         .unwrap_or(DEFAULT_CLIENT_ID)
@@ -91,39 +94,20 @@ fn ensure_client(state: &DiscordState, requested_id: Option<&str>) -> Result<(),
         }
     }
 
-    // ensure client exists
-    {
-        let mut cli_guard = state.client.lock().map_err(|_| "lock poisoned")?;
-        if cli_guard.is_none() {
-            *cli_guard = Some(DiscordIpcClient::new(&want_id).map_err(|e| e.to_string())?);
-            if let Ok(mut c) = state.connected.lock() {
-                *c = false;
-            }
-        }
-    }
-
-    // try connect if not yet connected — don't hold locks across blocking call
-    let already = state.connected.lock().map(|g| *g).unwrap_or(false);
-    if !already {
-        let mut guard = state.client.lock().map_err(|_| "lock poisoned")?;
-        if let Some(inner) = guard.as_mut() {
-            match inner.connect() {
-                Ok(_) => {
-                    drop(guard);
-                    if let Ok(mut cc) = state.connected.lock() {
-                        *cc = true;
-                    }
-                }
-                Err(e) => return Err(format!("discord not available: {e}")),
-            }
+    // ensure client exists (create is pure data — connect is the blocking part)
+    let mut cli_guard = state.client.lock().map_err(|_| "lock poisoned")?;
+    if cli_guard.is_none() {
+        *cli_guard = Some(DiscordIpcClient::new(&want_id).map_err(|e| e.to_string())?);
+        if let Ok(mut c) = state.connected.lock() {
+            *c = false;
         }
     }
     Ok(())
 }
 
 #[tauri::command]
-pub fn discord_set(
-    state: tauri::State<DiscordState>,
+pub async fn discord_set(
+    state: tauri::State<'_, DiscordState>,
     details: String,
     stt: String,
     large_image: Option<String>,
@@ -135,18 +119,38 @@ pub fn discord_set(
     // need to handle reconnection on failure — one retry
     let mut last_err = String::new();
     for attempt in 0..2 {
-        let ensure = ensure_client(&state, client_id.as_deref());
-        if let Err(e) = ensure {
+        // cheap: reset on id change + create client if missing (no IO)
+        if let Err(e) = ensure_client_created(&state, client_id.as_deref()) {
             last_err = e;
             if attempt == 0 {
-                // drop and retry once after short delay
-                std::thread::sleep(std::time::Duration::from_millis(200));
+                // drop and retry once after short delay (off-thread)
+                let _ = tauri::async_runtime::spawn_blocking(|| {
+                    std::thread::sleep(std::time::Duration::from_millis(200))
+                })
+                .await;
                 continue;
             }
             return Err(last_err);
         }
-        let mut cli_guard = state.client.lock().map_err(|_| "lock poisoned")?;
-        let cli = cli_guard.as_mut().ok_or("no discord client")?;
+        // authoritative timer: process-lifetime start_ts, survives webview reloads/HMR
+        // JS-provided start_ts is ignored except to seed the first value if we have none
+        if let Some(ts) = start_ts {
+            if ts > 0 {
+                if let Ok(mut g) = state.start_ts.lock() {
+                    if g.is_none() {
+                        *g = Some(ts);
+                    }
+                }
+            }
+        }
+        let effective_ts = get_or_init_start_ts(&state);
+
+        // take the client out so the blocking named-pipe connect / write can
+        // run on the blocking pool — the window where the slot is empty is
+        // the same one the old code had between its lock drops
+        let taken = state.client.lock().map_err(|_| "lock poisoned")?.take();
+        let Some(mut client) = taken else { return Err("no discord client".into()) };
+        let connected = state.connected.lock().map(|g| *g).unwrap_or(false);
 
         let details_owned = truncate128(details.trim());
         let stt_owned = truncate128(stt.trim());
@@ -166,55 +170,83 @@ pub fn discord_set(
             .filter(|s| !s.is_empty())
             .map(|s| truncate128(&s));
 
-        let mut act = activity::Activity::new()
-            .details(&details_owned)
-            .state(&stt_owned);
+        // connect + set_activity are blocking named-pipe IO — blocking pool
+        // returns the client so it can go back into the state mutex. The
+        // Activity borrows the owned strings, so it is built inside the
+        // blocking task.
+        let res = tauri::async_runtime::spawn_blocking(
+            move || -> Result<DiscordIpcClient, (DiscordIpcClient, String, bool)> {
+                let mut act = activity::Activity::new()
+                    .details(&details_owned)
+                    .state(&stt_owned);
 
-        // assets — optional: only if li present (avoids missing asset rejection)
-        if let Some(li) = li_owned.as_deref() {
-            let mut assets = activity::Assets::new().large_image(li);
-            if let Some(lt) = lt_owned.as_deref() {
-                assets = assets.large_text(lt);
-            }
-            if let Some(si) = si_owned.as_deref() {
-                assets = assets.small_image(si);
-            }
-            act = act.assets(assets);
-        }
+                // assets — optional: only if li present (avoids missing asset rejection)
+                if let Some(li) = li_owned.as_deref() {
+                    let mut assets = activity::Assets::new().large_image(li);
+                    if let Some(lt) = lt_owned.as_deref() {
+                        assets = assets.large_text(lt);
+                    }
+                    if let Some(si) = si_owned.as_deref() {
+                        assets = assets.small_image(si);
+                    }
+                    act = act.assets(assets);
+                }
+                act = act.timestamps(activity::Timestamps::new().start(effective_ts));
 
-        // authoritative timer: process-lifetime start_ts, survives webview reloads/HMR
-        // JS-provided start_ts is ignored except to seed the first value if we have none
-        if let Some(ts) = start_ts {
-            if ts > 0 {
-                if let Ok(mut g) = state.start_ts.lock() {
-                    if g.is_none() {
-                        *g = Some(ts);
+                if !connected {
+                    if let Err(e) = client.connect() {
+                        // keep the client for the retry attempt (old behavior)
+                        return Err((client, format!("discord not available: {e}"), false));
                     }
                 }
-            }
-        }
-        let effective_ts = get_or_init_start_ts(&state);
-        act = act.timestamps(activity::Timestamps::new().start(effective_ts));
-
-        match cli.set_activity(act) {
-            Ok(_) => return Ok(()),
-            Err(e) => {
-                last_err = e.to_string();
-                // broken pipe — drop client and retry
-                let mut conn_guard = state.connected.lock().map_err(|_| "lock poisoned")?;
-                *conn_guard = false;
-                drop(cli_guard);
-                drop(conn_guard);
-                // take and close
-                if let Ok(mut g) = state.client.lock() {
-                    if let Some(mut c) = g.take() {
-                        let _ = c.close();
-                    }
+                match client.set_activity(act) {
+                    Ok(_) => Ok(client),
+                    // broken pipe — flag for close+drop so the retry gets a fresh client
+                    Err(e) => Err((client, e.to_string(), true)),
                 }
+            },
+        )
+        .await;
+        match res {
+            Ok(Ok(client)) => {
+                *state.client.lock().map_err(|_| "lock poisoned")? = Some(client);
+                if let Ok(mut cc) = state.connected.lock() {
+                    *cc = true;
+                }
+                return Ok(());
+            }
+            Ok(Err((mut client, e, close_it))) => {
+                last_err = e;
+                if close_it {
+                    let _ = client.close();
+                    if let Ok(mut cc) = state.connected.lock() {
+                        *cc = false;
+                    }
+                    // client dropped — next attempt creates a fresh one
+                    if attempt == 0 {
+                        continue;
+                    }
+                    return Err(last_err);
+                }
+                // connect failed — keep the client for the retry attempt
+                *state.client.lock().map_err(|_| "lock poisoned")? = Some(client);
                 if attempt == 0 {
+                    // drop and retry once after short delay (off-thread)
+                    let _ = tauri::async_runtime::spawn_blocking(|| {
+                        std::thread::sleep(std::time::Duration::from_millis(200))
+                    })
+                    .await;
                     continue;
                 }
                 return Err(last_err);
+            }
+            Err(join) => {
+                // blocking task panicked — the moved client is lost either way
+                if let Ok(mut g) = state.connected.lock() {
+                    *g = false;
+                }
+                let _ = join;
+                return Err("discord task join failed".into());
             }
         }
     }

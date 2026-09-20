@@ -24,6 +24,7 @@ import { DEFAULT_HOTKEYS } from "../lib/hotkeys";
 import { fmtKey } from "../lib/tip";
 import { findMatches } from "../lib/find";
 import Dialog from "./Dialog";
+import { useTwoStepConfirm } from "../hooks/useTwoStepConfirm";
 import "../styles/file-editor.css";
 import "../styles/find.css";
 
@@ -66,7 +67,7 @@ export default function FileEditor({
   const findOpenRef = useRef(findOpen);
   findOpenRef.current = findOpen;
   // two-step close: first attempt with unsaved edits arms, second commits
-  const [closeArmed, setCloseArmed] = useState(false);
+  const closeConfirm = useTwoStepConfirm(3000);
 
   const mountRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
@@ -79,6 +80,9 @@ export default function FileEditor({
 
   const dirty = saved !== null && draft !== saved;
   const editable = !binary && !error && saved !== null;
+  // armed only applies while an unsaved, non-autosaved edit exists —
+  // same visible lifetime as the old manual armed state
+  const closeArmed = closeConfirm.armed && dirty && !autosave;
 
   useEffect(() => {
     onDirty?.(dirty);
@@ -144,25 +148,9 @@ export default function FileEditor({
   }
 
   const requestClose = () => {
-    if (dirty && !autosave) {
-      if (!closeArmed) {
-        setCloseArmed(true);
-        return;
-      }
-      setCloseArmed(false);
-    }
+    if (dirty && !autosave && !closeConfirm.press()) return;
     onClose();
   };
-
-  // armed state expires like the sidebar clear-all, and saving disarms
-  useEffect(() => {
-    if (!closeArmed) return;
-    const t = setTimeout(() => setCloseArmed(false), 3000);
-    return () => clearTimeout(t);
-  }, [closeArmed]);
-  useEffect(() => {
-    if (!dirty) setCloseArmed(false);
-  }, [dirty]);
 
   const matches = useMemo(() => {
     if (!findOpen || !query) return [];

@@ -20,6 +20,7 @@ import SoundsSettings from "./SoundsSettings";
 import InfoDialog from "./InfoDialog";
 import type { ProviderGroup } from "../types";
 import { useTranslation } from "../lib/i18n";
+import { useTwoStepConfirm } from "../hooks/useTwoStepConfirm";
 import "../styles/settings.css";
 
 export default function SettingsDrawer({
@@ -74,10 +75,13 @@ export default function SettingsDrawer({
   const [voiceOpen, setVoiceOpen] = useState(false);
   // first-launch setup can be replayed from here any time
   const [wizOpen, setWizOpen] = useState(false);
-  // clean state: two-click confirm, then wipe voice installs + every oc.*
-  // preference and reload into the first-launch wizard
-  const [confirmClean, setConfirmClean] = useState(false);
-  const [confirmThemes, setConfirmThemes] = useState(false);
+  // clean state: two-click confirm (4s), then wipe voice installs + every
+  // oc.* preference and reload into the first-launch wizard. Theme reset
+  // arms the same way.
+  const cleanConfirm = useTwoStepConfirm(4000);
+  const themesConfirm = useTwoStepConfirm(4000);
+  const confirmClean = cleanConfirm.armed;
+  const confirmThemes = themesConfirm.armed;
   const upd = updProp ?? useUpdaterInternal();
 
   // terminal discovery — shared global cache (probes + WSL + WT via Rust)
@@ -114,11 +118,7 @@ export default function SettingsDrawer({
   }
 
   async function cleanState() {
-    if (!confirmClean) {
-      setConfirmClean(true);
-      setTimeout(() => setConfirmClean(false), 4000);
-      return;
-    }
+    if (!cleanConfirm.press()) return;
     await invoke("voice_remove_all").catch(() => {});
     for (const k of Object.keys(localStorage)) {
       if (k.startsWith("oc.")) localStorage.removeItem(k);
@@ -233,12 +233,7 @@ export default function SettingsDrawer({
                   className={`reset-btn${confirmThemes ? " danger-btn armed" : ""}`}
                   data-tip={t("settings.appearance.theme.reset")}
                   onClick={() => {
-                    if (!confirmThemes) {
-                      setConfirmThemes(true);
-                      setTimeout(() => setConfirmThemes(false), 4000);
-                      return;
-                    }
-                    setConfirmThemes(false);
+                    if (!themesConfirm.press()) return;
                     void resetThemes();
                   }}
                 >

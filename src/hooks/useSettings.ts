@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -798,7 +798,8 @@ export function useSettings() {
     [activeId, effectiveMode],
   );
 
-  const themeList: ThemeMeta[] = Object.values(themes).map((t) => t.meta);
+  // stable identity across renders — the drawer re-renders on every settings tick
+  const themeList = useMemo<ThemeMeta[]>(() => Object.values(themes).map((t) => t.meta), [themes]);
 
   // merged view for the drawer: overrides win, otherwise the theme's own
   // palette (built-in table, else the definition's vars — never cyan for a

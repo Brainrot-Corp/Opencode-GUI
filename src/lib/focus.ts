@@ -15,6 +15,15 @@ export function isLiveFocusTarget(el: Element | null | undefined): el is HTMLEle
   return true;
 }
 
+/** Esc/typing-priority check: is any overlay mounted that owns the key
+ * (shared dialog scrim, settings drawer, context/command/model menus)?
+ * Callers append site-specific extras: `overlayOpen(", .permission-bar")`. */
+export function overlayOpen(extraSel = ""): boolean {
+  return !!document.querySelector(
+    ".dlg-scrim, .drawer-scrim.open, .ctx-menu, .cmd-menu, .model-menu" + extraSel,
+  );
+}
+
 /** Park keyboard on body when it is trapped on a dead/hidden element (or lost
  * entirely). No-op when a live element already owns focus — this never steals
  * focus, it only guarantees window keydown keeps firing. */

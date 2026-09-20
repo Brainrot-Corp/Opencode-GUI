@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { withDeadline } from "../api";
 import { pushToast } from "./useToast";
 import { ensureVad, vadVoicedCount } from "../lib/streamingVad";
 import { DedupEmitter } from "../lib/transcriptDedup";
+import { TTS_LIVE, TTS_STOP } from "../lib/voiceEvents";
 
 export type VoicePhase = "idle" | "recording" | "transcribing";
 export type VdbgKind = "act" | "say" | "warn" | "hint";
@@ -22,8 +24,8 @@ const TRANSCRIBE_TIMEOUT_MS = 32_000;
 const PARTIAL_TIMEOUT_MS = 14_000;
 const WATCHDOG_MS = 1500;
 
-export const MODE_FOR = (sens: number) => Math.max(0, Math.min(3, Math.round((1 - sens) * 3)));
-export const THRESH_FOR = (sens: number) => 0.03 - sens * 0.028;
+const MODE_FOR = (sens: number) => Math.max(0, Math.min(3, Math.round((1 - sens) * 3)));
+const THRESH_FOR = (sens: number) => 0.03 - sens * 0.028;
 
 // inline AudioWorklet processor code — keeps capture off main thread
 const WORKLET_CODE = `
@@ -55,25 +57,6 @@ function rms(chunk: Float32Array): number {
   return Math.sqrt(sum / chunk.length);
 }
 function chunkMs(len: number): number { return (len / RATE) * 1000; }
-
-function withTimeout<T>(p: Promise<T>, ms: number, label: string, signal?: AbortSignal): Promise<T> {
-  let t: number | undefined;
-  let onAbort: (() => void) | undefined;
-  const timeout = new Promise<T>((_, rej) => {
-    t = window.setTimeout(() => rej(new Error(`${label} timeout after ${ms}ms`)), ms);
-    if (signal) {
-      if (signal.aborted) { clearTimeout(t); rej(new DOMException(`${label} aborted`, "AbortError")); return; }
-      onAbort = () => { clearTimeout(t); rej(new DOMException(`${label} aborted seq stale`, "AbortError")); };
-      signal.addEventListener("abort", onAbort, { once: true });
-    }
-  });
-  // if p is already settled when signal aborts, race still rejects via abort
-  const raced = signal ? Promise.race([p, timeout]) : Promise.race([p, timeout]);
-  return raced.finally(() => {
-    if (t !== undefined) clearTimeout(t);
-    if (signal && onAbort) signal.removeEventListener("abort", onAbort);
-  }) as Promise<T>;
-}
 
 export function useVoice(
   onResult: (text: string) => void,
@@ -158,8 +141,8 @@ export function useVoice(
 
   useEffect(() => {
     const live = (e: Event) => { const ms = (e as CustomEvent<number>).detail || 3000; ttsUntilRef.current = Date.now() + ms + 500; };
-    window.addEventListener("oc:tts-live", live);
-    return () => window.removeEventListener("oc:tts-live", live);
+    window.addEventListener(TTS_LIVE, live);
+    return () => window.removeEventListener(TTS_LIVE, live);
   }, []);
 
   const forget = useCallback(() => {
@@ -247,7 +230,7 @@ export function useVoice(
         translate: mlRef.current,
         gpu: gpuRef.current,
       });
-      const out = await withTimeout(p, timeoutMs, label, ac.signal);
+      const out = await withDeadline(p, timeoutMs, label, ac.signal);
       if (ac.signal.aborted || isStaleFor(seq, isPartial)) {
         return null;
       }
@@ -281,7 +264,7 @@ export function useVoice(
         const p2 = invoke<{ text: string; engine: string; note: string }>("voice_transcribe", {
           audio: Array.from(wav), model, translate: mlRef.current, gpu: gpuRef.current,
         });
-        const out2 = await withTimeout(p2, timeoutMs, `${label} WAV fallback`, ac.signal);
+        const out2 = await withDeadline(p2, timeoutMs, `${label} WAV fallback`, ac.signal);
         if (ac.signal.aborted || isStaleFor(seq, isPartial)) {
           return null;
         }
@@ -352,7 +335,7 @@ export function useVoice(
       const p = invoke<{ text: string; engine: string; note: string }>("voice_transcribe_pcm", {
         pcm: Array.from(pcm), model, translate: !mlRef.current, gpu: gpuRef.current,
       });
-      const out = await withTimeout(p, TRANSCRIBE_TIMEOUT_MS, "retranscribe");
+      const out = await withDeadline(p, TRANSCRIBE_TIMEOUT_MS, "retranscribe");
       if (cancelRef.current || seq !== seqRef.current) return null;
       return out.text.trim() || null;
     } catch (e) {
@@ -461,11 +444,11 @@ export function useVoice(
     (async () => {
       try {
         sttLog("hint", "toggle: checking voice_status");
-        const st = await withTimeout(invoke<{ bin: boolean; models: string[] }>("voice_status").catch(() => null) as Promise<any>, 5000, "voice_status");
+        const st = await withDeadline(invoke<{ bin: boolean; models: string[] }>("voice_status").catch(() => null) as Promise<any>, 5000, "voice_status");
         if (!st?.bin) { sttLog("warn", "voice_status: engine not installed"); setError("voice engine not installed — set it up in Settings › Voice"); return; }
         if (!st.models.includes(model)) { sttLog("warn", `voice_status: model ${model} missing`); setError(`model ${model} isn't downloaded — pick or fetch one in Settings › Voice`); return; }
         sttLog("hint", "toggle: ensureVad");
-        try { await withTimeout(ensureVad(), 8000, "ensureVad"); sttLog("hint", "VAD ready"); } catch (e) { sttLog("warn", `VAD failed: ${String(e)}`); setError("voice VAD failed to load — try restarting"); return; }
+        try { await withDeadline(ensureVad(), 8000, "ensureVad"); sttLog("hint", "VAD ready"); } catch (e) { sttLog("warn", `VAD failed: ${String(e)}`); setError("voice VAD failed to load — try restarting"); return; }
         cancelRef.current = false;
         // abort any hanging whisper from previous seq before bumping — avoids overlap hang
         for (const [, ac] of inflightRef.current) { try { ac.abort(); } catch {} }
@@ -477,7 +460,7 @@ export function useVoice(
         finalBusyRef.current = null;
         dedupRef.current.reset();
         sttLog("hint", `toggle: getUserMedia seq=${seq}`);
-        const stream = await withTimeout(navigator.mediaDevices.getUserMedia({
+        const stream = await withDeadline(navigator.mediaDevices.getUserMedia({
           audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
         }), 8000, "getUserMedia");
         if (cancelRef.current || seq !== seqRef.current) {
@@ -514,7 +497,7 @@ export function useVoice(
         try {
           const blob = new Blob([WORKLET_CODE], { type: "application/javascript" });
           const url = URL.createObjectURL(blob);
-          await withTimeout(ctx.audioWorklet.addModule(url), 5000, "audioWorklet.addModule");
+          await withDeadline(ctx.audioWorklet.addModule(url), 5000, "audioWorklet.addModule");
           URL.revokeObjectURL(url);
           if (cancelRef.current || seq !== seqRef.current) throw new Error("cancelled while loading worklet");
           worklet = new AudioWorkletNode(ctx, "capture-processor", { processorOptions: { frameSize: WORKLET_FRAME } });
@@ -547,7 +530,7 @@ export function useVoice(
                   ttsUntilRef.current = Date.now();
                   ttsSpeakingRef.current = false;
                   window.speechSynthesis?.cancel();
-                  window.dispatchEvent(new Event("oc:tts-stop"));
+                  window.dispatchEvent(new Event(TTS_STOP));
                   if (!uttRef.current.length && preRef.current.length) {
                     uttRef.current = preRef.current;
                     preRef.current = [];

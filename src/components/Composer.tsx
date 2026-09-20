@@ -18,6 +18,7 @@ import SlashMenu from "./SlashMenu";
 import { playSound } from "../lib/sounds";
 import { getDraft, setDraft } from "../lib/drafts";
 import { getRecentModels, pushRecentModel } from "../lib/recentModels";
+import { overlayOpen } from "../lib/focus";
 import { useTranslation } from "../lib/i18n";
 import { cleanTypedText, isGarbageInput } from "../lib/platform";
 import "../styles/composer.css";
@@ -183,7 +184,9 @@ export default memo(function Composer({
   const [hi, setHi] = useState(-1); // keyboard highlight index
   const [hiCmd, setHiCmd] = useState(0); // slash-menu highlight
   const [cmdClosed, setCmdClosed] = useState(false);
-  const [recent, setRecent] = useState<string[]>(() => getRecentModels());
+  // recents live in lib/recentModels storage (no event bus) — reactivity is a
+  // version bump on every write; the entries memo reads getRecentModels() fresh
+  const [recentV, setRecentV] = useState(0);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const hlRef = useRef<HTMLDivElement>(null);
@@ -242,23 +245,16 @@ export default memo(function Composer({
   const hasOverlay = (hasCode || hasFind) && deferredInput.length > 0;
   const markup = useMemo(() => {
     if (!deferredInput) return "";
+    // find-only (no code block) still works: draftHtml for plain text is
+    // already the full escaped overlay html
     let base = rawMarkup;
-    // when find is active but no code block, base is still plain escaped text
-    // draftHtml already produced it; if somehow empty (plain without code, still has content)
-    // rawMarkup is non-empty. For safety, if no code and we need find, ensure base
-    // mirrors textarea plain text.
-    if (hasFind && !hasCode) {
-      // draftHtml for plain text already is escPlain lines; but if codeuhi
-      // For find-only, we want full plain html to highlight
-      // rawMarkup already is that (or empty if input empty which we early returned)
-    }
     if (hasFind && findQuery) {
       // ponytail: known entity boundary off-by-one, fix if reported — highlight
       // counts from raw text indices but injected by scanning html text nodes
       base = highlightFindInHtml(base, findQuery, findCase, findCur);
     }
     return base;
-  }, [deferredInput, rawMarkup, hasFind, hasCode, findQuery, findCase, findCur]);
+  }, [rawMarkup, hasFind, findQuery, findCase, findCur]);
 
   // the composer used to be drag-resizable (oc.comp.h) — clear any stale
   // stored height so old installs fall back to auto sizing
@@ -518,17 +514,6 @@ export default memo(function Composer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cmdOpen]);
 
-  // /models command → open the model picker
-  useEffect(() => {
-    const openEvt = () => {
-      if (loadingModels) return;
-      setOpen(true);
-      setHi(entries.findIndex((e2) => e2.value === modelSel));
-    };
-    window.addEventListener("oc:models", openEvt);
-    return () => window.removeEventListener("oc:models", openEvt);
-  });
-
   // voice dictation events (dispatched by useVoice routing in ChatPage):
   // "prompt …" text lands in the textarea for review, "send …" fills and
   // submits at once (single event so the draft can't be stale), bare
@@ -732,7 +717,7 @@ export default memo(function Composer({
       // only yield when focus is already inside the terminal
       if (ae?.closest?.(".xterm, .term-dock") || target?.closest?.(".xterm, .term-dock")) return;
       // overlays own typing — blocked per user choice
-      if (document.querySelector(".cmd-menu, .model-menu, .ctx-menu, .dlg-scrim, .drawer-scrim.open, .permission-bar")) return;
+      if (overlayOpen(", .permission-bar")) return;
       e.preventDefault();
       ta.focus();
       const cur = inputRef2.current;
@@ -795,18 +780,20 @@ export default memo(function Composer({
     return g && m ? `${g.label} · ${m.label}` : sel;
   };
 
-  // keep recent list in sync when model changes externally (voice, restore)
+  // record externally-driven model changes (voice, restore) in the recents
+  // storage; the entries memo re-reads on the version bump
   useEffect(() => {
     if (!modelSel || !providers.length) return;
-    if (recent[0] === modelSel) return;
+    if (getRecentModels()[0] === modelSel) return;
     const valid = providers.some((g) => g.models.some((m) => `${g.id}/${m.id}` === modelSel));
     if (!valid) return;
-    const next = pushRecentModel(modelSel);
-    if (next.join("|") !== recent.join("|")) setRecent(next);
-  }, [modelSel, providers, recent]);
+    pushRecentModel(modelSel);
+    setRecentV((v) => v + 1);
+  }, [modelSel, providers]);
 
   // flat selectable entries: recent (5) on top, then server default, then provider models (deduped)
   const allEntries: ModelEntry[] = useMemo(() => {
+    const recent = getRecentModels();
     const out: ModelEntry[] = [];
     if (recent.length && providers.length) {
       const valid = new Set(providers.flatMap((g) => g.models.map((m) => `${g.id}/${m.id}`)));
@@ -834,7 +821,7 @@ export default memo(function Composer({
       }),
     );
     return out;
-  }, [providers, defaultModel, recent]);
+  }, [providers, defaultModel, recentV]);
 
   // model-menu filter: keyboard brain navigates the FILTERED list, so
   // highlight indices always match what's on screen
@@ -864,8 +851,8 @@ export default memo(function Composer({
 
   function pick(v: string) {
     if (v) {
-      const next = pushRecentModel(v);
-      setRecent(next);
+      pushRecentModel(v);
+      setRecentV((x) => x + 1);
     }
     onModelSelect(v);
     setOpen(false);

@@ -10,7 +10,7 @@ Files:
 |---|---|
 | `src/lib/voiceLexicon.ts` | rewrites, fillers, typo tolerance |
 | `src/lib/voiceRouter.ts` | pattern chain over canonical tokens + embedded scan |
-| `src/pages/ChatPage.tsx` | dispatch, confirmation loop (trilingual yes/no) |
+| `src/hooks/useVoiceRouter.ts` | dispatch, confirmation loop (trilingual yes/no); wired from `ChatPage.tsx` |
 
 ## Pipeline
 
@@ -65,8 +65,8 @@ verb must miss, not misfire.
 
 When nothing matches whole-string, each occurrence of a `TRIGGERS` verb starts a candidate
 suffix; the first suffix that fully matches the chain wins, returned as
-`{type:"embedded", act}`. ChatPage reads the act back via `describeAct()` and waits for a
-spoken yes/no (EN/FR/ES). Any other speech or 15 s cancels. If a command executed within the
+`{type:"embedded", act}`. The voice router reads the act back via `describeAct()` and waits
+for a spoken yes/no (EN/FR/ES). Any other speech or 15 s cancels. If a command executed within the
 last 25 s, the confirmation is skipped ("streak").
 
 Sentence-final rule: the suffix must match to the end of the fragment — *"turn the lights off

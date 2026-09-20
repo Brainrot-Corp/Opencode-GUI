@@ -18,11 +18,8 @@ pub struct TerminalProfile {
 fn where_lookup(exe: &str) -> Option<String> {
     #[cfg(windows)]
     {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        let out = std::process::Command::new("where")
+        let out = crate::platform::win_command("where")
             .arg(exe)
-            .creation_flags(CREATE_NO_WINDOW)
             .output()
             .ok()?;
         if !out.status.success() { return None; }
@@ -94,30 +91,7 @@ fn expand_env(s: &str) -> String {
 
 fn parse_commandline(cmdline: &str) -> (String, Vec<String>) {
     let expanded = expand_env(cmdline.trim());
-    let mut parts: Vec<String> = Vec::new();
-    let mut cur = String::new();
-    let mut in_single = false;
-    let mut in_double = false;
-    for ch in expanded.chars() {
-        match ch {
-            '\'' if !in_double => {
-                in_single = !in_single;
-            }
-            '"' if !in_single => {
-                in_double = !in_double;
-            }
-            ' ' | '\t' if !in_single && !in_double => {
-                if !cur.is_empty() {
-                    parts.push(cur.clone());
-                    cur.clear();
-                }
-            }
-            _ => cur.push(ch),
-        }
-    }
-    if !cur.is_empty() {
-        parts.push(cur);
-    }
+    let mut parts = crate::platform::split_cmdline(&expanded);
     if parts.is_empty() {
         return (String::new(), Vec::new());
     }
@@ -314,50 +288,57 @@ fn is_no_distro_msg(s: &str) -> bool {
         || low.contains("nao ha")
 }
 
-fn wsl_distros(out: &mut Vec<TerminalProfile>) {
+// WSL distro names from the Lxss registry key — locale-independent, used
+// first (primary) and as a CLI-parse fallback in wsl_distros
+#[cfg(windows)]
+fn lxss_registry_names() -> Vec<String> {
     let mut names: Vec<String> = Vec::new();
-    let mut saw_no_distro = false;
-
-    // EH-14: registry is primary (locale-independent) — try it first before CLI parsing
-    #[cfg(windows)]
-    {
-        for hive in [winreg::enums::HKEY_CURRENT_USER, winreg::enums::HKEY_LOCAL_MACHINE] {
-            if !names.is_empty() { break; }
-            let base = match winreg::RegKey::predef(hive).open_subkey("Software\\Microsoft\\Windows\\CurrentVersion\\Lxss") {
-                Ok(k) => k,
-                Err(_) => continue,
-            };
-            for key in base.enum_keys().flatten() {
-                if let Ok(sub) = base.open_subkey(&key) {
-                    if let Ok(distro) = sub.get_value::<String, _>("DistributionName") {
-                        let d = distro.trim().to_string();
-                        if !d.is_empty() && !names.contains(&d) {
-                            names.push(d);
-                        }
+    for hive in [winreg::enums::HKEY_CURRENT_USER, winreg::enums::HKEY_LOCAL_MACHINE] {
+        if !names.is_empty() { break; }
+        let base = match winreg::RegKey::predef(hive).open_subkey("Software\\Microsoft\\Windows\\CurrentVersion\\Lxss") {
+            Ok(k) => k,
+            Err(_) => continue,
+        };
+        for key in base.enum_keys().flatten() {
+            if let Ok(sub) = base.open_subkey(&key) {
+                if let Ok(distro) = sub.get_value::<String, _>("DistributionName") {
+                    let d = distro.trim().to_string();
+                    if !d.is_empty() && !names.contains(&d) {
+                        names.push(d);
                     }
                 }
             }
         }
+    }
+    names
+}
+
+fn wsl_distros(out: &mut Vec<TerminalProfile>) {
+    // EH-14: registry is primary (locale-independent) — try it first before CLI parsing
+    #[cfg(windows)]
+    let mut names: Vec<String> = {
+        let names = lxss_registry_names();
         if !names.is_empty() {
             eprintln!("[terminals] wsl distros via registry: {:?}", names);
         }
-    }
+        names
+    };
+    #[cfg(not(windows))]
+    let mut names: Vec<String> = Vec::new();
+    let mut saw_no_distro = false;
 
     // helper to run wsl with args, handling CREATE_NO_WINDOW, UTF-16 and Sysnative fallback (32-bit WoW64)
     let run_wsl = |args: &[&str]| -> Option<String> {
         #[cfg(windows)]
         {
-            use std::os::windows::process::CommandExt;
-            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
             let mut candidates: Vec<String> = Vec::new();
             if let Some(p) = where_lookup("wsl.exe") { candidates.push(p); }
             candidates.push("wsl.exe".to_string());
             candidates.push("C:\\Windows\\System32\\wsl.exe".to_string());
             candidates.push("C:\\Windows\\Sysnative\\wsl.exe".to_string());
             for cand in candidates {
-                let out = match std::process::Command::new(&cand)
+                let out = match crate::platform::win_command(&cand)
                     .args(args)
-                    .creation_flags(CREATE_NO_WINDOW)
                     .output()
                 {
                     Ok(o) => o,
@@ -487,23 +468,7 @@ fn wsl_distros(out: &mut Vec<TerminalProfile>) {
     // 4) registry fallback under HKCU\Software\Microsoft\Windows\CurrentVersion\Lxss
     #[cfg(windows)]
     if names.is_empty() {
-        for hive in [winreg::enums::HKEY_CURRENT_USER, winreg::enums::HKEY_LOCAL_MACHINE] {
-            if !names.is_empty() { break; }
-            let base = match winreg::RegKey::predef(hive).open_subkey("Software\\Microsoft\\Windows\\CurrentVersion\\Lxss") {
-                Ok(k) => k,
-                Err(_) => continue,
-            };
-            for key in base.enum_keys().flatten() {
-                if let Ok(sub) = base.open_subkey(&key) {
-                    if let Ok(distro) = sub.get_value::<String, _>("DistributionName") {
-                        let d = distro.trim().to_string();
-                        if !d.is_empty() && !names.contains(&d) {
-                            names.push(d);
-                        }
-                    }
-                }
-            }
-        }
+        names = lxss_registry_names();
     }
 
     // 5) last resort: if wsl.exe exists but no distro name found, add generic default entry (unless we know there are no distros)

@@ -158,64 +158,6 @@
 }
 
 /* Hotkeys rebind — keycap style (replaces glass pills for binds) */
-.cmd-row.hk-row {
-  align-items: center;
-}
-.hk-sub {
-  font-size: 10px;
-  font-weight: 400;
-  letter-spacing: 0.02em;
-  color: var(--text-faint);
-}
-/* legacy pill kept for non-hotkey uses, but hotkeys now use keycaps */
-.hk-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 8px;
-  border: 1px solid var(--line);
-  background: var(--inset-bg);
-  border-radius: 4px;
-  font-size: 11.5px;
-  line-height: 1.35;
-  color: var(--text);
-  cursor: pointer;
-  transition: border-color 0.15s var(--ease), background 0.15s var(--ease), box-shadow 0.2s var(--ease), color 0.15s var(--ease);
-  max-width: 220px;
-  overflow: hidden;
-}
-.hk-pill:hover {
-  border-color: color-mix(in srgb, var(--accent) calc(0.35 * 100%), transparent);
-  background: color-mix(in srgb, var(--accent) calc(0.06 * 100%), var(--inset-bg));
-}
-.hk-pill.fixed {
-  cursor: default;
-  color: var(--text-dim);
-}
-.hk-pill.fixed:hover {
-  border-color: var(--line);
-  background: var(--inset-bg);
-}
-.hk-pill.rec {
-  border-color: color-mix(in srgb, var(--accent) calc(0.55 * 100%), transparent);
-  background: color-mix(in srgb, var(--accent) calc(0.10 * 100%), var(--inset-bg));
-  color: var(--accent-bright);
-  box-shadow: 0 0 14px -6px var(--accent-glow);
-  animation: hk-rec 1.1s ease-in-out infinite;
-}
-@keyframes hk-rec {
-  50% { box-shadow: 0 0 18px -4px var(--accent-glow); }
-}
-.hk-pill.off {
-  color: var(--text-faint);
-  border-style: dashed;
-  opacity: 0.75;
-}
-.hk-key {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 .hk-dot {
   width: 6px;
   height: 6px;
@@ -224,18 +166,10 @@
   box-shadow: 0 0 6px var(--accent-glow);
   flex: none;
 }
-.cmd-row.hk-row.conflict .hk-pill {
-  border-color: color-mix(in srgb, var(--danger) calc(0.45 * 100%), transparent);
-  box-shadow: 0 0 10px -6px color-mix(in srgb, var(--danger) 35%, transparent);
-}
 .hk-warn {
   color: var(--danger);
   font-size: 10px;
   margin-left: 4px;
-}
-.hk-desc {
-  flex: 1;
-  min-width: 0;
 }
 .hk-reset {
   display: grid;
@@ -259,9 +193,6 @@
   display: flex;
   justify-content: flex-end;
   padding: 4px 2px 2px;
-}
-.cmd-row.hk-row.static {
-  opacity: 0.95;
 }
 /* keycap visuals — each physical key is its own cap with + between — crisp, no fractional blur */
 .kc-group {
@@ -417,24 +348,6 @@
 .kc-btn:hover .hk-rebind-hint {
   opacity: 1;
   color: var(--text-dim);
-}
-
-/* equal-width pills — JS sets inline width to longest pill; keep flex row intact so pill stays left and desc stays right in one line */
-.cmd-group--pills .hk-pill {
-  justify-content: flex-start;
-  flex-shrink: 0;
-  box-sizing: border-box;
-}
-.cmd-group--pills .cmd-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 4px 6px;
-}
-.cmd-group--pills .cmd-desc,
-.cmd-group--pills .hk-desc {
-  flex: 1;
-  min-width: 0;
 }
 
 /* ── voice + commands redesign ────────────────────────────────── */

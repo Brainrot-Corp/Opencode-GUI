@@ -10,7 +10,8 @@
 // server rejects it the caller shows the manual auth.json path instead.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { getDirectory, opencodeFor, serverFetchFor, withDeadline } from "../api";
+import { getDirectory, serverFetchFor, withDeadline } from "../api";
+import { apiErr, getClientFor } from "../lib/apiErr";
 
 export type AuthPromptWhen = { key: string; op: "eq" | "neq"; value: string };
 export type AuthPrompt =
@@ -76,21 +77,8 @@ function sortProviders<T extends { id: string; label: string }>(items: T[]): T[]
   );
   return items;
 }
-function apiErr(r: unknown, fallback: string): string {
-  const e = (r as any)?.error;
-  if (!e) return "";
-  if (typeof e === "string") return e;
-  try {
-    return (e as any)?.message ?? (e as any)?.data?.message ?? JSON.stringify(e);
-  } catch {
-    return fallback;
-  }
-}
 
-async function getClient(dir: string) {
-  const { client } = await withDeadline(opencodeFor(dir), 15_000, "provider auth");
-  return client as any;
-}
+const getClient = (dir: string) => getClientFor(dir, "provider auth");
 
 export function useProviderAuth() {
   const dir = getDirectory();
