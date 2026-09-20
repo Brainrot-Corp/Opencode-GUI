@@ -5,6 +5,7 @@ import { pushToast } from "./useToast";
 import { windowKey } from "../lib/windowScope";
 import { getDirectory } from "../api";
 import { getWorkspacePref, recordSelection } from "../lib/workspacePrefs";
+import { pinEntry } from "../lib/sessionMeta";
 import type { ProviderGroup } from "../types";
 
 type OcClient = Awaited<ReturnType<typeof import("../api").opencode>>["client"];
@@ -256,16 +257,7 @@ export function useProviders(activeId: string) {
   // instance global again). nothing automatic touches the map
   const rememberSession = useCallback((sid: string, value: string) => {
     if (!sid) return;
-    setSessionModels((prev) => {
-      if (!value) {
-        if (!(sid in prev)) return prev;
-        const next = { ...prev };
-        delete next[sid];
-        return next;
-      }
-      if (prev[sid] === value) return prev;
-      return { ...prev, [sid]: value };
-    });
+    setSessionModels((prev) => pinEntry(prev, sid, value));
   }, []);
 
   // merge one workspace-remembered effort into the per-model map (used by
@@ -558,16 +550,7 @@ export function useProviders(activeId: string) {
 
   const rememberVariantSession = useCallback((sid: string, value: string) => {
     if (!sid) return;
-    setSessionVariants((prev) => {
-      if (!value) {
-        if (!(sid in prev)) return prev;
-        const next = { ...prev };
-        delete next[sid];
-        return next;
-      }
-      if (prev[sid] === value) return prev;
-      return { ...prev, [sid]: value };
-    });
+    setSessionVariants((prev) => pinEntry(prev, sid, value));
   }, []);
 
   // workspace switch → adapt the pickers to the newly-opened workspace's

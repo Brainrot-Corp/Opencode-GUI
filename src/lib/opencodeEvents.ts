@@ -3,7 +3,6 @@
 // timestamps; everything else arrives through ctx (built once per boot).
 import type { Message, Session } from "@opencode-ai/sdk/client";
 import { getDirectory, hiddenSessions, HIDDEN_TITLE } from "../api";
-import { playSound } from "./sounds";
 import { pushToast } from "../hooks/useToast";
 import type { createBusyTracker } from "./busyTracker";
 import type { createSessionStore } from "./sessionStore";
@@ -19,13 +18,14 @@ export type OpenCodeEventCtx = {
   activeRef: { current: string };
   childParentRef: { current: Map<string, string> };
   sessionDirRef: { current: Map<string, string> };
-  permissionsRef: { current: Map<string, PermAsk> };
-  questionsRef: { current: Map<string, QuestionAsk> };
   getSecurityModeFor: (sid: string) => "full" | "user" | "block";
   autoRespondPermission: (ask: PermAsk, response: "always" | "reject") => Promise<void>;
   resolveParent: (sid: string, dirHint?: string) => Promise<void>;
   restoreFailedInput: (sid: string) => void;
   handlePermAsk: (ask: PermAsk, dirHint?: string, sound?: boolean) => void;
+  handleQuestionAsk: (ask: QuestionAsk, dirHint?: string) => void;
+  clearPermissionAsk: (pid: string | undefined, sid?: string) => void;
+  clearQuestionAsk: (qid: string | undefined, sid?: string) => void;
   syncAttention: (sid: string) => void;
   emitPermission: (sid: string) => void;
   emitQuestion: (sid: string) => void;
@@ -132,82 +132,27 @@ export function handleOpenCodeEvent(ev: OpenCodeEvent, ctx: OpenCodeEventCtx, di
     case "permission.replied":
     case "permission.v2.replied": {
       const pid = p.permissionID ?? p.requestID ?? p.id;
-      const sid = p.sessionID;
-      const affected = new Set<string>();
-      if (pid) {
-        for (const [s, perm] of [...ctx.permissionsRef.current])
-          if (perm.id === pid) { ctx.permissionsRef.current.delete(s); affected.add(s); }
-      } else if (sid) {
-        if (ctx.permissionsRef.current.has(sid)) affected.add(sid);
-        ctx.permissionsRef.current.delete(sid);
-      }
-      for (const s of affected) {
-        ctx.syncAttention(s);
-        ctx.emitPermission(s);
-        const rtop = ctx.topOfSession(s);
-        if (rtop !== s) ctx.syncTopBadge(rtop);
-      }
-      if (!affected.size && sid) {
-        ctx.syncAttention(sid);
-        ctx.emitPermission(sid);
-        const rtop2 = ctx.topOfSession(sid);
-        if (rtop2 !== sid) ctx.syncTopBadge(rtop2);
-      }
-      ctx.setPermission((cur) =>
-        cur && (cur.id === pid || (sid && cur.sessionID === sid)) ? null : cur,
-      );
+      ctx.clearPermissionAsk(pid, p.sessionID);
       break;
     }
     case "question.asked":
     case "question.v2.asked": {
       // question tool ask: {id, sessionID, questions:[{question,header,options,multiple?,custom?}]}
-      const ask: QuestionAsk = {
-        id: p.id ?? p.requestID,
-        sessionID: p.sessionID,
-        questions: Array.isArray(p.questions) ? p.questions : [],
-      };
-      if (!ask.sessionID || !ask.id) break;
-      ctx.questionsRef.current.set(p.sessionID, ask);
-      ctx.syncAttention(p.sessionID);
-      ctx.emitQuestion(p.sessionID);
-      playSound("attention");
-      // subagent asks stay in the subagent's history — never popped into
-      // the parent chat. The visible parent only gets the sidebar badge
-      // (the child row itself is filtered from the sidebar).
-      const top = ctx.topOfSession(p.sessionID);
-      if (top !== p.sessionID) {
-        ctx.syncTopBadge(top);
-        if (!ctx.childParentRef.current.has(p.sessionID)) void ctx.resolveParent(p.sessionID, dirHint);
-      } else if (p.sessionID === ctx.activeRef.current) ctx.setQuestion(ask);
+      ctx.handleQuestionAsk(
+        {
+          id: p.id ?? p.requestID,
+          sessionID: p.sessionID,
+          questions: Array.isArray(p.questions) ? p.questions : [],
+        },
+        dirHint,
+      );
       break;
     }
     case "question.replied":
     case "question.v2.replied":
     case "question.rejected":
     case "question.v2.rejected": {
-      const qid = p.requestID ?? p.id;
-      const affected = new Set<string>();
-      if (qid) {
-        for (const [sid, q] of [...ctx.questionsRef.current])
-          if (q.id === qid) { ctx.questionsRef.current.delete(sid); affected.add(sid); }
-        ctx.setQuestion((cur) => (cur && cur.id === qid ? null : cur));
-      } else if (p.sessionID) {
-        if (ctx.questionsRef.current.has(p.sessionID)) affected.add(p.sessionID);
-        ctx.questionsRef.current.delete(p.sessionID);
-        ctx.setQuestion((cur) => (cur && cur.sessionID === p.sessionID ? null : cur));
-      }
-      for (const s of affected) {
-        ctx.syncAttention(s);
-        ctx.emitQuestion(s);
-        const top = ctx.topOfSession(s);
-        if (top !== s) ctx.syncTopBadge(top);
-      }
-      if (!affected.size && p.sessionID) {
-        ctx.syncAttention(p.sessionID);
-        ctx.emitQuestion(p.sessionID);
-        const top = ctx.topOfSession(p.sessionID);
-        if (top !== p.sessionID) ctx.syncTopBadge(top);
-      }
+      ctx.clearQuestionAsk(p.requestID ?? p.id, p.sessionID);
       break;
     }
     case "session.idle":

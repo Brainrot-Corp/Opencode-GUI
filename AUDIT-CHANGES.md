@@ -44,6 +44,20 @@ files (modules/hooks/lib extracted).** Baseline and both gates green:
 | 12-rust-wait-port.md | server.rs, voice/stt.rs, remote.rs | `wait_for_port(port, timeout, http_ok)` unifies the two poll loops — strict for serve/tunnels (default `true`), loose for whisper-server (404 builds stay "up"); stt's local `wait_for_server` deleted; +1 unit test (reply_ok predicate) |
 | 13-useopencode-typing-polls.md | useOpencode.ts, opencodeEvents.ts | **`@ts-nocheck` removed — hook fully typed** (24 documented casts remain for stale-SDK fields); 3 s children interval dropped (event triggers + settle edge cover it); 2 s workspace tick → event-driven reconcile (SSE onerror debounce + workspaces-changed), `remoteStatus` only probed for non-open remote streams |
 
+## Wave 4 (docs/audit-fixes/14) — useOpencode split under the new budget rule
+
+useOpencode.ts 2,400 → 1,446 L; the hook is now composition + SSE boot + prompt core.
+| New module | Lines | Owns |
+|---|---|---|
+| useAsks.ts | 454 | permission/question refs, attention, peek/subscribe, ask lifecycle |
+| useAgents.ts | 302 | per-session agent pinning (shares `sessionMeta.ts:pinEntry` with useProviders) |
+| useWorkspaceSessions.ts | 242 | dir map, getAllDirs, refreshSessions/guardedRefresh |
+| useSecurity.ts | 220 | security mode restore/auto-pin/auto-responder + cross-window sync |
+| useSessionUsage.ts | 140 | children/cost/usage polling |
+| sessionMeta.ts (+ test, 17 checks) | 100 | pinned/title overrides, applyOverrides as pure lib functions |
+
+`opencodeEvents.ts` 321 → 266 L (ask mutations only via ctx). Public return object key-for-key identical; no circular imports. Budget note: hook sits at 1,446 — all six mapped seams are exhausted; the remainder (SSE boot wiring, prompt/submit core, fork/revert/clear) is the audit-designated core of the hook. Splitting it further would be forced fragmentation, not a seam.
+
 ## Deliberately deferred (documented, not lost)
 
 - `useOpencode.ts` `@ts-nocheck` removal + full typing (incremental project)
