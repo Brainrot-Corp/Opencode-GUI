@@ -237,6 +237,7 @@
     var ring = document.createElement("div"); ring.className = "cursor-ring"; ring.setAttribute("aria-hidden", "true");
     document.body.appendChild(dot); document.body.appendChild(ring);
     root.classList.add("has-cursor");
+    $$("img").forEach(function (img) { img.draggable = false; });
     var tx = -100, ty = -100, rx = -100, ry = -100;
     function place(el, x, y) { el.style.transform = "translate3d(" + x + "px," + y + "px,0) translate(-50%,-50%)"; }
     document.addEventListener("mousemove", function (e) {

@@ -235,3 +235,7 @@ html.has-cursor .cursor-dot, html.has-cursor .cursor-ring { display: block; }
   -webkit-mask-image: radial-gradient(75% 60% at 50% 40%, black, transparent 92%); }
 /* hide the native cursor — the dynamic dot + ring take over (only when live) */
 html.has-cursor, html.has-cursor * { cursor: none !important; }
+/* clicks must not summon the OS I-beam: selectable text lives in prose/code only */
+html.has-cursor body { -webkit-user-select: none; user-select: none; }
+html.has-cursor .prose, html.has-cursor pre, html.has-cursor code { -webkit-user-select: text; user-select: text; }
+html.has-cursor a, html.has-cursor img { -webkit-user-drag: none; }
