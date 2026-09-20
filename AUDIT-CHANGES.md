@@ -58,6 +58,10 @@ useOpencode.ts 2,400 → 1,446 L; the hook is now composition + SSE boot + promp
 
 `opencodeEvents.ts` 321 → 266 L (ask mutations only via ctx). Public return object key-for-key identical; no circular imports. Budget note: hook sits at 1,446 — all six mapped seams are exhausted; the remainder (SSE boot wiring, prompt/submit core, fork/revert/clear) is the audit-designated core of the hook. Splitting it further would be forced fragmentation, not a seam.
 
+**Post-wave-4 addition — dispatcher made testable + dispatch test:**
+- `opencodeEvents.ts` now has **zero runtime imports** — `getDirectory`/`hiddenSessions`/`hiddenTitle`/`pushToast` are injected via ctx (testability requirement; behavior unchanged), and the dead `autoRespondPermission` ctx member was removed
+- New `src/lib/opencodeEvents.test.ts` — **66 checks** over the dispatch matrix: compaction marks, message.updated completion/live/model-learning paths, part.updated + delta (incl. 400ms task-refresh scheduling), permission asked/updated/replied title+id fallback chains, question lifecycle, session.idle vs inflight, session.error (abort skipped, restore+toast), session.created/updated/deleted (parent/hidden/dedup paths), file.watcher relay + registry-refetch throttle. Suite now 32 files / ~700 checks.
+
 ## Deliberately deferred (documented, not lost)
 
 - `useOpencode.ts` `@ts-nocheck` removal + full typing (incremental project)
