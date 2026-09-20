@@ -2,7 +2,7 @@
 
 Lightweight cross-platform GUI client for [opencode](https://opencode.ai). Tauri v2 + React + TypeScript, spawns an `opencode serve` sidecar and talks to it over HTTP/SSE.
 
-![opencode-gui screenshot](./readme-ressources/opencode-gui-ressource.png)
+![opencode-gui screenshot](./docs/assets/preview.png)
 
 See [PLAN.md](./PLAN.md) for architecture and [IMPLEMENTED.md](./IMPLEMENTED.md) for progress.
 
@@ -19,6 +19,7 @@ Run everything through `scripts/run.sh` (Git Bash on Windows, bash/WSL elsewhere
 ./scripts/run.sh dev      # run the app
 ./scripts/run.sh build    # bundle → src-tauri/target/release/bundle
 ./scripts/run.sh portable # portable zip (exe + sidecar + oc-relay) → bundle/portable
+./scripts/run.sh android  # APK for the mobile companion (needs JDK 17 + ANDROID_HOME + NDK)
 ./scripts/run.sh check    # unit tests + tsc + vite build + cargo check
 ./scripts/run.sh clean    # cargo clean + remove dist
 ```
