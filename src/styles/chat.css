@@ -171,6 +171,7 @@
 
 .msg {
   max-width: 92%;
+  min-width: 0;
   padding: 11px 16px;
   border-radius: 0;
   font-family: var(--mono);
@@ -205,6 +206,8 @@
 .lzy-row {
   display: flex;
   flex-direction: column;
+  min-width: 0;
+  max-width: 100%;
 }
 /* giant still-streaming parts render as plain text (markdown re-parses on
    completion) — same rhythm as .msg prose, no layout jump on the swap */
@@ -525,6 +528,8 @@
   position: relative;
   width: 100%;
   min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
 }
 /* fenced blocks have zero intrinsic width once monaco mounts (absolutely
    positioned lines), so a shrink-to-fit bubble collapses to min-content and
@@ -555,6 +560,7 @@
   overflow: hidden;
   width: 100%;
   min-width: 0;
+  max-width: 100%;
 }
 /* monaco-backed tool input/output — same material as .tool-input/.tool-out */
 .tool-mono {
@@ -562,6 +568,8 @@
   border: 1px solid var(--line);
   border-radius: 4px;
   overflow: hidden;
+  max-width: 100%;
+  min-width: 0;
 }
 /* monaco paints its own background — keep it transparent so the materials
    above show through (same override lives in file-editor/diff css) */
@@ -581,6 +589,8 @@
   border-left: 2px solid var(--line-strong);
   padding-left: 8px;
   margin: 3px 0;
+  min-width: 0;
+  max-width: 100%;
 }
 .msg .tool-block.error {
   border-left-color: var(--danger);
@@ -862,6 +872,8 @@
   display: flex;
   flex-direction: column;
   gap: 4px;
+  min-width: 0;
+  max-width: 100%;
 }
 .msg .tool-input,
 .msg .tool-out {

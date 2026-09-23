@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type * as Monaco from "monaco-editor";
 import type { ReactNode } from "react";
 import {
@@ -7,12 +7,8 @@ import {
   defineGuiTheme,
   forceCheapTokens,
   loadMonaco,
-  measureLineWidth,
   whenGrammarReady,
 } from "../lib/monaco";
-
-// growth budget past the natural column width before horizontal scrolling
-const MAX_EXPAND = 320;
 
 // smallest single-range edit turning oldStr into newStr (offsets) — the
 // model keeps tokens for unchanged lines instead of retokenizing everything
@@ -37,7 +33,7 @@ function diffOffsets(
 // read-only monaco block — shared renderer for diffs, fences and tool
 // outputs. Loads the chunk lazily, syncs content incrementally (streaming
 // safe), paints cheap lines synchronously (no idle-queue color pop-in),
-// auto-heights up to maxHeight, widens into free stage space, and degrades
+// auto-heights up to maxHeight, always stays inside the parent bubble, and
 // to `fallback` (silently + console.error) if monaco ever fails — a viewer
 // must never blank the chat, there is no error boundary above it.
 export default function MonacoBlock({
@@ -90,11 +86,6 @@ export default function MonacoBlock({
   const maxHeightRef = useRef(maxHeight);
   maxHeightRef.current = maxHeight;
   const fitRef = useRef<(() => void) | null>(null);
-  const longestLine = useMemo(() => {
-    let best = "";
-    for (const l of value.split("\n")) if (l.length > best.length) best = l;
-    return best;
-  }, [value]);
   // first paint must be colored: wait for the language grammar before
   // creating (fallback shows meanwhile — same shape, no layout shift).
   // Only gates first creation; later updates flow through the sync effect.
@@ -107,73 +98,22 @@ export default function MonacoBlock({
     setFail(stage);
   };
 
-  // grow toward the longest line when free stage space allows — capped at
-  // MAX_EXPAND past the natural width and never past the scroller, so the
-  // chat itself never gains a horizontal scrollbar. Wrapped blocks normally
-  // need nothing (wrapping absorbs overflow); only unbreakable spill grows
-  // them, by exactly the spilled amount (never the full unwrapped estimate).
-  // Hysteresis throughout (grow past +16, shrink back only with 32+ spare)
-  // so streaming never flickers the width, and layout runs only on change.
+  // containment: the editor always stays 100% of its parent bubble —
+  // widening past the parent (into "free stage space") stuck out past the
+  // .msg border, which stays capped (92%/84%), and read as the editor going
+  // out of bounds. Long lines scroll inside the editor instead; the bubble
+  // size stays proper. This only clears stale inline widths (pre-fix runs)
+  // and re-fits the editor after the clear.
   const applyWidth = useCallback(() => {
     const box = mountRef.current;
     if (!box || !box.isConnected) return;
-    const natural = box.parentElement?.clientWidth || box.clientWidth;
-    const ed = edRef.current;
-    let wrapSpill: number | null = null;
-    if (wrap) {
-      let clear = true;
-      if (ed) {
-        try {
-          const li = ed.getLayoutInfo();
-          const slack = li.width - li.contentLeft - ed.getScrollWidth();
-          if (slack < -2) {
-            clear = false;
-            wrapSpill = Math.ceil(li.contentLeft + ed.getScrollWidth() + 14);
-          } else if (slack <= 32) return; // deadband: keep current width
-        } catch {}
-      }
-      if (clear) {
-        if (box.style.width) {
-          box.style.width = "";
-          try {
-            ed?.layout();
-          } catch {}
-        }
-        return;
-      }
-    }
-    let needed =
-      wrapSpill ?? Math.ceil(leftPad + 8 + measureLineWidth(longestLine, fontSize, tabSize) + 14);
-    if (ed && wrapSpill == null) {
-      try {
-        const li = ed.getLayoutInfo();
-        needed = Math.max(needed, Math.ceil(li.contentLeft + ed.getScrollWidth() + 14));
-      } catch {}
-    }
-    let avail = natural + MAX_EXPAND;
-    const scroller = box.closest(".messages, .dlg-body");
-    if (scroller) {
-      const sr = scroller.getBoundingClientRect();
-      const br = box.getBoundingClientRect();
-      const pr = parseFloat(getComputedStyle(scroller).paddingRight || "0") || 0;
-      avail = Math.floor(sr.right - br.left - pr - 4);
-    }
-    const target = Math.min(needed, Math.min(natural + MAX_EXPAND, avail));
-    if (target > natural + 16) {
-      const v = `${Math.floor(target)}px`;
-      if (box.style.width !== v) {
-        box.style.width = v;
-        try {
-          ed?.layout();
-        } catch {}
-      }
-    } else if (box.style.width) {
+    if (box.style.width) {
       box.style.width = "";
       try {
-        ed?.layout();
+        edRef.current?.layout();
       } catch {}
     }
-  }, [longestLine, wrap, fontSize, leftPad, tabSize]);
+  }, []);
 
   useEffect(() => {
     if (expandWidth) applyWidth();

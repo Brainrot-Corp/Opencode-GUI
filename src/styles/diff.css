@@ -86,6 +86,8 @@
   overflow: hidden;
   min-height: 57px;
   max-height: 420px;
+  min-width: 0;
+  max-width: 100%;
 }
 .ro-diff .monaco-editor,
 .ro-diff .monaco-editor-background {
