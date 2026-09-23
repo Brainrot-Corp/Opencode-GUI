@@ -67,9 +67,9 @@ pub async fn update_download(url: String, sha256: String, version: String) -> Re
         // curl can run up to 30 min — platform::curl_download enforces the
         // timeout, cleans a partial file on failure and hides the console in
         // release builds. (No size cap here: the release zip's sha256 gate
-        // + streaming extraction bound memory; cap would need a per-release
-        // constant.)
-        crate::platform::curl_download(&url, &zip_path, u64::MAX)?;
+        // + streaming extraction bound memory; curl rejects u64::MAX for
+        // --max-filesize, so pass None instead of a fake cap.)
+        crate::platform::curl_download(&url, &zip_path, None)?;
 
         // pass 1: sha256 streamed off disk
         let file = std::fs::File::open(&zip_path).map_err(|e| e.to_string())?;

@@ -206,22 +206,36 @@ pub fn split_cmdline(s: &str) -> Vec<String> {
     out
 }
 
+/// Arg list for [`curl_download`] (binary excluded) — split out so the
+/// `--max-filesize` gating has a unit test without spawning curl.
+pub(crate) fn curl_download_args(url: &str, dest: &std::path::Path, cap: Option<u64>) -> Vec<std::ffi::OsString> {
+    let mut args: Vec<std::ffi::OsString> = vec![
+        "-L".into(),
+        "--fail".into(),
+        "--silent".into(),
+        "--show-error".into(),
+        "--max-time".into(),
+        "1800".into(),
+    ];
+    // curl parses --max-filesize as a signed 64-bit offset — anything above
+    // i64::MAX fails with "too large number" (the auto-updater once passed
+    // u64::MAX as "no cap"). Omit the flag instead of emitting garbage.
+    if let Some(limit) = cap.filter(|&n| n <= i64::MAX as u64) {
+        args.push("--max-filesize".into());
+        args.push(limit.to_string().into());
+    }
+    args.push("-o".into());
+    args.push(dest.into());
+    args.push(url.into());
+    args
+}
+
 /// Download `url` to `dest` via the OS curl binary (follows GitHub/HF
-/// release redirects; `--max-filesize` enforces `cap`). Blocking — call
-/// from spawn_blocking. Removes a partial `dest` on failure.
-pub fn curl_download(url: &str, dest: &std::path::Path, cap: u64) -> Result<(), String> {
+/// release redirects; `cap` enforces `--max-filesize` when `Some`).
+/// Blocking — call from spawn_blocking. Removes a partial `dest` on failure.
+pub fn curl_download(url: &str, dest: &std::path::Path, cap: Option<u64>) -> Result<(), String> {
     let mut cmd = win_command(curl_bin());
-    cmd.args([
-        "-L",
-        "--fail",
-        "--silent",
-        "--show-error",
-        "--max-time",
-        "1800",
-        "--max-filesize",
-    ]);
-    cmd.arg(cap.to_string());
-    cmd.arg("-o").arg(dest).arg(url);
+    cmd.args(curl_download_args(url, dest, cap));
     cmd.stdout(std::process::Stdio::null()).stderr(std::process::Stdio::piped());
     let out = cmd.output().map_err(|e| format!("failed to run curl: {e}"))?;
     if out.status.success() {
@@ -281,6 +295,42 @@ pub fn center_traffic_lights(win: &tauri::WebviewWindow) {
                 frame.origin.y = ch - CENTER_Y - frame.size.height / 2.0;
                 btn.setFrameOrigin(frame.origin);
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn has_flag(args: &[std::ffi::OsString], flag: &str) -> bool {
+        args.iter().any(|a| a.to_string_lossy() == flag)
+    }
+
+    // regression: update_download passed u64::MAX as "no cap" and curl died
+    // with `option --max-filesize: too large number`
+    #[test]
+    fn curl_args_omits_max_filesize_without_cap() {
+        let dest = std::path::Path::new("update.zip");
+        let args = curl_download_args("https://example.com/x.zip", dest, None);
+        assert!(!has_flag(&args, "--max-filesize"));
+        assert!(has_flag(&args, "--max-time"));
+    }
+
+    #[test]
+    fn curl_args_keeps_sane_cap() {
+        let dest = std::path::Path::new("part.bin");
+        let args = curl_download_args("https://example.com/x", dest, Some(2 * 1024 * 1024 * 1024));
+        let pos = args.iter().position(|a| a.to_string_lossy() == "--max-filesize").unwrap();
+        assert_eq!(args[pos + 1].to_string_lossy(), "2147483648");
+    }
+
+    #[test]
+    fn curl_args_never_emits_unparsable_cap() {
+        let dest = std::path::Path::new("update.zip");
+        for cap in [u64::MAX, i64::MAX as u64 + 1] {
+            let args = curl_download_args("https://example.com/x.zip", dest, Some(cap));
+            assert!(!has_flag(&args, "--max-filesize"), "cap {cap} must omit the flag");
         }
     }
 }

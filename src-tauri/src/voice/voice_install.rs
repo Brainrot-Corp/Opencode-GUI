@@ -79,7 +79,7 @@ pub async fn voice_download(key: String, url: String) -> Result<(), String> {
     let part = part_path(&key)?;
     std::fs::create_dir_all(downloads_dir()).map_err(|e| e.to_string())?;
     tauri::async_runtime::spawn_blocking(move || {
-        crate::platform::curl_download(&url, &part, DOWNLOAD_CAP)
+        crate::platform::curl_download(&url, &part, Some(DOWNLOAD_CAP))
     })
     .await
     .map_err(|e| format!("task join failed: {e}"))?
