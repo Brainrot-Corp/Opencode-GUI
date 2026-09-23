@@ -211,30 +211,41 @@ export async function applyWorkspace(path: string) {
   window.dispatchEvent(new CustomEvent("oc:workspaces-changed"));
 }
 
-// reset to a clean slate: primary -> "" (server cwd), extras dropped.
-// Terminals are closed via oc:terms-close-all (Terminal kills the PTYs and
-// clears its persisted list); sessions stay server-side and reappear if a
-// workspace is re-added.
+// navigate the primary workspace to the explicit user home dir.
+// "" means "server cwd", but the sidecar's cwd is fixed at spawn time —
+// after closing a workspace spawned elsewhere, "" would still show the old
+// folder until restart. The explicit path works regardless of spawn cwd.
+export async function goHomeWorkspace(): Promise<void> {
+  let home = "";
+  try {
+    home = (await invoke<string>("user_home")).trim();
+  } catch {}
+  if (home) {
+    await applyWorkspace(home);
+    return;
+  }
+  // fallback: legacy "" behavior (server cwd, correct on fresh spawns)
+  await applyWorkspace("");
+}
+
+// reset to the home workspace: extras dropped, primary -> explicit user
+// home (see goHomeWorkspace — "" would keep showing the spawned cwd until
+// restart). Terminals are closed via oc:terms-close-all (Terminal kills the
+// PTYs and clears its persisted list); closed folders' sessions stay
+// server-side and reappear if re-added.
 export async function closeAllWorkspaces() {
-  touchWorkspace("");
-  setDirectory("");
   if (!isSecondary()) {
     try {
       const raw = JSON.parse(localStorage.getItem("oc.settings") ?? "{}");
-      raw.workspace = "";
       raw.workspaces = [];
       localStorage.setItem("oc.settings", JSON.stringify(raw));
     } catch {
-      // unreadable settings blob — sessions still follow the api dir
+      // unreadable settings blob — extras still drop via the event below
     }
   } else {
     setExtras([]);
   }
-  // debug local builds survive devUrl origin changes via Rust file
-  try {
-    await invoke("workspace_set", { path: "" });
-  } catch {}
-  window.dispatchEvent(new CustomEvent("oc:workspaces-changed"));
+  await goHomeWorkspace();
   window.dispatchEvent(new Event("oc:terms-close-all"));
 }
 

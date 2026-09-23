@@ -38,7 +38,7 @@ use discover::relay_discover;
 mod files;
 #[cfg(desktop)]
 use files::{file_create, file_delete, file_duplicate, file_import, file_open, file_rename, window_scope,
-    workspace_get, workspace_is_dir, workspace_set, write_file};
+    user_home, workspace_get, workspace_is_dir, workspace_set, write_file};
 
 #[cfg(desktop)]
 mod git;
@@ -179,6 +179,7 @@ pub fn run() {
             os_glass,
             relay_discover,
             window_scope,
+            user_home,
             workspace_get,
             workspace_set,
             set_close_on_x,

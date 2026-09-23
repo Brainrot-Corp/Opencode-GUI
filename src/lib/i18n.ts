@@ -230,6 +230,7 @@ const en: Dict = {
 
   // chat / messages
   "chat.emptyNoSession": "Select or create a session\nto start.",
+  "chat.newHomeSession": "New session",
   "chat.rewind.banner": "Viewing an earlier version of this conversation.",
   "chat.rewind.undo": "Undo rewind",
   "chat.closeConfirm": "Press Ctrl+W again to close this session",
@@ -480,6 +481,7 @@ const fr: Dict = {
   "git.tabs.hidden": "+{count} non-dépôt masqué",
   "git.loading": "Chargement du statut git…",
   "chat.emptyNoSession": "Sélectionnez ou créez une session\npour commencer.",
+  "chat.newHomeSession": "Nouvelle session",
   "chat.rewind.banner": "Visualisation d'une version antérieure de la conversation.",
   "chat.rewind.undo": "Annuler le retour",
   "chat.closeConfirm": "Appuyez à nouveau sur Ctrl+W pour fermer cette session",
@@ -721,6 +723,7 @@ const es: Dict = {
   "git.tabs.hidden": "+{count} no-repo oculto",
   "git.loading": "Cargando estado git…",
   "chat.emptyNoSession": "Selecciona o crea una sesión\npara empezar.",
+  "chat.newHomeSession": "Nueva sesión",
   "chat.rewind.banner": "Viendo una versión anterior de la conversación.",
   "chat.rewind.undo": "Deshacer retroceso",
   "chat.closeConfirm": "Pulsa Ctrl+W de nuevo para cerrar esta sesión",

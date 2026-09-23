@@ -111,29 +111,9 @@ export function useWorkspaceSessions(deps: WorkspaceSessionsDeps) {
       }
     } catch {}
     prevDirsRef.current = [...dirs];
-    // no real workspace open ("", server cwd alone) → empty UI, not the
-    // server's cwd contents (which may coincide with the just-closed folder)
-    if (dirs.length === 1 && !dirs[0]) {
-      const prevActiveId = activeRef.current;
-      sessionDirRef.current = new Map();
-      setSessions(() => []);
-      if (prevActiveId) {
-        try {
-          askRefs.permissionsRef.current.delete(prevActiveId);
-          askRefs.questionsRef.current.delete(prevActiveId);
-          askRefs.clearAttention(prevActiveId);
-          markCompacting(prevActiveId, false);
-          trackerRef.current?.reset(prevActiveId);
-        } catch {}
-        setActiveId("");
-        try { localStorage.removeItem(LAST_KEY); } catch {}
-        store.clearStashes();
-        setMsgs([]);
-        askRefs.setQuestion(null);
-        askRefs.setPermission(null);
-      }
-      return [];
-    }
+    // "" alone is the home workspace (server cwd → user dir): list its
+    // sessions like any other dir so Close All lands on a usable view
+    // instead of an empty UI.
     const prevMap = new Map(sessionDirRef.current);
     const prevActiveId = activeRef.current;
     const prevActiveDir = prevActiveId ? prevMap.get(prevActiveId) : undefined;

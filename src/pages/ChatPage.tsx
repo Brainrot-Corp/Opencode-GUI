@@ -28,7 +28,8 @@ import { useSettings } from "../hooks/useSettings";
 import { useGlobalShortcuts } from "../hooks/useGlobalShortcuts";
 import { usePluginHotkeys } from "../hooks/usePluginHotkeys";
 import { useVoiceRouter, VD_TAG } from "../hooks/useVoiceRouter";
-import { pickWorkspace, getLastWorkspace, getAllWorkspaces, removeWorkspace, applyWorkspace } from "../lib/workspace";
+import { pickWorkspace, getLastWorkspace, getAllWorkspaces, removeWorkspace, goHomeWorkspace } from "../lib/workspace";
+import { isHome } from "../lib/homeWorkspace";
 import { normWorkspace } from "../lib/platform";
 import { playSound } from "../lib/sounds";
 import { useSpeech } from "../hooks/useSpeech";
@@ -39,6 +40,7 @@ import { usePluginUpdates } from "../hooks/usePluginUpdates";
 import { useTwoStepConfirm } from "../hooks/useTwoStepConfirm";
 import { useDragResize } from "../hooks/useDragResize";
 import { useChatFind } from "../hooks/useChatFind";
+import { useHomeWorkspace } from "../hooks/useHomeWorkspace";
 import { useNotifyRelay } from "../hooks/useNotifyRelay";
 import { ContextMenuProvider } from "../hooks/useContextMenu";
 import SelectionMenu from "../components/SelectionMenu";
@@ -52,6 +54,12 @@ const SB_C_KEY = "oc.sb.c";
 export default function ChatPage() {
   const { t } = useTranslation();
   const oc = useOpencode();
+  // home workspace ("", server cwd): real section + auto-create when empty
+  const home = useHomeWorkspace({
+    booting: oc.booting,
+    sessionCount: oc.sessions.length,
+    newSession: oc.newSession,
+  });
   const {
     settings,
     update,
@@ -299,17 +307,16 @@ export default function ChatPage() {
       return;
     }
     // primary-only and not already home — closing means going home
-    const primary = getAllWorkspaces()[0] ?? "";
-    if (primary && normWorkspace(primary) !== "") {
+    // (explicit user-home path: "" would keep the spawned cwd until restart)
+    if (!isHome(getAllWorkspaces(), home.homePath)) {
       playSound("close");
-      void applyWorkspace("");
+      void goHomeWorkspace();
     }
-  }, [resolveWorkspaceCloseTarget, oc.activeId, oc.getDirForSession, oc.refreshSessions]);
+  }, [resolveWorkspaceCloseTarget, home.homePath, oc.activeId, oc.getDirForSession, oc.refreshSessions]);
   const { armed: wsCloseHint, press: pressCloseWorkspace } = useTwoStepConfirm();
   const closeActiveWorkspace = useCallback(() => {
     const target = resolveWorkspaceCloseTarget();
-    const primary = getAllWorkspaces()[0] ?? "";
-    if (!target && !(primary && normWorkspace(primary) !== "")) return;
+    if (!target && isHome(getAllWorkspaces(), home.homePath)) return;
     if (pressCloseWorkspace()) {
       closeWorkspaceNow();
     } else {
@@ -620,6 +627,7 @@ export default function ChatPage() {
             isPinned={sbIsPinned}
             getDirForSession={sbGetDir}
             refreshSessions={sbRefresh}
+            homePath={home.homePath}
             toggleSidebarHotkey={settings.hotkeys.toggleSidebar}
             sidebarExtras={
               sidebarWidgets.length ? (
@@ -640,6 +648,19 @@ export default function ChatPage() {
                   <br />
                   {t("chat.emptyNoSession").split("\n")[1] || ""}
                 </p>
+                {home.isHome && (
+                  <p className="empty">
+                    <button
+                      type="button"
+                      className="reset-btn"
+                      data-tip={home.homePath || undefined}
+                      onClick={() => void oc.newSession(home.createDir)}
+                    >
+                      <i className="fa-solid fa-plus" />
+                      {t("chat.newHomeSession")}
+                    </button>
+                  </p>
+                )}
               </div>
             )}
             {(oc.activeId || oc.booting) && (

@@ -708,6 +708,8 @@
   font-size: 13px;
   font-weight: 500;
   letter-spacing: 0.06em;
+  /* morph entrance runs on every busy→idle / idle→busy swap (key change) */
+  animation: comp-btn-in 0.2s var(--ease);
   transition:
     border-color 0.35s var(--ease),
     background 0.35s var(--ease),
@@ -715,11 +717,27 @@
     color 0.25s var(--ease),
     transform 0.12s var(--ease);
 }
-.send-btn i {
+.send-btn i,
+.stop-btn i {
   transition: transform 0.3s var(--ease), text-shadow 0.3s var(--ease);
 }
-.send-btn:hover:not(:disabled) i {
-  transform: translateX(2px);
+@keyframes comp-btn-in {
+  from {
+    opacity: 0;
+    transform: scale(0.85) translateY(2px);
+  }
+  60% {
+    opacity: 1;
+    transform: scale(1.03) translateY(0);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+@keyframes comp-btn-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 /* send: the one warm element in the row — quiet accent chip at rest that
@@ -740,6 +758,19 @@
 .send-btn i {
   text-shadow: 0 0 8px var(--accent-glow);
 }
+/* ready (has text) — same palette, just lets the plane idle-drift */
+.send-btn.ready i {
+  animation: plane-idle 2.6s ease-in-out infinite;
+}
+@keyframes plane-idle {
+  0%,
+  100% {
+    transform: translate(0, 0);
+  }
+  50% {
+    transform: translate(1px, -1px);
+  }
+}
 .send-btn:hover:not(:disabled) {
   color: var(--text);
   border-color: color-mix(in srgb, var(--accent) calc(0.55 * 100%), transparent);
@@ -754,6 +785,19 @@
 }
 .send-btn:hover:not(:disabled) i {
   text-shadow: 0 0 12px var(--accent-glow);
+  animation: plane-nudge 0.32s var(--ease);
+  transform: translate(2px, -1px);
+}
+@keyframes plane-nudge {
+  0% {
+    transform: translate(0, 0);
+  }
+  45% {
+    transform: translate(3px, -2px);
+  }
+  100% {
+    transform: translate(2px, -1px);
+  }
 }
 .send-btn:active:not(:disabled) {
   transform: translateY(1px);
@@ -769,16 +813,33 @@
   opacity: 0.35;
   cursor: default;
 }
+.send-btn:disabled i {
+  animation: none;
+}
 
 .stop-btn {
   border-radius: 0;
   color: var(--danger);
   background: rgba(224, 143, 143, 0.06);
   border: 1px solid rgba(224, 143, 143, 0.35);
+  /* entrance once, then a shadow-only breathing loop while generating */
+  animation: comp-btn-in 0.2s var(--ease), stop-breathe 1.7s ease-in-out 0.25s infinite;
+}
+@keyframes stop-breathe {
+  0%,
+  100% {
+    box-shadow: 0 0 14px -8px rgba(224, 143, 143, 0.45);
+  }
+  50% {
+    box-shadow: 0 0 26px -6px rgba(224, 143, 143, 0.65);
+  }
 }
 .stop-btn:hover {
   background: rgba(224, 143, 143, 0.13);
   box-shadow: 0 0 28px -8px rgba(224, 143, 143, 0.55);
+}
+.stop-btn:active {
+  transform: translateY(1px) scale(0.97);
 }
 
 /* double-Escape armed — the stop button holds a steady red glow while the
@@ -786,7 +847,28 @@
 .stop-btn.armed {
   background: rgba(224, 143, 143, 0.16);
   border-color: rgba(224, 143, 143, 0.75);
-  box-shadow: 0 0 20px -2px rgba(224, 143, 143, 0.7);
+  animation: comp-btn-in 0.2s var(--ease), stop-breathe-armed 1s ease-in-out 0.2s infinite;
+}
+@keyframes stop-breathe-armed {
+  0%,
+  100% {
+    box-shadow: 0 0 20px -2px rgba(224, 143, 143, 0.7);
+  }
+  50% {
+    box-shadow: 0 0 30px -2px rgba(224, 143, 143, 0.9);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .send-btn,
+  .stop-btn,
+  .stop-btn.armed {
+    animation: comp-btn-fade 0.12s ease-out;
+  }
+  .send-btn.ready i,
+  .send-btn:hover:not(:disabled) i {
+    animation: none;
+  }
 }
 
 /* attachments: staged chips with read progress + inline rejects */

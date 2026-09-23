@@ -113,6 +113,11 @@ pub fn workspace_set(app: tauri::AppHandle, path: String) -> Result<(), String> 
     std::fs::write(&file, t).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+pub fn user_home() -> String {
+    crate::platform::home_dir().to_string_lossy().into_owned()
+}
+
 pub(crate) fn read_saved_workspace(app: &tauri::AppHandle) -> Option<PathBuf> {
     // secondary windows boot blank (server cwd = home); the per-window
     // ?directory= carries the real workspace. The post-update window restores
@@ -413,6 +418,12 @@ pub async fn workspace_is_dir(app: tauri::AppHandle, path: String) -> bool {
 #[cfg(test)]
 mod tests {
     use super::free_copy_name;
+
+    #[test]
+    fn user_home_is_non_empty() {
+        // HOME/USERPROFILE/temp fallback always yields something usable
+        assert!(!super::user_home().trim().is_empty());
+    }
 
     #[test]
     fn free_copy_name_dedupes() {

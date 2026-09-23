@@ -72,6 +72,7 @@ export default memo(function Sidebar({
   getDirForSession,
   refreshSessions,
   toggleSidebarHotkey,
+  homePath,
 }: {
   sessions: Session[];
   activeId: string;
@@ -100,6 +101,7 @@ export default memo(function Sidebar({
   getDirForSession?: (id: string) => string;
   refreshSessions?: () => void;
   toggleSidebarHotkey?: string | null;
+  homePath?: string;
 }) {
   const [tab, setTab] = useState(() =>
     localStorage.getItem("oc.sb.tab") === "files" ? "files" : "chats",
@@ -149,9 +151,14 @@ export default memo(function Sidebar({
   }, []);
   const primaryDir = allDirs[0] ?? getDirectory();
   const extraDirs = allDirs.slice(1);
-  // "" alone = no workspace open (server cwd) — show empty, not the
-  // server's cwd tree (which may be the just-closed folder it spawned in)
-  const hasRealWorkspace = allDirs.some((d) => (d ?? "").trim() !== "");
+  // "" is the home workspace (server cwd → user dir): a real section
+  // with its sessions + file tree, not an empty state.
+  // display path for the home ("") section — real path when resolved
+  const homeLabel = homePath && homePath.trim() ? homePath.trim() : "";
+  const dispFor = (dir: string) =>
+    isRemoteDir(dir) ? remoteLabel(dir) : dir || homeLabel || "Server cwd";
+  const titleFor = (dir: string) =>
+    dir ? baseName(dir) : homeLabel ? baseName(homeLabel) : "Server cwd";
 
   // drops over an open file tree copy files into that tree (FileTree handles
   // them) — anywhere else stays "add workspace". Point is logical CSS px.
@@ -334,7 +341,7 @@ export default memo(function Sidebar({
       { label: tr("fileTree.newFolder"), icon: "fa-folder-plus", action: () => fire("new-folder") },
       { separator: true },
       { label: tr("fileTree.refresh"), icon: "fa-arrows-rotate", action: () => fire("refresh") },
-      { label: tr("fileTree.copyWorkspacePath"), icon: "fa-link", action: () => void clipboardWrite(dir) },
+      { label: tr("fileTree.copyWorkspacePath"), icon: "fa-link", action: () => void clipboardWrite(dir || homeLabel || dir) },
     ]);
   };
 
@@ -359,8 +366,8 @@ export default memo(function Sidebar({
     return (
       <div key={`${keyPrefix}-${dir || "__cwd"}`} data-ws-header>
         {!isPrimary && dropHint(extraIdx)}
-        <div className="gp-sect ws-head ws-head--large" role="button" tabIndex={0} draggable={!isPrimary} onDragStart={() => { if (!isPrimary) setDragReorder(extraIdx); }} onDragEnd={() => { setDragReorder(null); setDropIndex(null); }} onClick={() => toggleWs(dir, tab)} {...(tab === "files" ? { onContextMenu: (e: React.MouseEvent) => showWsMenu(e, dir) } : {})} onKeyDown={onKey} data-tip={isRemoteDir(dir) ? remoteLabel(dir) : (dir || "Server cwd")} style={!isPrimary ? { cursor: "grab" } : undefined}>
-          <span className="gp-sect-toggle ws-toggle--large"><i className={`fa-solid fa-chevron-${isCollapsed ? "right" : "down"} gp-sect-chev`} /><i className={`fa-solid ${isRemoteDir(dir) ? "fa-server" : "fa-folder"}`} style={{ fontSize: 13, color: "var(--accent)", opacity: 0.9 }} /><span className="ws-title mono" style={{ maxWidth: 140, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{baseName(dir)}</span><span className="gp-sect-count">{p.count}</span></span>
+        <div className="gp-sect ws-head ws-head--large" role="button" tabIndex={0} draggable={!isPrimary} onDragStart={() => { if (!isPrimary) setDragReorder(extraIdx); }} onDragEnd={() => { setDragReorder(null); setDropIndex(null); }} onClick={() => toggleWs(dir, tab)} {...(tab === "files" ? { onContextMenu: (e: React.MouseEvent) => showWsMenu(e, dir) } : {})} onKeyDown={onKey} data-tip={dispFor(dir)} style={!isPrimary ? { cursor: "grab" } : undefined}>
+          <span className="gp-sect-toggle ws-toggle--large"><i className={`fa-solid fa-chevron-${isCollapsed ? "right" : "down"} gp-sect-chev`} /><i className={`fa-solid ${isRemoteDir(dir) ? "fa-server" : "fa-folder"}`} style={{ fontSize: 13, color: "var(--accent)", opacity: 0.9 }} /><span className="ws-title mono" style={{ maxWidth: 140, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{titleFor(dir)}</span><span className="gp-sect-count">{p.count}</span></span>
           <span className="gp-sect-acts ws-acts--large" onClick={(e) => e.stopPropagation()}>
             {p.acts}
             {!isPrimary && (
@@ -638,18 +645,17 @@ export default memo(function Sidebar({
                 </>
               )}
 
-              {/* Files tab: one FileTree per workspace with collapsable header */}
+              {/* Files tab: one FileTree per workspace, home ("") included */}
               <div style={{ display: loading && sessions.length === 0 ? "none" : tab === "files" ? "block" : "none" }}>
-                {!hasRealWorkspace ? (
+                {!allDirs.length ? (
                   <div className="gp-empty">No workspace open</div>
                 ) : (allDirs.map((dir, i) => {
-                  if (!(dir ?? "").trim()) return null;
                   return renderWsSection({
                     tab: "files",
                     dir,
                     index: i,
                     count: (dir ? "" : ""),
-                    acts: <button className="gp-sact ws-action--large" data-tip="Copy path" onClick={() => void clipboardWrite(dir)}><i className="fa-solid fa-link" /></button>,
+                    acts: <button className="gp-sact ws-action--large" data-tip="Copy path" onClick={() => void clipboardWrite(dir || homeLabel || dir)}><i className="fa-solid fa-link" /></button>,
                     body: <div className="ws-body"><FileTree dir={dir} /></div>,
                   });
                 }))}
@@ -658,12 +664,11 @@ export default memo(function Sidebar({
                 <button className="gp-sact ws-action--large" data-tip="Add an SSH remote workspace" style={{ margin: "2px 0 4px 6px" }} onClick={() => { playSound("click"); setSshOpen(true); }}><i className="fa-solid fa-server" />SSH</button>
               </div>
 
-              {/* Chats tab: grouped sessions */}
+              {/* Chats tab: grouped sessions, home ("") included */}
               <div style={{ display: loading && sessions.length === 0 || tab === "files" ? "none" : "block" }}>
-                {!hasRealWorkspace ? (
+                {!allDirs.length ? (
                   <div className="gp-empty">No workspace open</div>
                 ) : (allDirs.map((dir, idx) => {
-                  if (!(dir ?? "").trim()) return null;
                   const rawList = byDir.get(dir) ?? [];
                   const list = orderedForDir(dir, rawList);
                   const clearArmed = clearConfirm === dir;
@@ -673,7 +678,7 @@ export default memo(function Sidebar({
                     index: idx,
                     count: list.length,
                     acts: (<>
-                      <button className="gp-sact ws-action--large" data-tip={`New chat in ${baseName(dir)}`} onClick={() => onNew(dir)}><i className="fa-solid fa-plus" />New</button>
+                      <button className="gp-sact ws-action--large" data-tip={`New chat in ${titleFor(dir)}`} onClick={() => onNew(dir)}><i className="fa-solid fa-plus" />New</button>
                       {!!list.length && (
                         clearArmed ? (
                           <>

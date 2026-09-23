@@ -1263,6 +1263,9 @@ export default memo(function Composer({
           </div>
                 {busy ? (
                   <button
+                    key="stop"
+                    type="button"
+                    aria-label={escHint ? t("composer.stop.armed") : t("composer.stop.tip")}
                     className={`stop-btn${escHint ? " armed" : ""}`}
                     data-tip={escHint ? t("composer.stop.armed") : t("composer.stop.tip")}
                     onClick={() => {
@@ -1270,16 +1273,19 @@ export default memo(function Composer({
                       onAbort();
                     }}
                   >
-                    <i className="fa-solid fa-stop" />
+                    <i className="fa-solid fa-stop" aria-hidden />
                   </button>
                 ) : (
                   <button
-                    className="send-btn"
+                    key="send"
+                    type="button"
+                    aria-label={t("composer.send.tip")}
+                    className={`send-btn${(input.trim() || attach.readyFiles().length) && !needsModel ? " ready" : ""}`}
                     data-tip={t("composer.send.tip")}
                     onClick={send}
                     disabled={(!input.trim() && !attach.readyFiles().length) || needsModel}
                   >
-                    <i className="fa-solid fa-paper-plane" />
+                    <i className="fa-solid fa-paper-plane" aria-hidden />
                   </button>
                 )}
               </div>
