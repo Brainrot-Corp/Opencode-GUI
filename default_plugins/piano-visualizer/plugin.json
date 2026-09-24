@@ -1,0 +1,6 @@
+{
+  "id": "piano-visualizer",
+  "name": "Piano Visualizer",
+  "version": "0.1.0",
+  "description": "Glowing Synthesia-style piano — load .mid files, play via mouse/typing keys or a MIDI device, sampled grand + dark shader backdrop"
+}
