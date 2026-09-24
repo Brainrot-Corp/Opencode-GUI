@@ -20,6 +20,7 @@ const EVT = "oc:piano-viz:changed";
 const SF_BASE = "https://gleitz.github.io/midi-js-soundfonts/FluidR3_GM/acoustic_grand_piano-mp3/";
 const LOOKAHEAD = 4; // song-seconds visible above the keybed
 const MIN_W = 560, MIN_H = 420;
+const BLACK_H = 0.62; // black-key asset height as a fraction of keyH (draw + hit-test share this)
 // glide-FX clocks (song-seconds, so pause freezes beams + trails coherently)
 const TRAIL_DUR = 1.6; // how long a struck note keeps gliding upward
 const TRAIL_RISE = 1.15; // trail rise speed × fall speed
@@ -450,9 +451,16 @@ function keyLayout(w) {
   return { whites: whites.map((m) => ({ midi: m, x: xs.get(m), w: whiteW })), blacks, whiteW };
 }
 
-function keyAt(geom, x) {
-  for (const b of geom.blacks) if (x >= b.x && x <= b.x + b.w) return b.midi;
-  for (const w of geom.whites) if (x >= w.x && x <= w.x + w.w) return w.midi;
+// device-px hit-test against the drawn keybed: black keys only exist in the
+// top BLACK_H slice, so a press below their asset falls through to the white
+// key underneath (x/y/keyTop in the same space, blackH = keyTop + keyH*BLACK_H)
+export function keyAt(geom, x, y, keyTop, blackBottom) {
+  if (y >= keyTop && y <= blackBottom) {
+    for (const b of geom.blacks) if (x >= b.x && x <= b.x + b.w) return b.midi;
+  }
+  if (y >= keyTop) {
+    for (const w of geom.whites) if (x >= w.x && x <= w.x + w.w) return w.midi;
+  }
   return null;
 }
 
@@ -1139,7 +1147,7 @@ export default function activate(api) {
         for (const b of geom.blacks) {
           const hot = songActive.has(b.midi) || live.has(b.midi);
           const hc = hot ? handColor(b.midi) : null;
-          const bh = keyH * 0.62;
+          const bh = keyH * BLACK_H;
           const g = ctx.createLinearGradient(0, keyY, 0, keyY + bh);
           if (hc) { g.addColorStop(0, hc.core); g.addColorStop(1, hc.glow); }
           else { g.addColorStop(0, "#2a3138"); g.addColorStop(1, "#0b0e12"); }
@@ -1332,8 +1340,9 @@ export default function activate(api) {
       const x = ((e.clientX - r.left) / r.width) * cv.width;
       const y = ((e.clientY - r.top) / r.height) * cv.height;
       const keyH = clampN(cv.height * 0.17, 56 * (window.devicePixelRatio || 1), 110 * (window.devicePixelRatio || 1));
-      if (y < cv.height - keyH) return null;
-      return keyAt(keyLayout(cv.width), x);
+      const keyTop = cv.height - keyH;
+      if (y < keyTop) return null;
+      return keyAt(keyLayout(cv.width), x, y, keyTop, keyTop + keyH * BLACK_H);
     };
 
     const fmtT = (sec) => {

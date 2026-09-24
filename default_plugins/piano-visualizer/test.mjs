@@ -1,6 +1,6 @@
 // runnable self-check: node default_plugins/piano-visualizer/test.mjs
 // Exercises the pure SMF parser + note helpers (no DOM / no WebAudio).
-import { parseMidi, readVLQ, midiToName, isBlackKey, handColor, demoSongs } from "./main.js";
+import { parseMidi, readVLQ, midiToName, isBlackKey, handColor, keyAt, demoSongs } from "./main.js";
 
 let n = 0;
 function eq(actual, expected, label) {
@@ -43,6 +43,20 @@ for (const m of [21, 40, 60, 80, 108]) {
   const c = handColor(m);
   ok(/^#[0-9a-f]{6}$/.test(c.core) && /^#[0-9a-f]{6}$/.test(c.mid) && /^#[0-9a-f]{6}$/.test(c.glow), `hand colors valid hex (${m})`);
 }
+
+// ---- keybed hit-testing (black asset only covers the top slice) ----
+const testGeom = {
+  whites: [{ midi: 60, x: 0, w: 20 }, { midi: 62, x: 20, w: 20 }],
+  blacks: [{ midi: 61, x: 14, w: 12 }],
+};
+const KT = 100, BB = KT + 62; // keyTop 100, black asset ends at 162
+eq(keyAt(testGeom, 18, 110, KT, BB), 61, "black key hit inside asset");
+eq(keyAt(testGeom, 14, BB, KT, BB), 61, "black asset edges inclusive");
+eq(keyAt(testGeom, 18, 170, KT, BB), 60, "below black asset falls through to white");
+eq(keyAt(testGeom, 5, 170, KT, BB), 60, "white key lower area");
+eq(keyAt(testGeom, 5, 110, KT, BB), 60, "white key upper area beside black");
+eq(keyAt(testGeom, 18, 90, KT, BB), null, "above keybed is null");
+eq(keyAt(testGeom, 200, 170, KT, BB), null, "past last key is null");
 
 // ---- synthetic SMF (format 0, division 96, one tempo, two notes) ----
 function buildMidi() {
