@@ -1,6 +1,6 @@
 // runnable self-check: node default_plugins/piano-visualizer/test.mjs
 // Exercises the pure SMF parser + note helpers (no DOM / no WebAudio).
-import { parseMidi, readVLQ, midiToName, isBlackKey, demoSongs } from "./main.js";
+import { parseMidi, readVLQ, midiToName, isBlackKey, handColor, demoSongs } from "./main.js";
 
 let n = 0;
 function eq(actual, expected, label) {
@@ -33,6 +33,16 @@ eq(midiToName(61), "Db4", "flat naming for soundfont URLs");
 eq(isBlackKey(60), false, "C is white");
 eq(isBlackKey(61), true, "Db is black");
 eq(isBlackKey(62), false, "D is white");
+
+// ---- hand palette (gold left / blue right of middle C) ----
+eq(handColor(48).glow, "#ff8f2e", "bass splits warm");
+eq(handColor(59).glow, "#ff8f2e", "B3 still left hand");
+eq(handColor(60).glow, "#3f7dff", "middle C starts right hand");
+eq(handColor(72).mid, "#7cc4ff", "treble splits cool");
+for (const m of [21, 40, 60, 80, 108]) {
+  const c = handColor(m);
+  ok(/^#[0-9a-f]{6}$/.test(c.core) && /^#[0-9a-f]{6}$/.test(c.mid) && /^#[0-9a-f]{6}$/.test(c.glow), `hand colors valid hex (${m})`);
+}
 
 // ---- synthetic SMF (format 0, division 96, one tempo, two notes) ----
 function buildMidi() {

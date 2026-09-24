@@ -18,9 +18,19 @@
 const KEY = "oc.piano-viz";
 const EVT = "oc:piano-viz:changed";
 const SF_BASE = "https://gleitz.github.io/midi-js-soundfonts/FluidR3_GM/acoustic_grand_piano-mp3/";
-const TRACK_COLORS = ["#7fd4d4", "#b79cf0", "#9fe6a8", "#f0c97c", "#f09cb8", "#8fb8f0"];
 const LOOKAHEAD = 4; // song-seconds visible above the keybed
 const MIN_W = 560, MIN_H = 420;
+// glide-FX clocks (song-seconds, so pause freezes beams + trails coherently)
+const TRAIL_DUR = 1.6; // how long a struck note keeps gliding upward
+const TRAIL_RISE = 1.15; // trail rise speed × fall speed
+const FLASH_DUR = 0.35; // strike bloom lifetime
+const MAX_PARTS = 700; // ember particle cap
+
+// two hands, like the reference visual: warm gold below middle C, cool blue above
+export function handColor(midi) {
+  if (clampN(Math.round(midi), 0, 127) < 60) return { core: "#fff3d6", mid: "#ffc46b", glow: "#ff8f2e" };
+  return { core: "#e2f3ff", mid: "#7cc4ff", glow: "#3f7dff" };
+}
 
 // computer-keyboard map: code -> semitone offset from C of base octave
 const KEYMAP = {
@@ -446,6 +456,17 @@ function keyAt(geom, x) {
   return null;
 }
 
+// lane rect for a midi note inside a keyLayout (null when out of range)
+function noteGeom(geom, midi) {
+  const m = clampN(Math.round(midi), 21, 108);
+  if (isBlackKey(m)) {
+    const b = geom.blacks.find((k) => k.midi === m);
+    return b ? { x: b.x, w: b.w } : null;
+  }
+  const k = geom.whites.find((k) => k.midi === m);
+  return k ? { x: k.x + k.w * 0.08, w: k.w * 0.84 } : null;
+}
+
 // ---- activate --------------------------------------------------------------
 
 export default function activate(api) {
@@ -523,6 +544,11 @@ export default function activate(api) {
     snapRef.current = snap;
     const midiRef = useRef({ access: null, hooked: new Set() });
     const grainRef = useRef(null);
+    // glide-FX: struck notes keep rising as light trails + embers (never pop out)
+    const trailsRef = useRef([]); // {midi, t1} in song-seconds
+    const partsRef = useRef([]); // {x,y,vx,vy,life,max,size,col} in device px
+    const flashRef = useRef([]); // {midi, at} strike blooms in song-seconds
+    const starsRef = useRef(null); // night-sky points [{x,y,r,ph}] normalized
 
     if (!engineRef.current) engineRef.current = createEngine();
     const engine = engineRef.current;
@@ -531,6 +557,40 @@ export default function activate(api) {
       setErr(msg);
       window.clearTimeout(flashErr.t);
       flashErr.t = window.setTimeout(() => setErr(""), 5000);
+    };
+
+    const clearFx = () => {
+      trailsRef.current = [];
+      partsRef.current = [];
+      flashRef.current = [];
+    };
+
+    // ember burst at the keybed for a struck note
+    const burst = (midi, count = 6, power = 1) => {
+      const cv = canvasRef.current;
+      if (!cv || !cv.width) return;
+      const dpr = Math.min(2, window.devicePixelRatio || 1);
+      const ng = noteGeom(keyLayout(cv.width), midi);
+      if (!ng) return;
+      const col = handColor(midi);
+      const cx = ng.x + ng.w / 2;
+      const keyTop = cv.height - clampN(cv.height * 0.17, 56 * dpr, 110 * dpr);
+      const arr = partsRef.current;
+      for (let i = 0; i < count; i++) {
+        if (arr.length >= MAX_PARTS) arr.shift();
+        const a = Math.random() * Math.PI * 2;
+        const sp = (20 + Math.random() * 90) * dpr * power;
+        arr.push({
+          x: cx + (Math.random() - 0.5) * ng.w,
+          y: keyTop - Math.random() * 6 * dpr,
+          vx: Math.cos(a) * sp * 0.4,
+          vy: -(40 + Math.random() * 160) * dpr * power,
+          life: 0,
+          max: 0.5 + Math.random() * 0.9,
+          size: (1 + Math.random() * 2.2) * dpr,
+          col: Math.random() < 0.3 ? col.core : col.mid,
+        });
+      }
     };
 
     // ---- song ops ---------------------------------------------------------
@@ -542,6 +602,7 @@ export default function activate(api) {
       setPlaying(false);
       setPosUi(0);
       setSong({ name: d.name, notes: d.notes, duration: d.duration, demoId: d.id });
+      clearFx();
       engine.preload(d.notes.map((n) => n.midi), snapRef.current.samples);
       setSfState((s) => (s === "idle" && snapRef.current.samples ? "loading" : s));
       const p = loadPersist();
@@ -560,6 +621,7 @@ export default function activate(api) {
         setPlaying(false);
         setPosUi(0);
         setSong({ name: file.name, notes: parsed.notes, duration: parsed.duration, demoId: "" });
+        clearFx();
         engine.preload(parsed.notes.map((n) => n.midi), snapRef.current.samples);
         setSfState((s) => (snapRef.current.samples ? "loading" : s));
         const p = loadPersist();
@@ -581,6 +643,7 @@ export default function activate(api) {
       simRef.current.pos = nt;
       simRef.current.trigIdx = idx;
       simRef.current.active = s.notes.filter((n) => n.t0 <= nt && n.t1 > nt).map((n) => ({ midi: n.midi, t1: n.t1 }));
+      clearFx();
       setPosUi(nt);
     };
 
@@ -618,6 +681,7 @@ export default function activate(api) {
       simRef.current.trigIdx = 0;
       simRef.current.active = [];
       engine.stopAll();
+      clearFx();
       setPlaying(false);
       setPosUi(0);
     };
@@ -637,10 +701,18 @@ export default function activate(api) {
       try { engine.ensure(); } catch {}
       engine.noteOn(m, vel, null, snapRef.current.samples);
       liveAdd(m);
+      flashRef.current.push({ midi: m, at: simRef.current.pos });
+      if (flashRef.current.length > 120) flashRef.current.splice(0, flashRef.current.length - 120);
+      burst(m, 6, 1);
     };
     const releaseLive = (m) => {
       engine.noteOff(m);
       liveDel(m);
+      // the released key keeps gliding as a light trail like song notes
+      if (!liveRef.current.has(m)) {
+        trailsRef.current.push({ midi: m, t1: simRef.current.pos });
+        if (trailsRef.current.length > 400) trailsRef.current.splice(0, trailsRef.current.length - 400);
+      }
     };
 
     // ---- Web MIDI ----------------------------------------------------------
@@ -762,10 +834,25 @@ export default function activate(api) {
             if (n.t0 > prev - 0.001) {
               engine.noteOn(n.midi, n.vel, (n.t1 - n.t0) / tempo, snapRef.current.samples);
               sim.active.push({ midi: n.midi, t1: n.t1 });
+              flashRef.current.push({ midi: n.midi, at: np });
+              burst(n.midi, 5, 0.9);
             }
             sim.trigIdx++;
           }
-          sim.active = sim.active.filter((a) => a.t1 > np);
+          // ended notes glide on as light trails instead of popping out
+          const kept = [];
+          for (const a of sim.active) {
+            if (a.t1 > np) kept.push(a);
+            else trailsRef.current.push({ midi: a.midi, t1: a.t1 });
+          }
+          sim.active = kept;
+          if (trailsRef.current.length > 400) trailsRef.current.splice(0, trailsRef.current.length - 400);
+          if (flashRef.current.length > 120) flashRef.current.splice(0, flashRef.current.length - 120);
+          // ambient embers while notes ring
+          if (sim.active.length) {
+            const a = sim.active[(Math.random() * sim.active.length) | 0];
+            burst(a.midi, 1, 0.5);
+          }
           sim.pos = np;
           if (np >= s.duration) {
             sim.playing = false;
@@ -775,7 +862,7 @@ export default function activate(api) {
           uiTick += dt;
           if (uiTick > 0.25) { uiTick = 0; setPosUi(sim.pos); }
         }
-        draw(now / 1000);
+        draw(now / 1000, dt);
       };
       const cv = canvasRef.current;
       const fit = () => {
@@ -790,7 +877,7 @@ export default function activate(api) {
       window.addEventListener("resize", fit);
       raf = requestAnimationFrame(frame);
 
-      function draw(t) {
+      function draw(t, dt) {
         const cvs = canvasRef.current;
         if (!cvs) return;
         const ctx = cvs.getContext("2d");
@@ -803,30 +890,48 @@ export default function activate(api) {
         const keyTop = H - keyH;
         const geom = keyLayout(W);
 
-        // -- dark shader backdrop --
+        // -- night backdrop --
+        const dpr = Math.min(2, window.devicePixelRatio || 1);
         ctx.clearRect(0, 0, W, H);
         const bg = ctx.createLinearGradient(0, 0, 0, H);
-        bg.addColorStop(0, "#04060a");
-        bg.addColorStop(0.6, "#070c12");
-        bg.addColorStop(1, "#05070a");
+        bg.addColorStop(0, "#01020a");
+        bg.addColorStop(0.55, "#040818");
+        bg.addColorStop(1, "#03040c");
         ctx.fillStyle = bg;
         ctx.fillRect(0, 0, W, H);
         const blobs = [
-          { x: 0.22 + 0.1 * Math.sin(t * 0.21), y: 0.3 + 0.08 * Math.cos(t * 0.17), r: 0.55, c: "14,90,96" },
-          { x: 0.8 + 0.08 * Math.cos(t * 0.13), y: 0.55 + 0.1 * Math.sin(t * 0.19), r: 0.5, c: "46,32,96" },
-          { x: 0.55 + 0.12 * Math.sin(t * 0.09 + 2), y: 0.12 + 0.06 * Math.cos(t * 0.23), r: 0.4, c: "10,60,70" },
+          { x: 0.22 + 0.1 * Math.sin(t * 0.21), y: 0.3 + 0.08 * Math.cos(t * 0.17), r: 0.55, c: "10,50,66" },
+          { x: 0.8 + 0.08 * Math.cos(t * 0.13), y: 0.55 + 0.1 * Math.sin(t * 0.19), r: 0.5, c: "30,20,70" },
+          { x: 0.55 + 0.12 * Math.sin(t * 0.09 + 2), y: 0.12 + 0.06 * Math.cos(t * 0.23), r: 0.4, c: "8,36,46" },
         ];
         for (const b of blobs) {
           const g = ctx.createRadialGradient(W * b.x, H * b.y, 0, W * b.x, H * b.y, Math.max(W, H) * b.r);
-          g.addColorStop(0, `rgba(${b.c},0.5)`);
+          g.addColorStop(0, `rgba(${b.c},0.4)`);
           g.addColorStop(1, `rgba(${b.c},0)`);
           ctx.fillStyle = g;
           ctx.fillRect(0, 0, W, H);
         }
-        // scanline shimmer
-        ctx.fillStyle = "rgba(127,212,212,0.025)";
-        const sh = (t * 30) % 8;
-        for (let y = keyTop - sh; y > 0; y -= 8) ctx.fillRect(0, y, W, 1);
+        // stars with a slow twinkle
+        if (!starsRef.current) {
+          const arr = [];
+          for (let i = 0; i < 130; i++) {
+            arr.push({ x: Math.random(), y: Math.random() * 0.72, r: 0.6 + Math.random() * 1.3, ph: Math.random() * 6.28 });
+          }
+          starsRef.current = arr;
+        }
+        ctx.fillStyle = "#cfe4ff";
+        for (const st of starsRef.current) {
+          ctx.globalAlpha = 0.18 + 0.22 * (0.5 + 0.5 * Math.sin(t * 1.4 + st.ph));
+          ctx.fillRect(st.x * W, st.y * H, st.r * dpr, st.r * dpr);
+        }
+        ctx.globalAlpha = 1;
+        // warm horizon glow above the keys (distant city)
+        const hz = ctx.createRadialGradient(W * 0.5, keyTop, 0, W * 0.5, keyTop, W * 0.45);
+        hz.addColorStop(0, "rgba(255,170,90,0.10)");
+        hz.addColorStop(0.5, "rgba(120,90,160,0.05)");
+        hz.addColorStop(1, "rgba(0,0,0,0)");
+        ctx.fillStyle = hz;
+        ctx.fillRect(0, 0, W, keyTop);
         // grain
         if (!grainRef.current) {
           const g = document.createElement("canvas");
@@ -850,8 +955,8 @@ export default function activate(api) {
         for (const w of geom.whites) {
           if (w.midi % 12 === 0) ctx.fillRect(w.x, 0, 1.5, keyTop);
         }
-        // beat grid (from song notes near bar starts) — cheap: vertical lines each second
-        ctx.fillStyle = "rgba(127,212,212,0.05)";
+        // beat grid — faint lines each second
+        ctx.fillStyle = "rgba(150,190,255,0.05)";
         const pxPerSec = (keyTop) / LOOKAHEAD;
         const firstSec = Math.ceil(pos);
         for (let sec = firstSec; sec < pos + LOOKAHEAD; sec++) {
@@ -859,7 +964,7 @@ export default function activate(api) {
           ctx.fillRect(0, y, W, 1);
         }
 
-        // -- falling notes --
+        // -- falling capsules (clipped to the sky) --
         const live = liveRef.current;
         const songActive = new Set(sim.active.map((a) => a.midi));
         ctx.save();
@@ -870,55 +975,158 @@ export default function activate(api) {
           const n = s.notes[i];
           if (n.t0 > pos + LOOKAHEAD) break;
           if (n.t1 < pos - 0.5) continue;
-          const col = TRACK_COLORS[n.track % TRACK_COLORS.length];
-          const black = isBlackKey(n.midi);
-          let x, w;
-          if (black) {
-            const b = geom.blacks.find((k) => k.midi === n.midi);
-            if (!b) continue;
-            x = b.x; w = b.w;
-          } else {
-            const k = geom.whites.find((k) => k.midi === n.midi);
-            if (!k) continue;
-            x = k.x + k.w * 0.08; w = k.w * 0.84;
-          }
+          const col = handColor(n.midi);
+          const ng = noteGeom(geom, n.midi);
+          if (!ng) continue;
+          const x = ng.x, w = ng.w;
           const y0 = keyTop - ((n.t0 - pos) / LOOKAHEAD) * keyTop;
           const y1 = keyTop - ((n.t1 - pos) / LOOKAHEAD) * keyTop;
-          const h = Math.max(3 * (window.devicePixelRatio || 1), y0 - y1);
+          const h = Math.max(4 * dpr, y0 - y1);
           const y = y0 - h;
           const hot = songActive.has(n.midi) || live.has(n.midi);
-          ctx.shadowBlur = hot ? 22 : 13;
-          ctx.shadowColor = col;
-          ctx.fillStyle = col;
-          const r = Math.min(5, w / 3);
+          // comet tail streaming above the capsule
+          const tail = Math.min(keyTop * 0.22, h * 0.9 + 26 * dpr);
+          const tg = ctx.createLinearGradient(0, y - tail, 0, y + h);
+          tg.addColorStop(0, "rgba(0,0,0,0)");
+          tg.addColorStop(1, col.mid);
+          ctx.fillStyle = tg;
+          ctx.fillRect(x + w * 0.3, y - tail, w * 0.4, tail + h);
+          // capsule body: glow edges, white-hot core
+          const bgrad = ctx.createLinearGradient(x, 0, x + w, 0);
+          bgrad.addColorStop(0, col.glow);
+          bgrad.addColorStop(0.5, col.core);
+          bgrad.addColorStop(1, col.glow);
+          ctx.shadowBlur = hot ? 24 : 14;
+          ctx.shadowColor = col.glow;
+          ctx.fillStyle = bgrad;
+          const r = Math.min(w / 2, 6 * dpr);
           ctx.beginPath();
-          if (ctx.roundRect) ctx.roundRect(x, y, w, h, [r, r, 0, 0]);
+          if (ctx.roundRect) ctx.roundRect(x, y, w, h, r);
           else ctx.rect(x, y, w, h);
           ctx.fill();
           ctx.shadowBlur = 0;
-          ctx.fillStyle = hot ? "rgba(255,255,255,0.85)" : "rgba(255,255,255,0.28)";
-          ctx.fillRect(x + w * 0.22, y + 1, w * 0.28, Math.max(1, h - 2));
         }
         ctx.restore();
 
-        // glow line where notes land
-        const lg = ctx.createLinearGradient(0, keyTop - 2, 0, keyTop + 2);
-        lg.addColorStop(0, "rgba(127,212,212,0)");
-        lg.addColorStop(0.5, "rgba(127,212,212,0.55)");
-        lg.addColorStop(1, "rgba(127,212,212,0)");
+        // -- additive light pass: struck notes glide on as beams + trails --
+        ctx.save();
+        ctx.globalCompositeOperation = "lighter";
+        // gliding trails of ended notes (song + released live keys)
+        const risePx = pxPerSec * TRAIL_RISE;
+        trailsRef.current = trailsRef.current.filter((tr) => pos - tr.t1 < TRAIL_DUR);
+        for (const tr of trailsRef.current) {
+          const age = pos - tr.t1;
+          if (age < 0) continue;
+          const fade = 1 - age / TRAIL_DUR;
+          const col = handColor(tr.midi);
+          const ng = noteGeom(geom, tr.midi);
+          if (!ng) continue;
+          const headY = keyTop - age * risePx;
+          if (headY < -keyTop * 0.4) continue;
+          const len = keyTop * 0.32;
+          const w = Math.max(2 * dpr, ng.w * (isBlackKey(tr.midi) ? 0.9 : 0.55));
+          const x = ng.x + ng.w / 2 - w / 2;
+          const bot = Math.min(keyTop, headY + len);
+          if (bot <= headY) continue;
+          const tg = ctx.createLinearGradient(0, headY, 0, bot);
+          tg.addColorStop(0, col.core);
+          tg.addColorStop(0.25, col.mid);
+          tg.addColorStop(1, "rgba(0,0,0,0)");
+          ctx.globalAlpha = 0.75 * fade;
+          ctx.fillStyle = tg;
+          ctx.fillRect(x, headY, w, bot - headY);
+          // bright head bead riding the trail tip
+          ctx.globalAlpha = fade;
+          ctx.fillStyle = col.core;
+          ctx.beginPath();
+          ctx.arc(x + w / 2, headY, Math.max(1.5 * dpr, w * 0.5), 0, 6.29);
+          ctx.fill();
+        }
+        ctx.globalAlpha = 1;
+        // beams through currently ringing notes
+        const beam = (midi, topY, alpha) => {
+          const col = handColor(midi);
+          const ng = noteGeom(geom, midi);
+          if (!ng) return;
+          const w = Math.max(2 * dpr, ng.w * 0.42);
+          const x = ng.x + ng.w / 2 - w / 2;
+          const bg2 = ctx.createLinearGradient(0, keyTop, 0, topY);
+          bg2.addColorStop(0, col.core);
+          bg2.addColorStop(0.3, col.mid);
+          bg2.addColorStop(1, "rgba(0,0,0,0)");
+          ctx.globalAlpha = alpha;
+          ctx.fillStyle = bg2;
+          ctx.fillRect(x, topY, w, keyTop - topY);
+        };
+        for (const a of sim.active) beam(a.midi, 0, 0.5);
+        for (const m of live.keys()) beam(m, keyTop * 0.45, 0.55);
+        ctx.globalAlpha = 1;
+        // strike blooms expanding on the keybed
+        flashRef.current = flashRef.current.filter((f) => pos - f.at < FLASH_DUR + 0.05);
+        for (const f of flashRef.current) {
+          const age = pos - f.at;
+          if (age < 0) continue;
+          const k = age / FLASH_DUR;
+          const col = handColor(f.midi);
+          const ng = noteGeom(geom, f.midi);
+          if (!ng) continue;
+          const cx = ng.x + ng.w / 2;
+          const rr = (4 + k * 46) * dpr;
+          const fg = ctx.createRadialGradient(cx, keyTop, 0, cx, keyTop, rr);
+          fg.addColorStop(0, col.core);
+          fg.addColorStop(0.4, col.mid);
+          fg.addColorStop(1, "rgba(0,0,0,0)");
+          ctx.globalAlpha = 0.85 * (1 - k);
+          ctx.fillStyle = fg;
+          ctx.beginPath();
+          ctx.arc(cx, keyTop, rr, 0, 6.29);
+          ctx.fill();
+        }
+        ctx.globalAlpha = 1;
+        // embers drifting up (real-time clock so air stays alive on pause)
+        const parts = partsRef.current;
+        const step = Math.min(0.05, Math.max(0.0005, dt || 0.016));
+        for (let i = parts.length - 1; i >= 0; i--) {
+          const p = parts[i];
+          p.life += step;
+          if (p.life >= p.max) { parts.splice(i, 1); continue; }
+          p.x += p.vx * step;
+          p.y += p.vy * step;
+          p.vx *= 1 - 0.6 * step;
+          p.vy -= 30 * dpr * step;
+          const k = 1 - p.life / p.max;
+          ctx.globalAlpha = 0.8 * k;
+          ctx.fillStyle = p.col;
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, Math.max(0.5, p.size * k), 0, 6.29);
+          ctx.fill();
+        }
+        ctx.globalAlpha = 1;
+        // landing line: soft halo + white-hot core
+        const lg = ctx.createLinearGradient(0, keyTop - 5 * dpr, 0, keyTop + 5 * dpr);
+        lg.addColorStop(0, "rgba(140,200,255,0)");
+        lg.addColorStop(0.5, "rgba(140,200,255,0.35)");
+        lg.addColorStop(1, "rgba(140,200,255,0)");
         ctx.fillStyle = lg;
-        ctx.fillRect(0, keyTop - 2, W, 4);
+        ctx.fillRect(0, keyTop - 5 * dpr, W, 10 * dpr);
+        ctx.shadowBlur = 18 * dpr;
+        ctx.shadowColor = "rgba(160,220,255,0.9)";
+        ctx.fillStyle = "rgba(235,248,255,0.95)";
+        ctx.fillRect(0, keyTop - 1 * dpr, W, 1.6 * dpr);
+        ctx.shadowBlur = 0;
+        ctx.restore();
 
         // -- keybed --
         const keyY = keyTop;
         for (const k of geom.whites) {
           const hot = songActive.has(k.midi) || live.has(k.midi);
+          const hc = hot ? handColor(k.midi) : null;
           const g = ctx.createLinearGradient(0, keyY, 0, H);
-          if (hot) { g.addColorStop(0, "#bff3f3"); g.addColorStop(1, "#4fa3a3"); }
+          if (hc) { g.addColorStop(0, "#ffffff"); g.addColorStop(0.4, hc.mid); g.addColorStop(1, hc.glow); }
           else { g.addColorStop(0, "#dfe5ea"); g.addColorStop(0.85, "#b9c2c9"); g.addColorStop(1, "#9aa4ac"); }
           ctx.fillStyle = g;
           ctx.fillRect(k.x + 0.5, keyY, k.w - 1, keyH);
-          if (hot) { ctx.shadowBlur = 18; ctx.shadowColor = "#7fd4d4"; ctx.fillRect(k.x + 0.5, keyY, k.w - 1, keyH); ctx.shadowBlur = 0; }
+          if (hc) { ctx.shadowBlur = 18; ctx.shadowColor = hc.glow; ctx.fillRect(k.x + 0.5, keyY, k.w - 1, keyH); ctx.shadowBlur = 0; }
           ctx.strokeStyle = "rgba(0,0,0,0.45)";
           ctx.strokeRect(k.x + 0.5, keyY, k.w - 1, keyH);
           if (snapRef.current.showLabels && k.midi % 12 === 0) {
@@ -930,13 +1138,14 @@ export default function activate(api) {
         }
         for (const b of geom.blacks) {
           const hot = songActive.has(b.midi) || live.has(b.midi);
+          const hc = hot ? handColor(b.midi) : null;
           const bh = keyH * 0.62;
           const g = ctx.createLinearGradient(0, keyY, 0, keyY + bh);
-          if (hot) { g.addColorStop(0, "#8fe8e8"); g.addColorStop(1, "#2a7d7d"); }
+          if (hc) { g.addColorStop(0, hc.core); g.addColorStop(1, hc.glow); }
           else { g.addColorStop(0, "#2a3138"); g.addColorStop(1, "#0b0e12"); }
           ctx.fillStyle = g;
           ctx.fillRect(b.x, keyY, b.w, bh);
-          if (hot) { ctx.shadowBlur = 16; ctx.shadowColor = "#7fd4d4"; ctx.fillRect(b.x, keyY, b.w, bh); ctx.shadowBlur = 0; }
+          if (hc) { ctx.shadowBlur = 16; ctx.shadowColor = hc.glow; ctx.fillRect(b.x, keyY, b.w, bh); ctx.shadowBlur = 0; }
           ctx.strokeStyle = "rgba(0,0,0,0.7)";
           ctx.strokeRect(b.x, keyY, b.w, bh);
         }
