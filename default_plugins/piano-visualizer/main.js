@@ -464,6 +464,14 @@ export function keyAt(geom, x, y, keyTop, blackBottom) {
   return null;
 }
 
+// pure drag-voice step for M1 glissando: prev = sounding midi (or null),
+// hit = key under the cursor (or null when off the keybed).
+// returns {off, on} midis to release/strike (null = no-op)
+export function dragStep(prev, hit) {
+  if (hit === prev) return { off: null, on: null };
+  return { off: prev, on: hit };
+}
+
 // lane rect for a midi note inside a keyLayout (null when out of range)
 function noteGeom(geom, midi) {
   const m = clampN(Math.round(midi), 21, 108);
@@ -552,6 +560,7 @@ export default function activate(api) {
     snapRef.current = snap;
     const midiRef = useRef({ access: null, hooked: new Set() });
     const grainRef = useRef(null);
+    const glissRef = useRef(new Map()); // pointerId -> sounding midi (null = held off-keys)
     // glide-FX: struck notes keep rising as light trails + embers (never pop out)
     const trailsRef = useRef([]); // {midi, t1} in song-seconds
     const partsRef = useRef([]); // {x,y,vx,vy,life,max,size,col} in device px
@@ -1218,6 +1227,7 @@ export default function activate(api) {
         // release stuck computer-key notes, keep MIDI-device notes (they send their own offs)
         for (const m of [...liveRef.current.keys()]) { try { engine.noteOff(m); } catch {} }
         liveRef.current.clear();
+        glissRef.current.clear();
       };
       window.addEventListener("keydown", down);
       window.addEventListener("keyup", up);
@@ -1235,6 +1245,7 @@ export default function activate(api) {
       if (!snap.open) {
         simRef.current.playing = false;
         try { engineRef.current?.stopAll(); } catch {}
+        glissRef.current.clear();
         setPlaying(false);
       }
       return () => { try { engineRef.current?.stopAll(); } catch {} };
@@ -1423,27 +1434,37 @@ export default function activate(api) {
         h("canvas", {
           ref: canvasRef, className: "piano-canvas",
           onPointerDown: (e) => {
+            if (e.pointerType === "mouse" && e.button !== 0) return;
             const m = canvasPointer(e);
             if (m == null) return;
             try { e.currentTarget.setPointerCapture(e.pointerId); } catch {}
-            e.currentTarget.dataset.midi = String(m);
+            glissRef.current.set(e.pointerId, m);
             strikeLive(m);
           },
+          onPointerMove: (e) => {
+            if (!glissRef.current.has(e.pointerId)) return;
+            const prev = glissRef.current.get(e.pointerId) ?? null;
+            const hit = canvasPointer(e);
+            const step = dragStep(prev, hit);
+            if (step.off != null) releaseLive(step.off);
+            if (step.on != null) strikeLive(step.on);
+            glissRef.current.set(e.pointerId, hit);
+          },
           onPointerUp: (e) => {
-            const m = Number(e.currentTarget.dataset.midi);
-            if (Number.isFinite(m)) releaseLive(m);
-            e.currentTarget.dataset.midi = "";
+            const m = glissRef.current.get(e.pointerId);
+            if (m != null) releaseLive(m);
+            glissRef.current.delete(e.pointerId);
           },
           onPointerCancel: (e) => {
-            const m = Number(e.currentTarget.dataset.midi);
-            if (Number.isFinite(m)) releaseLive(m);
-            e.currentTarget.dataset.midi = "";
+            const m = glissRef.current.get(e.pointerId);
+            if (m != null) releaseLive(m);
+            glissRef.current.delete(e.pointerId);
           },
         }),
       ),
       err ? h("div", { className: "piano-err" }, err) : null,
       h("div", { className: "piano-foot" },
-        h("span", null, "Keys ", h("span", { className: "kbd" }, "Z–M"), " + ", h("span", { className: "kbd" }, "Q–I"),
+        h("span", null, "Hold M1 + drag to glissando · keys ", h("span", { className: "kbd" }, "Z–M"), " + ", h("span", { className: "kbd" }, "Q–I"),
           " · octave ", h("span", { className: "kbd" }, "←"), "/", h("span", { className: "kbd" }, "→"),
           " C" + snap.octave + " · drop a .mid anywhere"),
         h("div", { className: "piano-foot-right" },
@@ -1518,7 +1539,8 @@ export default function activate(api) {
         ["Z S X D C V G B H N J M ,", "Play octave starting at C (white + black keys)"],
         ["Q 2 W 3 E R 5 T 6 Y 7 U I", "Play one octave higher"],
         ["← / →", "Shift base octave"],
-        ["Click keys / drop .mid", "Play directly, or load any MIDI file by picker or drag-drop"],
+        ["Hold M1 + drag across keys", "Glissando — notes strike, glide and trail as you slide"],
+        ["MIDI file picker / drop .mid", "Load any MIDI file by picker or drag-drop onto the stage"],
         ["MIDI plug button", "Link a connected MIDI keyboard — notes + sustain pedal play live"],
         ["Esc", "Close piano (voices stop)"],
       ],

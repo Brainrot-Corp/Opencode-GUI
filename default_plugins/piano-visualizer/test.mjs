@@ -1,6 +1,6 @@
 // runnable self-check: node default_plugins/piano-visualizer/test.mjs
 // Exercises the pure SMF parser + note helpers (no DOM / no WebAudio).
-import { parseMidi, readVLQ, midiToName, isBlackKey, handColor, keyAt, demoSongs } from "./main.js";
+import { parseMidi, readVLQ, midiToName, isBlackKey, handColor, keyAt, dragStep, demoSongs } from "./main.js";
 
 let n = 0;
 function eq(actual, expected, label) {
@@ -57,6 +57,13 @@ eq(keyAt(testGeom, 5, 170, KT, BB), 60, "white key lower area");
 eq(keyAt(testGeom, 5, 110, KT, BB), 60, "white key upper area beside black");
 eq(keyAt(testGeom, 18, 90, KT, BB), null, "above keybed is null");
 eq(keyAt(testGeom, 200, 170, KT, BB), null, "past last key is null");
+
+// ---- glissando drag-voice step ----
+eq(dragStep(60, 60), { off: null, on: null }, "hovering same key is silent");
+eq(dragStep(null, 62), { off: null, on: 62 }, "press strikes");
+eq(dragStep(62, null), { off: 62, on: null }, "leaving keys releases");
+eq(dragStep(60, 64), { off: 60, on: 64 }, "slide retunes");
+eq(dragStep(null, null), { off: null, on: null }, "idle is silent");
 
 // ---- synthetic SMF (format 0, division 96, one tempo, two notes) ----
 function buildMidi() {
