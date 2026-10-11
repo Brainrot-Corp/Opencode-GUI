@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import Dialog from "./Dialog";
 import DialogTabs from "./DialogTabs";
+import SplitReinstallDelete from "./SplitReinstallDelete";
 import PluginSettingsDialog from "./PluginSettingsDialog";
 import type { LoadedPlugin } from "../lib/plugins";
 import { isNewer } from "../lib/plugins";
@@ -377,28 +378,16 @@ export default function PluginsDialog({
                             Settings
                           </button>
                         ) : null}
-                        <div className="split-btn" aria-label="Reinstall or delete">
-                          <button
-                            type="button"
-                            className={`split-half reinstall${isReinstallArmed ? " armed" : ""}`}
-                            data-tip={isReinstallArmed ? "Click again to confirm reinstall" : "Reinstall from catalog"}
-                            disabled={isRemoving || busy}
-                            onClick={() => void handleReinstall(p)}
-                          >
-                            <i className={`fa-solid ${isReinstallArmed ? "fa-triangle-exclamation" : busy ? "fa-spinner fa-spin" : "fa-rotate"}`} />
-                            <span className="split-label">{isReinstallArmed ? "Confirm" : busy ? "…" : "Reinstall"}</span>
-                          </button>
-                          <button
-                            type="button"
-                            className={`split-half delete${isDeleteArmed ? " armed" : ""}`}
-                            data-tip={isDeleteArmed ? "Click again to confirm delete" : "Delete plugin folder"}
-                            disabled={isRemoving || busy}
-                            onClick={() => void handleDelete(p)}
-                          >
-                            <i className={`fa-solid ${isDeleteArmed ? "fa-triangle-exclamation" : "fa-trash-can"}`} />
-                            <span className="split-label">{isDeleteArmed ? "Confirm" : isRemoving ? "…" : "Delete"}</span>
-                          </button>
-                        </div>
+                        <SplitReinstallDelete
+                          busy={busy}
+                          isRemoving={isRemoving}
+                          reinstallArmed={isReinstallArmed}
+                          deleteArmed={isDeleteArmed}
+                          reinstallTip={isReinstallArmed ? "Click again to confirm reinstall" : "Reinstall from catalog"}
+                          deleteTip={isDeleteArmed ? "Click again to confirm delete" : "Delete plugin folder"}
+                          onReinstall={() => void handleReinstall(p)}
+                          onDelete={() => void handleDelete(p)}
+                        />
                       </div>
                     </div>
                   );

@@ -161,6 +161,7 @@
   padding-right: 10px;
 }
 .split-half.reinstall:hover:not(:disabled),
+.split-btn.force-reinstall > .reinstall:not(:disabled),
 .split-half.reinstall.armed {
   clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%);
   z-index: 2;
@@ -169,6 +170,7 @@
   padding-right: 0;
 }
 .split-half.delete:hover:not(:disabled),
+.split-btn.force-delete > .delete:not(:disabled),
 .split-half.delete.armed {
   clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%);
   z-index: 2;
@@ -176,11 +178,13 @@
   padding-left: 0;
   padding-right: 0;
 }
-.split-half.reinstall:hover:not(:disabled) {
+.split-half.reinstall:hover:not(:disabled),
+.split-btn.force-reinstall > .reinstall:not(:disabled) {
   background: color-mix(in srgb, var(--accent) 10%, transparent);
   color: var(--accent-bright);
 }
-.split-half.delete:hover:not(:disabled) {
+.split-half.delete:hover:not(:disabled),
+.split-btn.force-delete > .delete:not(:disabled) {
   background: color-mix(in srgb, var(--danger) 12%, transparent);
   color: var(--danger);
 }
@@ -205,18 +209,22 @@
   transition: max-width 200ms var(--ease), opacity 140ms var(--ease);
 }
 .split-half:hover:not(:disabled) .split-label,
+.split-btn.force-reinstall > .reinstall:not(:disabled) .split-label,
+.split-btn.force-delete > .delete:not(:disabled) .split-label,
 .split-half.armed .split-label {
   max-width: 72px;
   opacity: 1;
 }
 /* hide the non-expanded sibling entirely to avoid overlap */
 .split-btn:has(> .reinstall:hover:not(:disabled)) > .delete,
+.split-btn.force-reinstall > .delete,
 .split-btn:has(> .reinstall.armed) > .delete {
   opacity: 0;
   pointer-events: none;
   visibility: hidden;
 }
 .split-btn:has(> .delete:hover:not(:disabled)) > .reinstall,
+.split-btn.force-delete > .reinstall,
 .split-btn:has(> .delete.armed) > .reinstall {
   opacity: 0;
   pointer-events: none;
