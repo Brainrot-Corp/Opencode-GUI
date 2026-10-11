@@ -8,6 +8,7 @@ import { iconFor } from "../lib/attachments";
 import { loadMonaco } from "../lib/monaco";
 import { parseAnsweredSummary } from "../lib/qSummary";
 import ToolBlock, { PartCtx } from "./ToolBlock";
+import ChangedLine from "./parts/ChangedLine";
 import Lightbox from "./Lightbox";
 import AnsweredSummary from "./parts/AnsweredSummary";
 import Reasoning, { STREAM_RAW_LIMIT } from "./parts/Reasoning";
@@ -53,7 +54,9 @@ function partVisible(p: any): boolean {
       return !!((tk.input ?? 0) + (tk.output ?? 0) + (tk.reasoning ?? 0)) || !!p.cost;
     }
     case "patch":
-      return !!(p.files ?? []).length;
+      // git-diff snapshot from the server — replaced by ChangedLine
+      // (write/edit + bash tools of this same message), never shown
+      return false;
     default:
       return ["reasoning", "tool", "retry", "compaction", "agent", "subtask"].includes(p.type);
   }
@@ -135,21 +138,6 @@ function renderPart(
         <div key={key} className="part-note mono">
           <i className="fa-solid fa-compress" />
           context compacted{c.auto ? "" : " (manual)"}
-        </div>
-      );
-    }
-    case "patch": {
-      const pt = part as any;
-      const files: string[] = pt.files ?? [];
-      return (
-        <div key={key} className="patch-line">
-          <i className="fa-solid fa-code-pull-request" />
-          changed:
-          {files.map((f) => (
-            <span key={f} className="mono patch-file" data-tip={f}>
-              {f.split(/[\\/]/).pop()}
-            </span>
-          ))}
         </div>
       );
     }
@@ -302,6 +290,7 @@ const LazyMsgRow = memo(function LazyMsgRow({
             </div>
           )}
           {m.parts.map((part, i) => renderPart(part, i, onImage, streaming))}
+          <ChangedLine parts={m.parts as any[]} />
           {short && (
             <div className="msg-time" data-tip={full} data-tip-cursor="">
               <i className="fa-solid fa-clock" />
