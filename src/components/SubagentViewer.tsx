@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useEphemeral } from "../hooks/useEphemeral";
 import type { Msg, PermAsk, QuestionAsk } from "../types";
 import { opencode, opencodeFor } from "../api";
 import { pushToast } from "../hooks/useToast";
@@ -66,7 +67,7 @@ export default function SubagentViewer({
   const [ask, setAsk] = useState<QuestionAsk | null>(null);
   const [perm, setPerm] = useState<PermAsk | null>(null);
   const [kids, setKids] = useState<SubagentChildInfo[]>([]);
-  const [error, setError] = useState("");
+  const [error, setError] = useEphemeral("");
   const genRef = useRef(0);
   // deltas arrive in bursts — coalesce mirrors into one paint per frame,
   // same rule as the main session mirror

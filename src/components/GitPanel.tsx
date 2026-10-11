@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, Component, type ReactNode } from "react";
+import { useEphemeral } from "../hooks/useEphemeral";
 import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -220,7 +221,7 @@ function GitWorkspacePanel({ dir, initial }: { dir: string; initial?: GitStatus 
   const [open, setOpen] = useState(() => localStorage.getItem(OPEN_KEY()) === "1");
   const [msg, setMsg] = useState(() => msgDrafts.get(dir) ?? "");
   const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState("");
+  const [err, setErr] = useEphemeral("");
   // arm/cancel lifecycle owned by useTwoStepConfirm (ttlMs null = never
   // expires — force-push stays armed across menu reopen, like the old
   // string-state which had no timer at all). confirmPath only names the

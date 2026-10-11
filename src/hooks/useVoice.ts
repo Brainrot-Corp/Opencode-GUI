@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useEphemeral } from "./useEphemeral";
 import { invoke } from "@tauri-apps/api/core";
 import { withDeadline } from "../api";
 import { pushToast } from "./useToast";
@@ -70,7 +71,7 @@ export function useVoice(
 ) {
   const [phase, setPhase] = useState<VoicePhase>("idle");
   const [streaming, setStreaming] = useState(false);
-  const [error, setError] = useState("");
+  const [error, setError] = useEphemeral("");
   const [partial, setPartial] = useState("");
   const phaseRef = useRef<VoicePhase>("idle");
   const streamingRef = useRef(false);

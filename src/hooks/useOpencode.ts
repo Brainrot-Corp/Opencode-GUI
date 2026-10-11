@@ -886,6 +886,12 @@ export function useOpencode() {
       }
       // stash for restore if promptAsync throws or session.error arrives later
       lastSentRef.current.set(sid, { text, files });
+      // rewind commit: a staged revert makes the server delete everything
+      // past the pivot on this prompt — snapshot pre-send ids so the local
+      // cache can be pruned the same way once the prompt lands (the new
+      // echo has an unknown id, so it survives whatever the SSE order is)
+      const revertPivot = sessionsRef.current.find((s) => s.id === sid)?.revert?.messageID ?? "";
+      const preIds = revertPivot ? new Set((store.cached(sid) ?? []).map((m) => m.info.id)) : null;
       tracker.markBusy(sid, true);
       try {
         const dirFor = sessionDirRef.current.get(sid) ?? getDirectory();
@@ -921,6 +927,15 @@ export function useOpencode() {
         if (agentSel) body.agent = agentSel;
         if (effVariant) body.variant = effVariant;
         await client.session.promptAsync({ path: { id: sid }, body });
+        // prompt sent — the stash served its purpose; a late session.error
+        // must not resurrect already-sent text into the composer
+        lastSentRef.current.delete(sid);
+        if (revertPivot && preIds) {
+          const keep = new Set<string>();
+          for (const m of store.cached(sid) ?? []) if (!preIds.has(m.info.id)) keep.add(m.info.id);
+          // dropPivot: the rewound prompt is replaced by the one just sent
+          store.pruneAfter(sid, revertPivot, keep, true);
+        }
       } catch (e) {
         tracker.reset(sid);
         // surface it in the history (synthetic error bubble) + toast

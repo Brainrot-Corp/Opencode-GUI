@@ -38,6 +38,38 @@
 .diff-lines .del {
   color: var(--danger);
 }
+/* per-file revert — right side of the file head, danger tint on hover */
+.diff-head-right {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.diff-revert {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  color: var(--text-dim);
+  font-family: var(--sans);
+  font-size: 11px;
+  cursor: pointer;
+  transition: all 0.25s var(--ease);
+}
+.diff-revert i {
+  font-size: 10px;
+}
+.diff-revert:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--danger) 45%, transparent);
+  color: var(--danger);
+}
+.diff-revert:disabled {
+  opacity: 0.5;
+  cursor: wait;
+}
 
 /* blocky diff rows — mono, tinted by line type */
 .diff-lines {

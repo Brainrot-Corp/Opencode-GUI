@@ -205,6 +205,7 @@ const LazyMsgRow = memo(function LazyMsgRow({
   onShift,
   onRevert,
   onFork,
+  onRewindWithFiles,
   onImage,
   readOnly,
 }: {
@@ -213,6 +214,7 @@ const LazyMsgRow = memo(function LazyMsgRow({
   onShift: (dh: number, el: HTMLDivElement) => void;
   onRevert?: (messageID: string) => void;
   onFork?: (messageID: string) => void;
+  onRewindWithFiles?: (messageID: string) => void;
   onImage?: (url: string) => void;
   readOnly?: boolean;
 }) {
@@ -261,7 +263,7 @@ const LazyMsgRow = memo(function LazyMsgRow({
     <div ref={ref} className="lzy-row" data-mid={m.info.id}>
       {on ? (
         <div className={`msg ${m.info.role}${showErr ? " msg-error" : ""}${isCmd ? " msg-command" : ""}${isQueued ? " msg-queued" : ""}`}>
-          {m.info.role === "user" && !isCmd && !isQueued && !readOnly && (onRevert || onFork) && (
+          {m.info.role === "user" && !isCmd && !isQueued && !readOnly && (onRevert || onFork || onRewindWithFiles) && (
             <span className="msg-actions">
               {onFork && (
                 <button
@@ -279,6 +281,15 @@ const LazyMsgRow = memo(function LazyMsgRow({
                   onClick={() => onRevert(m.info.id)}
                 >
                   <i className="fa-solid fa-clock-rotate-left" />
+                </button>
+              )}
+              {onRewindWithFiles && (
+                <button
+                  className="rewind-files"
+                  data-tip="Rewind conversation + discard session files"
+                  onClick={() => onRewindWithFiles(m.info.id)}
+                >
+                  <i className="fa-solid fa-file-circle-xmark" />
                 </button>
               )}
             </span>
@@ -328,6 +339,7 @@ export default function MessageList({
   onRevert,
   onFork,
   sessionId,
+  onRewindWithFiles,
   findOpen,
   findQuery,
   findCase,
@@ -352,6 +364,7 @@ export default function MessageList({
   collapsed?: boolean;
   onRevert?: (messageID: string) => void;
   onFork?: (messageID: string) => void;
+  onRewindWithFiles?: (messageID: string) => void;
   sessionId?: string;
   findOpen?: boolean;
   findQuery?: string;
@@ -1015,6 +1028,7 @@ export default function MessageList({
               onShift={shiftForGrowth}
               onRevert={readOnly ? undefined : onRevert}
               onFork={readOnly ? undefined : onFork}
+              onRewindWithFiles={readOnly ? undefined : onRewindWithFiles}
               onImage={setLightbox}
               readOnly={readOnly}
             />

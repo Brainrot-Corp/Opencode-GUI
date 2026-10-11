@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useEphemeral } from "../hooks/useEphemeral";
 import Dialog from "./Dialog";
 import { shortDir } from "./CommandDialog";
 import Markdown from "react-markdown";
@@ -14,7 +15,7 @@ import "../styles/plugins.css";
 export function SkillDialog({ onClose }: { onClose: () => void }) {
   const { dirs, loading, refreshLive, refresh } = useSkills();
   const [q, setQ] = useState("");
-  const [err, setErr] = useState("");
+  const [err, setErr] = useEphemeral("");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const needle = q.trim().toLowerCase();
   const total = dirs.reduce((n, d) => n + d.skills.length, 0);

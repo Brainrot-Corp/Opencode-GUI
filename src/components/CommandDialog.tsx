@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useEphemeral } from "../hooks/useEphemeral";
 import Dialog from "./Dialog";
 import { useMcp, toolsForServer, type McpServerState } from "../hooks/useMcp";
 import type { CmdEntry } from "../hooks/useOpencode";
@@ -246,7 +247,7 @@ export function shortDir(dir: string): string {
 export function McpDialog({ onClose }: { onClose: () => void }) {
   const { dirs, loading, busy, refreshLive, refresh, refreshOne, setEnabled, beginAuth, submitCode, signOut, rowKey } = useMcp();
   const [q, setQ] = useState("");
-  const [err, setErr] = useState("");
+  const [err, setErr] = useEphemeral("");
   const [notice, setNotice] = useState("");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [authBusy, setAuthBusy] = useState<Set<string>>(new Set());

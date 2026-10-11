@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useEphemeral } from "../hooks/useEphemeral";
 import { enable, isEnabled, disable } from "@tauri-apps/plugin-autostart";
 import type { AppSettings, Mode } from "../hooks/useSettings";
 import type { ThemeMeta } from "../lib/themes";
@@ -43,7 +44,7 @@ export default function Onboarding({
   const [recoState, setRecoState] = useState<"idle" | "busy" | "done">("idle");
   const [autoLaunch, setAutoLaunch] = useState<boolean | null>(null);
   // set when the suggested secondary model fails the live availability check
-  const [recoModelErr, setRecoModelErr] = useState(false);
+  const [recoModelErr, setRecoModelErr] = useEphemeral(false);
 
   // remote recommendation spec — updates without shipping a build
   useEffect(() => {

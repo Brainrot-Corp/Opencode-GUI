@@ -33,3 +33,28 @@ export function extractChanged(parts: any[]): ChangedEntry[] {
   }
   return out;
 }
+
+// every file the session touched — per-user-message summary.diffs merged
+// (same source as DiffPanel) PLUS tool-call file paths from every message's
+// parts (always present, even when the server provides no snapshots).
+// Deduped, first-seen order. Feeds the rewind+files button, which discards
+// exactly this set.
+export function sessionDiffFiles(msgs: any[]): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const push = (f: string) => {
+    if (!f || seen.has(f)) return;
+    seen.add(f);
+    out.push(f);
+  };
+  for (const m of msgs ?? []) {
+    if ((m as any)?.info?.role === "user") {
+      const list = ((m as any)?.info?.summary?.diffs ?? []) as { file?: unknown }[];
+      for (const d of list) if (typeof d?.file === "string") push(d.file);
+    }
+    for (const e of extractChanged((m as any)?.parts ?? [])) {
+      if (e.kind === "file") push(e.path);
+    }
+  }
+  return out;
+}

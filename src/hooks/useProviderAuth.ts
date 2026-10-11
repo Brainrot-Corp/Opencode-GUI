@@ -9,6 +9,7 @@
 // Logout has no SDK endpoint — attempted as DELETE /auth/{id}; when the
 // server rejects it the caller shows the manual auth.json path instead.
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useEphemeral } from "./useEphemeral";
 import { invoke } from "@tauri-apps/api/core";
 import { getDirectory, serverFetchFor, withDeadline } from "../api";
 import { apiErr, getClientFor } from "../lib/apiErr";
@@ -85,7 +86,7 @@ export function useProviderAuth() {
   const [items, setItems] = useState<ProviderAuthItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
-  const [error, setError] = useState("");
+  const [error, setError] = useEphemeral("");
   const alive = useRef(true);
   useEffect(() => {
     alive.current = true;

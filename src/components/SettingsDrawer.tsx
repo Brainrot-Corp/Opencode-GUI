@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useEphemeral } from "../hooks/useEphemeral";
 import { invoke } from "@tauri-apps/api/core";import type { AppSettings, ColorSet } from "../hooks/useSettings";
 import { fetchTerminalProfiles, useTerminalProfiles } from "../hooks/useTerminalProfiles";
 import { useUpdater as useUpdaterInternal } from "../hooks/useUpdater";
@@ -110,7 +111,7 @@ export default function SettingsDrawer({
     try { return localStorage.getItem("oc.debugLocalPath") ?? ""; } catch { return ""; }
   });
   const [sshOpen, setSshOpen] = useState(false);
-  const [debugLocalErr, setDebugLocalErr] = useState("");
+  const [debugLocalErr, setDebugLocalErr] = useEphemeral("");
   const [debugLocalBusy, setDebugLocalBusy] = useState(false);
   useEffect(() => { try { localStorage.setItem("oc.debugLocalPath", debugLocalPath); } catch {} }, [debugLocalPath]);
   async function handleDebugLocal() {

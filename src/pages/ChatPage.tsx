@@ -47,6 +47,8 @@ import SelectionMenu from "../components/SelectionMenu";
 import { useTranslation } from "../lib/i18n";
 import { windowKey } from "../lib/windowScope";
 import { mirrorPresence } from "../lib/presence";
+import { sessionDiffFiles } from "../lib/changedFiles";
+import { isRemoteDir } from "../lib/remotes";
 
 const SB_W_KEY = "oc.sb.w";
 const SB_C_KEY = "oc.sb.c";
@@ -225,6 +227,29 @@ export default function ChatPage() {
   const sbIsPinned = useCallback((id: string) => oc.isPinned(id), [oc.isPinned]);
   const sbGetDir = useCallback((id: string) => oc.getDirForSession(id) ?? "", [oc.getDirForSession]);
   const sbRefresh = useCallback(() => { void oc.refreshSessions(); }, [oc.refreshSessions]);
+
+  // rewind + files: plain conversation revert, then discard every file the
+  // session touched (back to pre-session state via git). Hidden when the
+  // session touched nothing or the repo isn't local (SSH has no git_discard).
+  const chatDir = oc.activeId ? ((oc as any).getDirForSession?.(oc.activeId) ?? settings.workspace) : settings.workspace;
+  const rewindFileCount = useMemo(
+    () => sessionDiffFiles(oc.peekSession(oc.activeId) ?? []).length,
+    [oc.activeId, oc.msgs],
+  );
+  const rewindWithFiles = useCallback(async (messageID: string) => {
+    const sid = oc.activeId;
+    if (!sid) return;
+    const files = sessionDiffFiles(oc.peekSession(sid) ?? []);
+    if (files.length && !window.confirm(`Rewind conversation AND discard session changes to ${files.length} file(s)?\n${files.join("\n")}\n\nThis cannot be undone.`)) return;
+    await oc.revertTo(messageID);
+    if (!files.length) return;
+    try {
+      await invoke("git_discard", { dir: (oc as any).getDirForSession?.(sid) ?? settings.workspace, paths: files });
+      pushToast(`Rewound + discarded ${files.length} file(s)`);
+    } catch (e) {
+      pushToast(String(e));
+    }
+  }, [oc.activeId, oc.peekSession, oc.revertTo, settings.workspace]);
 
   // Ctrl(+Shift+)Tab — walk the sidebar list (recency order), looping at both ends
   const cycleSessions = useCallback(
@@ -673,8 +698,9 @@ export default function ChatPage() {
                   collapsed={settings.collapsed}
                   onRevert={oc.revertTo}
                   onFork={oc.forkFrom}
+                  onRewindWithFiles={!rewindFileCount || isRemoteDir(chatDir) ? undefined : rewindWithFiles}
                   sessionId={oc.activeId}
-                  dir={oc.activeId ? ((oc as any).getDirForSession?.(oc.activeId) ?? settings.workspace) : settings.workspace}
+                  dir={chatDir}
                   taskCosts={(oc as any).childTaskCosts}
                   onOpenSubagent={openSubagent}
                   findOpen={chatFindOpen}

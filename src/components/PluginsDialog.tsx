@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useEphemeral } from "../hooks/useEphemeral";
 import { invoke } from "@tauri-apps/api/core";
 import Dialog from "./Dialog";
 import DialogTabs from "./DialogTabs";
@@ -49,7 +50,7 @@ export default function PluginsDialog({
   const [tab, setTab] = useState<"installed" | "browse">("installed");
   const [confirmKey, setConfirmKey] = useState<string | null>(null);
   const [removing, setRemoving] = useState<string | null>(null);
-  const [err, setErr] = useState("");
+  const [err, setErr] = useEphemeral("");
 
   // catalog now owned by ChatPage (single source) — dialog is stateless for it
   const catLoading = !!catalogLoading;
@@ -59,7 +60,7 @@ export default function PluginsDialog({
   // url install
   const [url, setUrl] = useState("");
   const [urlBusy, setUrlBusy] = useState(false);
-  const [urlErr, setUrlErr] = useState("");
+  const [urlErr, setUrlErr] = useEphemeral("");
   const [settingsId, setSettingsId] = useState<string | null>(null);
 
   function armConfirm(key: string) {

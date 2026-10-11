@@ -14,7 +14,7 @@ export function pushToast(message: string, opts?: { variant?: ToastVariant; ttl?
   const msg = message?.trim();
   if (!msg) return;
   const id = nextId++;
-  const t: Toast = { id, message: msg, variant: opts?.variant ?? "error", ttl: opts?.ttl ?? 5000 };
+  const t: Toast = { id, message: msg, variant: opts?.variant ?? "error", ttl: opts?.ttl ?? ((opts?.variant ?? "error") === "error" ? 10000 : 5000) };
   toasts = [...toasts, t];
   notify();
   if (t.ttl > 0) setTimeout(() => dismissToast(id), t.ttl);

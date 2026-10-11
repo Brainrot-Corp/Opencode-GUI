@@ -259,7 +259,7 @@
 .msg.user .msg-actions {
   position: absolute;
   top: -10px;
-  left: -58px;
+  left: -86px;
   display: flex;
   gap: 4px;
   opacity: 0;
@@ -269,6 +269,7 @@
   opacity: 1;
 }
 .msg.user .rewind,
+.msg.user .rewind-files,
 .msg.user .fork {
   width: 24px;
   height: 24px;
@@ -287,6 +288,10 @@
   color: var(--accent);
   background: var(--accent-dim);
   box-shadow: 0 0 12px -4px var(--accent-glow);
+}
+.msg.user .rewind-files:hover {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
 }
 
 .msg.assistant {

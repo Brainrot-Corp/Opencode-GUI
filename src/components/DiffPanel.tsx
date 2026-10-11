@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import type * as Monaco from "monaco-editor";
 import type { Msg } from "../types";
 import { opencode, opencodeFor } from "../api";
+import { pushToast } from "../hooks/useToast";
+import { isRemoteDir } from "../lib/remotes";
 import { extLang } from "../lib/syntax";
 import { hlToMonacoLang } from "../lib/monaco";
 import Dialog from "./Dialog";
@@ -29,6 +32,9 @@ export default function DiffPanel({
 }) {
   const [diffs, setDiffs] = useState<FileDiff[] | null>(null);
   const [error, setError] = useState("");
+  const [reverting, setReverting] = useState<string | null>(null);
+  // git-only: remote SSH workspaces have no local repo for git_discard
+  const canRevert = !isRemoteDir(dir ?? "");
   // the dialog stays mounted across session switches — generation-guard the
   // fetch so a slow response for the previous session can never overwrite
   // (or error-clear into) the current one
@@ -66,6 +72,20 @@ export default function DiffPanel({
     })();
   }, [sessionId, dir]);
 
+  async function doRevert(file: string) {
+    if (reverting) return;
+    if (!window.confirm(`Discard session changes to ${file}?\n\nThis cannot be undone.`)) return;
+    setReverting(file);
+    try {
+      await invoke("git_discard", { dir: dir ?? "", paths: [file] });
+      setDiffs((prev) => prev?.filter((d) => d.file !== file) ?? prev);
+    } catch (e) {
+      pushToast(String(e));
+    } finally {
+      setReverting(null);
+    }
+  }
+
   return (
     <Dialog title="Changes in this session" onClose={onClose} stage>
       {error && <p className="empty">{error}</p>}
@@ -80,8 +100,22 @@ export default function DiffPanel({
         <div key={d.file} className="diff-file">
           <div className="diff-file-head">
             <span className="diff-path">{d.file}</span>
-            <span className="diff-stat">
-              <em>+{d.additions ?? 0}</em> <em className="del">-{d.deletions ?? 0}</em>
+            <span className="diff-head-right">
+              <span className="diff-stat">
+                <em>+{d.additions ?? 0}</em> <em className="del">-{d.deletions ?? 0}</em>
+              </span>
+              {canRevert && (
+                <button
+                  type="button"
+                  className="diff-revert"
+                  data-tip={`Revert ${d.file} (git discard)`}
+                  disabled={reverting === d.file}
+                  onClick={() => void doRevert(d.file)}
+                >
+                  <i className={`fa-solid ${reverting === d.file ? "fa-spinner fa-spin" : "fa-clock-rotate-left"}`} />
+                  {reverting === d.file ? "Reverting…" : "Revert"}
+                </button>
+              )}
             </span>
           </div>
           <DiffLines patch={d.patch ?? ""} lang={extLang(d.file)} />

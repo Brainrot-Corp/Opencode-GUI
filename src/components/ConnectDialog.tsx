@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useEphemeral } from "../hooks/useEphemeral";
 import Dialog from "./Dialog";
 import { useProviderAuth, visiblePrompts } from "../hooks/useProviderAuth";
 import { playSound } from "../lib/sounds";
@@ -26,7 +27,7 @@ export default function ConnectDialog({
   // extra per-method prompt answers (keyed by prompt key), reset on pick/method change
   const [inputs, setInputs] = useState<Record<string, string>>({});
   const [oauth, setOauth] = useState<{ url: string; method: string; instructions: string } | null>(null);
-  const [err, setErr] = useState("");
+  const [err, setErr] = useEphemeral("");
   const [notice, setNotice] = useState("");
   const [copied, setCopied] = useState(false);
   const [done, setDone] = useState("");

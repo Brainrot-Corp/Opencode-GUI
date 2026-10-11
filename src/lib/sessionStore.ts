@@ -251,6 +251,32 @@ export function createSessionStore(onChange: (sid: string) => void) {
     for (const [k, v] of pendingDeltas) if (v.sid === sid) pendingDeltas.delete(k);
   }
 
+  // rewind commit: the server deletes everything after the pivot message
+  // when a prompt lands on a staged revert — mirror that locally so the
+  // rewound-away text can't resurface once the marker clears. With
+  // `dropPivot`, the pivot itself goes too (its text now lives in the
+  // replacement prompt). Ids in `keep` survive (the just-sent echo,
+  // whatever the SSE race order); local command traces survive like
+  // setFetched does. Unknown pivot → no-op.
+  function pruneAfter(sid: string, messageID: string, keep?: Set<string>, dropPivot = false) {
+    const store = stores.get(sid);
+    if (!store) return;
+    const idx = store.findIndex((m) => m.info.id === messageID);
+    if (idx < 0) return;
+    const cutFrom = dropPivot ? idx : idx + 1;
+    const head = store.slice(0, cutFrom);
+    const tail = store.slice(cutFrom);
+    const drop = tail.filter((m) => !keep?.has(m.info.id) && !(m as any)._isCommand);
+    if (!drop.length) return;
+    for (const m of drop) usageAdd(sid, m.info, -1);
+    const dropIds = new Set(drop.map((m) => m.info.id));
+    stores.set(
+      sid,
+      [...head, ...tail.filter((m) => !dropIds.has(m.info.id))],
+    );
+    onChange(sid);
+  }
+
   function remove(sid: string) {
     dropStashes(sid);
     stores.delete(sid);
@@ -326,6 +352,7 @@ export function createSessionStore(onChange: (sid: string) => void) {
     beginFetch,
     isStale,
     setFetched,
+    pruneAfter,
     dropStashes,
     remove,
     clearStashes,

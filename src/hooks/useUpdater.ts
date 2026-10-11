@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useEphemeral } from "./useEphemeral";
 import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
 import { releaseVersion } from "../lib/version";
@@ -26,7 +27,7 @@ export function useUpdater() {
   const [latest, setLatest] = useState<UpdateInfo | null>(null);
   const [busy, setBusy] = useState(false);
   const [downloading, setDownloading] = useState(false);
-  const [err, setErr] = useState("");
+  const [err, setErr] = useEphemeral("");
   const [flavor, setFlavor] = useState("");
   const ranRef = useRef(false);
 

@@ -142,4 +142,49 @@ check("running->error applies", (tfw.cached(S) as any[])[0].parts[0].state.statu
 tfw.applyPart(toolPart("t1", "running"));
 check("stale running keeps error", (tfw.cached(S) as any[])[0].parts[0].state.status, "error");
 
+// pruneAfter: rewind commit drops the tail past the pivot
+const pr = createSessionStore(() => {});
+pr.setFetched(S, [
+  msg("u1", "user"),
+  msg("a1", "assistant", { input: 10, output: 0, reasoning: 0 }, 0.5),
+  msg("u2", "user"),
+  msg("a2", "assistant", { input: 7, output: 0, reasoning: 0 }, 0.25),
+]);
+pr.pruneAfter(S, "u1");
+check("prune cuts tail", (pr.cached(S) as any[]).map((m: any) => m.info.id), ["u1"]);
+check("prune subtracts usage", pr.usageOf(S), { cost: 0, tokens: 0 });
+
+// kept ids survive (just-sent echo racing the prune either way)
+const rk = createSessionStore(() => {});
+rk.setFetched(S, [msg("u1", "user"), msg("u2", "user")]);
+rk.applyMessage(msg("u3", "user").info);
+rk.pruneAfter(S, "u1", new Set(["u3"]));
+check("keep survives prune", (rk.cached(S) as any[]).map((m: any) => m.info.id), ["u1", "u3"]);
+
+// unknown pivot / session → no-op, no onChange crash
+let prChanges = 0;
+const pn = createSessionStore(() => { prChanges++; });
+pn.setFetched(S, [msg("u1", "user")]);
+pn.pruneAfter(S, "missing");
+pn.pruneAfter("nope", "u1");
+check("unknown pivot no-op", (pn.cached(S) as any[]).map((m: any) => m.info.id), ["u1"]);
+
+// dropPivot: the rewound message goes too once a new prompt replaces it
+const dp = createSessionStore(() => {});
+dp.setFetched(S, [
+  msg("u0", "user"),
+  msg("u1", "user"),
+  msg("a1", "assistant", { input: 10, output: 0, reasoning: 0 }, 0.5),
+  msg("u2", "user"),
+]);
+dp.applyMessage(msg("u3", "user").info);
+dp.pruneAfter(S, "u1", new Set(["u3"]), true);
+check("dropPivot cuts pivot+tail", (dp.cached(S) as any[]).map((m: any) => m.info.id), ["u0", "u3"]);
+check("dropPivot subtracts usage", dp.usageOf(S), { cost: 0, tokens: 0 });
+
+// pivot at tail → nothing to drop, no onChange
+prChanges = 0;
+pn.pruneAfter(S, "u1");
+check("tail pivot silent", prChanges, 0);
+
 console.log(`sessionStore: ${n} checks passed`);

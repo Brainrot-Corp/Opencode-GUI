@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useEphemeral } from "./useEphemeral";
 import { invoke } from "@tauri-apps/api/core";
 import type { AppSettings } from "./useSettings";
 import {
@@ -36,7 +37,7 @@ export function useVoiceInstall(
   const [voice, setVoice] = useState<EngineState | null>(null);
   const [piper, setPiper] = useState<EngineState | null>(null);
   const [dl, setDl] = useState<{ label: string; pct: number } | null>(null);
-  const [err, setErr] = useState("");
+  const [err, setErr] = useEphemeral("");
   const previewRef = useRef<HTMLAudioElement | null>(null);
   const previewSeq = useRef(0);
   const previewUrlRef = useRef<string | null>(null);

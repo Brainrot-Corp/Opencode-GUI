@@ -1,5 +1,5 @@
 // runnable self-check: node --experimental-strip-types src/lib/changedFiles.test.ts
-import { extractChanged } from "./changedFiles.ts";
+import { extractChanged, sessionDiffFiles } from "./changedFiles.ts";
 
 let n = 0;
 function eq(name: string, got: unknown, want: unknown) {
@@ -49,6 +49,40 @@ eq(
     tool("bash", { command: "ls" }),
   ]),
   [{ kind: "bash", command: "ls" }],
+);
+
+const umsg = (id: string, diffs?: any[]): any => ({
+  info: { id, role: "user", summary: diffs ? { diffs } : undefined },
+  parts: [],
+});
+const amsg = (id: string): any => ({ info: { id, role: "assistant" }, parts: [] });
+
+eq("no summaries → []", sessionDiffFiles([umsg("u1"), amsg("a1")]), []);
+eq(
+  "merges + dedups, assistant ignored",
+  sessionDiffFiles([
+    umsg("u1", [{ file: "a.ts" }, { file: "b.ts" }]),
+    amsg("a1"),
+    umsg("u2", [{ file: "b.ts" }, { file: "c.ts" }, { file: "" }, {}]),
+  ]),
+  ["a.ts", "b.ts", "c.ts"],
+);
+eq("empty + missing → []", sessionDiffFiles([]), []);
+eq("non-array input → []", sessionDiffFiles(undefined as any), []);
+eq(
+  "tool parts detected without summaries",
+  sessionDiffFiles([
+    { info: { id: "a1", role: "assistant" }, parts: [tool("write", { filePath: "t.ts" })] },
+  ]),
+  ["t.ts"],
+);
+eq(
+  "summaries + tools merge and dedup",
+  sessionDiffFiles([
+    umsg("u1", [{ file: "a.ts" }]),
+    { info: { id: "a1", role: "assistant" }, parts: [tool("edit", { filePath: "a.ts" }), tool("write", { filePath: "b.ts" })] },
+  ]),
+  ["a.ts", "b.ts"],
 );
 
 console.log(`changedFiles: ${n} checks passed`);
